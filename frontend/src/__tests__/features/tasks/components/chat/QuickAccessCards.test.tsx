@@ -17,7 +17,6 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: routerPush,
   }),
-  useSearchParams: () => new URLSearchParams('source=partner-test'),
 }))
 
 jest.mock('@/apis/team', () => ({ teamApis: { getTeam: jest.fn() } }))
@@ -579,7 +578,7 @@ describe('QuickAccessCards', () => {
   })
 
   test.each([false, true])(
-    'carries the linked recommendation and source across modes (configured: %s)',
+    'carries the linked recommendation across modes (configured: %s)',
     async configured => {
       const linked = makeTeam({ id: 65, name: 'Linked code agent', bind_mode: ['code'] })
       if (configured) {
@@ -617,7 +616,6 @@ describe('QuickAccessCards', () => {
         teamId: '65',
         agent: 'code',
         recommend: '1',
-        source: 'partner-test',
         ...(configured ? { quickLauncher: 'system:code_review', showPresets: '1' } : {}),
       })
     }

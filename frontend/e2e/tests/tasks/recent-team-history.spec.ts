@@ -291,7 +291,6 @@ test('a partner link selects and recommends the agent before the user sends', as
   const params = new URLSearchParams({
     teamId: String(linked.id),
     recommend: '1',
-    source: 'e2e-partner',
   })
   const configured = await request.post(MODEL_URL + '/tool-scenarios', {
     data: { matchText: prompt, steps: [{ responseContent: 'Linked agent selected.' }] },
@@ -309,7 +308,6 @@ test('a partner link selects and recommends the agent before the user sends', as
     await page.getByTestId('send-button').click({ timeout: 5_000 })
     await expectPersistedSend(page, history, linked, prompt)
     expect(sends).toHaveLength(1)
-    expect(new URL(page.url()).searchParams.get('source')).toBe('e2e-partner')
   } finally {
     const removed = await request.delete(
       MODEL_URL + '/tool-scenarios?matchText=' + encodeURIComponent(prompt)

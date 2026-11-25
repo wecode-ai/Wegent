@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { teamApis } from '@/apis/team'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -47,7 +47,6 @@ export function QuickLaunchPanel({
   renderQuickCreateCard,
 }: QuickLaunchPanelProps) {
   const router = useRouter()
-  const source = useSearchParams()?.get('source') ?? null
   const { toast } = useToast()
   const { t } = useTranslation('common')
   const recommendedTeamId = recommendedTeam?.id
@@ -124,11 +123,11 @@ export function QuickLaunchPanel({
       router.push(
         buildQuickLaunchHref(launcher, {
           showPresets: launcher.inputPresets.length > 0,
-          recommendation: launcher.team.id === recommendedTeamId ? { source } : undefined,
+          recommend: launcher.team.id === recommendedTeamId,
         })
       )
     },
-    [recommendedTeamId, router, source]
+    [recommendedTeamId, router]
   )
 
   const activateLauncher = useCallback(

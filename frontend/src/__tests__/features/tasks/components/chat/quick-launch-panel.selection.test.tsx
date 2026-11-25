@@ -13,10 +13,7 @@ const mockLauncher: QuickLauncher = {
   inputPresets: [],
 }
 
-jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
-}))
+jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }) }))
 jest.mock('@/apis/team', () => ({ teamApis: { getTeam: jest.fn() } }))
 jest.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: jest.fn() }) }))
 jest.mock('@/hooks/useTranslation', () => ({
