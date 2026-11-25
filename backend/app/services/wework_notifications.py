@@ -215,7 +215,7 @@ def notify_issue_participation(
         user_id=user_id,
         actor_user_id=actor_user_id,
         kind="issue_participation",
-        title="Issue 已创建" if created else "你已加入 Issue",
+        title="事项已创建" if created else "你已加入事项",
         body="打开 Wework 查看事项。",
         project_id=project.project_id if project else None,
         item_id=target.item_id,

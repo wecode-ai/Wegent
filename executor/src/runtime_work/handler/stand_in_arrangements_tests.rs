@@ -102,6 +102,13 @@ async fn collaboration_chat_inherits_primary_settings_with_separate_persistent_h
         handler.identity_conversation_address(collaboration["taskId"].as_str().unwrap())["taskId"],
         collaboration["taskId"]
     );
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        handler.codex_app_server.request("test/stop", json!({})),
+    )
+    .await
+    .expect("fake Codex stdio server must stop before runtime shutdown")
+    .unwrap();
 }
 
 #[tokio::test]
