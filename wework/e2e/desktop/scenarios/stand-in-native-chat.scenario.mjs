@@ -20,12 +20,33 @@ const NEXT = 'STAND_IN_NATIVE_SECOND_MESSAGE'
 const AUTO = 'STAND_IN_NATIVE_AUTOMATIC_GUIDANCE'
 const CHILD = 'STAND_IN_NATIVE_CHILD_WORK'
 const CHILD_RESULT = 'Native child verified its isolated work.'
+const ACKNOWLEDGEMENT = '已交给原生子代理，你可以继续交代其他事情。'
+const ACKNOWLEDGEMENT_ID = 'native-chat-acknowledgement'
 const RESULT = '原生子代理已经完成后台检查。'
 const NOTIFICATION_REQUEST = 'STAND_IN_NATIVE_NOTIFICATION_REQUEST'
 const NOTIFICATION_RESULT = '助理已完成后台核对。'
 const NOTIFICATION_RESULT_ID = 'native-chat-notification-result'
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
+const TRANSPARENT_BACKGROUND = 'rgba(0, 0, 0, 0)'
+
+async function assertBorderlessAssistantText(control, selector) {
+  const style = {
+    backgroundColor: await control.command('getComputedStyleValue', selector, {
+      value: 'background-color',
+    }),
+    boxShadow: await control.command('getComputedStyleValue', selector, { value: 'box-shadow' }),
+    borderTopWidth: await control.command('getComputedStyleValue', selector, {
+      value: 'border-top-width',
+    }),
+  }
+  assert.deepEqual(
+    style,
+    { backgroundColor: TRANSPARENT_BACKGROUND, boxShadow: 'none', borderTopWidth: '0px' },
+    'The assistant reply uses borderless text'
+  )
+  return style
+}
 
 /** Extend the CI-owned session checkpoint without another app or Backend lifecycle. */
 export function createDesktopScenario(options) {
@@ -113,7 +134,9 @@ export function createDesktopScenario(options) {
           acknowledgement.item.id = 'native-chat-followup'
           events.push(acknowledgement)
         } else if (!receivedNext && sequence === 1) {
-          events.push(assistantMessage('已交给原生子代理，你可以继续交代其他事情。'))
+          const acknowledgement = assistantMessage(ACKNOWLEDGEMENT)
+          acknowledgement.item.id = ACKNOWLEDGEMENT_ID
+          events.push(acknowledgement)
         }
         if (input.includes(AUTO) && !automaticallyGuided) {
           automaticallyGuided = true
@@ -160,8 +183,11 @@ export function createDesktopScenario(options) {
           options.modelResponseTimeoutMs,
           'The real native subagent must reach the model'
         )
-        await control.command('waitFor', `${CHAT} [data-testid="assistant-message-content"]`, {
-          text: '已交给原生子代理',
+        const assistantContent = `${CHAT} [data-testid="assistant-message-content"]`
+        const initialAcknowledgement = `${assistantContent}[data-runtime-item-id="${ACKNOWLEDGEMENT_ID}"]`
+        await control.command('waitFor', initialAcknowledgement, {
+          text: ACKNOWLEDGEMENT,
+          visible: true,
           timeoutMs: options.modelResponseTimeoutMs,
         })
         const primary = await rpc('runtime.tasks.get', { taskId: 'stand-in-chat-9001-primary' })
@@ -169,6 +195,33 @@ export function createDesktopScenario(options) {
           primary.task.running,
           true,
           'The parent remains active while waiting on its native child'
+        )
+        const oldSelector = `${assistantContent}.rounded-3xl`
+        const oldSelectorMatches = await control.command('getElementCount', oldSelector)
+        const currentSelectorMatches = await control.command(
+          'getElementCount',
+          initialAcknowledgement
+        )
+        assert.equal(oldSelectorMatches, '0', 'The old bubble selector must no longer match')
+        assert.equal(currentSelectorMatches, '1', 'The acknowledgement is rendered exactly once')
+        const style = await assertBorderlessAssistantText(control, initialAcknowledgement)
+        const childHeld = Boolean(
+          childResponse && !released && !childResponse.writableEnded && !childResponse.destroyed
+        )
+        assert.equal(
+          childHeld,
+          true,
+          'The acknowledgement is visible while the native child is held'
+        )
+        console.log(
+          '[stand-in-native-chat] acknowledgement-style',
+          JSON.stringify({
+            oldSelectorMatches,
+            currentSelectorMatches,
+            style,
+            parentRunning: primary.task.running,
+            childHeld,
+          })
         )
         // The explicit guide action remains available during the active parent turn.
         await control.command(
@@ -304,7 +357,7 @@ export function createDesktopScenario(options) {
         )
         await control.command('focusMainWindow', 'body')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        const assistantMessageContent = `${CHAT} [data-testid="assistant-message-content"][data-runtime-item-id="${NOTIFICATION_RESULT_ID}"]`
+        const assistantMessageContent = `${assistantContent}[data-runtime-item-id="${NOTIFICATION_RESULT_ID}"]`
         await control.command('waitFor', assistantMessageContent, {
           text: NOTIFICATION_RESULT,
           visible: true,
@@ -319,37 +372,16 @@ export function createDesktopScenario(options) {
           text: NOTIFICATION_REQUEST,
           value: 'data-search-region-id',
         })
-        const transparent = 'rgba(0, 0, 0, 0)'
         assert.notEqual(
           await control.command(
             'getComputedStyleValue',
             `${userMessage}[data-search-region-id=${JSON.stringify(userMessageId)}]`,
             { value: 'background-color' }
           ),
-          transparent,
+          TRANSPARENT_BACKGROUND,
           'The user message keeps its filled bubble'
         )
-        assert.equal(
-          await control.command('getComputedStyleValue', assistantMessageContent, {
-            value: 'background-color',
-          }),
-          transparent,
-          'The assistant reply has no background fill'
-        )
-        assert.equal(
-          await control.command('getComputedStyleValue', assistantMessageContent, {
-            value: 'box-shadow',
-          }),
-          'none',
-          'The assistant reply has no outline'
-        )
-        assert.equal(
-          await control.command('getComputedStyleValue', assistantMessageContent, {
-            value: 'border-top-width',
-          }),
-          '0px',
-          'The assistant reply uses borderless text'
-        )
+        await assertBorderlessAssistantText(control, assistantMessageContent)
       } finally {
         releaseChild()
         if (notificationResponse && !notificationResponse.writableEnded) notificationResponse.end()
