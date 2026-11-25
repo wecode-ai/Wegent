@@ -212,6 +212,8 @@ mod stand_in_role_delegation;
 mod stand_in_role_dependencies;
 mod stand_in_role_results;
 mod stand_in_schedules;
+mod stand_in_share_sync;
+mod stand_in_shared_conversation;
 mod stand_in_source_tasks;
 mod stand_in_task_permissions;
 mod stand_in_task_results;
@@ -1353,6 +1355,7 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
         || method.starts_with("runtime.stand_in.onboarding.")
         || method == "runtime.stand_in.processing.status"
         || method == "runtime.stand_in.memory.rework_report"
+        || method == "runtime.stand_in.share.definition"
         || method == "runtime.stand_in.binding"
         || method == "runtime.stand_in.personal.lifecycle"
     {
