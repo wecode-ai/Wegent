@@ -3,12 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApis } from '@/apis/user'
 import type { QuickLaunchInputPreset, QuickLaunchResponse, Team } from '@/types/api'
-import { getBindModesTargetPage, type TeamModeFilter } from '../../selector/team-selector-utils'
+import {
+  getBindModesTargetPage,
+  getTeamDisplayName,
+  type TeamModeFilter,
+} from '../../selector/team-selector-utils'
+import { LINKED_AGENT_LAUNCHER_PREFIX } from './launch-intent'
 import type { QuickInputPreset, QuickLauncher } from './types'
 
 interface UseQuickLaunchersOptions {
   currentMode: TeamModeFilter
   defaultTeam?: Team | null
+  recommendedTeam?: Team | null
 }
 
 function presetsFromPhrases(phrases: string[] | undefined): QuickInputPreset[] {
@@ -39,7 +45,11 @@ function normalizeInputPresets(
   return presetsFromPhrases(fallbackPhrases)
 }
 
-export function useQuickLaunchers({ currentMode, defaultTeam }: UseQuickLaunchersOptions) {
+export function useQuickLaunchers({
+  currentMode,
+  defaultTeam,
+  recommendedTeam,
+}: UseQuickLaunchersOptions) {
   const [data, setData] = useState<QuickLaunchResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -79,8 +89,22 @@ export function useQuickLaunchers({ currentMode, defaultTeam }: UseQuickLauncher
       })
     }
 
-    return launchers
-  }, [currentMode, data?.system_functions])
+    if (!recommendedTeam) return launchers
+
+    const recommendedLauncher = launchers.find(
+      launcher => launcher.team.id === recommendedTeam.id
+    ) ?? {
+      key: `${LINKED_AGENT_LAUNCHER_PREFIX}${recommendedTeam.id}`,
+      type: 'system_function',
+      title: getTeamDisplayName(recommendedTeam),
+      description: recommendedTeam.description,
+      icon: recommendedTeam.icon,
+      team: recommendedTeam,
+      targetPage: getBindModesTargetPage(recommendedTeam.bind_mode, currentMode),
+      inputPresets: [],
+    }
+    return [recommendedLauncher, ...launchers.filter(launcher => launcher !== recommendedLauncher)]
+  }, [currentMode, data?.system_functions, recommendedTeam])
 
   const favoriteLaunchers = useMemo<QuickLauncher[]>(() => {
     const launchers: QuickLauncher[] = []
