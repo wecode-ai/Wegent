@@ -394,6 +394,10 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
       typeof next === 'function' ? next(navigation.getSnapshot().location) : next
     )
   const navigatePlatform = navigation.navigate
+  const openIndependentIssueProject = (projectId: string, issueId: string) => {
+    const next = routeProjectLocation({ projectStore: 'backend', projectId }, issueId)
+    if (next) navigatePlatform(next)
+  }
   const handleReady = navigation.handleReady
   const migrationInput = useMemo(
     () => ({
@@ -551,10 +555,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
         selection={independentIssueSelection}
         onSelect={setIndependentIssueSelection}
         onLogin={() => setCloudLoginIntent('issue')}
-        onOpenProjectIssue={(projectId, issueId) => {
-          const next = routeProjectLocation({ projectStore: 'backend', projectId }, issueId)
-          if (next) navigatePlatform(next)
-        }}
+        onOpenProjectIssue={openIndependentIssueProject}
       >
         <CollaborationPlatformApp
           api={platformApi}
@@ -608,6 +609,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                 sources={navigationApis}
                 draftScope={personalHomeTaskDrafts}
                 renderIssueDetail={renderPersonalIssueDetail}
+                onOpenProjectIssue={openIndependentIssueProject}
                 conversation={(active, collaborationWork) => (
                   <PersonalStandInWorkspace
                     homeProjects={home.projects}

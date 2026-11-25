@@ -38,6 +38,7 @@ export function CloudDeviceRestartDialog({
   return (
     <ConfirmDialog
       open
+      focusCancel
       title={t(
         devices.length === 1
           ? 'workbench.connection_restart_confirm_title'

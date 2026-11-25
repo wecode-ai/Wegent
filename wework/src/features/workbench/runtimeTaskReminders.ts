@@ -1,6 +1,6 @@
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
 import { createAppPreferencesStore } from '@/features/app-preferences/appPreferencesStore'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
 import { createActiveNotificationPreferencesStore } from '@/features/notifications/notificationPreferences'
 import type {
@@ -17,6 +17,7 @@ import { useStandInMessageReminders } from './useStandInMessageReminders'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from './workbenchServices'
+import { RuntimeTaskRemindersContext } from './workbenchContexts'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
@@ -49,6 +50,10 @@ export const EMPTY_RUNTIME_TASK_REMINDERS: RuntimeTaskReminderState = {
   preferences: defaultAppPreferences,
   markRuntimeTaskRead: () => {},
   items: [],
+}
+
+export function useWorkbenchTaskReminders(): RuntimeTaskReminderState {
+  return useContext(RuntimeTaskRemindersContext) ?? EMPTY_RUNTIME_TASK_REMINDERS
 }
 
 export function getRuntimeTaskReminderKey(address: RuntimeTaskAddress): string {
@@ -166,6 +171,10 @@ export function useRuntimeTaskReminders({
     [source, items, listedItems, notificationPreferences, unreadMessageCounts]
   )
   const visibleUnreadTaskKeys = useSyncExternalStore(subscribe, source.getSnapshot)
+  const markRuntimeTaskRead = useCallback(
+    (address: RuntimeTaskAddress) => lifecycleStore.markRead(address),
+    [lifecycleStore]
+  )
 
   return useMemo(
     () => ({
@@ -178,12 +187,12 @@ export function useRuntimeTaskReminders({
       hasRunningTasks: lifecycleSnapshot.runningTaskKeys.size > 0,
       preferences,
       items,
-      markRuntimeTaskRead: (address: RuntimeTaskAddress) => lifecycleStore.markRead(address),
+      markRuntimeTaskRead,
     }),
     [
       items,
       lifecycleSnapshot.runningTaskKeys.size,
-      lifecycleStore,
+      markRuntimeTaskRead,
       preferences,
       visibleUnreadTaskKeys,
       unreadMessageCounts,

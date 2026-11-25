@@ -136,7 +136,7 @@ export function TagEditor({
     >
       <span
         ref={containerRef}
-        className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md focus-within:ring-2 focus-within:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
+        className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md"
         onClick={() => inputRef.current?.focus()}
       >
         {tags.map((tag) => (
