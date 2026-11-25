@@ -15,6 +15,13 @@ export const defaultNotificationPreferences: WeworkNotificationPreferences = {
   stand_in: { in_app: true, system: true, im: null },
 }
 
+export function notificationPreferenceAccountKey(
+  baseUrl?: string | null,
+  userId?: number | null
+): string {
+  return `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
+}
+
 export function mergeNotificationPreferences(
   stored: Partial<WeworkNotificationPreferences>
 ): WeworkNotificationPreferences {

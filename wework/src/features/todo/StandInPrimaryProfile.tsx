@@ -95,6 +95,7 @@ export function StandInPrimaryProfile({
   onSelectDevice,
   deviceReadOnly = false,
   initialCalendar = false,
+  initialConnections = false,
   onCalendarViewChange,
   onReload,
   shortcuts,
@@ -119,6 +120,7 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
+  initialConnections?: boolean
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
@@ -167,7 +169,7 @@ export function StandInPrimaryProfile({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar ? 'connections' : 'main')
+  >(initialCalendar || initialConnections ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
