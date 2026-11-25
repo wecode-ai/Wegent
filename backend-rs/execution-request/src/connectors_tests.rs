@@ -189,6 +189,7 @@ fn keyword_phrases_require_all_terms_and_preload_chat_or_direct_coding() {
                     matched
                 );
                 assert_eq!(request.mcp_servers.len(), usize::from(matched));
+                assert_eq!(request.skill_configs[0]["sandbox_deploy"], false);
                 assert_eq!(
                     request.skill_configs[0].get("mcpServers").is_none(),
                     matched
