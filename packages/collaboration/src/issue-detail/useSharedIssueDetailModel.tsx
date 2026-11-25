@@ -35,11 +35,10 @@ import {
 import { issueDraftFromText } from '../issueDraft'
 import { canAssignCollaborationIssue, canManageCollaborationIssueSecurity } from '../permissions'
 import { markdownAttachmentRows } from './attachmentMarkdown'
-import { localizeStandardStatuses } from '../i18n'
 import { useIssueAssigneeResources } from './useIssueAssigneeResources'
 import { useIssueCreation } from './useIssueCreation'
 import {
-  columns,
+  issueEditorStatuses,
   memberNameById,
   todoDraftKey,
   readTodoDraft,
@@ -58,10 +57,11 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
   const showChildren = props.showChildren !== false
   const showAssignee = props.showAssignee !== false
   const createProps = props.mode === 'create' ? props : null
+  const draftForm = createProps?.draftForm
   const editProps = props.mode === 'edit' ? props : null
   const isCreate = createProps !== null
   const canStartWork = !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask)
-  const editable = isCreate || editProps?.editable === true
+  const editable = (isCreate && !props.closeDisabled) || editProps?.editable === true
   const workspacePanel = props.presentation === 'workspace-panel'
   const readFirst = workspacePanel && props.readFirst === true && !isCreate
   const showPanelControls = props.showPanelControls !== false
@@ -81,17 +81,16 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     onCreated: child =>
       setCommentChildren(current => [...current.filter(value => value.id !== child.id), child]),
   })
-  const statusOptions = project?.board_config?.statuses
-    ? localizeStandardStatuses(project.board_config.statuses, t)
-    : columns.map(column => ({
-        id: column.status,
-        name: t(`todo.status_${column.status}`, column.label),
-        color: 'gray' as const,
-      }))
+  const statusOptions = issueEditorStatuses(
+    project?.board_config?.statuses,
+    t,
+    !project && Boolean(draftForm || (item && !item.cloud_project_id))
+  )
 
-  const draftKey = createProps
-    ? todoDraftKey(createProps.project.id, createProps.draftScope ?? createProps.initialStatus)
-    : null
+  const draftKey =
+    createProps && !createProps.draftForm
+      ? todoDraftKey(createProps.project.id, createProps.draftScope ?? createProps.initialStatus)
+      : null
   const [draft] = useState(() => (draftKey ? readTodoDraft(draftKey) : null))
   const [createMilestoneId, setCreateMilestoneId] = useState<string | null>(
     draft ? draft.milestoneId : (createProps?.initialMilestoneId ?? null)
@@ -123,7 +122,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     storage: draftKey ? { key: draftKey, milestoneId: createMilestoneId } : undefined,
     allowedParentIds: allItems.map(candidate => candidate.id),
     pendingFields: pendingDraftFields,
-    initial: {
+    initial: draftForm?.initial ?? {
       title: createProps?.initialTitle ?? draft?.title ?? '',
       description: draft?.markdown ?? '',
       status: createProps?.initialStatus ?? 'inbox',
@@ -151,8 +150,15 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     tags,
   } = issueDraft
 
-  const setTitle = (value: SetStateAction<string>) => setIssueDraftField('title', value)
-  const setDescription = (value: SetStateAction<string>) => setIssueDraftField('description', value)
+  function setDraftField<K extends keyof IssueDetailDraftValue>(
+    field: K,
+    value: SetStateAction<IssueDetailDraftValue[K]>
+  ) {
+    const dirty = setIssueDraftField(field, value)
+    draftForm?.onDirtyChange?.(dirty)
+  }
+  const setTitle = (value: SetStateAction<string>) => setDraftField('title', value)
+  const setDescription = (value: SetStateAction<string>) => setDraftField('description', value)
   const [notifyAssignee, setNotifyAssignee] = useState(true)
   function changeProperty<K extends keyof IssueDetailDraftValue>(
     field: K,
@@ -164,7 +170,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
             getDraft()[field]
           )
         : value
-    setIssueDraftField(field, next)
+    setDraftField(field, next)
     if (
       !item ||
       (!editable && field !== 'assigneeTarget') ||
@@ -299,7 +305,8 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
   const [addingCollaborator, setAddingCollaborator] = useState(false)
   const collaboratorAvailabilityId = useId()
   const collaboratorEditingSupported = editorPort.collaborators.editingSupported !== false
-  const canEditCollaborators = editable && collaboratorEditingSupported
+  const canEditCollaborators =
+    editable && collaboratorEditingSupported && editorPort.collaborators.canEdit !== false
   const collaboratorAvailabilityNote = !collaboratorEditingSupported ? (
     <span
       id={collaboratorAvailabilityId}
@@ -587,14 +594,16 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
         (item === null || item.can_view_detail !== false) &&
         canAssignCollaborationIssue(project)))
   const commentActions =
-    item && project && editProps && (editable || canAssign)
+    item && editProps && (editable || canAssign)
       ? createIssueCommentActions({
           issue: item,
-          board:
-            props.commentBoard ?? defaultIssueCommentBoard(project, allItems, statusOptions, t),
+          board: project
+            ? (props.commentBoard ?? defaultIssueCommentBoard(project, allItems, statusOptions, t))
+            : undefined,
           statuses: statusOptions,
           editable,
           canAssign,
+          currentUserId: props.currentUserId ?? project?.current_user_id,
           confirmAssignee: target => outside.confirmOutsideTarget(target as IssueAssigneeTarget),
           issues: editorPort.issues,
           onUpdated: updated => {
@@ -617,8 +626,20 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
 
   async function submitCreate(notifyAssignee = true) {
     if (props.mode !== 'create' || !createTitle || saving || scheduleRangeInvalid) return
+    if (props.draftForm && !title.trim()) return
     setSaving(true)
     setSaveError(null)
+    if (props.draftForm) {
+      try {
+        await props.draftForm.submit(getDraft())
+      } catch (cause) {
+        if (collections.isActive())
+          setSaveError(cause instanceof Error ? cause.message : t('todo.save_issue_failed'))
+      } finally {
+        if (collections.isActive()) setSaving(false)
+      }
+      return
+    }
     const createInput: SharedIssueDetailCreateInput = {
       title: createTitle,
       description,
@@ -734,11 +755,17 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
         assignee_group_id: target.slice(6),
       })
     }
-    return editorPort.issues.assign(source.cloud_project_id, source.id, {
+    const { assigneeUserId, assigneeAgentId, assigneeTeamId } = parseIssueAssigneeTarget(target)
+    return editorPort.issues.update(source.id, {
       version: source.version,
-      assigneeType: target.slice(0, target.indexOf(':')) as 'user' | 'agent' | 'team',
-      assigneeId: target.slice(target.indexOf(':') + 1),
-      ...(target.startsWith('user:') ? { notifyAssignee: shouldNotify } : {}),
+      ...(assigneeUserId == null
+        ? assigneeAgentId == null
+          ? { assignee_team_id: assigneeTeamId }
+          : { assignee_agent_id: assigneeAgentId }
+        : {
+            assignee_user_id: assigneeUserId,
+            notify_assignee: shouldNotify,
+          }),
     })
   }
 
@@ -827,6 +854,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
 
   function handleDrop(event: React.DragEvent) {
     event.preventDefault()
+    if (draftForm) return
     if (isCreate) void attachmentActions.stageFiles(event.dataTransfer.files)
     else if (editable) void attachmentActions.addAttachments(event.dataTransfer.files)
   }

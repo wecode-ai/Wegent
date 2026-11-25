@@ -39,22 +39,17 @@ pub fn has_permission(user_role: &str, required_role: &str) -> bool {
 
 /// Shared ordered assignment-event query for transactional and ordinary reads.
 pub fn item_comments_query() -> String {
-    ordered_comments_query(false)
+    ordered_comments_query("")
 }
 
-fn ordered_comments_query(assignments_only: bool) -> String {
-    let assignment_filter = if assignments_only {
-        "AND JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.event_type')) = 'assignment' "
-    } else {
-        ""
-    };
+fn ordered_comments_query(comment_filter: &str) -> String {
     format!(
         "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.loop_item_id = ? \
                      AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
                          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
                      AND loop_items.resource_type IN ('comment') \
-                     {assignment_filter}\
+                     {comment_filter} \
                      ORDER BY loop_items.created_at, loop_items.id",
     )
 }

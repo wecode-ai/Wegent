@@ -104,6 +104,19 @@ class NotificationTarget:
 
 
 @dataclass(frozen=True)
+class PersonalIssueInvitationTarget:
+    item_id: str
+    item_title: str
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "personalIssueId": self.item_id,
+            "itemTitle": self.item_title,
+            "assigned": False,
+        }
+
+
+@dataclass(frozen=True)
 class NotificationMessage:
     """One notification: its kind, its copy, its payload and its landing spot."""
 

@@ -15,6 +15,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -24,10 +25,15 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.adapter.attachments import _build_content_disposition
+from app.api.endpoints.issue_assignment_actions import (
+    assign_project_issue,
+    direct_assignment,
+)
 from app.core.config import settings
 from app.core.security import (
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
+    get_current_user_optional,
 )
 from app.models.delivery import (
     Delivery,
@@ -55,6 +61,8 @@ from app.schemas.delivery import (
     LoopItemCommentCreate,
     LoopItemCommentResponse,
     LoopItemCreate,
+    LoopItemDelete,
+    LoopItemDetailResponse,
     LoopItemListResponse,
     LoopItemPageResponse,
     LoopItemRead,
@@ -196,6 +204,8 @@ def list_my_work(
         default="participating"
     ),
     include_completed: bool = Query(default=True),
+    unlinked: bool = Query(default=False),
+    archived: bool = Query(default=False),
     order: Literal["recent", "attention", "activity", "assignment", "priority"] = Query(
         default="recent"
     ),
@@ -212,6 +222,8 @@ def list_my_work(
         include_completed=include_completed,
         attention=order == "attention",
         order=order,
+        unlinked=unlinked,
+        archived=archived,
     )
     return MyWorkListResponse(
         items=[MyWorkItemResponse.model_validate(item) for item in items],
@@ -250,21 +262,6 @@ def add_loop_item_collaborator(
         db, item_id, values.user_id, current_user.id
     )
     return LoopItemCollaboratorResponse.model_validate(collaborator)
-
-
-@router.delete(
-    "/loop-items/{item_id}/collaborators/{collaborator_user_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-def remove_loop_item_collaborator(
-    item_id: str,
-    collaborator_user_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> None:
-    loop_item_service.remove_collaborator(
-        db, item_id, collaborator_user_id, current_user.id
-    )
 
 
 @router.get("/runtime-tasks/loop-item", response_model=LoopItemResponse)
@@ -497,18 +494,26 @@ def reorder_loop_items(
     )
 
 
-@router.get("/loop-items/{item_id}", response_model=LoopItemResponse)
+@router.get("/loop-items/{item_id}", response_model=LoopItemDetailResponse)
 def get_loop_item(
     item_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> LoopItemResponse:
+) -> LoopItemDetailResponse:
     if external_loop_item_provider.is_external_item(db, item_id):
-        return LoopItemResponse.model_validate(
+        return LoopItemDetailResponse.model_validate(
             external_loop_item_provider.get(db, item_id, current_user.id)
         )
-    item = loop_item_service.get(db, item_id, current_user.id)
-    return _loop_item_response(db, item, current_user)
+    return LoopItemDetailResponse.model_validate(
+        loop_item_service.get_detail_values(
+            db,
+            item_id,
+            current_user.id,
+            allow_no_project=getattr(request.state, "user_session_id", None)
+            == current_user.id,
+        )
+    )
 
 
 @router.post("/loop-items/{item_id}/read", response_model=LoopItemResponse)
@@ -533,15 +538,26 @@ def mark_loop_item_read(
     return _loop_item_response(db, item, current_user)
 
 
-@router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
+@router.patch(
+    "/loop-items/{item_id}", response_model=LoopItemResponse | LoopItemDetailResponse
+)
 async def update_loop_item(
     item_id: str,
     values: LoopItemUpdate,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
     if external_loop_item_provider.is_external_item(db, item_id):
+        if assignment := direct_assignment(values, notify_self=False):
+            return assign_project_issue(
+                db,
+                item_id=item_id,
+                user_id=current_user.id,
+                values=assignment,
+                background_tasks=background_tasks,
+            )
         response = external_loop_item_provider.update(
             db, item_id, current_user.id, values
         )
@@ -551,9 +567,37 @@ async def update_loop_item(
             background_tasks.add_task(consume_queues_background)
             response = external_loop_item_provider.get(db, item_id, current_user.id)
         return LoopItemResponse.model_validate(response)
-    existing = loop_item_service.get(db, item_id, current_user.id)
+    existing = loop_item_service.get(
+        db,
+        item_id,
+        current_user.id,
+        allow_no_project=getattr(request.state, "user_session_id", None)
+        == current_user.id,
+    )
+    if not existing.cloud_project_id:
+        item, affected = loop_item_service.update_unlinked_issue(
+            db, item_id, current_user.id, values
+        )
+        if affected:
+            from app.services.wework_notifications import emit_issue_assignments_changed
+
+            for assignee in sorted(affected):
+                background_tasks.add_task(emit_issue_assignments_changed, assignee)
+        return LoopItemDetailResponse.model_validate(
+            loop_item_service.detail_values(db, item, current_user.id)
+        )
+    if assignment := direct_assignment(values):
+        return assign_project_issue(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            values=assignment,
+            background_tasks=background_tasks,
+            source=existing,
+        )
     previous_status = existing.status
     previous_tags = set(existing.tags)
+    previous_assignee = existing.assignee_user_id
     access = loop_item_service._require_item_access(db, existing, current_user.id)
     project = access.project
     selected_status_automation_id: str | None = None
@@ -668,6 +712,11 @@ async def update_loop_item(
     except Exception:
         db.rollback()
         raise
+    if status_changed or previous_assignee != item.assignee_user_id:
+        from app.services.wework_notifications import emit_issue_assignments_changed
+
+        for assignee in sorted({previous_assignee, item.assignee_user_id} - {None, 0}):
+            background_tasks.add_task(emit_issue_assignments_changed, assignee)
     queue_wakeup_scheduled = False
     if (item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set) or (
         "assignee_group_id" in values.model_fields_set
@@ -746,13 +795,21 @@ async def update_loop_item(
 @router.delete("/loop-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_loop_item(
     item_id: str,
+    background_tasks: BackgroundTasks,
+    values: LoopItemDelete | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
     if external_loop_item_provider.is_external_item(db, item_id):
         external_loop_item_provider.archive(db, item_id, current_user.id)
         return
-    loop_item_service.delete(db, item_id, current_user.id)
+    item = loop_item_service.delete(
+        db, item_id, current_user.id, version=values.version if values else None
+    )
+    if not item.cloud_project_id and item.assignee_user_id:
+        from app.services.wework_notifications import emit_issue_assignments_changed
+
+        background_tasks.add_task(emit_issue_assignments_changed, item.assignee_user_id)
 
 
 @router.get(
@@ -1089,9 +1146,13 @@ def list_loop_item_attachments(
     item_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    session_user: User | None = Depends(get_current_user_optional),
 ) -> list[LoopItemAttachmentResponse]:
     attachments = loop_item_attachment_provider_router.list(
-        db, item_id, current_user.id
+        db,
+        item_id,
+        current_user.id,
+        session=session_user is not None and session_user.id == current_user.id,
     )
     return [LoopItemAttachmentResponse.model_validate(item) for item in attachments]
 
@@ -1106,6 +1167,7 @@ def add_loop_item_attachment(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    session_user: User | None = Depends(get_current_user_optional),
 ) -> LoopItemAttachmentResponse:
     attachment = loop_item_attachment_provider_router.add(
         db,
@@ -1115,6 +1177,7 @@ def add_loop_item_attachment(
         file.content_type or "application/octet-stream",
         file.file,
         settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
+        session=session_user is not None and session_user.id == current_user.id,
     )
     return LoopItemAttachmentResponse.model_validate(attachment)
 
@@ -1151,7 +1214,7 @@ def access_loop_item_attachment(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemAttachmentAccessResponse:
     loop_item_attachment_provider_router.require_access(
-        db, attachment_id, current_user.id
+        db, attachment_id, current_user.id, session=True
     )
     return LoopItemAttachmentAccessResponse(
         url=f"wegent://attachments/{attachment_id}",
@@ -1164,9 +1227,13 @@ def read_loop_item_attachment(
     attachment_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    session_user: User | None = Depends(get_current_user_optional),
 ) -> Response:
     content, content_type, filename = loop_item_attachment_provider_router.content(
-        db, attachment_id, current_user.id
+        db,
+        attachment_id,
+        current_user.id,
+        session=session_user is not None and session_user.id == current_user.id,
     )
     return Response(
         content=content,
@@ -1182,8 +1249,14 @@ def delete_loop_item_attachment(
     attachment_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    session_user: User | None = Depends(get_current_user_optional),
 ) -> None:
-    loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
+    loop_item_attachment_provider_router.delete(
+        db,
+        attachment_id,
+        current_user.id,
+        session=session_user is not None and session_user.id == current_user.id,
+    )
 
 
 @router.delete(

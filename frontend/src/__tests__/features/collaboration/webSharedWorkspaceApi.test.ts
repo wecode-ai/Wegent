@@ -142,10 +142,13 @@ describe('createWebSharedWorkspaceApi', () => {
       },
       visibility: 'public',
     })
-    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/loop-items', {
-      title: 'Ship it',
-      due_at: '2026-09-12T00:00:00Z',
-      parent_id: 'parent-1',
+    expect(client.post).toHaveBeenCalledWith('/v1/loop-items', {
+      project_id: 'project/1',
+      issue: {
+        title: 'Ship it',
+        due_at: '2026-09-12T00:00:00Z',
+        parent_id: 'parent-1',
+      },
     })
   })
 

@@ -178,12 +178,19 @@ pub async fn project_entity<M: Mysql>(
     mysql: &M,
     project_id: i64,
 ) -> MysqlResult<Option<ProjectEntityRow>> {
+    project_entity_on(&mut &*mysql, project_id).await
+}
+
+pub async fn project_entity_on(
+    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
+    project_id: i64,
+) -> MysqlResult<Option<ProjectEntityRow>> {
     let sql = format!(
         "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS} \nFROM loop_items \n\
          WHERE loop_items.id = '{project_id}' \n\
          AND loop_items.resource_type IN ('project')"
     );
-    mysql.fetch_optional(sql, ()).await
+    query.fetch_optional(sql, ()).await
 }
 
 /// `collaboration_permission_service.check`'s `project_sources` reads. The

@@ -4,6 +4,7 @@ export const issueCommentMessages: Record<CollaborationLocale, Readonly<Record<s
   'zh-CN': {
     'todo.comment_send_actions': '发送选项',
     'todo.comment_send': '发送评论',
+    'todo.comment_send_mode': '评论',
     'todo.comment_mention': '提及成员或智能体',
     'todo.comment_assign_action': '交给',
     'todo.comment_assign_placeholder': '分配给…',
@@ -23,9 +24,7 @@ export const issueCommentMessages: Record<CollaborationLocale, Readonly<Record<s
     'todo.comment_board_unmatched': '未匹配当前泳道',
     'todo.send_and_update_issue': '发送并更新',
     'todo.update_issue': '更新事项',
-    'todo.close_issue_action': '关闭事项',
     'todo.comment_and_close_issue': '评论并关闭',
-    'todo.reopen_issue_action': '重新打开',
     'todo.comment_move_unavailable': '该泳道变更当前不可用，请重新选择。',
     'todo.comment_move_conflict': '事项的来源泳道已变化，请重新选择目标泳道。',
     'todo.comment_update_failed': '评论已发送，事项更新未完成：{{error}}。重试不会重复发送原评论。',
@@ -33,6 +32,7 @@ export const issueCommentMessages: Record<CollaborationLocale, Readonly<Record<s
   en: {
     'todo.comment_send_actions': 'Send options',
     'todo.comment_send': 'Send comment',
+    'todo.comment_send_mode': 'Comment',
     'todo.comment_mention': 'Mention a member or agent',
     'todo.comment_assign_action': 'Assign to',
     'todo.comment_assign_placeholder': 'Assign to…',
@@ -52,9 +52,7 @@ export const issueCommentMessages: Record<CollaborationLocale, Readonly<Record<s
     'todo.comment_board_unmatched': 'No matching lane',
     'todo.send_and_update_issue': 'Send and update',
     'todo.update_issue': 'Update issue',
-    'todo.close_issue_action': 'Close issue',
     'todo.comment_and_close_issue': 'Comment and close',
-    'todo.reopen_issue_action': 'Reopen issue',
     'todo.comment_move_unavailable': 'This lane change is unavailable. Select a destination again.',
     'todo.comment_move_conflict': 'The source lane has changed. Select a destination again.',
     'todo.comment_update_failed':

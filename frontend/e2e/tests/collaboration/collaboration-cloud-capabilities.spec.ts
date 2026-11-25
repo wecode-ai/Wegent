@@ -543,10 +543,10 @@ test.describe('Collaboration cloud capabilities', () => {
         .getByTestId('cloud-todo-detail-description')
         .fill('Created and edited through the shared Issue editor.')
       const issueCreateResponse = page.waitForResponse(response => {
-        const pathname = new URL(response.url()).pathname
         return (
           response.request().method() === 'POST' &&
-          pathname.endsWith(`/cloud-projects/${project.id}/loop-items`)
+          new URL(response.url()).pathname === '/api/v1/loop-items' &&
+          response.request().postDataJSON()?.project_id === project.id
         )
       })
       const issueDetailNavigation = page.waitForURL(url =>

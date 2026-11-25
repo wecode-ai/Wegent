@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+  type Response,
+  type TestInfo,
+} from '@playwright/test'
 import { REGULAR_USER, type TestUser } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { webApi } from '../../utils/collaboration-test-support'
@@ -176,7 +183,8 @@ test.describe('Issue Dispatch human assignment', () => {
       const rejectedCreate = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
-          response.url().endsWith(`/cloud-projects/${fixture.projectId}/loop-items`)
+          new URL(response.url()).pathname === '/api/v1/loop-items' &&
+          response.request().postDataJSON()?.project_id === fixture.projectId
       )
       await saveSilently(page, 'cloud-todo-create-confirm')
       expect((await rejectedCreate).status()).toBe(422)
@@ -211,19 +219,15 @@ test.describe('Issue Dispatch human assignment', () => {
       await captureEvidence(page, testInfo, '04-silent-create-persisted')
 
       // Change the owner through the UI, then exercise a real reassignment to another person.
-      const ownerAssigned = page.waitForResponse(
-        response =>
-          response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
-      )
+      const isIssuePatch = (response: Response) =>
+        response.request().method() === 'PATCH' && new URL(response.url()).pathname === issuePath
+      const ownerAssigned = page.waitForResponse(isIssuePatch)
       await selectAssigneeSilently(page, owner.id)
       expect((await ownerAssigned).ok()).toBe(true)
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       expect((await webApi<SavedIssue>(page, issuePath)).assignee_user_id).toBe(owner.id)
       await setRecipientActive(false)
-      const rejectedAssignment = page.waitForResponse(
-        response =>
-          response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
-      )
+      const rejectedAssignment = page.waitForResponse(isIssuePatch)
       await selectAssigneeSilently(page, memberId)
       expect((await rejectedAssignment).status()).toBe(422)
       await expect(error).toContainText('Issue recipient must be an active user')
@@ -240,10 +244,7 @@ test.describe('Issue Dispatch human assignment', () => {
       await setRecipientActive(true)
       await expectNoAssignmentNotification(request, issueId, recipient)
       await captureEvidence(page, testInfo, '05-silent-reassignment-rejected')
-      const retryAssigned = page.waitForResponse(
-        response =>
-          response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
-      )
+      const retryAssigned = page.waitForResponse(isIssuePatch)
       await page.getByTestId('cloud-todo-field-retry').click()
       expect((await retryAssigned).ok()).toBe(true)
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)

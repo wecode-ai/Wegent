@@ -12,15 +12,85 @@ use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess};
 use crate::cloud_projects::cloud_project_not_found;
 use crate::http_compat::FastApiError;
 use brz_http_server::StatusCode;
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlRow, MysqlTransaction};
+use wegent_backend_persistence::mysql_query::MysqlQuery;
 
 use super::http_error::HttpError;
-use super::loop_repository::{LoopItemRepository, TaskItemFullRow, has_permission};
+use super::loop_repository::{TaskItemFullRow, has_permission, is_related_item_on};
 use crate::cloud_projects::members;
-use crate::cloud_projects::{CloudMetadataInput, project_access_details, role_for_priority};
+use crate::cloud_projects::{
+    CloudMetadataInput, project_access_details, project_access_point_statement, role_for_priority,
+};
 
 pub struct ItemReadAccess {
     pub project: members::ProjectEntityRow,
     pub invited_only: bool,
+    can_edit: bool,
+}
+
+#[derive(Debug, FromMysqlRow)]
+pub struct IssueReadScope {
+    pub project_id: Option<String>,
+    creator_id: Option<i32>,
+    participants: Option<Json<Vec<i32>>>,
+    security_level: Option<String>,
+}
+
+impl IssueReadScope {
+    pub fn security_level(&self) -> Option<&str> {
+        self.security_level.as_deref()
+    }
+
+    pub async fn load(mysql: &impl Mysql, issue_id: &str) -> brz_mysql::MysqlResult<Option<Self>> {
+        // Scope changes and invitation revocation take effect on the primary immediately.
+        let people = super::issue_invitation::collaborator_people("issue.id", false);
+        mysql.with_transaction(async |tx| tx.fetch_optional(
+            format!("SELECT NULLIF(cloud_project_id,'') AS project_id, created_by_user_id AS creator_id,
+                    CASE WHEN cloud_project_id IS NULL OR cloud_project_id='' THEN
+                      {people}
+                    END AS participants,
+                    CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.security_level'))
+                      AS CHAR CHARACTER SET utf8mb4) AS security_level
+             FROM loop_items issue WHERE id=? AND resource_type='task'
+               AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))"),
+            (issue_id,),
+        ).await).await
+    }
+
+    pub async fn require(
+        &self,
+        mysql: &brz_mysql::MysqlService,
+        issue_id: &str,
+        user_id: i32,
+    ) -> Result<(), HttpError> {
+        if let Some(project_id) = &self.project_id {
+            require_project_item_access(
+                mysql,
+                issue_id,
+                project_id,
+                self.security_level(),
+                user_id,
+            )
+            .await?;
+        } else if !can_read_issue_without_project(
+            self.creator_id,
+            self.participants
+                .as_ref()
+                .map_or(&[], |value| value.0.as_slice()),
+            user_id,
+        ) {
+            return Err(HttpError::new(StatusCode::NOT_FOUND, "Issue not found"));
+        }
+        Ok(())
+    }
+}
+
+pub fn can_read_issue_without_project(
+    creator: Option<i32>,
+    participants: &[i32],
+    user: i32,
+) -> bool {
+    creator == Some(user) || participants.contains(&user)
 }
 
 /// Resolve project access or a current invitation for this Issue.
@@ -29,10 +99,23 @@ pub async fn require_item_access(
     item: &TaskItemFullRow,
     user_id: i32,
 ) -> Result<ItemReadAccess, HttpError> {
+    let level = item
+        .metadata()
+        .and_then(|metadata| metadata.security_level.as_ref())
+        .and_then(serde_json::Value::as_str);
+    require_project_item_access(mysql, &item.id, &item.cloud_project_id, level, user_id).await
+}
+
+async fn require_project_item_access(
+    mysql: &brz_mysql::MysqlService,
+    issue_id: &str,
+    project_id: &str,
+    security_level: Option<&str>,
+    user_id: i32,
+) -> Result<ItemReadAccess, HttpError> {
     // `collaboration_permission_service.check` rejects a non-decimal
     // `cloud_project_id` before any statement runs (404, not 422).
-    let project_number: i64 = item
-        .cloud_project_id
+    let project_number: i64 = project_id
         .parse()
         .map_err(|_| HttpError::cloud_project_not_found())?;
 
@@ -43,12 +126,66 @@ pub async fn require_item_access(
     let role = access
         .map(|access| role_for_priority(access.priority).ok_or_else(HttpError::internal_detail))
         .transpose()?;
+    require_project_item_access_on(
+        &mut &*mysql,
+        issue_id,
+        project_number,
+        security_level,
+        user_id,
+        role,
+    )
+    .await
+}
+
+pub async fn require_project_collaborator_edit(
+    query: &mut impl MysqlQuery,
+    issue_id: &str,
+    project_id: &str,
+    security_level: Option<&str>,
+    user_id: i32,
+) -> Result<(), HttpError> {
+    let project_number = project_id
+        .parse()
+        .map_err(|_| HttpError::cloud_project_not_found())?;
+    let row: Option<MysqlRow> = query
+        .fetch_optional(project_access_point_statement(user_id, project_number), ())
+        .await
+        .map_err(HttpError::internal)?;
+    let role = row
+        .map(|row| row.get_required("anon_3_priority"))
+        .transpose()
+        .map_err(HttpError::internal)?
+        .map(|priority| role_for_priority(priority).ok_or_else(HttpError::internal_detail))
+        .transpose()?;
+    let access = require_project_item_access_on(
+        query,
+        issue_id,
+        project_number,
+        security_level,
+        user_id,
+        role,
+    )
+    .await?;
+    if !access.can_edit {
+        return Err(HttpError::insufficient_permission());
+    }
+    Ok(())
+}
+
+async fn require_project_item_access_on(
+    query: &mut impl MysqlQuery,
+    issue_id: &str,
+    project_number: i64,
+    security_level: Option<&str>,
+    user_id: i32,
+    role: Option<&str>,
+) -> Result<ItemReadAccess, HttpError> {
     if role.is_some_and(|role| !has_permission(role, "Viewer")) {
         return Err(HttpError::insufficient_permission());
     }
 
     let invited_only = !role.is_some_and(|role| has_permission(role, "Developer"))
-        && super::issue_invitation::permits_read(mysql, &item.id, user_id)
+        && super::issue_invitation::permits_read_on(query, issue_id, user_id)
             .await
             .map_err(HttpError::internal)?;
     if !invited_only && role.is_none() {
@@ -56,7 +193,7 @@ pub async fn require_item_access(
     }
 
     // The project metadata feeds `item_security` and the response projection.
-    let project = members::project_entity(mysql, project_number)
+    let project = members::project_entity_on(query, project_number)
         .await
         .map_err(HttpError::internal)?
         .ok_or_else(HttpError::internal_detail)?;
@@ -65,9 +202,8 @@ pub async fn require_item_access(
     // invitation, an `open` item or a related-item relationship.
     if !invited_only
         && !role.is_some_and(|role| has_permission(role, "Maintainer"))
-        && item_security(item, &project) != "open"
-        && !LoopItemRepository::new(mysql)
-            .is_related_item(&item.id, user_id)
+        && item_security(security_level, &project) != "open"
+        && !is_related_item_on(query, issue_id, user_id)
             .await
             .map_err(HttpError::internal)?
     {
@@ -76,19 +212,13 @@ pub async fn require_item_access(
     Ok(ItemReadAccess {
         project,
         invited_only,
+        can_edit: invited_only || role.is_some_and(|role| has_permission(role, "Developer")),
     })
 }
 
 /// `item_security(item, project)`: the item's stored `security_level` when it
 /// is one of the known levels, otherwise the project's default.
-pub(crate) fn item_security(
-    item: &TaskItemFullRow,
-    project: &members::ProjectEntityRow,
-) -> &'static str {
-    let level = item
-        .metadata()
-        .and_then(|metadata| metadata.security_level.as_ref())
-        .and_then(serde_json::Value::as_str);
+fn item_security(level: Option<&str>, project: &members::ProjectEntityRow) -> &'static str {
     match level {
         Some("open") => "open",
         Some("related") => "related",

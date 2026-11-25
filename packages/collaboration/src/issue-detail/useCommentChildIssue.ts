@@ -27,8 +27,10 @@ export function useCommentChildIssue({
 }) {
   const progress = useRef(new Map<string, CollaborationIssue>())
   return async (input: CommentChildInput): Promise<CollaborationIssue> => {
-    if (!project || !parent || !input.body.trim()) throw new Error('Issue context is unavailable')
-    const key = `${project.project_store}:${project.id}:${parent.id}:${input.requestId}`
+    if (!parent || (parent.cloud_project_id && !project) || !input.body.trim())
+      throw new Error('Issue context is unavailable')
+    const projectId = project?.id ?? ''
+    const key = JSON.stringify([project?.project_store, projectId, parent.id, input.requestId])
     const target = await resolveTarget(
       (input.target && !input.target.includes(':')
         ? `user:${input.target}`
@@ -37,15 +39,19 @@ export function useCommentChildIssue({
     let child = progress.current.get(key)
     if (!child) {
       const draft = issueDraftFromText(input.body)
-      child = await port.issues.create(project.id, {
+      child = await port.issues.create(projectId, {
         request_id: input.requestId,
         title: Array.from(draft.title).slice(0, 255).join(''),
-        description: `${draft.description}\n\n[$#${parent.sequence_number} ${parent.title.replaceAll('[', '').replaceAll(']', '')}](wework-issue://${encodeURIComponent(project.id)}/${encodeURIComponent(parent.id)})`,
+        description: project
+          ? `${draft.description}\n\n[$#${parent.sequence_number} ${parent.title.replaceAll('[', '').replaceAll(']', '')}](wework-issue://${encodeURIComponent(project.id)}/${encodeURIComponent(parent.id)})`
+          : draft.description,
         parent_id: parent.id,
         priority: parent.priority,
         ...(target.startsWith('user:')
           ? { assignee_user_id: Number(target.slice(5)), notify_assignee: true }
           : {}),
+        ...(!project && target.startsWith('agent:') ? { assignee_agent_id: target.slice(6) } : {}),
+        ...(!project && target.startsWith('group:') ? { assignee_group_id: target.slice(6) } : {}),
       })
       progress.current.set(key, child)
     } else child = await port.issues.get(child.id)

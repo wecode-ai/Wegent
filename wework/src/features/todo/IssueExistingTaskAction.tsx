@@ -16,7 +16,7 @@ export interface ExistingIssueTaskSource {
 
 function collectExistingIssueTasks(
   work: ExistingIssueTaskSource['work'],
-  bindings: readonly LoopItemTaskBinding[] | undefined,
+  bindings: readonly Pick<LoopItemTaskBinding, 'device_id' | 'task_id'>[] | undefined,
   linked: ReadonlySet<string>
 ): ExistingIssueTask[] {
   const existing = new Set(bindings?.map(binding => `${binding.device_id}:${binding.task_id}`))
@@ -56,9 +56,9 @@ export function IssueExistingTaskAction({
   onLinked,
 }: {
   source: ExistingIssueTaskSource
-  issue: CloudLoopItem
-  project: RuntimeProjectSpaceRef
-  bindings?: readonly LoopItemTaskBinding[]
+  issue: Pick<CloudLoopItem, 'id'>
+  project?: RuntimeProjectSpaceRef
+  bindings?: readonly Pick<LoopItemTaskBinding, 'device_id' | 'task_id'>[]
   deviceNamesById?: Readonly<Record<string, string>>
   onLinked: () => void
 }) {
@@ -82,11 +82,12 @@ export function IssueExistingTaskAction({
         setLinked(
           current => new Set([...current, `${task.address.deviceId}:${task.address.taskId}`])
         )
-        publishProjectSpaceTaskBindingChanged({
-          task: task.address,
-          project,
-          type: 'bound',
-        })
+        if (project)
+          publishProjectSpaceTaskBindingChanged({
+            task: task.address,
+            project,
+            type: 'bound',
+          })
         onLinked()
         source.onLinked?.()
       }}
