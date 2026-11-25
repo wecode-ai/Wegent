@@ -7,11 +7,20 @@ use wegent_protocol::StandInTaskPermissions;
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
 use connections::validate_connections;
+#[path = "personal_stand_in_share_copy.rs"]
+mod share_copy;
+#[path = "personal_stand_in_share_sync.rs"]
+mod share_sync;
+pub use share_copy::assistant_share_copy_revision;
+pub use share_sync::AssistantShareCopyReceipt;
+#[path = "personal_stand_in_teams.rs"]
+mod teams;
 pub use connections::{
     connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
     source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
     training_source_granted,
 };
+pub use teams::{stand_in_team, supports_role_delegation, team_scope_id, StandInTeam};
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
@@ -495,6 +504,53 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     identities
 }
 
+/// Project a saved identity or team into the fields allowed to leave its account.
+pub fn assistant_share_definition(
+    settings: &Value,
+    kind: &str,
+    id: &str,
+) -> Option<crate::protocol::assistant_share::AssistantShareDefinition> {
+    use crate::protocol::assistant_share::{
+        AssistantDefinition, AssistantShareDefinition, AssistantTeamDefinition,
+    };
+    match kind {
+        "team" => {
+            let team = stand_in_team(settings, id)?;
+            Some(AssistantShareDefinition::Team(AssistantTeamDefinition {
+                id: team.id,
+                name: team.name,
+                lead_id: team.lead_id,
+                members: team.members,
+            }))
+        }
+        "assistant" => {
+            let role = if id == "@primary" {
+                settings.get("primary").filter(|role| role.is_object())
+            } else {
+                settings["roles"].as_array()?.iter().find(|role| {
+                    role["id"] == id && role["executionDeviceId"] == settings["executionDeviceId"]
+                })
+            };
+            if role.is_none() && id != "@primary" {
+                return None;
+            }
+            Some(AssistantShareDefinition::Assistant(AssistantDefinition {
+                id: id.to_owned(),
+                name: role
+                    .and_then(|role| role["name"].as_str())
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or("我的助理")
+                    .to_owned(),
+                prompt: role
+                    .and_then(|role| role["prompt"].as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            }))
+        }
+        _ => None,
+    }
+}
+
 pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
     role["collaboration"]["projectPolicies"]
         .as_array()
@@ -705,6 +761,7 @@ impl LocalTaskStore {
             validate_task_permissions(primary)?;
             validate_connections(primary)?;
         }
+        teams::validate_teams(&value)?;
         let mut ids = HashSet::new();
         for role in roles {
             validate_role(role)?;
@@ -750,6 +807,9 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        if share_sync::share_configuration_changed(&previous, &value) {
+            share_sync::queue_assistant_share_sync(connection, user, &value["version"])?;
+        }
         super::stand_in_ghost_proposals::retire_stale_candidates(
             connection,
             user,
