@@ -244,11 +244,31 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
             status_code=504,
             detail={"code": "timeout", "message": f"Request timeout: {str(e)}"},
         )
+    except httpx.RequestError as e:
+        logger.exception(
+            "[SandboxProxy] Transport error for sandbox %s type=%s",
+            sandbox_id,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "sandbox_transport_error",
+                "message": f"{type(e).__name__}: {str(e)}".strip(),
+            },
+        ) from e
     except Exception as e:
-        logger.error(f"[SandboxProxy] Proxy error for sandbox {sandbox_id}: {e}")
+        logger.exception(
+            "[SandboxProxy] Proxy error for sandbox %s type=%s",
+            sandbox_id,
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=500,
-            detail={"code": "proxy_error", "message": str(e)},
+            detail={
+                "code": "proxy_error",
+                "message": f"{type(e).__name__}: {str(e)}".strip(),
+            },
         )
 
 

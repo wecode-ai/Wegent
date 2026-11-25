@@ -23,7 +23,8 @@ pub(crate) use wegent_model_proxy::local_model_proxy;
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Multipart, Query, State},
+    extract::multipart::MultipartError,
+    extract::{DefaultBodyLimit, Multipart, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -152,7 +153,12 @@ where
             "/process.Process/SendSignal",
             post(connect_process_send_signal),
         )
-        .route("/files", get(download_envd_file).post(upload_envd_file))
+        .route(
+            "/files",
+            get(download_envd_file)
+                .post(upload_envd_file)
+                .layer(DefaultBodyLimit::max(MAX_ENVD_FILE_UPLOAD_BYTES)),
+        )
         .route("/api/archive", post(archive_workspace))
         .route("/api/runtime/prepare", post(prepare_runtime_workspace))
         .route("/api/restore", post(restore_workspace))
@@ -749,6 +755,13 @@ fn zip_download_semaphore() -> &'static Semaphore {
     SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
 }
 
+fn multipart_http_error(error: MultipartError) -> HttpError {
+    HttpError {
+        status: error.status(),
+        detail: error.body_text(),
+    }
+}
+
 async fn upload_envd_file(
     headers: HeaderMap,
     Query(query): Query<WorkspacePathQuery>,
@@ -802,10 +815,7 @@ async fn upload_envd_file(
         }
     }
 
-    while let Some(field) = multipart.next_field().await.map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("invalid multipart body: {error}"),
-    })? {
+    while let Some(field) = multipart.next_field().await.map_err(multipart_http_error)? {
         let field_name = field.name().unwrap_or_default().to_owned();
         let file_name = field.file_name().unwrap_or_default().to_owned();
         log_executor_event(
@@ -819,10 +829,7 @@ async fn upload_envd_file(
         if field_name != "file" {
             continue;
         }
-        let bytes = field.bytes().await.map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("failed to read uploaded file: {error}"),
-        })?;
+        let bytes = field.bytes().await.map_err(multipart_http_error)?;
         let size = bytes.len();
         fs::write(&path, &bytes).map_err(|error| {
             log_executor_event(
@@ -1864,6 +1871,8 @@ fn default_runtime_type() -> String {
 }
 
 const MIN_UPLOAD_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
+// The Backend accepts attachment files up to 100 MiB. Include multipart framing overhead.
+const MAX_ENVD_FILE_UPLOAD_BYTES: usize = 101 * 1024 * 1024;
 const DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB: u64 = 500;
 const MAX_WORKSPACE_ZIP_CONCURRENCY: usize = 2;
 const MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS: u64 = 120;

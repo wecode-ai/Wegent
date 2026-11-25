@@ -945,6 +945,46 @@ async fn envd_files_endpoint_accepts_multipart_uploads_under_home() {
 }
 
 #[tokio::test]
+async fn envd_files_endpoint_accepts_multipart_uploads_above_axum_default() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("executor-http-large-upload-workspace");
+    let home = unique_dir("executor-http-large-upload-home");
+    fs::create_dir_all(&workspace_root).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let target = home.join("123:executor:attachments/456/large.bin");
+    let boundary = "wegent-large-upload-boundary";
+    let payload = vec![b'x'; 3 * 1024 * 1024];
+    let header = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"large.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+    );
+    let mut body = Vec::with_capacity(header.len() + payload.len() + boundary.len() + 8);
+    body.extend_from_slice(header.as_bytes());
+    body.extend_from_slice(&payload);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let upload = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/files?path={}", target.display()))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(upload.status(), StatusCode::OK);
+    assert_eq!(fs::read(&target).unwrap(), payload);
+}
+
+#[tokio::test]
 async fn envd_files_endpoint_uses_env_download_size_limit() {
     let _lock = env_lock().lock().await;
     let home = unique_dir("executor-http-envd-download-limit");
