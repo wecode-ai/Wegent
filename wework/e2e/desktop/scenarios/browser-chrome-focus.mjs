@@ -112,7 +112,9 @@ async function verifySearchOverlay(
     pagePath,
     `<!doctype html><title>Search overlay fixture</title>
       <style>button { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: rgb(${searchFixtureColor.join(',')}); }</style>
-      <button id="page" aria-label="Test page" data-clicks="0"
+      <button id="page" aria-label="Test page" data-clicks="0" data-downs="0" data-ups="0"
+        onpointerdown="this.dataset.downs=Number(this.dataset.downs)+1"
+        onpointerup="this.dataset.ups=Number(this.dataset.ups)+1"
         onclick="this.dataset.clicks=Number(this.dataset.clicks)+1"></button>`
   )
   assert.equal((await bridgeCall({ action: 'open', url: pathToFileURL(pagePath).href })).ok, true)
@@ -176,6 +178,21 @@ async function verifySearchOverlay(
     colorChannels(overlap.surface).slice(0, 3),
     'The composed window must show the search dialog over the guest page'
   )
+  const readHit = `(() => {
+    const label = document.querySelector(${JSON.stringify(address)})
+      .closest('[data-embedded-browser-label]').dataset.embeddedBrowserLabel
+    const view = [...document.querySelectorAll('[data-wework-browser-webview]')]
+      .find(element => element.dataset.weworkBrowserWebview === label)
+    const hit = document.elementFromPoint(${overlap.close.x}, ${overlap.close.y})
+    return { guest: Boolean(view && hit && view.contains(hit)),
+      closeButton: Boolean(hit?.closest(${JSON.stringify(searchCloseButton)})),
+      pointerEvents: view && getComputedStyle(view).pointerEvents,
+      inert: Boolean(view?.closest('[inert]')),
+      dialog: Boolean(document.querySelector('[data-testid="workbench-search-dialog"]')),
+      hit: hit && (hit.dataset.testid || hit.localName), active: document.activeElement?.dataset.testid }
+  })()`
+  const openHit = await read(readHit)
+  assert.ok(openHit.closeButton && !openHit.guest, 'The search close button must receive the click')
   await clickPoint(command, overlap.close)
   await control.command('waitFor', searchInput, { visible: false, timeoutMs: 5_000 })
   const restoredPixel = await waitForValue(
@@ -184,16 +201,31 @@ async function verifySearchOverlay(
     'The guest page must be visible again after closing search',
     5000
   )
-  const readGuestClicks = async () => {
+  const readGuestInput = async () => {
     const result = await bridgeCall({
       action: 'evaluate',
-      expression: 'Number(document.querySelector("#page").dataset.clicks)',
+      expression: `(() => {
+        const { clicks, downs, ups } = document.querySelector('#page').dataset
+        return { clicks: Number(clicks), downs: Number(downs), ups: Number(ups) }
+      })()`,
     })
-    assert.equal(result.ok, true, 'The guest click counter must be readable')
+    assert.equal(result.ok, true, 'The guest input counters must be readable')
     return result.value
   }
-  const closedClicks = await readGuestClicks()
-  assert.equal(closedClicks, 0, 'The dialog dismissal must stay out of the guest page')
+  const closedInput = await readGuestInput()
+  assert.deepEqual(
+    closedInput,
+    { clicks: 0, downs: 0, ups: 0 },
+    'The dialog dismissal must stay out of the guest page'
+  )
+  // The overlay observer reconciles native pointer ownership after the dialog unmounts.
+  // A restored pixel does not guarantee that the guest can receive input yet.
+  const readyHit = await waitForValue(
+    () => read(readHit),
+    state => state.guest && !state.inert && !state.dialog,
+    'The restored guest must own the former close-button hit target',
+    5_000
+  )
   await clickPoint(command, overlap.close)
   const pageClicked = await bridgeCall({
     action: 'waitFor',
@@ -202,13 +234,21 @@ async function verifySearchOverlay(
     },
     timeoutMs: 5000,
   })
+  const guestInput = await readGuestInput()
+  await writeFile(
+    join(resultDir, 'search-overlay-input.json'),
+    JSON.stringify(
+      { restoredPixel, openHit, readyHit, closedInput, guestInput, finalHit: await read(readHit) },
+      null,
+      2
+    )
+  )
   assert.equal(
     pageClicked.ok,
     true,
     'The restored guest page must receive exactly one native click'
   )
-  const restoredClicks = await readGuestClicks()
-  assert.equal(restoredClicks, 1)
+  assert.deepEqual(guestInput, { clicks: 1, downs: 1, ups: 1 })
   await writeFile(
     join(resultDir, 'search-overlay-paint.json'),
     JSON.stringify(
@@ -218,8 +258,8 @@ async function verifySearchOverlay(
         pagePixel,
         dialogPixel,
         restoredPixel,
-        closedClicks,
-        restoredClicks,
+        closedClicks: closedInput.clicks,
+        restoredClicks: guestInput.clicks,
       },
       null,
       2
@@ -237,9 +277,16 @@ export async function verifyBrowserChromeFocus({
   searchOverlayOnly = false,
 }) {
   if (searchOverlayOnly) {
-    return withChromeRenderer(({ command, read }) =>
-      verifySearchOverlay({ control, bridgeCall, address, resultDir, command, read })
-    )
+    return withChromeRenderer(async ({ command, read }) => {
+      await control.command('focusMainWindow', 'body')
+      return verifySearchOverlay(
+        { control, bridgeCall, address, resultDir, command, read },
+        async () => {
+          await control.command('nativePress', searchInput, { key: 'Tab' })
+          await control.command('nativePress', searchCloseButton, { key: 'Shift+Tab' })
+        }
+      )
+    })
   }
   const historyUrl = fixtureUrl + '?weg-address-history'
   assert.equal((await bridgeCall({ action: 'open', url: historyUrl, timeoutMs: 5_000 })).ok, true)
