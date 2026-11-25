@@ -1656,6 +1656,8 @@ class DockerExecutor(Executor):
         Returns:
             Dict with status and error_msg if failed
         """
+        from executor_manager.services.sandbox.repository import get_sandbox_repository
+
         try:
             # Find containers with the matching task_id label
             result = get_running_task_details(label_selector=f"task_id={task_id}")
@@ -1675,24 +1677,33 @@ class DockerExecutor(Executor):
                     "error_msg": f"No container found with task_id '{task_id}'",
                 }
 
-            # Delete all matching containers (should typically be one)
             deleted_containers = []
+            failed_containers = []
             for container in containers:
                 container_name = container.get("container_name")
-                if container_name:
-                    try:
-                        delete_result = delete_container(container_name)
-                        if delete_result.get("status") == "success":
-                            deleted_containers.append(container_name)
-                            logger.info(
-                                f"Deleted Docker container '{container_name}' "
-                                f"found by task_id label '{task_id}'"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to delete container '{container_name}': {e}"
-                        )
+                if not container_name:
+                    continue
+                delete_result = delete_container(container_name)
+                status = delete_result.get("status")
+                if status == "success":
+                    deleted_containers.append(container_name)
+                elif status != "not_found":
+                    failed_containers.append(container_name)
+                    continue
 
+                if container.get("task_type") == "sandbox":
+                    get_sandbox_repository().delete_executor_binding(
+                        int(task_id),
+                        expected_executor_name=container_name,
+                        sandbox=True,
+                    )
+
+            if failed_containers:
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to delete containers: {', '.join(failed_containers)}",
+                    "deleted_containers": deleted_containers,
+                }
             if deleted_containers:
                 return {
                     "status": "success",

@@ -567,8 +567,9 @@ class TestDockerExecutor:
         assert mock_create.call_count == 1
         assert mock_dispatch.call_count == (0 if task_type == "sandbox" else 1)
 
+    @pytest.mark.parametrize("delete_status", ["success", "failed"])
     def test_sandbox_task_cleanup_preserves_the_regular_executor(
-        self, executor, mocker
+        self, executor, mocker, delete_status
     ):
         mocker.patch.object(
             docker_executor_module,
@@ -584,13 +585,24 @@ class TestDockerExecutor:
         delete = mocker.patch.object(
             docker_executor_module,
             "delete_container",
-            return_value={"status": "success"},
+            return_value={"status": delete_status},
         )
+        repository = mocker.patch(
+            "executor_manager.services.sandbox.repository.get_sandbox_repository"
+        ).return_value
 
         result = executor.delete_executor_by_task_id("123", sandbox_only=True)
 
-        assert result == {"status": "success", "deleted_containers": ["sandbox"]}
         delete.assert_called_once_with("sandbox")
+        assert result["status"] == delete_status
+        if delete_status == "success":
+            assert result["deleted_containers"] == ["sandbox"]
+            repository.delete_executor_binding.assert_called_once_with(
+                123, expected_executor_name="sandbox", sandbox=True
+            )
+        else:
+            assert result["deleted_containers"] == []
+            repository.delete_executor_binding.assert_not_called()
 
     def test_create_new_container_first_command_includes_callback_token(
         self, executor, sample_task, mock_subprocess
