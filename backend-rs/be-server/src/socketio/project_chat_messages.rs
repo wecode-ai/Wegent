@@ -11,6 +11,8 @@
 
 use brz_mysql::{Json, MysqlTransaction as _};
 use serde_json::{Map, Value, json};
+use wegent_backend_persistence::mysql_query::MysqlQuery;
+use wegent_project_coordination::project_chat_message::{INSERT_MESSAGE_SQL, insert_message_args};
 
 use super::project_chat_events::ack_error;
 use crate::json_compat::python_json_value;
@@ -20,9 +22,9 @@ use crate::state::AppState;
 #[cfg(test)]
 pub(crate) use wegent_project_coordination::project_chat_message::utc_isoformat;
 pub(crate) use wegent_project_coordination::project_chat_message::{
-    INSERT_MESSAGE_SQL, InsertMessage, MESSAGE_COLUMNS, MessageRow, database_timestamp,
-    insert_message_args, insert_message_on, message_view, metadata_map, runtime_activity_key,
-    runtime_source, utc_isoformat_micros, utc_timestamp,
+    InsertMessage, MESSAGE_COLUMNS, MessageRow, database_timestamp, insert_message_on,
+    message_view, metadata_map, runtime_activity_key, runtime_source, utc_isoformat_micros,
+    utc_timestamp,
 };
 
 use super::project_chat_events::{AgentFailureRequest, AgentStartRequest};
@@ -41,53 +43,73 @@ pub(crate) async fn load_messages(
     limit: i64,
     message_id: Option<&str>,
 ) -> Result<Vec<Value>, Value> {
-    let task_filter = if task_id.is_some() {
-        "project_chat_messages.task_id = ?"
+    let page = if after_sequence > 0 {
+        HistoryPage::After {
+            sequence: after_sequence,
+            limit,
+        }
     } else {
-        "(project_chat_messages.task_id IS NULL OR project_chat_messages.task_id = '')"
+        HistoryPage::Latest { limit }
     };
-    let mut arguments = vec![StatementArg::Str(project_id.to_string())];
-    if let Some(task_id) = task_id {
-        arguments.push(StatementArg::Str(task_id.to_string()));
-    }
-    let exact_message = if let Some(message) = message_id {
-        arguments.push(StatementArg::Str(message.to_owned()));
-        " AND project_chat_messages.message_id = ?"
+    let mut query = mysql;
+    let rows = fetch_history(&mut query, project_id, task_id, message_id, page)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, project_id, "project chat message read failed");
+            ack_error("INVALID_MESSAGE", "database query failed")
+        })?;
+    authorship::message_views(mysql, viewer_user_id, &rows).await
+}
+
+pub(crate) enum HistoryPage {
+    All,
+    Latest { limit: i64 },
+    After { sequence: i64, limit: i64 },
+}
+
+/// Read messages in sequence order after the caller has authorized the exact scope.
+pub(crate) async fn fetch_history(
+    query: &mut impl MysqlQuery,
+    project_id: &str,
+    task_id: Option<&str>,
+    message_id: Option<&str>,
+    page: HistoryPage,
+) -> brz_mysql::MysqlResult<Vec<MessageRow>> {
+    let mut args = vec![StatementArg::Str(project_id.to_owned())];
+    let task_filter = if let Some(task_id) = task_id {
+        args.push(StatementArg::Str(task_id.to_owned()));
+        "task_id = ?"
+    } else {
+        "(task_id IS NULL OR task_id = '')"
+    };
+    let message_filter = if let Some(message_id) = message_id {
+        args.push(StatementArg::Str(message_id.to_owned()));
+        " AND message_id = ?"
     } else {
         ""
     };
-    let sql = if after_sequence > 0 {
-        format!(
-            "SELECT {MESSAGE_COLUMNS} FROM project_chat_messages \
-             WHERE project_chat_messages.project_id = ? \
-             AND (project_chat_messages.deleted_at IS NULL OR project_chat_messages.deleted_at \
-             IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-             AND {task_filter}{exact_message} AND project_chat_messages.id > ? \
-             ORDER BY project_chat_messages.id ASC LIMIT ?"
-        )
-    } else {
-        format!(
-            "SELECT {MESSAGE_COLUMNS} FROM project_chat_messages \
-             WHERE project_chat_messages.project_id = ? \
-             AND (project_chat_messages.deleted_at IS NULL OR project_chat_messages.deleted_at \
-             IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-             AND {task_filter}{exact_message} \
-             ORDER BY project_chat_messages.id DESC LIMIT ?"
-        )
+    let page_filter = match page {
+        HistoryPage::All => " ORDER BY id ASC",
+        HistoryPage::Latest { limit } => {
+            args.push(StatementArg::Int(limit));
+            " ORDER BY id DESC LIMIT ?"
+        }
+        HistoryPage::After { sequence, limit } => {
+            args.extend([StatementArg::Int(sequence), StatementArg::Int(limit)]);
+            " AND id > ? ORDER BY id ASC LIMIT ?"
+        }
     };
-    if after_sequence > 0 {
-        arguments.push(StatementArg::Int(after_sequence));
-    }
-    arguments.push(StatementArg::Int(limit));
-    let rows: Vec<MessageRow> = mysql.fetch_all(&sql, arguments).await.map_err(|error| {
-        tracing::error!(%error, project_id, "project chat message read failed");
-        ack_error("INVALID_MESSAGE", "database query failed")
-    })?;
-    let mut rows = rows;
-    if after_sequence <= 0 {
+    let sql = format!(
+        "SELECT {MESSAGE_COLUMNS} FROM project_chat_messages \
+         WHERE project_id = ? AND {task_filter} \
+         AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))\
+         {message_filter}{page_filter}"
+    );
+    let mut rows = query.fetch_all(sql, args).await?;
+    if matches!(page, HistoryPage::Latest { .. }) {
         rows.reverse();
     }
-    authorship::message_views(mysql, viewer_user_id, &rows).await
+    Ok(rows)
 }
 
 /// One message by primary key (`db.refresh`).

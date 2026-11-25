@@ -1,4 +1,4 @@
-import { standInConversationTaskId, type StandInConversationScope } from '@/api/personalStandIn'
+import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Button } from '@/components/ui/button'
@@ -70,7 +70,7 @@ export function StandInConversation({
   renderDetails?(activeBranches: ReturnType<typeof activeStandInBranchRows>): ReactNode
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
-  scope?: StandInConversationScope
+  scope?: 'collaboration'
 }) {
   const [recordOpened] = useState(createStandInOpenedReceipt)
   const openedIdentity = roleId ? 'role' : 'primary'
@@ -139,13 +139,12 @@ export function StandInConversation({
       ),
     [api, userId, deviceId, taskId]
   )
-  const roleDelegationEnabled = scope !== 'collaboration' && !scope?.startsWith('shared:')
   const remoteBranches = useSyncExternalStore(
-    active && roleDelegationEnabled && address ? roleBranches.subscribe : subscribeIdleResource,
+    active && !scope && address ? roleBranches.subscribe : subscribeIdleResource,
     roleBranches.getSnapshot,
     getIdleResourceSnapshot
   )
-  const delegatedWork = !roleDelegationEnabled
+  const delegatedWork = scope
     ? []
     : selectStandInDelegatedWork(
         workbench?.runtimeTaskReminders.items ?? [],
@@ -284,22 +283,18 @@ export function StandInConversation({
         placeholder={t(
           scope === 'collaboration'
             ? 'personalHome.conversationPrompt'
-            : scope?.startsWith('team:')
-              ? 'standIn.teams.prompt'
-              : roleId
-                ? 'standIn.workspace.role_prompt'
-                : 'standIn.workspace.primary_prompt'
+            : roleId
+              ? 'standIn.workspace.role_prompt'
+              : 'standIn.workspace.primary_prompt'
         )}
         emptyStateText={t(
           scope === 'collaboration'
             ? 'personalHome.conversationEmpty'
-            : scope?.startsWith('team:')
-              ? 'standIn.teams.empty_conversation'
-              : hasPendingWork
-                ? 'standIn.workspace.pending_work_help'
-                : roleId
-                  ? 'standIn.workspace.role_empty'
-                  : 'standIn.workspace.primary_empty'
+            : hasPendingWork
+              ? 'standIn.workspace.pending_work_help'
+              : roleId
+                ? 'standIn.workspace.role_empty'
+                : 'standIn.workspace.primary_empty'
         )}
         onOpenRuntimeTask={onOpenTask}
         createTask={async (message, options) => {

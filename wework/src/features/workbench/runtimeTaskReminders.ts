@@ -166,6 +166,10 @@ export function useRuntimeTaskReminders({
     [source, items, listedItems, notificationPreferences, unreadMessageCounts]
   )
   const visibleUnreadTaskKeys = useSyncExternalStore(subscribe, source.getSnapshot)
+  const markRuntimeTaskRead = useCallback(
+    (address: RuntimeTaskAddress) => lifecycleStore.markRead(address),
+    [lifecycleStore]
+  )
 
   return useMemo(
     () => ({
@@ -178,12 +182,12 @@ export function useRuntimeTaskReminders({
       hasRunningTasks: lifecycleSnapshot.runningTaskKeys.size > 0,
       preferences,
       items,
-      markRuntimeTaskRead: (address: RuntimeTaskAddress) => lifecycleStore.markRead(address),
+      markRuntimeTaskRead,
     }),
     [
       items,
       lifecycleSnapshot.runningTaskKeys.size,
-      lifecycleStore,
+      markRuntimeTaskRead,
       preferences,
       visibleUnreadTaskKeys,
       unreadMessageCounts,

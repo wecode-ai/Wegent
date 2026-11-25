@@ -19,16 +19,6 @@ async fn fresh_schema_and_historical_upgrade_round_trip() -> Result<()> {
     isolated(verify).await
 }
 
-#[tokio::test]
-#[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated schema"]
-async fn assistant_shares_preserve_cross_account_boundaries() -> Result<()> {
-    isolated(async |mysql| {
-        upgrade(mysql).await?;
-        crate::assistant_shares::mysql_tests::verify(mysql).await
-    })
-    .await
-}
-
 pub(crate) async fn isolated(test: impl AsyncFnOnce(&MysqlService) -> Result<()>) -> Result<()> {
     // Share the existing service without multiplying simultaneous DDL workloads.
     static DATABASE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
@@ -74,7 +64,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 53);
+    assert_eq!(tables.len(), 50);
     assert!(
         !tables
             .iter()

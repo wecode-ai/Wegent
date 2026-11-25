@@ -164,6 +164,27 @@ it.each([
   }
 )
 
+it('does not remeasure a single visible Markdown chunk when its stream ends', async () => {
+  const content = 'First paragraph.\n\nSecond paragraph.'
+  const render = (isStreaming: boolean) =>
+    act(async () =>
+      root.render(
+        <MarkdownServicesProvider value={{ ...browserMarkdownServices, windowMarkdown: true }}>
+          <AssistantMarkdown content={content} isStreaming={isStreaming} />
+        </MarkdownServicesProvider>
+      )
+    )
+  await render(true)
+  const chunk = container.querySelector<HTMLElement>('[data-markdown-window-chunk]')!
+  const measure = vi.spyOn(chunk, 'getBoundingClientRect')
+
+  await render(false)
+
+  expect(container.querySelector('[data-markdown-window-chunk]')).toBe(chunk)
+  expect(chunk.textContent).toContain('Second paragraph.')
+  expect(measure).not.toHaveBeenCalled()
+})
+
 it('renders tables and following paragraphs in completed desktop Markdown', async () => {
   await act(async () =>
     root.render(

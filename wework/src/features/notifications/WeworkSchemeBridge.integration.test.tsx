@@ -229,9 +229,6 @@ test.each([true, false])(
   'an old shared Issue link respects project access (access: %s)',
   async allowed => {
     const fetchIssue = vi.fn(async (url: string) => {
-      if (url.endsWith('/v1/personal-issues/share-12-test')) {
-        return Response.json({ detail: 'Issue not found' }, { status: 404 })
-      }
       if (!url.endsWith('/v1/loop-items/share-12-test')) throw new Error(url)
       return allowed
         ? Response.json({ id: 'share-12-test', cloud_project_id: '12', can_view_detail: true })
@@ -264,6 +261,7 @@ test.each([true, false])(
       expect(params.get('itemId')).toBe(allowed ? 'share-12-test' : null)
       expect(params.get('personalIssueId')).toBe(allowed ? null : 'share-12-test')
     })
+    expect(fetchIssue).toHaveBeenCalledTimes(1)
   }
 )
 

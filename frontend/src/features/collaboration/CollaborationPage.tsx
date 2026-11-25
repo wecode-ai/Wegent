@@ -448,7 +448,7 @@ export function CollaborationPage({
                 api={webPersonalIssuesApi}
                 collaborationApi={api}
                 userId={user.id}
-                presentation="drawer"
+                presentation="embedded"
                 saveAttachment={saveBrowserIssueAttachment}
                 onMovedToProject={(project, issue) =>
                   router.replace(
@@ -603,6 +603,10 @@ export function CollaborationPage({
               userId={user.id}
               saveAttachment={saveBrowserIssueAttachment}
               onClose={() => setIssueCreationScope(undefined)}
+              onOpenChildTask={issue => {
+                setIssueCreationScope(undefined)
+                router.push(`/collaboration/created?personalIssueId=${encodeURIComponent(issue.id)}`)
+              }}
               onSaved={() => setPersonalIssueRevision(value => value + 1)}
               onOpenProjectIssue={(targetProject, targetIssue) =>
                 router.push(

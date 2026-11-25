@@ -4409,6 +4409,7 @@ button.collaboration-project-offline:hover {
 }
 
 .collaboration-issue-table-wrap {
+  container: issue-list / inline-size;
   overflow-x: auto;
 }
 
@@ -4512,9 +4513,48 @@ button.collaboration-project-offline:hover {
 
 .collaboration-issue-table {
   width: 100%;
-  min-width: 1180px;
   border-collapse: collapse;
   table-layout: fixed;
+}
+
+@container issue-list (max-width: 56rem) {
+  .collaboration-issue-table:has(thead) {
+    min-width: 56rem;
+  }
+
+  .collaboration-issue-table .collaboration-issue-table-col-status,
+  .collaboration-issue-table .collaboration-issue-table-col-assignee {
+    width: min(24cqi, 7rem);
+  }
+}
+
+.collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-secondary {
+  display: none;
+}
+
+@container issue-list (max-width: 21rem) {
+  .collaboration-issue-task-names {
+    display: none;
+  }
+
+  .collaboration-issue-table:not(:has(thead)) td.collaboration-issue-table-status {
+    overflow: hidden;
+    padding-inline: 4px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-col-assignee,
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-assignee {
+    display: none;
+  }
+}
+
+@container issue-list (max-width: 12rem) {
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-col-status,
+  .collaboration-issue-table:not(:has(thead)) .collaboration-issue-table-status {
+    display: none;
+  }
 }
 
 .collaboration-issue-table-col-select {
@@ -4667,7 +4707,8 @@ button.collaboration-project-offline:hover {
   opacity: 0;
 }
 
-.collaboration-issue-table tbody tr:hover {
+.collaboration-issue-table tbody tr:hover,
+.collaboration-issue-table tbody tr[aria-current='true'] {
   background: rgb(var(--color-bg-hover));
 }
 
@@ -4680,52 +4721,6 @@ button.collaboration-project-offline:hover {
   width: 16px;
   height: 16px;
   accent-color: rgb(var(--color-primary));
-}
-
-.collaboration-issue-table td:nth-child(2) button {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  border: 0;
-  overflow: hidden;
-  color: rgb(var(--color-text-primary));
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.collaboration-issue-table td:nth-child(2) button:hover {
-  color: rgb(var(--color-primary));
-}
-
-.collaboration-issue-table td:nth-child(2) button:focus-visible {
-  border-radius: 4px;
-}
-
-:where(html:not([data-input-modality='pointer']))
-  .collaboration-issue-table
-  td:nth-child(2)
-  button:focus-visible {
-  outline: 2px solid rgb(var(--color-primary));
-  outline-offset: 2px;
-}
-
-.collaboration-issue-key {
-  flex: none;
-  margin-right: 6px;
-  color: rgb(var(--color-text-muted));
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.collaboration-issue-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .collaboration-issue-table-date,

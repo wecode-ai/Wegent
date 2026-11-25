@@ -7,7 +7,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use brz_mysql::{Json, MysqlRow, MysqlService};
 use serde_json::{Value, json};
@@ -124,10 +123,9 @@ impl Fixture {
                 .unwrap();
         let database = format!(
             "shadow_{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+            crate::wework_auth_tokens::uuid4_hex()
                 .unwrap()
-                .as_nanos()
+                .replace('-', "")
         );
         admin
             .execute(format!("CREATE DATABASE {database}"), ())

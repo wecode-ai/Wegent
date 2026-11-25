@@ -255,10 +255,10 @@ impl RuntimeWorkRpcHandler {
                     && !matches!(parent.status.as_str(), "archived" | "cancelled")
                     && parent.thread_id.is_some()
                     && parent.interaction_status.is_none()
-                    && (crate::task_runtime::personal_stand_in::supports_role_delegation(
-                        parent_origin,
-                    ) || (parent_origin["type"] == "stand_in_task"
-                        && parent_origin["roleDelegation"]["root"] == role_branch["root"]))
+                    && ((parent_origin["type"] == "stand_in_identity"
+                        && parent_origin["conversationScope"].is_null())
+                        || (parent_origin["type"] == "stand_in_task"
+                            && parent_origin["roleDelegation"]["root"] == role_branch["root"]))
             })
         {
             return None;

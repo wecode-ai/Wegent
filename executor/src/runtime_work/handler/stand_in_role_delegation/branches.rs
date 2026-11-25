@@ -13,7 +13,10 @@ impl RuntimeWorkRpcHandler {
             return Ok(json!({"items":[]}));
         };
         let origin = &link.runtime_handle["origin"];
-        if !owned_role_task(&link, user, &self.device_id) || !supports_role_delegation(origin) {
+        if !owned_role_task(&link, user, &self.device_id)
+            || origin["type"] != "stand_in_identity"
+            || !origin["conversationScope"].is_null()
+        {
             return Err(denied());
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
@@ -227,20 +230,17 @@ mod tests {
         assert_eq!(stale_attempt["status"], "dispatched");
         assert!(stale_attempt["statusSource"].is_null());
 
-        handler.store.update_task(conversation, |link| {
-            link.runtime_handle["origin"]["conversationScope"] =
-                json!("team:00000000-0000-4000-8000-000000000001");
-        });
-        assert_eq!(row()["taskId"], "specialist");
-        handler.store.update_task(conversation, |link| {
-            link.runtime_handle["origin"]["conversationScope"] = json!("collaboration");
-        });
-        assert_eq!(
-            handler
-                .stand_in_role_branches(&json!({"userId":user,"taskId":conversation}))
-                .unwrap_err()
-                .code,
-            "permission_denied"
-        );
+        for scope in ["team:00000000-0000-4000-8000-000000000001", "collaboration"] {
+            handler.store.update_task(conversation, |link| {
+                link.runtime_handle["origin"]["conversationScope"] = json!(scope);
+            });
+            assert_eq!(
+                handler
+                    .stand_in_role_branches(&json!({"userId":user,"taskId":conversation}))
+                    .unwrap_err()
+                    .code,
+                "permission_denied"
+            );
+        }
     }
 }
