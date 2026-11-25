@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 
 /** Reproduce the persisted local failure without changing the authorized sources. */
-export async function seedCollectionTimeout(database, userId, providerId, timeoutMs) {
+export async function seedCollectionTimeout(database, userId, providerId, sourceIds, timeoutMs) {
   const rows = () =>
     database
       .prepare(
-        "SELECT id, metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.source.providerId')=?"
+        "SELECT id, metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.source.providerId')=? AND json_extract(metadata,'$.source.id') IN (?, ?)"
       )
-      .all(userId, providerId)
+      .all(userId, providerId, ...sourceIds)
   await storyUntil(
     async () => rows(),
     value => value.length === 2 && value.every(row => JSON.parse(row.metadata).checkpoint),
