@@ -38,7 +38,8 @@ function createReminderProjection() {
     visible: ReadonlySet<string>
   ) => {
     let next: RuntimeTaskReminderItem[] | undefined
-    for (const [index, item] of items.entries()) {
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index]
       const row = projectRow(item, tasks.get(item.key))
       if (row === item) continue
       next ??= items.slice()
@@ -87,24 +88,25 @@ export function useUnlistedStandInTasks(
   const source = useMemo(() => createUnlistedStandInTasksSource(reader), [reader])
   const projection = useMemo(() => createReminderProjection(), [])
   const visible = useMemo(() => new Set(items.map(item => item.key)), [items])
-  const candidates = useMemo<UnlistedTaskCandidate[]>(
-    () =>
-      [...snapshot.tasks.values()]
-        .filter(task => !visible.has(task.key) && needsStandInLookup(task.task))
-        .map(task => ({
-          key: task.key,
-          address: task.address,
-          signature: JSON.stringify([
-            task.execution.phase,
-            task.turn.id,
-            task.turn.latestId,
-            task.turn.outcome,
-            task.interactionStatus,
-            task.task?.updatedAt,
-          ]),
-        })),
-    [visible, snapshot.tasks]
-  )
+  const candidates = useMemo(() => {
+    const candidates: UnlistedTaskCandidate[] = []
+    for (const task of snapshot.tasks.values()) {
+      if (visible.has(task.key) || !needsStandInLookup(task.task)) continue
+      candidates.push({
+        key: task.key,
+        address: task.address,
+        signature: JSON.stringify([
+          task.execution.phase,
+          task.turn.id,
+          task.turn.latestId,
+          task.turn.outcome,
+          task.interactionStatus,
+          task.task?.updatedAt,
+        ]),
+      })
+    }
+    return candidates
+  }, [visible, snapshot.tasks])
   // Keep the subscription's inputs with React state so an abandoned render cannot change them.
   const [pending, setPending] = useState(candidates)
   if (!dequal(pending, candidates)) setPending(candidates)

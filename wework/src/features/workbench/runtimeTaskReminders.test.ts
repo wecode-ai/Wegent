@@ -142,6 +142,29 @@ describe('runtime task reminders', () => {
     }
   })
 
+  test('reuses unchanged lifecycle projections when another listed task starts', () => {
+    const store = new RuntimeTaskLifecycleStore('reminder-lifecycle-row-identity')
+    const workspace = notificationItem('device-1').workspace
+    const runtimeWork = {
+      projects: [],
+      chats: [{ ...workspace, tasks: [reminderItem('first').task, reminderItem('second').task] }],
+      totalTasks: 2,
+    }
+    store.syncRuntimeWork(runtimeWork)
+    const items = collectRuntimeTaskReminderItems(runtimeWork)
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: store.getSnapshot(),
+    })
+    const [first, second] = result.current
+    expect(second.lifecycle).toBeDefined()
+
+    store.executorStarted(first.address)
+    rerender(store.getSnapshot())
+
+    expect(result.current[0].lifecycle?.derived.isRunning).toBe(true)
+    expect(result.current[1]).toBe(second)
+  })
+
   test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
     const hidden = reminderItem('hidden-stand-in')
     const ordinary = reminderItem('hidden-ordinary')
@@ -247,21 +270,34 @@ function notificationItem(deviceId: string): RuntimeTaskReminderItem {
   }
 }
 
-test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
-  'keeps memory review results silent when the origin is available in the %s',
-  async originSource => {
+const silentTaskOrigins = [
+  { type: 'stand_in_schedule', memoryReview: true },
+  { type: 'stand_in_coordinator' },
+]
+
+test.each(
+  silentTaskOrigins.flatMap(origin =>
+    ['task list', 'executor snapshot', 'earlier running snapshot'].map(source => ({
+      origin,
+      source,
+      type: origin.type,
+    }))
+  )
+)(
+  'keeps $type results silent when the origin is available in the $source',
+  async ({ origin, source: originSource }) => {
     const send = vi.mocked(sendSystemNotification)
     send.mockClear()
-    const store = new RuntimeTaskLifecycleStore('memory-review-reminder-test')
+    const store = new RuntimeTaskLifecycleStore(`silent-reminder-${origin.type}-${originSource}`)
     const item = notificationItem('device-1')
     const scheduled = {
       ...item.task,
       runtimeHandle: { origin: { type: 'stand_in_schedule' } },
     }
-    const review = {
+    const background = {
       ...scheduled,
-      taskId: 'memory-review',
-      runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+      taskId: 'background-task',
+      runtimeHandle: { origin },
     }
     const reported = {
       ...scheduled,
@@ -277,7 +313,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
         {
           ...item.workspace,
           tasks: [
-            originSource === 'task list' ? review : { ...review, runtimeHandle: undefined },
+            originSource === 'task list' ? background : { ...background, runtimeHandle: undefined },
             scheduled,
             reported,
           ],
@@ -288,7 +324,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
     const items = collectRuntimeTaskReminderItems(work)
     store.syncRuntimeWork(work)
     if (originSource === 'earlier running snapshot') {
-      store.syncRuntimeTask(items[0].address, { ...review, running: true, updatedAt: 1000 })
+      store.syncRuntimeTask(items[0].address, { ...background, running: true, updatedAt: 1000 })
       store.syncRuntimeWork({
         ...work,
         chats: [
@@ -309,7 +345,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
         ],
       })
     } else if (originSource === 'executor snapshot') {
-      store.syncRuntimeTask(items[0].address, review)
+      store.syncRuntimeTask(items[0].address, background)
     }
     const settlingItems = originSource === 'earlier running snapshot' ? items.slice(1) : items
     for (const { address } of settlingItems) {
@@ -349,17 +385,17 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
   }
 )
 
-test('excludes an existing memory review unread marker when restoring cached remote work', async () => {
-  const owner = 'cached-memory-review-reminder-test'
+test.each(silentTaskOrigins)('clears cached $type unread markers', async origin => {
+  const owner = `cached-silent-reminder-${origin.type}`
   const item = notificationItem('remote-device')
-  const review = {
+  const background = {
     ...item.task,
-    taskId: 'memory-review',
-    runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true, userId: 7 } },
+    taskId: 'background-task',
+    runtimeHandle: { origin: { ...origin, userId: 7 } },
   }
   const work = {
     projects: [],
-    chats: [{ ...item.workspace, tasks: [review, item.task] }],
+    chats: [{ ...item.workspace, tasks: [background, item.task] }],
     totalTasks: 2,
   }
   const unreadStorageKey = `wework.runtimeTaskLifecycle.${owner}.unread.v2`
@@ -369,9 +405,7 @@ test('excludes an existing memory review unread marker when restoring cached rem
   )
   writeCachedRemoteRuntimeWork(owner, work)
   const cachedWork = readCachedRemoteRuntimeWork(owner)
-  expect(cachedWork.chats[0]?.tasks[0]?.runtimeHandle).toEqual({
-    origin: { type: 'stand_in_schedule', memoryReview: true },
-  })
+  expect(cachedWork.chats[0]?.tasks[0]?.runtimeHandle).toEqual({ origin })
   const store = new RuntimeTaskLifecycleStore(owner)
   store.syncRuntimeWork(cachedWork)
   const { result, unmount } = renderHook(() =>
