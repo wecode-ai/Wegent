@@ -82,7 +82,12 @@ pub(super) async fn send_upstream_request_with_rate_limit_retry(
             incoming_headers,
         );
         let response = if let Some(credentials) = gateway_credentials {
-            let mut request = request.build().map_err(upstream_transport_error)?;
+            let mut request = request
+                .timeout(Duration::from_secs(
+                    LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
+                ))
+                .build()
+                .map_err(upstream_transport_error)?;
             let mut authorization =
                 HeaderValue::from_str(&format!("Bearer {}", credentials.current_token()?))
                     .map_err(|_| HttpError {
