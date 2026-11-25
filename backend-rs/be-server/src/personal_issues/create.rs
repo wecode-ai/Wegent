@@ -59,19 +59,7 @@ async fn create_board_issue(
     api_key: Option<&str>,
     trace_id: Option<&str>,
 ) -> Result<Response, FastApiError> {
-    static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
-    let client = CLIENT.get_or_init(|| {
-        brz_http::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .configure(|builder| {
-                builder
-                    .no_proxy()
-                    .redirect(brz_http::reqwest::redirect::Policy::none())
-                    .retry(brz_http::reqwest::retry::never())
-            })
-            .build()
-    });
-    let client = client.as_ref().map_err(|_| upstream_error())?;
+    let client = project_issue_client().map_err(|_| upstream_error())?;
     let upstream = std::env::var("WEGENT_PYTHON_UPSTREAM_URL")
         .unwrap_or_else(|_| wegent_backend_config::DEFAULT_PYTHON_UPSTREAM.to_owned());
     let project_path = format!("/api/v1/cloud-projects/{project_id}/loop-items");
@@ -100,9 +88,69 @@ async fn create_board_issue(
     Ok(response)
 }
 
+fn project_issue_client() -> Result<&'static brz_http::Client, &'static brz_http::reqwest::Error> {
+    static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            brz_http::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .read_timeout(Duration::from_secs(60))
+                .configure(|builder| {
+                    builder
+                        .no_proxy()
+                        .redirect(brz_http::reqwest::redirect::Policy::none())
+                        .retry(brz_http::reqwest::retry::never())
+                })
+                .build()
+        })
+        .as_ref()
+}
+
 fn upstream_error() -> FastApiError {
     FastApiError::detail(
         StatusCode::BAD_GATEWAY,
         "Unable to reach the project Issue provider",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn project_issue_response_can_exceed_the_http_library_default_read_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![];
+            loop {
+                request.push(stream.read_u8().await.unwrap());
+                if request.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            // Reproduce a provider response slower than Breeze's 400ms read default.
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .await
+                .unwrap();
+        });
+        let response = project_issue_client()
+            .unwrap()
+            .as_reqwest()
+            .post(format!(
+                "http://{address}/api/v1/cloud-projects/1/loop-items"
+            ))
+            .send()
+            .await
+            .expect("The provider response must use the declared 60-second operation budget");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.text().await.unwrap(), "{}");
+        server.await.unwrap();
+    }
 }
