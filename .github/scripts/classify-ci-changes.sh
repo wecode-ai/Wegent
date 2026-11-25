@@ -128,6 +128,7 @@ classify_path() {
       .github/scripts/archive-frontend-e2e-build.sh | \
       .github/scripts/free-runner-disk-space-if-needed.sh | \
       .github/scripts/resolve-executor-e2e-runtime.sh | \
+      .github/scripts/resolve-backend-rs-e2e-dependencies.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
       .github/scripts/verify-executor-e2e-image.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \

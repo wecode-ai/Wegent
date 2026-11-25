@@ -33,11 +33,17 @@ RUN mkdir -p be-server/src be-server/examples \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 
 FROM ${DEPS_IMAGE} AS build
+# A dependency seed can come from an earlier source revision. Keep Cargo's
+# compiled dependencies and replace every workspace input with this revision.
+RUN find . -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + \
+    && rm -rf /workspace/shared/rust /workspace/shared/assets/calendars
+COPY shared/rust /workspace/shared/rust
+COPY shared/assets/calendars /workspace/shared/assets/calendars
+COPY --exclude=config --exclude=docs --exclude=init_data \
+    --exclude=migrations/reference --exclude=scripts backend-rs/ ./
 COPY shared/assets/codex-models /workspace/shared/assets/codex-models
-COPY backend-rs/be-server/src ./be-server/src
-COPY backend-rs/be-server/examples ./be-server/examples
 COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json
-RUN find be-server/src be-server/examples -type f -exec touch {} + \
+RUN find . /workspace/shared/rust -path ./target -prune -o -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 

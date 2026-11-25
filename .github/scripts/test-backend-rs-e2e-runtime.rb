@@ -97,6 +97,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   FileUtils.cp(File.join(root, recipe), File.join(directory, recipe))
   %w[.github/runtime-images/backend-rs-builder.Dockerfile .github/ci/rust-toolchain
     .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock
+    .github/scripts/resolve-backend-rs-e2e-dependencies.sh
     backend-rs/be-server/Cargo.toml backend-rs/src/task_export_docx/templates/thumbnail.jpeg].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
@@ -156,7 +157,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
           cp "$context/$source" "$TEST_IMAGE$destination"
         done < "$recipe"
         ;;
-      manifest) exit 1 ;;
+      manifest) [[ "${3-}" == "${TEST_SEED:-missing}" ]] ;;
       push|pull) ;;
       create) echo contract-container ;;
       cp) cp "$TEST_IMAGE/${2#*:/}" "$3" ;;
@@ -174,6 +175,39 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
     "TEST_IMAGE" => File.join(directory, "image"),
     "TEST_CLEANUP" => File.join(directory, "cleanup")
   }
+  git = lambda do |*arguments|
+    output, status = Open3.capture2e("git", *arguments, chdir: directory)
+    raise output unless status.success?
+    output.strip
+  end
+  git.call("init", "-q")
+  git.call("add", ".")
+  git.call("-c", "user.name=CI", "-c", "user.email=ci@example.com", "commit", "-qm", "seed")
+  metadata, status = Open3.capture2e(
+    "node", ".github/scripts/ci-prebuilt-images.mjs", "backend-rs-deps", "example", chdir: directory
+  )
+  raise metadata unless status.success?
+  seed = YAML.safe_load(metadata).fetch("image")
+  environment["BASE_SHA"] = git.call("rev-parse", "HEAD")
+  environment["TEST_SEED"] = seed
+  seed_selection = lambda do
+    output, status = Open3.capture2e(environment, "bash",
+      ".github/scripts/resolve-backend-rs-e2e-dependencies.sh", chdir: directory)
+    raise output unless status.success?
+    output.strip
+  end
+  raise "Exact seed was not selected" unless seed_selection.call == seed
+  File.write(File.join(directory, "backend-rs/backend-config/src/cache-test.rs"), "// changed source")
+  File.open(File.join(directory, ".github/runtime-images/backend-rs-builder.Dockerfile"), "a") do |file|
+    file.puts "# Updated final build stage"
+  end
+  raise "Compatible base seed was not reused" unless seed_selection.call == seed
+  lockfile = File.join(directory, "backend-rs/Cargo.lock")
+  original_lock = File.read(lockfile)
+  File.write(lockfile, original_lock + "\n# new lock")
+  raise "Incompatible base seed was selected" unless seed_selection.call.empty?
+  File.write(lockfile, original_lock)
+
   run = lambda do |name, success|
     output, status = Open3.capture2e(environment, "bash", "-e", "-o", "pipefail", "-c",
       step.call(name), chdir: directory)

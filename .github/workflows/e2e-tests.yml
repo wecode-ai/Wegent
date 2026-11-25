@@ -233,12 +233,12 @@ jobs:
         if: steps.image-check.outputs.exists != 'true'
         env:
           IMAGE: ${{ steps.runtime.outputs.image }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          metadata="$(node .github/scripts/ci-prebuilt-images.mjs backend-rs-deps "$GITHUB_REPOSITORY_OWNER")"
-          dependencies="$(jq -r .restoreImage <<< "$metadata")"
+          dependencies="$(.github/scripts/resolve-backend-rs-e2e-dependencies.sh)"
           cache="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:buildcache"
           arguments=(--cache-from "type=registry,ref=$cache")
-          if docker manifest inspect "$dependencies" >/dev/null 2>&1; then
+          if [[ -n "$dependencies" ]]; then
             arguments+=(--build-arg "DEPS_IMAGE=$dependencies")
           fi
           docker buildx build --load --platform linux/amd64 \
