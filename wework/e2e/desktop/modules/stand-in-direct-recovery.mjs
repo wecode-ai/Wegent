@@ -289,6 +289,7 @@ export function createDirectRecoveryVerification(options) {
           database,
           USER,
           PROVIDER,
+          [source('direct').id, source('group').id],
           options.modelResponseTimeoutMs
         )
         await publish(1)
