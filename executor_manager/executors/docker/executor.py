@@ -207,7 +207,7 @@ class DockerExecutor(Executor):
                     execution_status["executor_name"] = executor_name
                     self._create_new_container(task_dict, task_info, execution_status)
                 elif prepare_only:
-                    require_callback_token(int(task_id))
+                    require_callback_token(int(task_id), executor_name)
                     self.wait_instance_ready(executor_name)
                 else:
                     self._execute_in_existing_container(task_dict, execution_status)

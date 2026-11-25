@@ -177,8 +177,17 @@ async def test_responses_preserve_optional_backend_context_for_each_queue(
     assert enqueue.call_args.args[0]["metadata"] == metadata
 
 
-@pytest.mark.parametrize("credential", ["callback-token", None])
-def test_legacy_dispatch_requires_a_prepared_callback_credential(credential):
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"executor_name": "executor-1", "callback_token": "callback-token"},
+        {"executor_name": "executor-replacement", "callback_token": "callback-token"},
+        None,
+    ],
+)
+def test_legacy_dispatch_requires_a_prepared_callback_credential(binding):
+    from executor_manager.services.sandbox.repository import SandboxRepository
+
     task = {
         "metadata": {
             "task_id": 42,
@@ -188,13 +197,16 @@ def test_legacy_dispatch_requires_a_prepared_callback_credential(credential):
     }
     dispatch = Mock(return_value={"status": "success"})
     executor = Mock(_dispatch_initial_task_to_new_container=dispatch)
-    repository = Mock(load_executor_callback_token=Mock(return_value=credential))
+    repository = Mock(load_executor_binding_full=Mock(return_value=binding))
+    repository.load_executor_callback_token = (
+        SandboxRepository.load_executor_callback_token.__get__(repository)
+    )
 
     with patch(
         "executor_manager.services.sandbox.repository.get_sandbox_repository",
         return_value=repository,
     ):
-        if credential:
+        if binding and binding["executor_name"] == "executor-1":
             assert DockerExecutor.dispatch_task_to_instance(
                 executor, task, "executor-1", {"port": 8080}
             ) == {"status": "success"}

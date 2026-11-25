@@ -680,7 +680,7 @@ class SandboxRepository(metaclass=SingletonMeta):
     def reserve_executor_callback_token(
         self, task_id: int, executor_name: str, candidate: str
     ) -> Optional[str]:
-        """Return the single credential shared by concurrent runtime preparations."""
+        """Reuse a runtime's credential across retries and rotate on replacement."""
         if self.redis_client is None:
             return None
 
@@ -696,8 +696,11 @@ class SandboxRepository(metaclass=SingletonMeta):
                 """
                 local current = redis.call('GET', KEYS[1])
                 if current then
-                    local token = cjson.decode(current).callback_token
-                    if type(token) == 'string' and token ~= '' then
+                    local binding = cjson.decode(current)
+                    local token = binding.callback_token
+                    if binding.executor_name == ARGV[4]
+                        and type(token) == 'string' and token ~= '' then
+                        redis.call('EXPIRE', KEYS[1], ARGV[1])
                         return token
                     end
                 end
@@ -709,6 +712,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 self._config.executor.executor_binding_ttl,
                 json.dumps(new_binding),
                 candidate,
+                executor_name,
             )
             return token.decode() if isinstance(token, bytes) else token
         except (redis.RedisError, ValueError) as error:
@@ -759,17 +763,25 @@ class SandboxRepository(metaclass=SingletonMeta):
                 type(error).__name__,
             )
 
-    def load_executor_callback_token(self, task_id: int) -> Optional[str]:
+    def load_executor_callback_token(
+        self, task_id: int, *, expected_executor_name: Optional[str] = None
+    ) -> Optional[str]:
         """Load the callback credential issued for one task runtime.
 
         Args:
             task_id: Task ID
+            expected_executor_name: Restrict lookup to the runtime being reused.
 
         Returns:
             Callback credential if found, None otherwise
         """
         binding = self.load_executor_binding_full(task_id)
-        return binding.get("callback_token") if binding else None
+        if not binding or (
+            expected_executor_name is not None
+            and binding.get("executor_name") != expected_executor_name
+        ):
+            return None
+        return binding.get("callback_token")
 
     def load_executor_binding_full(self, task_id: int) -> Optional[Dict[str, Any]]:
         """Load full executor binding info for task continuity.

@@ -52,7 +52,7 @@ def task_fixture() -> Iterator[tuple[str, int, list[int]]]:
                 status=SubtaskStatus.RUNNING,
                 message_id=message_id,
             )
-            for message_id in (1, 2)
+            for message_id in (1, 2, 3)
         ]
         db.add_all(turns)
         db.flush()
@@ -138,27 +138,52 @@ def dispatch_and_verify(
     wait_for(f"Executor callback persisted for turn {subtask_id}", completed, 20)
 
 
+def prepare_executor(
+    client: httpx.Client,
+    task_id: int,
+    subtask_id: int,
+    user_name: str,
+    image: str,
+    name: str | None = None,
+) -> str:
+    prepared = (
+        client.post(
+            "/executors/prepare",
+            timeout=60,
+            json={
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "user": {"name": user_name},
+                "executor_type": "docker",
+                "executor_image": image,
+                "executor_name": name,
+            },
+        )
+        .raise_for_status()
+        .json()
+    )
+    assert prepared["status"] == "success", prepared
+    return prepared["executor_name"]
+
+
+def delete_executor(client: httpx.Client, name: str) -> None:
+    response = client.post(
+        "/executor/delete", json={"executor_name": name}, timeout=20
+    ).raise_for_status()
+    assert response.json()["status"] == "success"
+
+
 def verify_callback_lease(
     client: httpx.Client, redis: Redis, ttl: int, image: str
 ) -> None:
-    with task_fixture() as (user_name, task_id, (first_turn, next_turn)):
-        prepared = (
-            client.post(
-                "/executors/prepare",
-                timeout=60,
-                json={
-                    "task_id": task_id,
-                    "subtask_id": first_turn,
-                    "user": {"name": user_name},
-                    "executor_type": "docker",
-                    "executor_image": image,
-                },
-            )
-            .raise_for_status()
-            .json()
-        )
-        assert prepared["status"] == "success", prepared
-        name = prepared["executor_name"]
+    with task_fixture() as (
+        user_name,
+        task_id,
+        (first_turn, next_turn, replacement_turn),
+    ):
+        name = prepare_executor(client, task_id, first_turn, user_name, image)
+        replacement = None
+        original_deleted = False
         try:
             # With no renewals, any binding provisioned by prepare must be absent
             # by this conservative deadline.
@@ -190,11 +215,34 @@ def verify_callback_lease(
             dispatch_and_verify(client, task_id, next_turn, name, user_name)
             assert container_id(name) == initial_container
             print("Docker callback and next dispatch succeeded past the original TTL")
+
+            replacement = prepare_executor(
+                client, task_id, replacement_turn, user_name, image, f"{name}-next"
+            )
+            assert replacement != name
+            binding = redis.get(key)
+            assert binding, "Replacement runtime has no callback lease"
+            current = json.loads(binding)
+            assert current["executor_name"] == replacement
+            assert (
+                current["callback_token"] != initial_token
+            ), "Replacement reused the old token"
+
+            delete_executor(client, name)
+            original_deleted = True
+            dispatch_and_verify(
+                client, task_id, replacement_turn, replacement, user_name
+            )
+            print(
+                "Replacement Docker Executor dispatched and called back after old runtime cleanup"
+            )
         finally:
-            response = client.post(
-                "/executor/delete", json={"executor_name": name}, timeout=20
-            ).raise_for_status()
-            assert response.json()["status"] == "success"
+            try:
+                if not original_deleted:
+                    delete_executor(client, name)
+            finally:
+                if replacement:
+                    delete_executor(client, replacement)
 
 
 def main() -> None:

@@ -39,7 +39,7 @@ def bind_executor_for_dispatch(
         )
 
     # Older queued requests also need the credential provisioned with the container.
-    require_callback_token(task_id)
+    require_callback_token(task_id, executor_name)
     runtime_task = task.copy()
     for key in (CALLBACK_TOKEN, BINDING_TOKEN):
         runtime_task.pop(key, None)
@@ -82,11 +82,13 @@ def _confirm_executor_binding(
         raise RuntimeError("Executor binding acknowledgement is invalid")
 
 
-def require_callback_token(task_id: int) -> str:
+def require_callback_token(task_id: int, executor_name: str) -> str:
     """Refuse reuse of a container whose callback credential is unavailable."""
     from executor_manager.services.sandbox.repository import get_sandbox_repository
 
-    token = get_sandbox_repository().load_executor_callback_token(task_id)
+    token = get_sandbox_repository().load_executor_callback_token(
+        task_id, expected_executor_name=executor_name
+    )
     if not token:
         raise RuntimeError("Executor has no callback credential provisioned")
     return token

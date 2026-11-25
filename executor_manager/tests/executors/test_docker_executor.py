@@ -506,7 +506,7 @@ class TestDockerExecutor:
             patch(
                 "executor_manager.services.sandbox.repository.get_sandbox_repository",
                 return_value=MagicMock(
-                    load_executor_callback_token=lambda _: "callback-token"
+                    load_executor_callback_token=lambda *args, **kwargs: "callback-token"
                 ),
             ),
             patch.object(
