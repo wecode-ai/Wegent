@@ -308,7 +308,9 @@ export function createWorkbenchSession(
     projects.reconcile()
   }
   function startRequestedChat() {
-    if (canNavigate() && consumeWorkbenchNewChatRequest()) operations.stableStartNewChat()
+    if (!canNavigate()) return
+    const requested = consumeWorkbenchNewChatRequest()
+    if (requested) operations.stableStartNewChat(requested)
   }
   function updateNotificationSource() {
     if (!input || !isHeld()) return
