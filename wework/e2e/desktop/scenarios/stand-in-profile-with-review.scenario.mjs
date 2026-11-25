@@ -71,13 +71,20 @@ async function verifyGuideExamples(control, completed = false) {
   ]) {
     await control.command('waitFor', `button[data-testid="stand-in-onboarding-example-${example}"]`)
   }
-  assert.equal(
+  const exampleLayout = JSON.parse(
     await control.command(
-      'getElementCount',
-      `${GUIDE} button[data-testid^="stand-in-onboarding-example-"]`
-    ),
-    '5'
+      'getElementMetrics',
+      `${GUIDE}, ${GUIDE} button[data-testid^="stand-in-onboarding-example-"]`,
+      { value: 'includeText' }
+    )
   )
+  assert.equal(exampleLayout.length, 6)
+  for (const item of exampleLayout) {
+    assert.ok(
+      item.clientWidth > 0 && item.scrollWidth <= item.clientWidth + 1,
+      `${item.testId} must fit horizontally (scroll: ${item.scrollWidth}, client: ${item.clientWidth})`
+    )
+  }
   for (const selector of [
     `${GUIDE} input[type="checkbox"]`,
     `${GUIDE} input[type="time"]`,
