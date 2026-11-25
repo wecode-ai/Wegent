@@ -120,7 +120,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 | `authorization_required` | 调用授权接口，将链接展示给目标用户。 |
 | `not_required` | Connector 无需用户 OAuth，可以继续调用内容 API。 |
 
-调用方使用 `X-API-Key`。服务 API Key 通过 `wegent-username` 指定目标用户，个人 API Key 则绑定其所有者。外部应用的后端应从自己的登录身份确定目标用户名。不存在、停用或对用户不可见的 Connector 返回 `404`。
+调用方使用 `X-API-Key`。服务 API Key 通过 `wegent-username` 指定目标用户，个人 API Key 则绑定其所有者。外部应用的后端应从自己的登录身份确定目标用户名。不存在、停用或对用户不可见的 Connector 返回 `404`。使用 Bearer 等非 OAuth 凭据的 Connector 在两个接口均返回 `422`。
 
 用户打开链接后，使用绑定的 Wegent 账号登录并确认授权，再完成上游 OAuth。凭据保存在 Wegent。用户返回后，外部服务重新调用预检，确认 `authorized` 后再请求内容。预检只覆盖 Connector App 的 OAuth 授权，历史个人 MCP URL 和具体文档的访问权限由各自的流程处理。
 

@@ -36,15 +36,24 @@ pub async fn lookup<M: Mysql>(
         .map(service::row_to_app)
         .filter(|app| app.slug == slug && service::is_visible(app, &user))
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Connector app not found"))?;
-    let status = if app.auth_type == "none" {
-        AuthorizationStatus::NotRequired
-    } else if service::app_connected(mysql, &app, user_id)
-        .await
-        .map_err(lookup_failed)?
-    {
-        AuthorizationStatus::Authorized
-    } else {
-        AuthorizationStatus::AuthorizationRequired
+    let status = match app.auth_type.as_str() {
+        "none" => AuthorizationStatus::NotRequired,
+        "oauth2" => {
+            if service::app_connected(mysql, &app, user_id)
+                .await
+                .map_err(lookup_failed)?
+            {
+                AuthorizationStatus::Authorized
+            } else {
+                AuthorizationStatus::AuthorizationRequired
+            }
+        }
+        _ => {
+            return Err(FastApiError::detail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Connector app does not use OAuth",
+            ));
+        }
     };
     Ok((app.id, status))
 }

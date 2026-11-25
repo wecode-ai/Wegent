@@ -120,7 +120,7 @@ External services can check a target user's OAuth grant before calling a Wegent 
 | `authorization_required` | Call the start endpoint and show the resulting link to the target user. |
 | `not_required` | Continue to the content API. This Connector does not require user OAuth. |
 
-Call both endpoints with `X-API-Key`. For service keys, set `wegent-username` to the target user derived from the external application's signed-in identity. A personal key acts as its owner. Unknown, disabled, and hidden Connectors return `404`.
+Call both endpoints with `X-API-Key`. For service keys, set `wegent-username` to the target user derived from the external application's signed-in identity. A personal key acts as its owner. Unknown, disabled, and hidden Connectors return `404`. Both endpoints return `422` for Connectors configured to use Bearer or other non-OAuth credentials.
 
 The user opens the link, signs in to the bound Wegent account, and completes the provider's OAuth consent. Wegent stores the provider credentials. When the user returns, repeat the precheck and call the content API after receiving `authorized`. The precheck covers the Connector App OAuth grant. Legacy personal MCP URLs and individual document permissions are handled by their respective flows.
 

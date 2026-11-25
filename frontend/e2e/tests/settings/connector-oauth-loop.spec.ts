@@ -238,6 +238,62 @@ test.describe('Connector app OAuth loop', () => {
     }
   })
 
+  test('distinguishes unsupported Bearer credentials from no authorization', async ({
+    request,
+  }) => {
+    const slug = `${SLUG}-auth-types`
+    const adminHeaders = authHeaders(adminToken)
+    const created = await request.post(`${API_URL}/api/admin/connector-apps`, {
+      headers: adminHeaders,
+      data: {
+        slug,
+        name: 'E2E Connector authentication types',
+        mcp_url: `${MOCK_URL}/connector-oauth/mcp`,
+        auth_type: 'bearer',
+      },
+      timeout: 10_000,
+    })
+    expect(created.status(), 'The Connector catalog supports Bearer credentials').toBe(201)
+    const { id } = (await created.json()) as { id: number }
+    const appUrl = `${API_URL}/api/admin/connector-apps/${id}`
+    const keyUrl = `${API_URL}/api/api-keys`
+    const externalUrl = `${API_URL}/api/external/connector-apps/${slug}`
+    try {
+      const keyResponse = await request.post(keyUrl, {
+        headers: adminHeaders,
+        data: { name: 'External connector authentication types E2E' },
+        timeout: 10_000,
+      })
+      expect(keyResponse.status()).toBe(201)
+      const key = (await keyResponse.json()) as { id: number; key: string }
+      const options = { headers: { 'X-API-Key': key.key }, timeout: 10_000 }
+      try {
+        const precheck = await request.get(`${externalUrl}/authorization`, options)
+        expect(precheck.status(), 'Bearer cannot be checked as an OAuth grant').toBe(422)
+        const start = await request.post(`${externalUrl}/oauth/start`, options)
+        expect(start.status(), 'Bearer must not receive an OAuth consent link').toBe(422)
+        expect(await start.json()).toEqual({ detail: 'Connector app does not use OAuth' })
+
+        const updated = await request.patch(appUrl, {
+          headers: adminHeaders,
+          data: { auth_type: 'none' },
+          timeout: 10_000,
+        })
+        expect(updated.status()).toBe(200)
+        const openPrecheck = await request.get(`${externalUrl}/authorization`, options)
+        const openStart = await request.post(`${externalUrl}/oauth/start`, options)
+        for (const response of [openPrecheck, openStart]) {
+          expect(response.status()).toBe(200)
+          expect(await response.json()).toEqual({ slug, status: 'not_required' })
+        }
+      } finally {
+        await request.delete(`${keyUrl}/${key.id}`, { headers: adminHeaders, timeout: 10_000 })
+      }
+    } finally {
+      await request.delete(appUrl, { headers: adminHeaders, timeout: 10_000 })
+    }
+  })
+
   test('keeps a connector disconnected when an older external consent returns', async ({
     request,
   }) => {
