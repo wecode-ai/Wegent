@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { dequal } from 'dequal'
 import {
   createUnlistedStandInTasksSource,
+  isStandInNotificationTask,
   type UnlistedTaskCandidate,
 } from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -63,6 +64,20 @@ function createReminderProjection() {
   }
 }
 
+function needsStandInLookup(task: RuntimeTaskReminderItem['task'] | null): boolean {
+  const handle = task?.runtimeHandle
+  // Native task summaries preserve the origin used by readTask.
+  if (
+    !task ||
+    task.cachedProjection ||
+    task.optimistic ||
+    !handle ||
+    !Object.hasOwn(handle, 'threadId')
+  )
+    return true
+  return isStandInNotificationTask(task)
+}
+
 /** Sidebar project filters must not hide executions from collaboration notifications. */
 export function useUnlistedStandInTasks(
   items: RuntimeTaskReminderItem[],
@@ -75,7 +90,7 @@ export function useUnlistedStandInTasks(
   const candidates = useMemo<UnlistedTaskCandidate[]>(
     () =>
       [...snapshot.tasks.values()]
-        .filter(task => !visible.has(task.key))
+        .filter(task => !visible.has(task.key) && needsStandInLookup(task.task))
         .map(task => ({
           key: task.key,
           address: task.address,

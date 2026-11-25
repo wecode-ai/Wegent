@@ -6,6 +6,7 @@ import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
 import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
@@ -162,6 +163,41 @@ describe('runtime task reminders', () => {
     }
   })
 
+  test('only reads hidden tasks whose native summary cannot rule out a stand-in', async () => {
+    const ordinary = reminderItem('ordinary-native')
+    const cached = reminderItem('cached-native')
+    const standIn = reminderItem('stand-in-native')
+    const store = new RuntimeTaskLifecycleStore('unlisted-native-summary-test')
+    store.syncRuntimeTask(ordinary.address, {
+      ...ordinary.task,
+      runtimeHandle: { threadId: null },
+    })
+    store.syncRuntimeTask(cached.address, {
+      ...cached.task,
+      cachedProjection: true,
+      runtimeHandle: { threadId: null },
+    })
+    const standInTask = {
+      ...standIn.task,
+      runtimeHandle: { threadId: 'stand-in-thread', origin: { initiatedBy: 'stand_in' } },
+    }
+    store.syncRuntimeTask(standIn.address, standInTask)
+    const calls: string[] = []
+    const reader = {
+      async readTask(_deviceId: string, taskId: string) {
+        calls.push(taskId)
+        return taskId === standIn.task.taskId
+          ? { success: true, task: standInTask }
+          : { success: true, task: cached.task }
+      },
+    }
+    const { result } = renderHook(() => useUnlistedStandInTasks([], store.getSnapshot(), reader))
+    await waitFor(() =>
+      expect(result.current.map(item => item.task.taskId)).toEqual([standIn.task.taskId])
+    )
+    expect(calls).toEqual([cached.task.taskId, standIn.task.taskId])
+  })
+
   test('discovers hidden pending work without adding it to visible unread badges', () => {
     const item = reminderItem('hidden-pending')
     const machine = new RuntimeTaskMachine(item.address)
@@ -288,6 +324,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       items,
       listedItems: items,
       unreadMessageCounts: new Map(),
+      preferences: defaultAppPreferences,
       notificationPreferences: {
         ...defaultNotificationPreferences,
         tasks: { in_app: true, system: true, im: null },

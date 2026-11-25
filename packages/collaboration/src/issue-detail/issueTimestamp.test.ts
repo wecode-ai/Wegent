@@ -63,6 +63,14 @@ describe("issueActivityTimestamp", () => {
 });
 
 describe("formatIssueTimestamp", () => {
+  it("uses the device timezone when no timezone is supplied", () => {
+    const localTimeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timestamp = "2026-09-22T00:05:00Z";
+    expect(formatIssueTimestamp(timestamp)).toBe(
+      formatIssueTimestamp(timestamp, localTimeZone),
+    );
+  });
+
   it("treats timezone-less backend timestamps as UTC", () => {
     expect(formatIssueTimestamp("2026-09-22T06:31:00", "Asia/Shanghai")).toBe(
       "09-22 14:31",

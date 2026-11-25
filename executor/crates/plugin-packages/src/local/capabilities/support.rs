@@ -215,25 +215,9 @@ pub(super) fn ensure_dual_plugin_manifests(
     let claude_path = plugin_path.join(CLAUDE_PLUGIN_MANIFEST_PATH);
     let codex_manifest = read_plugin_manifest(&codex_path)?;
     let claude_manifest = read_plugin_manifest(&claude_path)?;
-    validate_plugin_manifest_names(codex_manifest.as_ref(), claude_manifest.as_ref())?;
-    if codex_manifest.is_none() && claude_manifest.is_none() {
-        return Err(CapabilitySyncError::invalid_payload(
-            "Plugin package is missing .codex-plugin/plugin.json or \
-             .claude-plugin/plugin.json",
-        ));
-    }
-
     let codex_missing = codex_manifest.is_none();
-    let codex_manifest = codex_manifest.unwrap_or_else(|| {
-        convert_plugin_manifest(
-            claude_manifest
-                .as_ref()
-                .expect("Claude manifest exists when Codex manifest is missing"),
-            false,
-        )
-    });
-    let claude_source = claude_manifest.as_ref().unwrap_or(&codex_manifest);
-    let normalized_claude_manifest = convert_plugin_manifest(claude_source, true);
+    let [codex_manifest, normalized_claude_manifest] =
+        normalized_plugin_manifests(codex_manifest.as_ref(), claude_manifest.as_ref())?;
     let claude_changed = claude_manifest.as_ref() != Some(&normalized_claude_manifest);
     if codex_missing {
         write_json(&codex_path, &codex_manifest)?;
@@ -242,6 +226,24 @@ pub(super) fn ensure_dual_plugin_manifests(
         write_json(&claude_path, &normalized_claude_manifest)?;
     }
     Ok(codex_missing || claude_changed)
+}
+
+pub(super) fn normalized_plugin_manifests(
+    codex: Option<&Value>,
+    claude: Option<&Value>,
+) -> Result<[Value; 2], CapabilitySyncError> {
+    validate_plugin_manifest_names(codex, claude)?;
+    let codex = codex
+        .cloned()
+        .or_else(|| claude.map(|manifest| convert_plugin_manifest(manifest, false)))
+        .ok_or_else(|| {
+            CapabilitySyncError::invalid_payload(
+                "Plugin package is missing .codex-plugin/plugin.json or \
+                 .claude-plugin/plugin.json",
+            )
+        })?;
+    let claude = convert_plugin_manifest(claude.unwrap_or(&codex), true);
+    Ok([codex, claude])
 }
 
 fn read_plugin_manifest(path: &Path) -> Result<Option<Value>, CapabilitySyncError> {

@@ -40,7 +40,7 @@ impl GlobalCapabilityStore {
         if candidates.is_empty() {
             return Ok(reused);
         }
-        let template = RuntimeTemplate::read(source)?;
+        let template = RuntimeTemplate::read(source, self)?;
         // Ownership was validated before this probe. Unreadable or symlinked
         // contents still follow the existing whole-directory repair path.
         reused.extend(template.matching_paths(&candidates)?);
