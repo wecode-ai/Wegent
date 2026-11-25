@@ -36,7 +36,9 @@ function createPredictionView(service: ReplyPredictionService, source: ReplyPred
     subscribe(listener: () => void) {
       listeners.add(listener)
       if (listeners.size === 1) {
-        unsubscribe = service.subscribe(publish)
+        unsubscribe = service.subscribe(scope => {
+          if (scope === undefined || scope === source.scope) publish()
+        })
         if (source.busy) {
           service.invalidate(source.scope)
         } else {

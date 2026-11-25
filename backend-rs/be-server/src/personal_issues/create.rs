@@ -98,13 +98,19 @@ async fn create_board_issue(
             request = request.header(name, value);
         }
     }
-    let response = request.send().await.map_err(|_| upstream_error())?;
+    let response = request.send().await.map_err(|error| {
+        tracing::warn!(project_id, trace_id, error = %error.without_url(), "Project Issue request failed");
+        upstream_error()
+    })?;
     let status = response.status();
     let bearer_challenge = response
         .headers()
         .get("www-authenticate")
         .is_some_and(|header| header == "Bearer");
-    let body = response.bytes().await.map_err(|_| upstream_error())?;
+    let body = response.bytes().await.map_err(|error| {
+        tracing::warn!(project_id, trace_id, error = %error.without_url(), "Project Issue response body failed");
+        upstream_error()
+    })?;
     let mut response = Response::owned_bytes(status, body).content_type("application/json");
     if bearer_challenge {
         response = response.www_authenticate("Bearer");
