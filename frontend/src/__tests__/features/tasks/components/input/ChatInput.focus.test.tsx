@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Profiler, type ReactNode } from 'react'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
@@ -35,11 +35,6 @@ jest.mock('@/features/common/UserContext', () => ({
 }))
 
 jest.mock('@/features/tasks/components/chat/MentionAutocomplete', () => ({
-  __esModule: true,
-  default: () => null,
-}))
-
-jest.mock('@/features/tasks/components/chat/SkillAutocomplete', () => ({
   __esModule: true,
   default: () => null,
 }))
@@ -187,3 +182,59 @@ describe('ChatInput external focus', () => {
     expect(screen.getByText('chat:send_shortcut').parentElement).toHaveClass('hidden', 'md:block')
   })
 })
+
+test.each([false, true])(
+  'consumes only the slash query with a pending catalog: %s',
+  async pendingCatalog => {
+    const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 0, left: 0 }),
+    })
+    try {
+      const skill = {
+        id: 1,
+        name: 'pdf',
+        namespace: 'default',
+        description: 'Read docs/pdf files',
+        user_id: 1,
+        is_public: false,
+        is_active: true,
+      }
+      const props = {
+        setMessage: jest.fn(),
+        handleSendMessage: jest.fn(),
+        onSkillSelect: jest.fn(),
+        isLoading: false,
+      }
+      const suffix = pendingCatalog ? ' and keep this path /tmp' : ''
+      const draft = 'Check /docs/pdf' + suffix
+      const { rerender } = render(
+        <ChatInput
+          {...props}
+          message={'Check ' + suffix}
+          availableSkills={pendingCatalog ? [] : [skill]}
+        />
+      )
+      const input = screen.getByTestId('message-input')
+      input.focus()
+      function typeCommand(value: string) {
+        input.textContent = 'Check ' + value + suffix
+        window.getSelection()?.collapse(input.firstChild, 'Check '.length + value.length)
+        fireEvent.input(input)
+      }
+      typeCommand('/')
+      typeCommand('/docs/pdf')
+      rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
+
+      fireEvent.click(await screen.findByTestId('slash-skill-option'))
+      expect(props.onSkillSelect).toHaveBeenCalledWith(skill)
+      expect(props.setMessage).toHaveBeenLastCalledWith('Check ' + suffix)
+      expect(window.getSelection()?.anchorOffset).toBe('Check '.length)
+    } finally {
+      if (originalRect)
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRect)
+      else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect')
+    }
+  }
+)

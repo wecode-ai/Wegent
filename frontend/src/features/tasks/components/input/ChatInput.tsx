@@ -19,6 +19,41 @@ import { useToast } from '@/hooks/use-toast'
 
 type PlaceholderLanguage = 'zh' | 'en'
 
+interface SkillCommand {
+  draft: string
+  start: number
+  end: number
+  query: string
+  position: { top: number; left: number }
+}
+
+function placeCaretInPlainText(element: HTMLElement, offset: number) {
+  const selection = window.getSelection()
+  if (!selection) return
+
+  // The composer renders plain text as text nodes and <br> elements.
+  for (const node of element.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const length = node.textContent?.length ?? 0
+      if (offset <= length) {
+        selection.collapse(node, offset)
+        return
+      }
+      offset -= length
+    } else if (offset === 0) {
+      const range = document.createRange()
+      range.setStartBefore(node)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return
+    } else {
+      offset -= 1
+    }
+  }
+  selection.collapse(element, element.childNodes.length)
+}
+
 export function resolveTeamInputPlaceholder(
   team: Team | null,
   language: PlaceholderLanguage,
@@ -71,7 +106,6 @@ interface ChatInputProps {
   disabledReason?: string
 
   // Skill selector support
-  showSkillSelector?: boolean
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
@@ -113,7 +147,6 @@ export default function ChatInput({
   onPasteFile,
   hasNoTeams = false,
   disabledReason,
-  showSkillSelector = false,
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
@@ -159,8 +192,7 @@ export default function ChatInput({
 
   // Combine disabled, hasNoTeams and disabledReason for input disabled state
   const isInputDisabled = disabled || hasNoTeams || !!disabledReason
-  const canSelectSkills =
-    !isInputDisabled && showSkillSelector && Boolean(onSkillSelect) && availableSkills.length > 0
+  const canSelectSkills = !isInputDisabled && Boolean(onSkillSelect) && availableSkills.length > 0
 
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)
@@ -180,9 +212,8 @@ export default function ChatInput({
   const [mentionQuery, setMentionQuery] = useState('')
 
   // Skill autocomplete state
-  const [showSkillMenu, setShowSkillMenu] = useState(false)
-  const [skillMenuPosition, setSkillMenuPosition] = useState({ top: 0, left: 0 })
-  const [skillQuery, setSkillQuery] = useState('')
+  const [skillCommand, setSkillCommand] = useState<SkillCommand | null>(null)
+  const closeSkillMenu = useCallback(() => setSkillCommand(null), [])
 
   // Skill fly animation state (managed here so animation persists after autocomplete closes)
   const [flyAnimation, setFlyAnimation] = useState<{
@@ -219,7 +250,7 @@ export default function ChatInput({
   }, [badge, badgeWidth])
 
   // Helper function to extract text with preserved newlines from contentEditable
-  const getTextWithNewlines = useCallback((element: HTMLElement): string => {
+  const getTextWithNewlines = useCallback((element: ParentNode): string => {
     let text = ''
     const childNodes = element.childNodes
 
@@ -284,6 +315,7 @@ export default function ChatInput({
       // Get current content with newlines preserved
       const currentContent = getTextWithNewlines(editableRef.current)
       if (currentContent !== message) {
+        setSkillCommand(null)
         // Only update if different to avoid cursor jumping
         const selection = window.getSelection()
         const hadFocus = document.activeElement === editableRef.current
@@ -353,6 +385,8 @@ export default function ChatInput({
       compositionJustEndedRef.current
     )
       return
+
+    if (e.key === 'Escape') closeSkillMenu()
 
     // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
     // Users can tap the send button to send messages
@@ -446,37 +480,42 @@ export default function ChatInput({
         }
       }
 
-      // Check for / trigger for skill selector
-      if (canSelectSkills) {
-        const lastChar = text[text.length - 1]
-        // Only trigger at start of input or after whitespace
-        const charBeforeLast = text.length > 1 ? text[text.length - 2] : ''
-        const isValidTrigger = lastChar === '/' && (text.length === 1 || /\s/.test(charBeforeLast))
+      if (!onSkillSelect) return
 
-        if (isValidTrigger) {
-          const geometry = getCursorGeometry()
-          if (geometry) {
-            setSkillMenuPosition({
-              top: geometry.rect.top - geometry.containerRect.top - 8,
-              left: geometry.rect.left - geometry.containerRect.left,
-            })
-            setShowSkillMenu(true)
-            setSkillQuery('')
-          }
-        } else if (showSkillMenu) {
-          // Update query or close menu if user continues typing after /
-          const words = text.split(/\s/)
-          const lastWord = words[words.length - 1]
-          if (lastWord.startsWith('/')) {
-            // Extract query after /
-            const query = lastWord.substring(1)
-            setSkillQuery(query)
-          } else {
-            setShowSkillMenu(false)
-            setSkillQuery('')
-          }
-        }
+      const selection = window.getSelection()
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+      if (!range?.collapsed || !e.currentTarget.contains(range.startContainer)) {
+        closeSkillMenu()
+        return
       }
+
+      if (
+        !skillCommand &&
+        range.startContainer.nodeType === Node.TEXT_NODE &&
+        range.startContainer.textContent?.[range.startOffset - 1] !== '/'
+      ) {
+        return
+      }
+
+      const prefixRange = range.cloneRange()
+      prefixRange.selectNodeContents(e.currentTarget)
+      prefixRange.setEnd(range.startContainer, range.startOffset)
+      const prefix = getTextWithNewlines(prefixRange.cloneContents())
+      const match = /(?:^|\s)\/(\S*)$/.exec(prefix)
+      if (!match || (match[1] && !skillCommand)) {
+        closeSkillMenu()
+        return
+      }
+
+      const end = prefix.length
+      const start = end - match[1].length - 1
+      let position = skillCommand?.start === start ? skillCommand.position : undefined
+      if (!position) {
+        const rect = range.getBoundingClientRect()
+        const containerRect = e.currentTarget.getBoundingClientRect()
+        position = { top: rect.top - containerRect.top - 8, left: rect.left - containerRect.left }
+      }
+      setSkillCommand({ draft: text, start, end, query: match[1], position })
     },
     [
       isInputDisabled,
@@ -486,8 +525,9 @@ export default function ChatInput({
       team,
       enableTaskMentions,
       showMentionMenu,
-      canSelectSkills,
-      showSkillMenu,
+      onSkillSelect,
+      skillCommand,
+      closeSkillMenu,
     ]
   )
 
@@ -541,49 +581,30 @@ export default function ChatInput({
     [onSelectConversation, replaceMentionQuery]
   )
 
-  // Handle skill selection from autocomplete
   const handleSkillSelect = useCallback(
     (skill: UnifiedSkill) => {
-      if (editableRef.current && onSkillSelect) {
-        const currentText = getTextWithNewlines(editableRef.current)
-        // Remove the /query from the text
-        const lastSlashIndex = currentText.lastIndexOf('/')
-        if (lastSlashIndex !== -1) {
-          // Find the position of / that triggered the menu
-          // Get text before the /
-          const textBefore = currentText.substring(0, lastSlashIndex)
-          // Get text after the / and find where the current word ends
-          const textAfterSlash = currentText.substring(lastSlashIndex + 1)
-          // Find the end of the current word (first whitespace after /)
-          const wordEndMatch = textAfterSlash.match(/^\S*/)
-          const currentWord = wordEndMatch ? wordEndMatch[0] : ''
-          const textAfterWord = textAfterSlash.substring(currentWord.length)
-          // Build new text: text before / + remaining text (remove the /query)
-          const newText = textBefore + textAfterWord.trimStart()
-          setMessage(newText)
-          setContentWithNewlines(editableRef.current, newText)
-        }
+      const input = editableRef.current
+      if (!input || !onSkillSelect || !skillCommand) return
 
-        // Call the skill selection callback
-        onSkillSelect(skill)
+      const { draft, start, end } = skillCommand
+      if (getTextWithNewlines(input) !== draft) return
 
-        // Move cursor to end
-        const selection = window.getSelection()
-        if (selection && editableRef.current) {
-          const range = document.createRange()
-          range.selectNodeContents(editableRef.current)
-          range.collapse(false)
-          selection.removeAllRanges()
-          selection.addRange(range)
-        }
-
-        // Focus back to input
-        editableRef.current.focus()
-        setShowSkillMenu(false)
-        setSkillQuery('')
-      }
+      const newText = draft.slice(0, start) + draft.slice(end)
+      setMessage(newText)
+      setContentWithNewlines(input, newText)
+      onSkillSelect(skill)
+      input.focus()
+      placeCaretInPlainText(input, start)
+      closeSkillMenu()
     },
-    [getTextWithNewlines, setMessage, setContentWithNewlines, onSkillSelect]
+    [
+      getTextWithNewlines,
+      setMessage,
+      setContentWithNewlines,
+      onSkillSelect,
+      skillCommand,
+      closeSkillMenu,
+    ]
   )
 
   const handlePaste = useCallback(
@@ -795,19 +816,16 @@ export default function ChatInput({
       )}
 
       {/* Skill autocomplete menu */}
-      {showSkillMenu && canSelectSkills && (
+      {skillCommand && canSelectSkills && (
         <SkillAutocomplete
           skills={availableSkills}
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
-          query={skillQuery}
+          query={skillCommand.query}
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
-          onClose={() => {
-            setShowSkillMenu(false)
-            setSkillQuery('')
-          }}
-          position={skillMenuPosition}
+          onClose={closeSkillMenu}
+          position={skillCommand.position}
           isChatShell={isChatShell}
           skillButtonRef={skillButtonRef}
           onTriggerFlyAnimation={handleTriggerFlyAnimation}
@@ -861,6 +879,7 @@ export default function ChatInput({
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
                     onFocus={handleFocus}
+                    onBlur={canSelectSkills ? undefined : closeSkillMenu}
                     data-testid="message-input"
                     data-team-id={team?.id}
                     data-roleid="message-input"

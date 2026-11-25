@@ -809,7 +809,6 @@ export function ChatInputCard({
               hasNoTeams={hasNoTeams}
               disabledReason={disabledReason}
               // Skill selector props for slash command
-              showSkillSelector={availableSkills && availableSkills.length > 0}
               availableSkills={availableSkills}
               teamSkillNames={teamSkillNames}
               preloadedSkillNames={preloadedSkillNames}
