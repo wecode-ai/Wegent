@@ -144,7 +144,7 @@ export default defineConfig({
       dependencies: ['setup'],
     },
     {
-      // Keep the existing CI entry point and run isolated files after device flows.
+      // Each CI project has its own services. Local combined runs keep their existing order.
       name: 'executor-chromium',
       testMatch: EXECUTOR_INDEPENDENT_SPEC,
       workers: 2,
@@ -153,7 +153,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
       },
-      dependencies: ['executor-device-chromium'],
+      dependencies: [process.env.E2E_EXECUTOR_PROJECT ? 'setup' : 'executor-device-chromium'],
     },
   ],
 

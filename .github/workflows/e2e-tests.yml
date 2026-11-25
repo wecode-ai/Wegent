@@ -73,7 +73,7 @@ jobs:
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: needs.changes.outputs.platform_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -101,7 +101,7 @@ jobs:
   prepare-platform-e2e-image:
     name: Prepare Platform E2E Image
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: needs.changes.outputs.platform_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -172,7 +172,7 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
+    if: (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -380,7 +380,7 @@ jobs:
     # Every fork still publishes a same-head binary artifact for desktop consumers.
     # Published immutable seeds can be pulled anonymously; unpublished fork images
     # retain the existing image-archive transport.
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || (needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository)))
+    if: (needs.changes.outputs.platform_e2e == 'true' || ((github.event_name == 'merge_group' && needs.changes.outputs.wework_desktop_e2e == 'true' || github.event_name == 'pull_request' && needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository))) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -1642,18 +1642,22 @@ jobs:
           retention-days: 7
 
   executor-e2e-tests:
-    name: Executor E2E Tests
+    name: Executor E2E Tests (${{ matrix.suite }})
     permissions:
       actions: read
       contents: read
       packages: read
-    needs:
-      [
-        build-executor-e2e-runtime,
-        prepare-platform-e2e-image,
-      ]
+    needs: [build-executor-e2e-runtime, prepare-platform-e2e-image]
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: device
+            project: executor-device-chromium
+          - suite: sandbox
+            project: executor-chromium
 
     services:
       mysql:
@@ -2004,6 +2008,7 @@ jobs:
             executor/local-executor.pid
 
       - name: Start Claude Code Compaction Executor
+        if: matrix.suite == 'device'
         env:
           EXECUTOR_MODE: local
           WEGENT_BACKEND_URL: http://localhost:8000
@@ -2086,15 +2091,8 @@ jobs:
             && wait_for_url http://localhost:8191/health \
             || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && cat backend/executor-recovery.log && exit 1)
 
-      - name: Verify backend is running
-        run: |
-          curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
-
-      - name: Verify Chat Shell is running
-        run: |
-          curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
-
       - name: Run Executor Manager resilience E2E tests
+        if: matrix.suite == 'device'
         working-directory: ./executor_manager
         env:
           E2E_REDIS_URL: redis://localhost:6379/15
@@ -2103,6 +2101,7 @@ jobs:
         run: uv run pytest e2e_tests/ --no-cov -v
 
       - name: Verify retired artifact revision against real MySQL
+        if: matrix.suite == 'device'
         working-directory: ./backend
         env:
           WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
@@ -2111,6 +2110,7 @@ jobs:
 
       - name: Run Executor E2E tests
         env:
+          E2E_EXECUTOR_PROJECT: ${{ matrix.project }}
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
@@ -2145,6 +2145,7 @@ jobs:
             --env E2E_BASE_URL \
             --env E2E_API_URL \
             --env E2E_USE_ISOLATED_USERS \
+            --env E2E_EXECUTOR_PROJECT \
             --env MOCK_MODEL_SERVER_URL \
             --env E2E_CLAUDE_MODEL_SERVER_URL \
             --env E2E_CODEX_MODEL_SERVER_URL \
@@ -2158,9 +2159,10 @@ jobs:
             --env GITHUB_RUN_ATTEMPT \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
+            node ./node_modules/@playwright/test/cli.js test --project="$E2E_EXECUTOR_PROJECT"
 
       - name: Run Responses device cancellation E2E
+        if: matrix.suite == 'device'
         working-directory: ./backend
         env:
           E2E_API_URL: http://127.0.0.1:8000
@@ -2172,6 +2174,7 @@ jobs:
       # Keep normal executor coverage on production thresholds. Replace only the
       # Backend after that suite, retaining its binaries, ports and dependencies.
       - name: Restart Backend for stalled Chat SSE regression
+        if: matrix.suite == 'sandbox'
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
@@ -2220,6 +2223,7 @@ jobs:
           exit 1
 
       - name: Run stalled Chat SSE regression
+        if: matrix.suite == 'sandbox'
         env:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
@@ -2335,12 +2339,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: blob-report-executor
+          name: blob-report-executor-${{ matrix.suite }}
           path: frontend/blob-report/
           retention-days: 14
 
       - name: Upload stalled Chat SSE test results
-        if: always()
+        if: always() && matrix.suite == 'sandbox'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: blob-report-executor-stalled
@@ -2351,7 +2355,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: playwright-traces-executor
+          name: playwright-traces-executor-${{ matrix.suite }}
           path: |
             frontend/test-results/
             frontend/test-results-stalled/
@@ -2361,7 +2365,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: backend-logs-executor
+          name: backend-logs-executor-${{ matrix.suite }}
           path: |
             backend/backend.log
             backend/executor-recovery.log
@@ -2393,12 +2397,13 @@ jobs:
     steps:
       - name: Check Platform E2E results
         env:
-          RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true') }}
+          RUN_E2E: ${{ needs.changes.outputs.platform_e2e == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
+          RUN_EXECUTOR_BUILD: ${{ (needs.changes.outputs.platform_e2e == 'true' || ((github.event_name == 'merge_group' && needs.changes.outputs.wework_desktop_e2e == 'true' || github.event_name == 'pull_request' && needs.changes.outputs.wework_desktop_e2e == 'true' && github.event.pull_request.head.repo.full_name != github.repository))) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           RUN_DELIVERY: ${{ needs.changes.outputs.backend_delivery_image == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-          RUN_BACKEND_RUNTIME: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true')) }}
+          RUN_BACKEND_RUNTIME: ${{ (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
           BACKEND_BUILD_RESULT: ${{ needs.build-backend-rs-e2e-runtime.result }}
           DELIVERY_BUILD_RESULT: ${{ needs.verify-backend-delivery-image.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
@@ -2426,12 +2431,15 @@ jobs:
             assert_success "$BACKEND_BUILD_RESULT" "Backend Rust E2E runtime"
           fi
 
+          if [[ "$RUN_EXECUTOR_BUILD" == "true" ]]; then
+            assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
+          fi
+
           if [[ "$RUN_E2E" != "true" ]]; then
-            echo "Platform E2E is not required for this pull request"
+            echo "Platform E2E is not required for this event"
             exit 0
           fi
 
           assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
-          assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"

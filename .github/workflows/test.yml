@@ -439,6 +439,26 @@ jobs:
           path: .ci-artifacts/backend-rs-tests/
           if-no-files-found: error
 
+  lint-backend-rs:
+    name: Lint Backend Rust
+    needs: changes
+    if: needs.changes.outputs.backend_rs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: backend-rs/Cargo.toml
+          components: clippy
+
       - name: Check Rust backend lints
         working-directory: backend-rs
         run: cargo clippy --locked --all-targets -- -D warnings
@@ -1118,6 +1138,7 @@ jobs:
         changes,
         test-backend,
         test-backend-rs,
+        lint-backend-rs,
         test-plugin-auth-mysql,
         test-executor,
         test-executor-local-auth-platforms,
@@ -1155,6 +1176,7 @@ jobs:
           fi
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
           assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
+          assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.lint-backend-rs.result }}" "Backend Rust lints"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor.result }}" "Executor tests"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor-local-auth-platforms.result }}" "Executor local auth platform tests"

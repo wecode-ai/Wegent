@@ -154,7 +154,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check Wework browser E2E image
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: steps.classify.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
         id: browser-image-check
         env:
           IMAGE: ${{ steps.image.outputs.browser-ref }}
@@ -166,7 +166,7 @@ jobs:
           fi
 
       - name: Check Wework desktop E2E image
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: steps.classify.outputs.wework_desktop_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
         id: desktop-image-check
         env:
           IMAGE: ${{ steps.image.outputs.desktop-ref }}
