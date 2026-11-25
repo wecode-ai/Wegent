@@ -6,14 +6,22 @@ import { synchronizeRuntimeConversation } from './runtimeConversationSynchroniza
 import { conversationOutcomePresentation } from '@/components/layout/workspace-panels/conversationOutcomePresentation'
 import i18n from '@/i18n'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
-import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
+import type { RuntimeTaskAddress } from '@/types/api'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { isRuntimeTurnRunningStatus } from './runtimeTaskLifecycle/projection'
 import type { WorkbenchServices } from './workbenchServices'
 import type { ReceivedAssistantMessage } from './runtimeTaskLifecycle/RuntimeMessageReceipts'
 
-function completedReplies(item: RuntimeTaskReminderItem): ReceivedAssistantMessage[] {
-  const turns = getRuntimeConversationTurns(item.address)
+export interface StandInMessageReminderIdentity {
+  key: string
+  address: RuntimeTaskAddress
+  title: string
+  standInId?: string
+  unread: boolean
+}
+
+function completedReplies(address: RuntimeTaskAddress): ReceivedAssistantMessage[] {
+  const turns = getRuntimeConversationTurns(address)
   if (!turns.length) return []
   const visible = conversationOutcomePresentation([], turns).turns
   return visible.flatMap((turn, index) => {
@@ -40,7 +48,7 @@ function completedReplies(item: RuntimeTaskReminderItem): ReceivedAssistantMessa
 
 /** Canonical conversation subscriptions publish the actual unread counts shown by the workbench. */
 export function createStandInMessageReminderSource(
-  identities: RuntimeTaskReminderItem[],
+  identities: StandInMessageReminderIdentity[],
   receipts: RuntimeTaskLifecycleStore['messageReceipts'],
   inApp: boolean,
   system: boolean,
@@ -74,19 +82,13 @@ export function createStandInMessageReminderSource(
           cleanups.forEach(cleanup => cleanup())
         }
         for (const item of identities) {
-          const origin = item.task.runtimeHandle?.origin as { standInId?: unknown } | undefined
-          const role = origin?.standInId
           const title =
-            typeof role === 'string' && role !== '@primary'
-              ? item.task.title
+            typeof item.standInId === 'string' && item.standInId !== '@primary'
+              ? item.title
               : i18n.t('common:standIn.title')
           const observe = () => {
             if (controller.signal.aborted) return
-            const incoming = receipts.observe(
-              item.key,
-              completedReplies(item),
-              item.lifecycle?.unread ?? false
-            )
+            const incoming = receipts.observe(item.key, completedReplies(item.address), item.unread)
             if (!inApp) receipts.markRead(item.key)
             if (system)
               for (const message of incoming) {
