@@ -651,7 +651,7 @@ function CollaborationPlatformAppContent({
       ) : (
         <div
           className={
-            host.renderIssueComposer && domainProjects.length
+            host.renderPersonalHome || (host.renderIssueComposer && domainProjects.length)
               ? 'collaboration-task-home-page'
               : 'collaboration-platform-page collaboration-home-page'
           }
@@ -690,6 +690,11 @@ function CollaborationPlatformAppContent({
             />
           ) : (
             <IssueHomeLauncher
+              embedded={Boolean(host.renderPersonalHome)}
+              onTaskCreated={(issue, task, confirmed) => {
+                const project = domainProjects.find(item => item.id === issue.cloud_project_id)
+                if (project) issueCreation.recordCreatedTask(project, issue, task, confirmed)
+              }}
               draft={host.issueHomeDraft}
               renderTaskComposer={
                 host.renderIssueComposer
