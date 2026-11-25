@@ -4,7 +4,7 @@ sidebar_position: 42
 
 # Wework Stand-in
 
-My Assistant requires a cloud connection. When disconnected, the assistant page offers a Connect cloud action. Connected devices read the same account’s Bot and Ghost definitions. Users can select an execution device for a conversation. Moving a role transfers its source connection settings. The destination needs the corresponding providers and authorization. Git webhook subscriptions transfer receiver ownership using the subscription generation. Delegated tasks retain the destination role’s device address and wait when that device is offline.
+My Assistant requires a cloud connection. When disconnected, the assistant page offers a Connect cloud action. Connected devices read the same account’s Bot and Ghost definitions. Users can select an execution device for a conversation. Moving a role transfers its source connection settings. The destination needs the corresponding providers and authorization. Git webhook subscriptions transfer receiver ownership using the subscription generation. The destination resumes from the last cloud-confirmed sequence. Delegated tasks retain the destination role’s device address and wait when that device is offline.
 
 ## Local project directories and startup failures
 

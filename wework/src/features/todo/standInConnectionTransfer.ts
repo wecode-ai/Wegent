@@ -9,7 +9,7 @@ export function transferredConnection(
   delete settings.pendingTakeover
   delete settings.resumePending
   if (settings.subscriptionId && settings.generation && settings.transport !== 'cli') {
-    return { ...settings, pendingTakeover: true }
+    return { ...settings, pendingTakeover: true, resumePending: true }
   }
   return settings
 }

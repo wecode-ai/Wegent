@@ -50,6 +50,7 @@ describe('moving a role with a bound webhook', () => {
       subscriptionId: 'subscription',
       generation: 'generation',
       pendingTakeover: true,
+      resumePending: true,
       policy: connection.policy,
     })
     expect(moved.connections?.[0].boundary).toBeUndefined()

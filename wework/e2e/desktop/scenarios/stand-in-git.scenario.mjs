@@ -160,10 +160,33 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           first.items[0].sequence
         )
         assert.ok(!JSON.stringify(listed).includes(created.secret))
+        const queuedDeliveryId = 'delivery-before-device-transfer'
+        await request(`/v1/git-connections/hooks/${created.id}`, 'POST', payload, 200, {
+          ...headers,
+          'x-github-delivery': queuedDeliveryId,
+        })
         const takeover = await request(base, 'PUT', { ...binding, deviceId: 'other-device' })
         cleanupBinding = { deviceId: 'other-device', generation: takeover.generation }
         await request(base, 'DELETE', binding, 409)
         await request(`${base}/events`, 'POST', { ...binding, after: 0 }, 409)
+        const deliveryId = 'delivery-after-device-transfer'
+        await request(`/v1/git-connections/hooks/${created.id}`, 'POST', payload, 200, {
+          ...headers,
+          'x-github-delivery': deliveryId,
+        })
+        const moved = await request(`${base}/events`, 'POST', {
+          ...cleanupBinding,
+          after: first.items[0].sequence,
+        })
+        assert.equal(moved.generation, takeover.generation)
+        assert.deepEqual(
+          moved.items.map(item => item.id),
+          [queuedDeliveryId, deliveryId]
+        )
+        await request(`${base}/ack`, 'POST', {
+          ...cleanupBinding,
+          sequence: moved.items.at(-1).sequence,
+        })
         await request(
           `${base}/ack`,
           'POST',
