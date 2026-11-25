@@ -1,6 +1,6 @@
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { isUsableDevice } from '@/lib/device-capabilities'
-import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
+import { isStandInCoordinatorTask, isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import type {
   DeviceInfo,
   RuntimeDeviceWorkspace,
@@ -291,15 +291,18 @@ function parsePersistedTask(value: unknown, workspacePath: string): PersistedRun
   if (!taskId || !title || !runtime) return null
 
   const gitInfo = sanitizeGitInfo(task.gitInfo)
-  const memoryReview = isStandInMemoryReviewTask({ runtimeHandle: recordValue(task.runtimeHandle) })
+  const identity = { runtimeHandle: recordValue(task.runtimeHandle) }
+  const origin = isStandInMemoryReviewTask(identity)
+    ? { type: 'stand_in_schedule', memoryReview: true }
+    : isStandInCoordinatorTask(identity)
+      ? { type: 'stand_in_coordinator' }
+      : undefined
   return {
     taskId,
     title,
     runtime: runtime as RuntimeTaskSummary['runtime'],
-    // Preserve visibility for offline work without storing the native runtime handle.
-    ...(memoryReview
-      ? { runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview } } }
-      : {}),
+    // Preserve visibility and reminder rules without storing the native runtime handle.
+    ...(origin ? { runtimeHandle: { origin } } : {}),
     workspacePath: stringValue(task.workspacePath) ?? workspacePath,
     ...(nullableStringValue(task.threadId) !== undefined
       ? { threadId: nullableStringValue(task.threadId) }

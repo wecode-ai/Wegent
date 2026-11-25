@@ -18,6 +18,28 @@ fn stand_in_work_signature(link: &RuntimeTaskLink) -> Value {
     ])
 }
 
+fn stand_in_work_needs_review(
+    state: &Value,
+    task_id: &str,
+    changed_at: i64,
+    signature: &Value,
+) -> bool {
+    let needs_followup = signature[1]
+        .as_str()
+        .is_some_and(|status| !status.is_empty())
+        || matches!(signature[0].as_str(), Some("failed" | "cancelled"))
+        || matches!(signature[3].as_str(), Some("failed" | "cancelled"));
+    needs_followup
+        && state["observed"].get(task_id).map_or_else(
+            || {
+                state["observedSince"]
+                    .as_i64()
+                    .is_some_and(|since| changed_at >= since)
+            },
+            |previous| previous != signature,
+        )
+}
+
 struct IntakeWorker {
     revision: String,
     result: tokio::task::JoinHandle<Result<Vec<Value>, AppIpcError>>,
@@ -464,9 +486,12 @@ impl RuntimeWorkRpcHandler {
     fn has_stand_in_work_change(&self, user: i64, state: &Value) -> bool {
         self.store.any_unarchived_task(|link| {
             stand_in_owns_work(link, user)
-                && state["observed"]
-                    .get(&link.local_task_id)
-                    .map_or(true, |previous| *previous != stand_in_work_signature(link))
+                && stand_in_work_needs_review(
+                    state,
+                    &link.local_task_id,
+                    link.updated_at.max(link.created_at),
+                    &stand_in_work_signature(link),
+                )
         })
     }
 
@@ -483,29 +508,14 @@ impl RuntimeWorkRpcHandler {
             |link| {
                 (
                     link.local_task_id.clone(),
-                    link.created_at,
+                    link.updated_at.max(link.created_at),
                     stand_in_work_signature(link),
                     link.runtime_handle["origin"]["standInId"].clone(),
                 )
             },
         );
-        for (task_id, created_at, signature, role_id) in work_states {
-            let changed = observed.get(&task_id).map_or_else(
-                || {
-                    state["observedSince"]
-                        .as_i64()
-                        .is_some_and(|since| created_at >= since)
-                        && (!signature[0].is_null()
-                            || !signature[1].is_null()
-                            || !signature[2].is_null()
-                            || matches!(
-                                signature[3].as_str(),
-                                Some("done" | "failed" | "cancelled")
-                            ))
-                },
-                |previous| *previous != signature,
-            );
-            if changed {
+        for (task_id, changed_at, signature, role_id) in work_states {
+            if stand_in_work_needs_review(state, &task_id, changed_at, &signature) {
                 store.enqueue_stand_in_event(user, json!(["work-state",task_id,signature]), json!({"kind":"work_state","taskId":task_id,"state":signature,"roleIds":[role_id]})).map_err(settings_error)?;
             }
             observed.insert(task_id, signature);
