@@ -337,6 +337,8 @@ export function createDesktopScenario({
         assert.equal(items.length, 1)
         assert.equal(items[0].availability.status, 'ready')
         await click('stand-in-website-add-source')
+        await control.command('waitFor', testId('stand-in-website-add-source'), { visible: false })
+        await captureScreenshot(control, 'website-05-assistant-source.png')
         await click('stand-in-primary-save')
         const saved = await storyUntil(
           () => rpc('runtime.stand_in.personal.get', { userId: STORY_USER }),
@@ -348,8 +350,10 @@ export function createDesktopScenario({
           item => item.providerId === items[0].id
         )
         source = { providerId, id, profile, kind }
-        await captureScreenshot(control, 'website-05-assistant-source.png')
         await openStoryPrimary(control, uiTimeoutMs)
+        await click('stand-in-onboarding-continue')
+        await click('stand-in-onboarding-complete')
+        await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
         const composer = `${STORY_CHAT} ${testId('chat-message-input')}`
         await control.command('fill', composer, { value: READ_INTENT })
         await control.command('press', composer, { key: 'Enter' })
