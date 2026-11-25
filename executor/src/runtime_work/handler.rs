@@ -858,6 +858,10 @@ impl RuntimeWorkRpcHandler {
             turns::RuntimeTurnQueueState::default()
         });
         quota_recovery::restore_dispatches(&mut persisted_turns);
+        quota_recovery::remove_goal_turns_shadowed_by_waits(
+            &persisted_turns.queued_turns,
+            &mut persisted_turns.active_goal_turns,
+        );
         for command in persisted_turns.commands.values_mut() {
             if command.is_owner_abandoned()
                 || matches!(
