@@ -1,6 +1,6 @@
 import { ChevronDown, FileText, Pencil, Search, SquareTerminal, Wrench } from 'lucide-react'
 import type { ReactNode, TransitionEvent } from 'react'
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { CompositedSpinner } from '../../issue-detail/CompositedSpinner'
 import { Button as ControlButton } from '../../markdown/Button'
 import { AssistantThinkingIndicator } from '../AssistantThinkingIndicator'
@@ -12,7 +12,7 @@ import type { FileEditDurationsByBlock } from './ToolFileChanges'
 import { type ToolActivityLabels } from './processingDisplayTypes'
 import { getProcessingDetailStateKey } from './processingExpansionState'
 import { isContextCompactionToolBlock, type ProcessingDisplayRow } from './toolBlockActivity'
-import type { SubagentBlock } from './types'
+import type { ProcessingBlock, SubagentBlock } from './types'
 import {
   useProcessingSummaryDuration,
   type ProcessingSummaryTiming,
@@ -168,12 +168,6 @@ export function LiveProcessingPreview({
       else next.delete(rowId)
       return next
     })
-    if (!expanded) {
-      requestAnimationFrame(() => {
-        const scrollArea = scrollRef.current
-        if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-      })
-    }
   }, [])
 
   useLayoutEffect(() => {
@@ -181,10 +175,14 @@ export function LiveProcessingPreview({
   }, [hasExpandedDetail, onExpandedDetailChange])
 
   useLayoutEffect(() => {
-    const scrollArea = scrollRef.current
-    if (!scrollArea) return
-    scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [rows.length, showThinking])
+    if (hasExpandedDetail) return
+    // Coalesce tool updates before reading layout for the preview's scroll position.
+    const frame = requestAnimationFrame(() => {
+      const scrollArea = scrollRef.current
+      if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [rows.length, showThinking, hasExpandedDetail])
 
   return (
     <div className="ml-2 min-w-0 border-l border-border pl-3" data-testid="processing-live-preview">
@@ -197,21 +195,31 @@ export function LiveProcessingPreview({
           overflowY: hasExpandedDetail ? 'visible' : 'auto',
         }}
       >
-        {rows.map(row => (
-          <LiveProcessingPreviewRow
-            key={row.id}
-            row={row}
-            onOpenWorkspaceFile={onOpenWorkspaceFile}
-            fileEditDurations={fileEditDurations}
-            onExpandedChange={updateExpandedRow}
-            stateKey={
-              detailStateScopeKey
-                ? getProcessingDetailStateKey(detailStateScopeKey, row.id)
-                : undefined
-            }
-            onOpenSubagent={onOpenSubagent}
-          />
-        ))}
+        {rows.map(row =>
+          row.type === 'activity_group' ? (
+            <div key={row.id} className="min-h-8 min-w-0 py-1">
+              <ToolActivityGroup
+                row={row}
+                initialExpanded={false}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            </div>
+          ) : (
+            <LiveProcessingPreviewRow
+              key={row.id}
+              block={row.block}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+              fileEditDurations={row.block.type === 'file_changes' ? fileEditDurations : undefined}
+              onExpandedChange={updateExpandedRow}
+              stateKey={
+                detailStateScopeKey
+                  ? getProcessingDetailStateKey(detailStateScopeKey, row.id)
+                  : undefined
+              }
+              onOpenSubagent={onOpenSubagent}
+            />
+          )
+        )}
         {showThinking ? (
           <div className="flex min-h-8 items-center py-1 text-sm" data-testid="tool-block-thinking">
             <AssistantThinkingIndicator
@@ -225,76 +233,46 @@ export function LiveProcessingPreview({
   )
 }
 
-function LiveProcessingPreviewRow({
-  row,
-  durationStartedAt,
-  durationEndAt,
+const LiveProcessingPreviewRow = memo(function LiveProcessingPreviewRow({
+  block,
   fileEditDurations,
   onOpenWorkspaceFile,
   onExpandedChange,
   stateKey,
   onOpenSubagent,
 }: {
-  row: ProcessingDisplayRow
-  durationStartedAt?: number
-  durationEndAt?: number
-  fileEditDurations: FileEditDurationsByBlock
+  block: ProcessingBlock
+  fileEditDurations?: FileEditDurationsByBlock
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
   stateKey?: string
   onOpenSubagent?: (block: SubagentBlock) => void
 }) {
   const handleExpandedChange = useCallback(
-    (expanded: boolean) => onExpandedChange(row.id, expanded),
-    [onExpandedChange, row.id]
+    (expanded: boolean) => onExpandedChange(block.id, expanded),
+    [onExpandedChange, block.id]
   )
+  const isTool = block.type === 'tool'
 
-  if (row.type === 'activity_group') {
-    return (
-      <div className="min-h-8 min-w-0 py-1">
-        <ToolActivityGroup
-          row={row}
-          initialExpanded={false}
-          onOpenWorkspaceFile={onOpenWorkspaceFile}
-        />
-      </div>
-    )
+  if (isTool && isContextCompactionToolBlock(block)) {
+    return <ContextCompactionIndicator block={block} />
   }
 
-  if (row.block.type === 'tool') {
-    if (isContextCompactionToolBlock(row.block)) {
-      return <ContextCompactionIndicator block={row.block} />
-    }
-
-    return (
-      <ToolBlockItem
-        block={row.block}
-        compact
-        durationStartedAt={durationStartedAt}
-        durationEndAt={durationEndAt}
-        fileEditDurations={fileEditDurations}
-        onOpenWorkspaceFile={onOpenWorkspaceFile}
-        onExpandedChange={handleExpandedChange}
-        stateKey={stateKey}
-      />
-    )
-  }
-
-  if (row.block.type === 'subagent') {
-    return <SubagentActivityGroup blocks={[row.block]} onOpenSubagent={onOpenSubagent} />
+  if (block.type === 'subagent') {
+    return <SubagentActivityGroup blocks={[block]} onOpenSubagent={onOpenSubagent} />
   }
 
   return (
     <ToolBlockItem
-      block={row.block}
-      durationStartedAt={durationStartedAt}
-      durationEndAt={durationEndAt}
+      block={block}
+      compact={isTool}
       fileEditDurations={fileEditDurations}
+      onOpenWorkspaceFile={isTool ? onOpenWorkspaceFile : undefined}
       onExpandedChange={handleExpandedChange}
       stateKey={stateKey}
     />
   )
-}
+})
 
 export function CollapsibleProcessingContent({
   expanded,

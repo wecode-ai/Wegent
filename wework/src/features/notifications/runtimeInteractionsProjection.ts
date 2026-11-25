@@ -35,6 +35,7 @@ export function selectPendingRuntimeInteractions({
   acceptancePrefix,
   isDismissed,
 }: PendingProjection): RuntimeInteraction[] {
+  if (!issueInteractions.items.length && !Object.keys(loaded).length) return []
   const visible = new Map(
     [...(source?.items ?? []), ...inventory]
       .filter(item => !isStandInMemoryReviewTask(item.task))

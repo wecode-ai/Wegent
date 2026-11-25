@@ -66,29 +66,45 @@ export function turnStatus(
   return turn.status;
 }
 
-/** Live completion closes the same wall-clock interval used by the running label. */
 export function completeRuntimeTurnTiming(
   turn: RuntimeConversationTurn,
-  source: { startedAt?: number; durationMs?: number },
+  source: Pick<
+    RuntimeConversationTurn,
+    "startedAt" | "completedAt" | "durationMs"
+  >,
 ): Pick<RuntimeConversationTurn, "startedAt" | "completedAt" | "durationMs"> {
+  const previousEnd = ["done", "failed", "cancelled"].includes(turn.status)
+    ? turn.completedAt
+    : undefined;
   if (
-    ["done", "failed", "cancelled"].includes(turn.status) &&
-    turn.completedAt !== null &&
-    turn.completedAt !== undefined
+    previousEnd != null &&
+    (source.durationMs ?? 0) <= (turn.durationMs ?? 0)
   ) {
     return {
       startedAt: turn.startedAt ?? source.startedAt,
-      completedAt: turn.completedAt,
+      completedAt: previousEnd,
       durationMs: turn.durationMs ?? source.durationMs,
     };
   }
-  const completedAt = Date.now();
+  const end = source.completedAt ?? previousEnd;
+  const recordedEnd = typeof end === "number" ? end : Date.parse(end ?? "");
+  const completedAt = Number.isFinite(recordedEnd) ? recordedEnd : Date.now();
+  const startedAt = turn.startedAt ?? source.startedAt;
+  const elapsed =
+    startedAt === undefined ? undefined : Math.max(0, completedAt - startedAt);
+  // Replay can deliver start and completion together. The elapsed time at the
+  // renderer may omit work that the executor already measured.
+  const durationMs =
+    source.durationMs !== undefined
+      ? Math.max(source.durationMs, elapsed ?? 0)
+      : elapsed;
   return {
-    startedAt: turn.startedAt ?? source.startedAt,
+    startedAt:
+      durationMs !== undefined &&
+      (elapsed === undefined || durationMs > elapsed)
+        ? completedAt - durationMs
+        : startedAt,
     completedAt: new Date(completedAt).toISOString(),
-    durationMs:
-      turn.startedAt === undefined
-        ? source.durationMs
-        : Math.max(0, completedAt - turn.startedAt),
+    durationMs,
   };
 }

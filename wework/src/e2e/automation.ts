@@ -43,6 +43,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import { composeDesktopInput } from './input-composition'
+import { recordComposerSubmitModel } from './composer-submit-model-diagnostics'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { decodeDesktopControlImage } from './desktop-control-image'
@@ -1396,6 +1397,7 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
+  recordComposerSubmitModel(element, keyboardEvent)
   for (const type of ['keydown', 'keyup']) {
     element.dispatchEvent(
       new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
@@ -1451,6 +1453,9 @@ async function pressNativeDesktopControlKey(
     : null
   const recordKey = (event: KeyboardEvent) => {
     recordNativeTerminalKey('native-event', key, element, event)
+    if (event.type === 'keydown' && event.target === element) {
+      recordComposerSubmitModel(element, event)
+    }
     if (event.key === expectedKey) observation?.record(event)
   }
   window.addEventListener(eventType, recordKey, true)
@@ -4211,7 +4216,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           element,
           command.value ?? '',
           command.by,
-          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+          command.includeOptionsOnError
         )
       })
     }

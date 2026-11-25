@@ -68,6 +68,7 @@ import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
 import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -86,6 +87,8 @@ export interface ProjectChatControls {
   requiresNewSession?: boolean
   onSessionStartConfirmed?(model: UnifiedModel): void
   selectedModelOptions: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
+  permissionError?: { message: string; dismiss(): void }
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
   trialPluginName?: string
@@ -649,11 +652,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     followUpBehavior,
     isStreaming,
   }
+  const dismissError = controls.permissionError?.dismiss ?? onDismissError
   const errorBanner = (
     <ComposerErrorBanner
-      error={error}
+      error={controls.permissionError?.message ?? error}
       action={
-        onDismissError && (
+        dismissError && (
           <Button
             type="button"
             variant="ghost"
@@ -662,7 +666,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             aria-label={t('workbench.dismiss_composer_error')}
             title={t('workbench.dismiss_composer_error')}
             data-testid="dismiss-chat-input-error"
-            onClick={onDismissError}
+            onClick={dismissError}
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </Button>
@@ -762,6 +766,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             selectedModel={controls.selectedModel}
             activeModel={controls.activeModel}
             selectedModelOptions={controls.selectedModelOptions}
+            permissionControls={controls.permissionControls}
             modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
             onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
             isModelSelectionReady={controls.isModelSelectionReady ?? true}
@@ -945,6 +950,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           selectedModel={controls.selectedModel}
           activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
+          permissionControls={controls.permissionControls}
           onSelectModel={model => requestModelSelection(model)}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}

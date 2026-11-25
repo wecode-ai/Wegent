@@ -1,12 +1,12 @@
 import type { RuntimeWorkListResponse } from '@/types/api'
-import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import { getDesktopE2EInjectedConfig } from '@/e2e/runtime-config'
 
 export function debugRuntimeSidebarState(
   event: string,
   details: Record<string, unknown> | (() => Record<string, unknown> | null)
 ): void {
   if (
-    !getDesktopE2ERuntimeConfig().controlUrl &&
+    !getDesktopE2EInjectedConfig().controlUrl &&
     globalThis.localStorage?.getItem('wework:debug-runtime') !== '1'
   )
     return

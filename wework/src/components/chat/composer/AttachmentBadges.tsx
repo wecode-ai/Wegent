@@ -6,7 +6,7 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 import { ComposerAttachmentBadges } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { MessageSquare, X } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CodeCommentPreview } from '../CodeCommentPreview'
 import { useAttachmentImageServices } from '../useAttachmentImageServices'
 import { useAttachmentPreview } from '../useAttachmentPreview'
@@ -76,6 +76,17 @@ export function AttachmentBadges({
   const imageServices = useAttachmentImageServices()
   const openPreview = useAttachmentPreview()
   const [openError, setOpenError] = useState<{ filename: string; message: string } | null>(null)
+  const labels = useMemo(
+    () => ({
+      removeAttachment: t('workbench.task_activity_attachment_remove'),
+      showText: t('workbench.show_text_attachment_in_composer'),
+      addingText: t('workbench.adding_pasted_text_attachment'),
+      dismissError: t('workbench.dismiss_attachment_error'),
+      pastedText: t('workbench.pasted_text_attachment'),
+      appshot: t('workbench.appshot_attachment_label', '应用快照'),
+    }),
+    [t]
+  )
   const openAttachment = async (attachment: Attachment) => {
     setOpenError(null)
     if (
@@ -128,14 +139,7 @@ export function AttachmentBadges({
             ? new Map([...props.errors, [openError.filename, openError.message]])
             : props.errors
         }
-        labels={{
-          removeAttachment: t('workbench.task_activity_attachment_remove'),
-          showText: t('workbench.show_text_attachment_in_composer'),
-          addingText: t('workbench.adding_pasted_text_attachment'),
-          dismissError: t('workbench.dismiss_attachment_error'),
-          pastedText: t('workbench.pasted_text_attachment'),
-          appshot: t('workbench.appshot_attachment_label', '应用快照'),
-        }}
+        labels={labels}
         leading={
           codeComments.length ? (
             <CodeCommentBadge comments={codeComments} onRemove={onClearCodeComments} />

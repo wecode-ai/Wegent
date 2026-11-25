@@ -23,7 +23,14 @@ async fn request(
     #[session] session: &wegent_runtime_work::Ownership,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
-    let ack = runtime_request::handle(app, user.identity(), session, data).await?;
+    let ack = runtime_request::handle(
+        app,
+        user.identity(),
+        user.credential_expires_at(),
+        session,
+        data,
+    )
+    .await?;
     Ok(Reply::payload(ack))
 }
 

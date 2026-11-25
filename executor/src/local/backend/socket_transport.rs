@@ -21,9 +21,11 @@ use tf_rust_socketio::{
 };
 use tokio::sync::oneshot;
 
+use crate::logging::{format_executor_log, write_executor_log_line};
+
 use super::{
     ConnectionClosedHandler, EventHandler, LocalBackendConfig, LocalBackendTransport,
-    TransportFuture, DEVICE_SYNC_CAPABILITIES_EVENT,
+    TransportFuture, DEVICE_SYNC_CAPABILITIES_EVENT, RUNTIME_RPC_EVENT,
 };
 
 const NAMESPACE: &str = "/local-executor";
@@ -111,14 +113,16 @@ impl SocketIoTransport {
         event: &str,
         ack_id: i32,
         payload: Value,
-    ) {
+    ) -> bool {
         if let Err(error) = socket.ack_with_id(ack_id, payload).await {
             eprintln!(
                 "local backend {}",
                 format_socket_error("ack", Some(event), &error)
             );
             self.invalidate_generation(generation).await;
+            return false;
         }
+        true
     }
 
     async fn connected_socket(&self) -> Result<ConnectedSocket, String> {
@@ -219,9 +223,33 @@ impl SocketIoTransport {
                     dispatch_handler(run_in_background, async move {
                         let ack_id = payload.ack_id();
                         let value = payload_to_value(payload);
+                        let request_id = value
+                            .get("request_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("-")
+                            .to_owned();
                         let ack_payload = handler(value).await;
+                        if handler_event == RUNTIME_RPC_EVENT {
+                            write_executor_log_line(&format_executor_log(
+                                "runtime:rpc ack prepared",
+                                &[
+                                    ("request_id", request_id.clone()),
+                                    (
+                                        "ack_id",
+                                        ack_id.map_or_else(|| "-".to_owned(), |id| id.to_string()),
+                                    ),
+                                    (
+                                        "response_bytes",
+                                        ack_payload
+                                            .as_ref()
+                                            .map_or(0, |response| response.to_string().len())
+                                            .to_string(),
+                                    ),
+                                ],
+                            ));
+                        }
                         if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
-                            ack_transport
+                            let submitted = ack_transport
                                 .acknowledge(
                                     generation,
                                     &socket,
@@ -230,6 +258,12 @@ impl SocketIoTransport {
                                     ack_payload,
                                 )
                                 .await;
+                            if submitted && handler_event == RUNTIME_RPC_EVENT {
+                                write_executor_log_line(&format_executor_log(
+                                    "runtime:rpc ack submitted",
+                                    &[("request_id", request_id)],
+                                ));
+                            }
                         }
                     })
                     .await;

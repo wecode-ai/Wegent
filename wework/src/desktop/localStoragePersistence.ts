@@ -47,6 +47,7 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
 
 export async function flushDesktopLocalStoragePersistence(): Promise<void> {
   if (flushScheduled) flushPendingChanges()
+  else if (writeFailure !== null) enqueueStorageUpdate()
   await writeQueue
   if (writeFailure !== null) throw writeFailure
 }
@@ -182,9 +183,14 @@ function flushPendingChanges(): void {
     changes: new Map(),
   }
   if (!update.clear && update.changes.size === 0) return
+  enqueueStorageUpdate(update)
+}
 
+function enqueueStorageUpdate(update?: PendingStorageUpdate): void {
   writeQueue = writeQueue.then(async () => {
-    const persistedUpdate = retryUpdate ? mergeUpdates(retryUpdate, update) : update
+    const persistedUpdate =
+      retryUpdate && update ? mergeUpdates(retryUpdate, update) : (update ?? retryUpdate)
+    if (!persistedUpdate) return
     retryUpdate = null
     try {
       await invokeDesktopHost('rendererStorage.update', {

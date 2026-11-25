@@ -22,16 +22,31 @@ function isEmptyXdotoolSearch(error) {
   return error?.code === 1 && !(error.stderr ?? '').trim()
 }
 
+function isInterruptedXdotoolSearch(error) {
+  const stderr = error?.stderr ?? ''
+  return (
+    isVanishedX11Window(error) ||
+    (error?.code === 1 &&
+      /BadDrawable \(invalid Pixmap or Window parameter\)/.test(stderr) &&
+      /\(X_GetGeometry\)/.test(stderr))
+  )
+}
+
 async function xdotoolSearch(args, timeoutMs) {
-  try {
-    const { stdout } = await execute('xdotool', ['search', ...args], {
-      encoding: 'utf8',
-      timeout: timeoutMs,
-    })
-    return stdout.trim().split(/\s+/).filter(Boolean)
-  } catch (error) {
-    if (isEmptyXdotoolSearch(error) || isVanishedX11Window(error)) return []
-    throw error
+  const deadline = performance.now() + timeoutMs
+  let timeout = timeoutMs
+  while (true) {
+    try {
+      const { stdout } = await execute('xdotool', ['search', ...args], {
+        encoding: 'utf8',
+        timeout,
+      })
+      return stdout.trim().split(/\s+/).filter(Boolean)
+    } catch (error) {
+      if (isEmptyXdotoolSearch(error)) return []
+      timeout = Math.ceil(deadline - performance.now())
+      if (!isInterruptedXdotoolSearch(error) || timeout <= 0) throw error
+    }
   }
 }
 

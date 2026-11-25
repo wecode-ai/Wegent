@@ -138,7 +138,31 @@ export function createTrainingModel() {
       const orders = judged.get(payload.scene) ?? []
       orders.push([payload.A, payload.B])
       judged.set(payload.scene, orders)
-      reply = { winner: payload.A.startsWith('When') ? 'A' : 'B', reason: 'Asks about onset.' }
+      const dimensions = answer => {
+        const clarified = answer.startsWith('When')
+        return {
+          intent: { score: 'insufficient', evidence: 'The scene only reports a symptom.' },
+          verification: {
+            score: clarified ? 2 : 0,
+            evidence: clarified ? 'Asks when the delay began.' : 'Restarts without checking.',
+          },
+          judgment: { score: 'insufficient', evidence: 'Neither answer diagnoses the cause.' },
+          actionability: {
+            score: 'insufficient',
+            evidence: 'The record lacks prerequisites for an intervention.',
+          },
+          clarity: {
+            score: clarified ? 2 : 1,
+            evidence: clarified ? 'Names the missing time.' : 'Restart target is unclear.',
+          },
+        }
+      }
+      reply = {
+        winner: payload.A.startsWith('When') ? 'A' : 'B',
+        reason: 'Asks about onset.',
+        A: dimensions(payload.A),
+        B: dimensions(payload.B),
+      }
     }
     return [assistantMessage(JSON.stringify(reply))]
   }

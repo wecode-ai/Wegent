@@ -39,6 +39,7 @@ enum DispatchState {
 struct DispatchUpdate {
     state: DispatchState,
     reason_code: Option<String>,
+    failure_code: Option<String>,
     observed_at: chrono::DateTime<chrono::Utc>,
     public_message_id: Option<String>,
 }
@@ -157,19 +158,20 @@ async fn acknowledge_assignment(
     struct LockedRow {
         id: String,
         cloud_project_id: String,
+        title: Option<String>,
     }
-    let written = mysql
+    let (written, notification) = mysql
         .with_transaction(async |tx| {
             // Assignment changes take the same Issue lock; no activity range is read or locked.
-            let locked: Vec<LockedRow> = tx
-                .fetch_all(
-                    "SELECT id,cloud_project_id FROM loop_items WHERE id = ? AND resource_type = 'task' FOR UPDATE",
+            let locked: Option<LockedRow> = tx
+                .fetch_optional(
+                    "SELECT id,cloud_project_id,title FROM loop_items WHERE id = ? AND resource_type = 'task' FOR UPDATE",
                     (item_id,),
                 )
                 .await?;
-            if !locked.iter().any(|row| row.id == item_id) {
-                return Ok(false);
-            }
+            let Some(locked) = locked.filter(|row| row.id == item_id) else {
+                return Ok((false, None));
+            };
             let assignment: Option<ReceiptRow> = tx
                 .fetch_optional(
                     format!("{RECEIPT_QUERY} AND active.id = ? AND event.id = ? FOR UPDATE"),
@@ -181,13 +183,13 @@ async fn acknowledge_assignment(
                 )
                 .await?;
             if require_active_recipient(assignment.as_ref(), user.id).is_err() {
-                return Ok(false);
+                return Ok((false, None));
             }
             if let Some(update) = payload.dispatch.as_ref() {
                 let previous = assignment.as_ref().and_then(ReceiptRow::metadata).and_then(|row| row.dispatch_receipt.as_ref());
-                if !accept_update(previous, &payload) { return Ok(false); }
+                if !accept_update(previous, &payload) { return Ok((false, None)); }
                 let public_result = if update.state == DispatchState::Completed {
-                    let Some(result) = public_result_on(tx, item_id, assignment_id, user.id, &payload).await? else { return Ok(false) };
+                    let Some(result) = public_result_on(tx, item_id, assignment_id, user.id, &payload).await? else { return Ok((false, None)) };
                     Some(result)
                 } else { None };
                 let confirmed = if let Some(result) = &public_result {
@@ -202,7 +204,7 @@ async fn acknowledge_assignment(
                     Some("awaiting_delivery")
                 } else { None };
                 let receipt = json!({
-                    "projectId":locked[0].cloud_project_id,"issueId":item_id,
+                    "projectId":locked.cloud_project_id,"issueId":item_id,
                     "humanAssignmentId":wegent_project_coordination::loop_tasks::human_task_binding::direct_human_assignment_id(item_id,assignment_id),
                     "ownerUserId":user.id,"state":if waiting_reason.is_some() { json!(DispatchState::WaitingUser) } else { json!(update.state) },"reasonCode":waiting_reason.map(|reason|json!(reason)).unwrap_or_else(||json!(update.reason_code)),
                     "runtimeTaskId":payload.task_id.as_ref().map(|task|json!(task)).unwrap_or_else(||previous.map(|row|row["runtimeTaskId"].clone()).unwrap_or(Value::Null)),
@@ -210,16 +212,29 @@ async fn acknowledge_assignment(
                     "observedAt":update.observed_at,"updatedAt":timestamp,
                 });
                 persist_dispatch_receipt(tx, item_id, assignment_id, receipt).await?;
-            }
-            if payload.dispatch.as_ref().is_some_and(|update| update.state == DispatchState::BlockedPolicy) || unbound_failure(&payload) {
-                return Ok(true);
+                if unbound_failure(&payload) {
+                    let notification = if previous.is_some_and(|row| {
+                        row["state"] == "failed" && row["reasonCode"] == "execution_rejected"
+                    }) {
+                        None
+                    } else {
+                        Some(wegent_project_notifications::stand_in_start_failure_on(
+                            tx, i64::from(user.id), &locked.cloud_project_id, item_id,
+                            locked.title.as_deref().unwrap_or(item_id), update.failure_code.as_deref()
+                        ).await?)
+                    };
+                    return Ok((true, notification));
+                }
+                if update.state == DispatchState::BlockedPolicy {
+                    return Ok((true, None));
+                }
             }
             tx.execute(
             "UPDATE loop_items SET metadata = JSON_INSERT(COALESCE(metadata, JSON_OBJECT()), ?, ?) \
              WHERE id = ? AND loop_item_id = ? AND resource_type = 'comment'",
             (format!("$.{field}"), timestamp.as_str(), assignment_id, item_id),
         ).await?;
-            Ok(true)
+            Ok((true, None))
         })
         .await
         .map_err(internal)?;
@@ -228,6 +243,15 @@ async fn acknowledge_assignment(
             StatusCode::CONFLICT,
             "Assignment, observation or public result is no longer valid",
         ));
+    }
+    if let Some(notification) = notification {
+        wegent_project_notifications::deliver(
+            mysql,
+            state.redis.as_ref(),
+            state.local_emit.as_ref(),
+            notification,
+        )
+        .await;
     }
     Ok(json!({"acknowledged": true}))
 }

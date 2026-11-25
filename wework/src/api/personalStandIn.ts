@@ -1,4 +1,8 @@
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import type {
+  RuntimeCommandApprovalMode,
+  RuntimePermissionMode,
+} from '@wegent/chat-core/runtime-permission'
 
 export interface StandInProjectRef {
   id: string
@@ -41,6 +45,11 @@ export interface StandInProjectPolicy extends StandInProjectRef {
   policy: StandInHandlingPolicy
 }
 
+export interface StandInTaskPermissions {
+  permissionMode: RuntimePermissionMode
+  commandApproval?: RuntimeCommandApprovalMode
+}
+
 export interface StandInIdentity extends Partial<
   Pick<WorkspaceStandInSettings, 'model' | 'modelOptions' | 'workspace'>
 > {
@@ -48,6 +57,7 @@ export interface StandInIdentity extends Partial<
   selfLearningEnabled?: boolean
   prompt: string
   preferences: string
+  taskPermissions?: StandInTaskPermissions
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
@@ -57,6 +67,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   id: string
   selfLearningEnabled?: boolean
   name: string
+  taskPermissions?: StandInTaskPermissions
   migrationSource?: string
   previousExecutionDevices?: string[]
   calendar?: { policy: StandInHandlingPolicy }
@@ -65,6 +76,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
     enabled: boolean
     allProjects: boolean
     includeIndependentIssues?: boolean
+    includeParticipatingIssues?: boolean
     projects: StandInProjectRef[]
     excludedProjects: StandInProjectRef[]
     tags: string[]

@@ -159,7 +159,9 @@ impl RuntimeWorkRpcHandler {
         if !settings["lifecycle"]["status"].is_null() {
             return Ok(());
         }
-        let configs = self.stand_in_project_configs(&[settings], project, "cloud");
+        let configs = self
+            .cloud_issue_intake_configs(&[settings], user, project, issue_id)
+            .await?;
         let issue = self
             .runtime_http(
                 reqwest::Method::GET,

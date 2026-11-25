@@ -196,6 +196,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
+    deduplicate_by_document: bool = Field(default=False, strict=True)
     authorized_resources: list[RemoteAuthorizedRetrievalResources] | None = None
     knowledge_base_retrieval_overrides: (
         list[RemoteKnowledgeBaseRetrievalOverride] | None

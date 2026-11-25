@@ -39,6 +39,7 @@ pub(crate) mod remote_task_access;
 mod response;
 mod restored_workspaces;
 mod runtime_handle_messages;
+mod stand_in_task_permissions;
 pub(crate) mod store;
 mod task_create_contract;
 mod transcript;

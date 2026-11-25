@@ -22,12 +22,24 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         role: Option<&str>,
         latest_revision: bool,
+        learning_report: bool,
     ) -> Result<Value, AppIpcError> {
         self.verify_local_stand_in_owner(user)?;
         let settings = store
             .configured_personal_stand_in(user, &self.device_id)
             .map_err(super::stand_in::settings_error)?;
         let device = self.local_stand_in_role_device(&settings, role.unwrap_or("@primary"));
+        if learning_report {
+            let device = device.ok_or_else(|| {
+                AppIpcError::new(
+                    "permission_denied",
+                    "Learning report belongs to another executor",
+                )
+            })?;
+            return store
+                .ghost_learning_report(user, &device, role)
+                .map_err(super::stand_in::settings_error);
+        }
         match (device, latest_revision) {
             (Some(device), true) => store.latest_applied_ghost(user, &device, role),
             (Some(device), false) => store.stand_in_proposal_for_device(user, &device, role),

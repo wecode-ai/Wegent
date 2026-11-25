@@ -1,6 +1,5 @@
 import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 
 export interface UnlistedTaskCandidate {
@@ -17,8 +16,7 @@ interface Retry {
 
 /** One API owner discovers hidden executions and owns their bounded read retries. */
 export function createUnlistedStandInTasksSource(
-  reader: StandInExecutorApi | undefined,
-  runtimeApi: WorkbenchServices['runtimeWorkApi']
+  reader: Pick<StandInExecutorApi, 'readTask'> | undefined
 ) {
   let loaded = new Map<string, RuntimeTaskReminderItem>()
   const attempted = new Map<string, string>()
@@ -52,7 +50,7 @@ export function createUnlistedStandInTasksSource(
     retries.add(retry)
   }
   const read = async (candidate: UnlistedTaskCandidate, attempt: number, owner: number) => {
-    if (!reader || !runtimeApi || !current(candidate, owner)) return
+    if (!reader || !current(candidate, owner)) return
     try {
       const result = await reader.readTask(candidate.address.deviceId, candidate.address.taskId)
       if (!current(candidate, owner)) return
@@ -62,24 +60,11 @@ export function createUnlistedStandInTasksSource(
         publish(next)
         return
       }
-      const response = await runtimeApi.getRuntimeTranscript({
-        ...candidate.address,
-        limit: 1,
-        includeFullContent: false,
-      })
-      if (!current(candidate, owner)) return
-      if (
-        response.origin?.initiatedBy !== 'stand_in' &&
-        !isPersonalStandInTask({
-          task: { ...result.task, runtimeHandle: { origin: response.origin } },
-        })
-      ) {
-        if (response.origin) ordinary.add(candidate.key)
+      const task = result.task
+      const origin = task.runtimeHandle?.origin as { initiatedBy?: string } | undefined
+      if (origin?.initiatedBy !== 'stand_in' && !isPersonalStandInTask({ task })) {
+        if (origin) ordinary.add(candidate.key)
         return
-      }
-      const task = {
-        ...result.task,
-        runtimeHandle: { ...result.task.runtimeHandle, origin: response.origin },
       }
       const item: RuntimeTaskReminderItem = {
         key: candidate.key,
@@ -113,7 +98,7 @@ export function createUnlistedStandInTasksSource(
           schedule(retry.candidate, retry.attempt, retry.dueAt)
       }
       suspended = []
-      if (reader && runtimeApi) {
+      if (reader) {
         for (const candidate of pending) {
           if (ordinary.has(candidate.key) || attempted.get(candidate.key) === candidate.signature)
             continue

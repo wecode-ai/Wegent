@@ -382,6 +382,15 @@ export function createDesktopScenario({
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCount)
+      // Reload opens the conversation at the latest turn. Mount the original
+      // virtualized tool row before checking its restored document.
+      const scroller =
+        '[data-active-workbench-pane="true"] [data-testid="desktop-workbench-content"]'
+      await control.command('waitFor', scroller + ' [data-testid="message-assistant"]', {
+        text: activeCase.completion,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('scrollToRatioAsUser', scroller, { value: '0' })
       await control.command(
         'waitFor',
         original + ' [data-testid="mcp-app-frame"][data-ready="true"]',
