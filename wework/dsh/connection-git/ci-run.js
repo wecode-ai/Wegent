@@ -1,3 +1,11 @@
+export const GITLAB_TERMINAL_PIPELINE_STATUSES = [
+  'success',
+  'failed',
+  'canceled',
+  'skipped',
+  'manual',
+]
+
 export async function readCiRun(ctx, target, { parseProfile, invalid }) {
   const { instance } = parseProfile(target.profile)
   const github = target.platform === 'github'
@@ -66,7 +74,7 @@ export async function collectCiRun(ctx, source, next, target, helpers) {
     ? old.digest !== version
     : github
       ? data.status === 'completed'
-      : ['success', 'failed', 'canceled', 'skipped', 'manual'].includes(data.status)
+      : GITLAB_TERMINAL_PIPELINE_STATUSES.includes(data.status)
   const objectId = helpers.fingerprint([source.profile, source.id, target.url])
   const events = changed
     ? [

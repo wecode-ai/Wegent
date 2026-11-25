@@ -181,6 +181,28 @@ async function loadSourceMaps(command, events, profile) {
   return { maps, errors }
 }
 
+export async function resolveCpuProfileLocations(client, target, profile) {
+  const command = method => client({ action: 'command', target, method })
+  await command('Runtime.enable')
+  await command('Debugger.enable')
+  const { events, lost } = await collectProtocolEvents(client, target)
+  const { maps, errors } = await loadSourceMaps(
+    (method, params) => client({ action: 'command', target, method, params }),
+    events,
+    profile
+  )
+  return {
+    locations: Object.fromEntries(
+      profile.nodes.flatMap(({ id, callFrame }) => {
+        const location = sourceLocation(callFrame, maps)
+        return location.mapped ? [[id, location]] : []
+      })
+    ),
+    lostEvents: lost,
+    sourceMapErrors: errors,
+  }
+}
+
 export function sourceLocation(frame, maps = new Map()) {
   const generated = { url: frame.url, line: frame.lineNumber + 1, column: frame.columnNumber + 1 }
   const entry = maps.get(frame.scriptId)

@@ -62,7 +62,7 @@ test('attributes a main-thread long task to the matching native turn update', as
       status: 'started',
       observedAt: 25,
       longTaskMs: 180,
-      longTaskStartAt: 20,
+      longTaskStartMs: 20,
       afterDeliveryAt: 55,
     },
     { status: 'settled', observedAt: 500, longTaskMs: 0 },

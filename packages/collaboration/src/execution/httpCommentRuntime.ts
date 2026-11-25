@@ -24,6 +24,18 @@ type RuntimeApi = Pick<
   'createRuntimeTask' | 'sendRuntimeMessage'
 >
 
+function isRuntimeCreateHttpRejection(cause: unknown): boolean {
+  // The HTTP endpoint validates the request and the execution target before dispatch.
+  // Gateway failures can occur after the executor has already accepted the task.
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    'status' in cause &&
+    typeof cause.status === 'number' &&
+    [400, 403, 404, 422].includes(cause.status)
+  )
+}
+
 /** HTTP host port for the PC comment orchestration, with the same pre-dispatch bindings. */
 export function createHttpCommentRuntime(
   api: RuntimeApi,
@@ -75,7 +87,10 @@ export function createHttpCommentRuntime(
         rollback = await options.prepareRuntimeTask?.(address)
         await options.onRuntimeTaskOptimisticOpen?.(address)
         dispatched = true
-        const response = await api.createRuntimeTask(request)
+        const response = await api.createRuntimeTask(request).catch((cause: unknown) => {
+          if (isRuntimeCreateHttpRejection(cause)) dispatched = false
+          throw cause
+        })
         if (!response.accepted) {
           dispatched = false
           throw new Error(response.error || 'Runtime did not accept task creation')

@@ -1,4 +1,4 @@
-import { collectCiRun } from './ci-run.js'
+import { collectCiRun, GITLAB_TERMINAL_PIPELINE_STATUSES } from './ci-run.js'
 
 const PENDING_STATUS_INTERVAL_MS = 15_000
 const STATUS_CHECK_DETAILS_INTERVAL_MS = 60_000
@@ -147,11 +147,13 @@ export function createTrackedCollector(helpers) {
       )
     // The status read and the checks read have separate collection deadlines.
     // Expire a failed checks phase so it cannot indefinitely delay fresh status.
+    const github = platform === 'github'
     const currentStatus = next.resourceStates?.[target.url]
     const statusObservedAt = Date.parse(currentStatus?.observedAt)
     const statusRefreshAt = statusObservedAt + PENDING_STATUS_INTERVAL_MS
     const readChecks =
       statusWait &&
+      github &&
       !force &&
       next.pendingStatusChecks === true &&
       Date.now() < statusObservedAt + 45_000
@@ -163,20 +165,23 @@ export function createTrackedCollector(helpers) {
         operation: 'change_request_status',
         repositoryId: source.id,
       })
-      const sha = data.headRefOid
-      if (data.url !== target.url || !/^[0-9a-f]{40}$/i.test(sha ?? ''))
+      const sha = github ? data.headRefOid : (data.sha ?? data.diff_refs?.head_sha)
+      if ((github ? data.url : data.web_url) !== target.url || !/^[0-9a-f]{40}$/i.test(sha ?? ''))
         throw invalid('Observed change request identity or revision changed during collection')
       const event = projectStatus(platform, source, next, target, data, sha, helpers)
       if (target.sha !== sha || next.pendingStatusChecks !== false) next.page = 1
       if (target.sha !== sha) delete next.nextStatusChecksAt
       target.sha = sha
       delete target.baseline
-      const statusPending =
-        data.state === 'OPEN' &&
-        !['SUCCESS', 'FAILURE', 'ERROR'].includes(data.statusCheckRollup?.state)
+      const statusPending = github
+        ? data.state === 'OPEN' &&
+          !['SUCCESS', 'FAILURE', 'ERROR'].includes(data.statusCheckRollup?.state)
+        : data.state === 'opened' &&
+          (data.head_pipeline?.sha !== sha ||
+            !GITLAB_TERMINAL_PIPELINE_STATUSES.includes(data.head_pipeline?.status))
       if (!statusPending) delete next.nextStatusChecksAt
       const observedAt = Date.parse(next.resourceStates[target.url].observedAt)
-      next.pendingStatusChecks = statusPending && !(next.nextStatusChecksAt > observedAt)
+      next.pendingStatusChecks = github && statusPending && !(next.nextStatusChecksAt > observedAt)
       next.nextCheckAt = next.pendingStatusChecks
         ? 0
         : observedAt + (statusPending ? PENDING_STATUS_INTERVAL_MS : 60_000)
