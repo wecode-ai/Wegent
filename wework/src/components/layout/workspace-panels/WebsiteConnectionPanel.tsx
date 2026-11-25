@@ -452,8 +452,8 @@ export function WebsiteConnectionPanel({
           </p>
           <p className="text-text-secondary">
             {t('workbench.web_connection_observation_window', {
-              since: new Date(stage.trial.observationWindow.since).toLocaleString(),
-              until: new Date(stage.trial.observationWindow.until).toLocaleString(),
+              since: new Date(stage.trial.observationWindow.since).toLocaleString(i18n.language),
+              until: new Date(stage.trial.observationWindow.until).toLocaleString(i18n.language),
             })}
           </p>
           {thresholdField && (
