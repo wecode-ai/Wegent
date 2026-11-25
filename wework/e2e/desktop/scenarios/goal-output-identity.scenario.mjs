@@ -353,13 +353,17 @@ export function createDesktopScenario(options) {
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
         )
+        phase = 'reopen-completed-conversation'
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await waitForWorkbenchDebugState(
           control,
-          snapshot => snapshot.pane?.transcript?.loading === false,
-          'The final history did not finish loading'
+          snapshot =>
+            snapshot.pane?.currentRuntimeTask?.taskId === address.taskId &&
+            snapshot.pane?.transcript?.loading === false,
+          'The completed task and its history did not load in the active pane'
         )
+        await waitText(FINAL)
         const completedTranscript = await transcript()
         recoveryEvidence.beforeCompletedRestart = {
           transcript: completedTranscript,

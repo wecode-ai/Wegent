@@ -136,11 +136,19 @@ export function createDesktopLayoutSession(
       state.setImNotificationSettings(settings)
     return settings
   }
-  function activateBlankComposer() {
-    if (!isHeld()) return
+  function activatePane(paneKey: string) {
     state.setTaskView('workbench')
     state.setActiveLocalHarnessSessionId(null)
-    inputs().activatePane(inputs().blankPaneKey)
+    inputs().activatePane(paneKey)
+  }
+  function activateBlankComposer() {
+    if (isHeld()) activatePane(inputs().blankPaneKey)
+  }
+  function activateRuntimeTaskPane(paneKey: string) {
+    if (!isHeld()) return
+    // A delayed New Chat focus must not reactivate the blank pane after this selection.
+    consumeNewChatComposerRequest(tabId)
+    activatePane(paneKey)
   }
   function consumeComposer() {
     if (isHeld() && consumeNewChatComposerRequest(tabId)) activateBlankComposer()
@@ -212,6 +220,7 @@ export function createDesktopLayoutSession(
     refreshImSettings,
     consumeComposer,
     activateBlankComposer,
+    activateRuntimeTaskPane,
     captureOwner() {
       const services = inputs().services
       return { isCurrent: () => isHeld() && inputs().services === services }
