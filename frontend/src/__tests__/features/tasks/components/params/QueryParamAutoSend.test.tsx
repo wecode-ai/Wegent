@@ -185,6 +185,18 @@ it.each([
   expect(initial.onSendMessage).toHaveBeenCalledWith('hello')
 })
 
+it('keeps a prompt as a draft when the explicit ID is invalid and no name was provided', () => {
+  setQuery('q=hello&autoSend=true&teamId=invalid')
+  const initial = props({ isTeamSelectionReady: false })
+  const { rerender } = render(<QueryParamAutoSend {...initial} />)
+
+  expect(initial.onPrefillMessage).toHaveBeenCalledWith('hello')
+  rerender(<QueryParamAutoSend {...initial} isTeamSelectionReady />)
+  advance()
+  expect(initial.onSendMessage).not.toHaveBeenCalled()
+  expect(mockReplace).toHaveBeenCalledWith('/chat?teamId=invalid')
+})
+
 it('preserves modifier keys and cancels automatic sending after user input', () => {
   const initial = props({ isTeamSelectionReady: false })
   const { rerender } = render(<QueryParamAutoSend {...initial} />)

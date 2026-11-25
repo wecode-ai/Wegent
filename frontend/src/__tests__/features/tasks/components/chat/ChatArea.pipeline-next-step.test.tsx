@@ -1050,6 +1050,7 @@ describe('ChatArea selection while the catalog loads', () => {
 
     fireEvent.click(screen.getByTestId('quick-access-cards'))
     expect(onGenerateModeChange).toHaveBeenCalledWith('image')
+    expect(mockNewChatTeam?.id).toBe(imageOnlyTeam.id)
 
     view.rerender(
       <ChatArea

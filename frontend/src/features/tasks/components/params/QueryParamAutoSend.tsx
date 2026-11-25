@@ -196,6 +196,10 @@ export default function QueryParamAutoSend({
 
     // Mark processed immediately to prevent duplicate triggers
     processedRef.current = true
+    if (teamIdParam !== null && targetTeamId === null && !teamNameParam) {
+      clearQueryParams(true)
+      return
+    }
 
     // Wait for prerequisites then send
     let cancelled = false

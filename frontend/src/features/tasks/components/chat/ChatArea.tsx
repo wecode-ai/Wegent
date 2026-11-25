@@ -1295,7 +1295,9 @@ function ChatAreaContent({
 
   // Explicit selections take priority over recent history and configured defaults.
   useEffect(() => {
-    if (isExitingGenerationRef.current) return
+    // A manual generation-mode switch can update the agent before the route commits.
+    if (isExitingGenerationRef.current || teamSelectionScopeRef.current !== teamSelectionScope)
+      return
 
     // Extract team ID from task detail
     const detailTeamId = selectedTaskDetail?.team
