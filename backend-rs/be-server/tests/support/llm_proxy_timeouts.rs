@@ -610,3 +610,67 @@ async fn runtime_model_personal_keys_use_current_owner_and_permissions() {
     app.stop().await;
     database.close().await;
 }
+
+/// Verify the wire body at the real gateway's provider boundary after CRD routing.
+#[tokio::test]
+#[ignore = "requires disposable MySQL and Redis; invoked by Backend Rust CI"]
+async fn responses_passthrough_preserves_wire_body_after_model_routing() {
+    const REQUEST: &str = r#"{ "model" : "slow-headers", "extension":1.0000,
+        "tools":[{"type":"custom","name":"exec","description":"client contract"}],
+        "input":[{"type":"function_call_output","call_id":"x","output":"a"},
+                 {"type":"function_call_output","call_id":"x","output":"b"}] }"#;
+    let database = super::fixture::Fixture::new().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    seed_models(
+        &database.mysql,
+        &format!("http://{}", listener.local_addr().unwrap()),
+    )
+    .await;
+    let app = HttpApp::start(database.mysql.clone()).await;
+    let provider = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let expected = REQUEST.replace("slow-headers", "provider-model");
+        let mut wire = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert_ne!(count, 0);
+            wire.extend_from_slice(&buffer[..count]);
+            if let Some(end) = wire.windows(4).position(|part| part == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&wire[..end]).to_lowercase();
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap();
+                if wire.len() >= end + 4 + length {
+                    assert_eq!(&wire[end + 4..end + 4 + length], expected.as_bytes());
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
+                        )
+                        .await
+                        .unwrap();
+                    break;
+                }
+            }
+        }
+    });
+    let http = brz_http::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let response = proxy_builder(&http, &app.url, "headers")
+        .unwrap()
+        .header("x-wegent-request-mode", "passthrough")
+        .body(REQUEST.to_owned())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    provider.await.unwrap();
+    app.stop().await;
+    database.close().await;
+}

@@ -934,6 +934,8 @@ export function createDesktopScenario({
         if (recordingTurnCpu) {
           recordingTurnCpu = false
           const { profile } = await command('Profiler.stop')
+          await command('Profiler.disable')
+          await command('Performance.disable')
           const slowUpdates = turnUpdates.filter(
             update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
           )
