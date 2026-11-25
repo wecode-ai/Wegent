@@ -380,8 +380,11 @@ on run argv
               set labelText to name of nativeElement
               if inspectDialog then log {role of nativeElement, labelText}
               if labelText is in acceptedLabels then
-                click nativeElement
-                return
+                -- Pressing the button dismisses the sheet. The application verifies the decision.
+                ignoring application responses
+                  click nativeElement
+                end ignoring
+                return true
               end if
             end if
           end repeat
@@ -397,6 +400,14 @@ end run`,
     ],
     options
   ).catch(error => {
-    throw new Error(error.stderr?.trim() || error.message, { cause: error })
+    throw new Error(
+      [
+        error.killed ? 'Native decision helper exceeded its deadline' : error.message,
+        error.stderr?.trim(),
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      { cause: error }
+    )
   })
 }
