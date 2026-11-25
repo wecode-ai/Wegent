@@ -321,7 +321,7 @@ export function createDesktopScenario(options) {
         })
         assert.equal(enabled.primary.delegation.authorized, true)
         await storyUntil(
-          () => ['direct', 'group'].map(sourceState),
+          () => ['direct', 'group'].map(kind => sourceState(kind)),
           states => states.every(state => state?.checkpoint?.after && !state.error),
           timeout,
           'Both selected sources must have a first real checkpoint'
@@ -451,7 +451,7 @@ export function createDesktopScenario(options) {
         )
         await mailbox.setOffline(false)
         await storyUntil(
-          () => ['direct', 'group'].map(sourceState),
+          () => ['direct', 'group'].map(kind => sourceState(kind)),
           states =>
             states.every(
               state =>
