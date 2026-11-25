@@ -27,6 +27,23 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+fn personal_runtime_scope(request: &ExecutionRequest, runtime_handle: &Value) -> bool {
+    let is_empty_origin = |origin: &Value| {
+        origin.is_null() || origin.as_object().is_some_and(|object| object.is_empty())
+    };
+    request.extra.get("origin").map_or(true, is_empty_origin)
+        && cloud_project_id(request).is_none()
+        && !request.extra.contains_key("standInDelegation")
+        && !request.extra.contains_key("standInSchedule")
+        && super::super::util::runtime_origin(runtime_handle).map_or(true, is_empty_origin)
+        && ["cloudProjectId", "cloud_project_id", "wegentTeam"]
+            .iter()
+            .all(|key| runtime_handle[*key].is_null())
+        && ["standInDelegation", "standInSchedule"]
+            .iter()
+            .all(|key| runtime_handle["executionRequest"][*key].is_null())
+}
+
 fn interrupted_by_runtime_stop(result: &Result<crate::agents::CodexAppServerTurn, String>) -> bool {
     matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
         || error == CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED)
@@ -356,12 +373,14 @@ fn hook_user_id(value: &Value) -> Option<String> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum TurnAdmission {
+pub(super) enum TurnAdmission {
     Normal,
     Forced,
     Queue,
     Continuation,
 }
+
+const USE_SAVED_STAND_IN_PERMISSIONS: &str = "useSavedStandInTaskPermissions";
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn persist_turn_queue(
@@ -453,7 +472,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Normal)
+        self.schedule_turn(turn, TurnAdmission::Normal, false)
             .await
             .map(|_| ())
     }
@@ -462,13 +481,13 @@ impl RuntimeWorkRpcHandler {
         &self,
         turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Forced)
+        self.schedule_turn(turn, TurnAdmission::Forced, false)
             .await
             .map(|_| ())
     }
 
     pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Queue)
+        self.schedule_turn(turn, TurnAdmission::Queue, false)
             .await
             .map(|_| ())
     }
@@ -476,17 +495,31 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn submit_continuation(
         &self,
         turn: SpawnTurnRequest,
+        use_saved_stand_in_permissions: bool,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Continuation)
-            .await
-            .map(|_| ())
+        self.schedule_turn(
+            turn,
+            TurnAdmission::Continuation,
+            use_saved_stand_in_permissions,
+        )
+        .await
+        .map(|_| ())
     }
 
-    async fn schedule_turn(
+    pub(super) async fn schedule_turn(
         &self,
         mut turn: SpawnTurnRequest,
         admission: TurnAdmission,
+        use_saved_stand_in_permissions: bool,
     ) -> Result<bool, AppIpcError> {
+        // Only native admission may opt into owner-granted permissions. The queue
+        // retains this decision for restart and re-reads the current grant at launch.
+        turn.request.extra.remove(USE_SAVED_STAND_IN_PERMISSIONS);
+        if use_saved_stand_in_permissions {
+            turn.request
+                .extra
+                .insert(USE_SAVED_STAND_IN_PERMISSIONS.into(), Value::Bool(true));
+        }
         turn.bind_task_kind(&self.store);
         // Binding restores immutable origin; recompute the host's per-run manual fact
         // before the admission snapshot drops transient confirmation metadata.
@@ -960,7 +993,7 @@ impl RuntimeWorkRpcHandler {
             .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         // A native Goal mutation may update only disk state when its session
         // has unloaded. Resume it through the existing owner and admission flow.
-        self.schedule_turn(turn, TurnAdmission::Normal).await
+        self.schedule_turn(turn, TurnAdmission::Normal, false).await
     }
 
     pub(super) async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
@@ -1255,6 +1288,8 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
         let preparation = async {
+            self.refresh_shared_conversation_request(&mut turn.request)
+                .await?;
             self.prepare_project_environment(&mut turn).await?;
             self.prepare_deferred_worktree(&mut turn).await?;
             self.prepare_creation_branch(&mut turn.request).await?;
@@ -1410,11 +1445,31 @@ impl RuntimeWorkRpcHandler {
                     .insert("standInGuidanceSources".into(), sources);
             }
         }
-        let continuation = turn_id.is_some_and(|turn_id| {
+        let client_id = request
+            .extra
+            .get("client_user_message_id")
+            .or_else(|| request.extra.get("clientUserMessageId"))
+            .and_then(Value::as_str);
+        // A new send may reuse a request subtask before turn/start returns.
+        // Only this client's native binding distinguishes an autonomous continuation.
+        let continuation = turn_id.zip(client_id).is_some_and(|(turn_id, client_id)| {
             self.store.read_task(local_task_id, |link| {
-                link.runtime_handle
-                    .get("turnIdsBySubtask")
-                    .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
+                link.runtime_handle["userMessagePresentations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|presentation| {
+                        presentation
+                            .get("clientUserMessageId")
+                            .or_else(|| presentation.get("client_user_message_id"))
+                            .and_then(Value::as_str)
+                            == Some(client_id)
+                    })
+                    .and_then(|presentation| {
+                        presentation
+                            .get("turnId")
+                            .or_else(|| presentation.get("turn_id"))
+                    })
                     .and_then(Value::as_str)
                     .is_some_and(|initial| initial != turn_id)
             }) == Some(true)
@@ -1491,6 +1546,20 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        if turn
+            .request
+            .extra
+            .remove(super::runtime_rpc::REMOTE_PERSONAL_RUNTIME_IDENTITY)
+            == Some(Value::Bool(true))
+            && !self
+                .store
+                .read_task(&turn.local_task_id, |link| {
+                    personal_runtime_scope(&turn.request, &link.runtime_handle)
+                })
+                .unwrap_or(false)
+        {
+            turn.request.runtime_auth_token = None;
+        }
         let _lifecycle_guard = self
             .stand_in_lifecycle_gate
             .lock()
@@ -1529,6 +1598,19 @@ impl RuntimeWorkRpcHandler {
             self.reject_stand_in_schedule_turn(&turn.request, &turn.local_task_id, error);
             return;
         }
+        let use_saved_stand_in_permissions = turn.request.extra.get(USE_SAVED_STAND_IN_PERMISSIONS)
+            == Some(&Value::Bool(true))
+            && !turn.request.extra.contains_key("resource_event_keys");
+        turn.request.stand_in_task_permissions = if use_saved_stand_in_permissions {
+            self.store
+                .read_task(
+                    &turn.local_task_id,
+                    super::stand_in_task_permissions::task_permissions,
+                )
+                .flatten()
+        } else {
+            None
+        };
         if let Some(payload) = turn.send_payload.as_ref() {
             if !turn.request.new_session {
                 if let Some(link) = self
@@ -2771,6 +2853,21 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_personal_identity_respects_the_stored_task_scope() {
+        let request = ExecutionRequest::default();
+        assert!(personal_runtime_scope(&request, &json!({})));
+        for handle in [
+            json!({"origin": {"type": "connection_work"}}),
+            json!({"executionRequest": {"origin": {"type": "issue_dispatch"}}}),
+            json!({"executionRequest": {"standInDelegation": {}}}),
+            json!({"cloudProjectId": "shared"}),
+            json!({"wegentTeam": {"id": 42}}),
+        ] {
+            assert!(!personal_runtime_scope(&request, &handle));
+        }
+    }
 
     #[test]
     fn recovered_goal_does_not_rebind_persisted_user_message() {

@@ -202,19 +202,22 @@ export function createInteractionDraftStore(accountKey: string) {
 export function useInteractionDrafts(accountKey: string) {
   const store = useMemo(() => createInteractionDraftStore(accountKey), [accountKey])
   const values = useSyncExternalStore(store.subscribe, store.getSnapshot)
-  return {
-    drafts: Object.fromEntries(
-      Object.entries(values).map(([id, value]) => [
-        id,
-        typeof value === 'string' ? value : value.text,
-      ])
-    ),
-    replyDrafts: Object.values(values).filter(
-      (value): value is InteractionReplyDraft => typeof value === 'object'
-    ),
-    setDraft: store.setDraft,
-    discardDraft: store.discardDraft,
-    retainDraft: store.retainDraft,
-    retainedReply: store.retainedReply,
-  }
+  return useMemo(
+    () => ({
+      drafts: Object.fromEntries(
+        Object.entries(values).map(([id, value]) => [
+          id,
+          typeof value === 'string' ? value : value.text,
+        ])
+      ),
+      replyDrafts: Object.values(values).filter(
+        (value): value is InteractionReplyDraft => typeof value === 'object'
+      ),
+      setDraft: store.setDraft,
+      discardDraft: store.discardDraft,
+      retainDraft: store.retainDraft,
+      retainedReply: store.retainedReply,
+    }),
+    [store, values]
+  )
 }

@@ -151,6 +151,7 @@ mod local_project_import;
 pub(crate) use wegent_project_coordination::{
     delivery_storage, loop_item_executions, loop_item_pages, loop_node_storage,
 };
+mod assistant_shares;
 mod loop_tasks;
 mod mcp;
 mod milestones;

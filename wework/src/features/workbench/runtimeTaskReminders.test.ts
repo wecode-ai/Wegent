@@ -7,10 +7,13 @@ import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
+import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import { createNotificationCenterSummary } from '@/features/notifications/notificationCenterSummary'
 import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { serializeTaskKeys } from './runtimeTaskLifecycle/taskKeyStorage'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
+import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
 
 vi.mock('@/desktop/windowFocus', () => ({
   isMainWindowFocused: () => false,
@@ -44,7 +47,41 @@ function reminderItem(key: string): RuntimeTaskReminderItem {
   }
 }
 
-describe('getVisibleRuntimeTaskUnreadKeys', () => {
+describe('runtime task reminders', () => {
+  test('preserves listed reminder rows when only an unlisted task changes', () => {
+    const listed = reminderItem('listed')
+    const unlisted = new RuntimeTaskMachine(reminderItem('unlisted').address).getSnapshot()
+    const items = [listed]
+    const initial = new RuntimeTaskLifecycleStore('reminder-row-identity-test').getSnapshot()
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: initial,
+    })
+    const rows = result.current
+    rerender({ ...initial, version: 1, tasks: new Map([[unlisted.key, unlisted]]) })
+    expect(result.current).toBe(rows)
+  })
+
+  test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
+    const hidden = reminderItem('hidden-stand-in')
+    const ordinary = reminderItem('hidden-ordinary')
+    const task = { ...hidden.task, runtimeHandle: { origin: { initiatedBy: 'stand_in' } } }
+    const readTask = vi.fn(async (_deviceId: string, taskId: string) => ({
+      success: true,
+      task: taskId === hidden.address.taskId ? task : ordinary.task,
+    }))
+    const source = createUnlistedStandInTasksSource({ readTask })
+    const stop = source.subscribe(vi.fn(), [
+      { key: hidden.key, address: hidden.address, signature: '1' },
+      { key: ordinary.key, address: ordinary.address, signature: '1' },
+    ])
+    try {
+      await waitFor(() => expect(source.getSnapshot().get(hidden.key)?.task).toBe(task))
+      expect(source.getSnapshot().has(ordinary.key)).toBe(false)
+    } finally {
+      stop()
+    }
+  })
+
   test('discovers hidden pending work without adding it to visible unread badges', () => {
     const item = reminderItem('hidden-pending')
     const machine = new RuntimeTaskMachine(item.address)
@@ -244,6 +281,44 @@ test('excludes an existing memory review unread marker when restoring cached rem
     unmount()
     await act(async () => {})
   }
+})
+
+test('keeps the notification summary and native badge stable across read task updates', async () => {
+  const badge = vi.mocked(syncNotificationUnreadCount)
+  badge.mockClear()
+  const bell = createNotificationCenterSummary()
+  const input = {
+    taskSource: null,
+    collaborationUnreadCount: 0,
+    generalInbox: null,
+  }
+  const listener = vi.fn()
+  const stop = bell.subscribe(listener, input)
+  const snapshot = bell.getSnapshot()
+  stop()
+
+  const item = reminderItem('read-task')
+  const taskSource = {
+    items: [item],
+    unreadTaskKeys: new Set<string>(),
+    markRuntimeTaskRead: vi.fn(),
+  }
+  const stopRead = bell.subscribe(listener, { ...input, taskSource })
+  expect(bell.getSnapshot()).toBe(snapshot)
+  expect(listener).not.toHaveBeenCalled()
+  expect(badge.mock.calls).toEqual([[0]])
+  stopRead()
+
+  const stopUnread = bell.subscribe(listener, {
+    ...input,
+    taskSource: { ...taskSource, unreadTaskKeys: new Set([item.key]) },
+  })
+  expect(bell.getSnapshot().sortedTasks).toEqual([item])
+  expect(listener).toHaveBeenCalledTimes(1)
+  expect(badge.mock.calls).toEqual([[0], [1]])
+  stopUnread()
+  await act(async () => {})
+  expect(badge.mock.calls).toEqual([[0], [1], [0]])
 })
 
 test('notifies once when an unread completion survives a device alias migration', async () => {

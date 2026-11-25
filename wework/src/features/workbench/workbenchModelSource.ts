@@ -65,6 +65,7 @@ export function createWorkbenchModelSource(api: ModelApi, traceId: string) {
     transientLookupFailureByScope: {},
   }
   let input: WorkbenchModelInput | undefined
+  let lastSelectionIdentity: readonly number[] | undefined
   const listeners = new Set<() => void>()
   let loadRevision = 0
   let syncGeneration = 0
@@ -324,16 +325,39 @@ export function createWorkbenchModelSource(api: ModelApi, traceId: string) {
         enabled: next.enabled,
         selectionReady: next.selectionReady,
       })
+    const selectedModel = snapshot.selectedModelByScope[next.scopeKey] ?? null
+    const selectedModelOptions = snapshot.selectedModelOptionsByScope[next.scopeKey] ?? {}
+    const selectionDiagnostics = {
+      scopeFingerprint: modelSelectionScopeFingerprint(next.scopeKey),
+      configuredModelFingerprint: next.configuredFingerprint,
+      effectiveModelFingerprint: modelSelectionIdentityDiagnostics(next.config)?.fingerprint ?? 0,
+      selectedModelFingerprint:
+        modelSelectionIdentityDiagnostics(
+          selectedModel ? toSelectionConfig(selectedModel, selectedModelOptions) : null
+        )?.fingerprint ?? 0,
+      catalogReady: next.enabled && snapshot.hasCompletedModelLoad,
+    }
+    const selectionIdentity = [
+      selectionDiagnostics.scopeFingerprint,
+      selectionDiagnostics.configuredModelFingerprint,
+      selectionDiagnostics.effectiveModelFingerprint,
+      selectionDiagnostics.selectedModelFingerprint,
+      Number(selectionDiagnostics.catalogReady),
+    ]
     if (
       previous?.isSelectionReady !== next.isSelectionReady ||
       previous.selectedModelAvailable !== next.selectedModelAvailable ||
-      previous.models.length !== next.models.length
+      previous.models.length !== next.models.length ||
+      !lastSelectionIdentity ||
+      selectionIdentity.some((value, index) => value !== lastSelectionIdentity?.[index])
     )
       logModelLoading(traceId, 'workbench.selection', {
         isSelectionReady: next.isSelectionReady,
         selectedModelAvailable: next.selectedModelAvailable,
         modelCount: next.models.length,
+        ...selectionDiagnostics,
       })
+    lastSelectionIdentity = selectionIdentity
     if (
       !previous ||
       previous.scopeKey !== next.scopeKey ||

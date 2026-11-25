@@ -1,5 +1,6 @@
 //! Deliver a matching event to the running native turn when it can accept input.
 use super::*;
+use crate::runtime_work::stand_in_task_permissions::task_permissions;
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn steer_connection_event(
@@ -16,7 +17,9 @@ impl RuntimeWorkRpcHandler {
             self.save_event_subscription(id, record)?;
             return Ok(true);
         }
-        if !is_codex_runtime(&link.runtime)
+        // An event needs its own turn on tasks with owner-configured permissions.
+        if task_permissions(link).is_some()
+            || !is_codex_runtime(&link.runtime)
             || !(self.is_busy_local_task(task) || self.native_task_holds_capacity(task))
         {
             return Ok(false);

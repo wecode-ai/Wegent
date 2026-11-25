@@ -10,13 +10,14 @@ use crate::remote_control_is_enabled;
 
 use super::runtime_rpc::Route;
 
-const PERSONAL_TASK_METHODS: [&str; 23] = [
+const PERSONAL_TASK_METHODS: [&str; 24] = [
     "runtime.tasks.create",
     "runtime.tasks.list",
     "runtime.tasks.search",
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
     "runtime.tasks.send",
+    "runtime.tasks.permissions.set",
     "runtime.tasks.guidance",
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
@@ -40,6 +41,7 @@ const PROJECT_READ_METHODS: [&str; 2] = [
     "runtime.tasks.transcript.search",
 ];
 pub(super) const STAND_IN_ROLE_START_METHOD: &str = "runtime.stand_in.role_task.start";
+const ASSISTANT_SHARE_DEFINITION_METHOD: &str = "runtime.stand_in.share.definition";
 const STAND_IN_ROLE_METHODS: [&str; 7] = [
     STAND_IN_ROLE_START_METHOD,
     "runtime.stand_in.role_task.verify",
@@ -55,9 +57,13 @@ pub(super) enum TaskGrant {
     Unscoped,
     ProjectRead,
     StandInRole,
+    AssistantShareDefinition,
 }
 
 pub(super) fn authorize(route: &Route, method: &str, project_read: bool) -> Option<TaskGrant> {
+    if method == ASSISTANT_SHARE_DEFINITION_METHOD {
+        return Some(TaskGrant::AssistantShareDefinition);
+    }
     if STAND_IN_ROLE_METHODS.contains(&method) {
         return Some(TaskGrant::StandInRole);
     }
@@ -153,6 +159,23 @@ mod tests {
     }
 
     #[test]
+    fn assistant_export_grant_only_covers_the_portable_definition() {
+        let target = route(Value::Null);
+        assert_eq!(
+            authorize(&target, ASSISTANT_SHARE_DEFINITION_METHOD, false),
+            Some(TaskGrant::AssistantShareDefinition)
+        );
+        for method in [
+            "runtime.stand_in.personal.get",
+            "runtime.stand_in.share.publish",
+            "runtime.stand_in.share.copy",
+            "runtime.tasks.transcript",
+        ] {
+            assert!(authorize(&target, method, false).is_none(), "{method}");
+        }
+    }
+
+    #[test]
     fn project_grants_remain_limited_to_validated_reads() {
         let target = route(Value::Null);
         for method in PROJECT_READ_METHODS {
@@ -184,7 +207,11 @@ mod tests {
                     Some(TaskGrant::StandInRole)
                 );
             }
-            for method in ["runtime.stand_in.role_task.unknown", "runtime.tasks.send"] {
+            for method in [
+                "runtime.stand_in.role_task.unknown",
+                "runtime.tasks.send",
+                "runtime.tasks.permissions.set",
+            ] {
                 assert_ne!(
                     authorize(&target, method, false),
                     Some(TaskGrant::StandInRole)

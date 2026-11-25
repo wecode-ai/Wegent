@@ -62,6 +62,19 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.stand_in_onboarding_rpc(method, payload).await },
                 )
             }
+            "runtime.stand_in.share.definition" => {
+                boxed_rpc(move || async move { self.stand_in_share_definition(payload).await })
+            }
+            "runtime.stand_in.share.list"
+            | "runtime.stand_in.share.search_users"
+            | "runtime.stand_in.share.publish"
+            | "runtime.stand_in.share.direct"
+            | "runtime.stand_in.share.revoke" => {
+                boxed_rpc(move || async move { self.share_stand_in_cloud(method, payload).await })
+            }
+            "runtime.stand_in.share.copy" => {
+                boxed_rpc(move || async move { self.copy_stand_in_share(payload).await })
+            }
             "runtime.stand_in.personal.save" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, true).await },
@@ -267,6 +280,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.get" => {
                 boxed_rpc(move || async move { self.get_task_with_active_provider(&payload).await })
+            }
+            "runtime.tasks.permissions.set" => {
+                boxed_rpc(move || async move { self.set_stand_in_task_permissions(payload).await })
             }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })

@@ -1898,6 +1898,14 @@ export function createHybridWorkbenchServices(
           return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
         },
       },
+      async setTaskPermissions(userId, deviceId, taskId, taskPermissions) {
+        return (await standInApiForDevice(deviceId)).setTaskPermissions(
+          userId,
+          deviceId,
+          taskId,
+          taskPermissions
+        )
+      },
       async gitConnection(deviceId, input) {
         return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
       },
@@ -2077,8 +2085,8 @@ export function createHybridWorkbenchServices(
       async proposal(userId, deviceId, roleId) {
         return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
       },
-      async latestAppliedGhost(userId, deviceId, roleId) {
-        return (await standInApiForDevice(deviceId)).latestAppliedGhost(userId, deviceId, roleId)
+      async learningReport(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).learningReport(userId, deviceId, roleId)
       },
       async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
         return (await standInApiForDevice(deviceId)).resolveProposal(
@@ -2098,6 +2106,34 @@ export function createHybridWorkbenchServices(
           deviceId
         )
       },
+      sharing: {
+        async list(userId, deviceId) {
+          return (await standInApiForDevice(deviceId)).sharing.list(userId, deviceId)
+        },
+        async searchUsers(userId, deviceId, query) {
+          return (await standInApiForDevice(deviceId)).sharing.searchUsers(userId, deviceId, query)
+        },
+        async definition(userId, deviceId, kind, id) {
+          return (await standInApiForDevice(deviceId)).sharing.definition(
+            userId,
+            deviceId,
+            kind,
+            id
+          )
+        },
+        async publish(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.publish(userId, deviceId, share)
+        },
+        async direct(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.direct(userId, deviceId, share)
+        },
+        async revoke(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.revoke(userId, deviceId, share)
+        },
+        async copy(userId, deviceId, share, update) {
+          return (await standInApiForDevice(deviceId)).sharing.copy(userId, deviceId, share, update)
+        },
+      },
       async deviceIdentity(deviceId) {
         const api = await standInApiForDevice(deviceId)
         if (api === localServices.standInApi) return api.deviceIdentity(deviceId)
@@ -2111,8 +2147,13 @@ export function createHybridWorkbenchServices(
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },
-      async personalSave(userId, settings, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      async personalSave(userId, settings, deviceId, transferRoleId) {
+        return (await standInApiForDevice(deviceId)).personalSave(
+          userId,
+          settings,
+          deviceId,
+          transferRoleId
+        )
       },
       async saveDelegationRoute(userId, deviceId, version, roleId, route) {
         return (await standInApiForDevice(deviceId)).saveDelegationRoute(

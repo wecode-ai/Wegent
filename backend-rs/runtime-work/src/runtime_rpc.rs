@@ -228,6 +228,7 @@ pub(crate) async fn resolve_route(
 
 /// `RuntimeRpcService.call`.
 #[allow(clippy::result_large_err)]
+#[allow(clippy::too_many_arguments)]
 pub async fn call(
     app: &RuntimeRequestServices<'_>,
     user_id: i64,
@@ -236,9 +237,16 @@ pub async fn call(
     payload: Value,
     timeout_seconds: i64,
     allow_app_device_task_reading: bool,
+    authenticated_login: Option<(&str, i64)>,
 ) -> Result<Value, CallFailure> {
     let normalized_timeout = normalize_timeout(timeout_seconds);
     let route = resolve_route(app, user_id, submitted_device_id).await?;
+    if method == "runtime.tasks.permissions.set" && payload["userId"].as_i64() != Some(user_id) {
+        return Err(CallFailure::Rpc(rpc_error(
+            "permission_denied",
+            "The requested owner must match the connected account",
+        )));
+    }
 
     let grant = runtime_rpc_policy::authorize(&route, method, allow_app_device_task_reading)
         .ok_or_else(|| {
@@ -249,6 +257,12 @@ pub async fn call(
                 &route.logical_device_id,
             ))
         })?;
+    if grant == TaskGrant::AssistantShareDefinition && payload["userId"].as_i64() != Some(user_id) {
+        return Err(CallFailure::Rpc(rpc_error(
+            "permission_denied",
+            "The requested assistant owner must match the connected account",
+        )));
+    }
     if grant == TaskGrant::StandInRole
         && let Some(source_route) = role_task_source(method, user_id, &payload)
             .map_err(|message| CallFailure::Rpc(rpc_error("permission_denied", message)))?
@@ -288,11 +302,31 @@ pub async fn call(
             })
         })?;
 
+    let personal_runtime_token = if let Some((user_name, expires_at)) = authenticated_login
+        && !user_name.is_empty()
+        && can_issue_personal_runtime_token(route.device_type, method, &payload)
+        && expires_at > chrono::Utc::now().timestamp()
+    {
+        Some(
+            wegent_identity::task_token::create_personal_runtime_token(
+                app.auth, user_id, user_name,
+            )
+            .map_err(|_| CallFailure::Internal)?,
+        )
+    } else {
+        None
+    };
     let mut request = runtime_request_envelope(method, payload, user_id, &route.runtime_device_id)
         .map_err(|message| CallFailure::Rpc(rpc_error("bad_request", message)))?;
+    if let Some(token) = personal_runtime_token {
+        request["personalRuntimeToken"] = Value::String(token);
+    }
     match grant {
         TaskGrant::ProjectRead => request["appTaskAccessScope"] = json!("project-session"),
         TaskGrant::StandInRole => request["appTaskAccessScope"] = json!("stand-in-role-task"),
+        TaskGrant::AssistantShareDefinition => {
+            request["appTaskAccessScope"] = json!("assistant-share-definition")
+        }
         TaskGrant::Unscoped => {}
     }
     let ack = call_runtime_method_envelope(
@@ -348,6 +382,39 @@ fn role_task_source<'a>(
         .filter(|source| !source.trim().is_empty())
         .map(Some)
         .ok_or("A current owned source device is required")
+}
+
+fn can_issue_personal_runtime_token(
+    device_type: DeviceType,
+    method: &str,
+    payload: &Value,
+) -> bool {
+    REMOTE_RUNTIME_DEVICE_TYPES.contains(&device_type)
+        && matches!(
+            method,
+            "runtime.tasks.create"
+                | "runtime.tasks.send"
+                | "runtime.tasks.interrupt_and_send"
+                | "runtime.tasks.rollback"
+        )
+        && payload
+            .get("executionRequest")
+            .or_else(|| payload.get("execution_request"))
+            .is_some_and(|execution| {
+                execution.is_object()
+                    && ["origin", "cloudProjectId", "cloud_project_id"]
+                        .iter()
+                        .all(|key| execution[*key].is_null())
+            })
+        && [
+            "origin",
+            "cloudProjectId",
+            "cloud_project_id",
+            "wegentTeamId",
+            "wegent_team_id",
+        ]
+        .iter()
+        .all(|key| payload[*key].is_null())
 }
 
 fn runtime_request_envelope(

@@ -11,6 +11,7 @@ Models with relationships should be imported after their related models.
 The legacy SharedTask, SharedTeam, and TaskMember models have been removed.
 Use ResourceMember for all resource sharing functionality.
 """
+from app.models import assistant_share  # noqa: F401
 from app.models.api_key import APIKey
 from app.models.cloud_project import (
     CloudProject,

@@ -34,6 +34,7 @@ import {
   getProcessingSummaryStartMs,
   getStoppedElapsedDuration,
   getWebSearchToolBlocks,
+  hasSameAssistantRenderInputs,
   hasRunningProcessingBlocks,
   isCancelledAssistantMessage,
   shouldShowAssistantThinkingIndicator,
@@ -125,7 +126,17 @@ export function AssistantMessage({
       ? getStoppedElapsedDuration(message, runtimeTurn)
       : null
   const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
-  const renderProjection = useMemo(() => getAssistantRenderProjection(message), [message])
+  const [projected, setProjected] = useState(() => ({
+    message,
+    result: getAssistantRenderProjection(message),
+  }))
+  let renderProjection = projected.result
+  // Reasoning is rendered separately. Keep the tool and prose projections
+  // stable when the only thing that changed was the current reasoning text.
+  if (projected.message !== message && !hasSameAssistantRenderInputs(projected.message, message)) {
+    renderProjection = getAssistantRenderProjection(message)
+    setProjected({ message, result: renderProjection })
+  }
   const {
     content: visibleContent,
     hidden: shouldHideContent,
@@ -137,7 +148,7 @@ export function AssistantMessage({
     () => getFileEditDurationsBySourceBlock(displayBlocks),
     [displayBlocks]
   )
-  const processingSegments = splitProcessingBlocks(displayBlocks)
+  const processingSegments = useMemo(() => splitProcessingBlocks(displayBlocks), [displayBlocks])
   const hasBlocks = displayBlocks.length > 0
   const hasProcessingActivity =
     hasBlocks || message.blocks?.some(block => block.type === 'thinking')
@@ -166,8 +177,18 @@ export function AssistantMessage({
   )
   const orderedRuntimeSegments = renderProjection.segments
   const hasProcessingAfterContent = renderProjection.interleaved
-  const expandedToolDetailStateKeys = displayBlocks.map(block =>
-    getProcessingDetailStateKey(processingItemScopeKey, block.id)
+  const orderedProcessingSegments = useMemo(
+    () =>
+      hasProcessingAfterContent
+        ? orderedRuntimeSegments.map(segment =>
+            segment.kind === 'content' ? [] : splitProcessingBlocks(segment.blocks)
+          )
+        : [],
+    [hasProcessingAfterContent, orderedRuntimeSegments]
+  )
+  const expandedToolDetailStateKeys = useMemo(
+    () => displayBlocks.map(block => getProcessingDetailStateKey(processingItemScopeKey, block.id)),
+    [displayBlocks, processingItemScopeKey]
   )
   const hasExpandedToolDetail = useAnyPersistentProcessingExpansion(expandedToolDetailStateKeys)
   const usesFinalProcessingShell =
@@ -213,7 +234,11 @@ export function AssistantMessage({
     [renderVisualization, message]
   )
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
-  const processingTimeline = shouldShowProcessingSummary
+  const showProcessingTimeline =
+    shouldShowProcessingSummary &&
+    !hasProcessingAfterContent &&
+    (!usesFinalProcessingShell || isFinalProcessingExpanded)
+  const processingTimeline = showProcessingTimeline
     ? processingSegments.map((segment, index) => (
         <ToolBlocksDisplay
           key={`${segment.kind}:${segment.blocks[0]?.id}`}
@@ -270,7 +295,7 @@ export function AssistantMessage({
           )
         }
 
-        const segments = splitProcessingBlocks(segment.blocks)
+        const segments = orderedProcessingSegments[segmentIndex]
         return (
           <Fragment key={`processing:${segment.id}`}>
             {segments.map((processingSegment, processingIndex) => (

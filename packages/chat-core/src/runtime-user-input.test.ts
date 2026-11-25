@@ -239,6 +239,9 @@ describe('async request user input', () => {
     const resolved = resolveAsyncRequestUserInputAnswers(messages)
 
     expect(resolved).toBe(messages)
+    expect(resolveAsyncRequestUserInputReplies(messages).get('user-1')).toEqual([
+      { question: 'Which state jitters?', answer: 'Reading' },
+    ])
   })
 
   test('does not resolve blocking questions from later user messages', () => {
@@ -300,6 +303,11 @@ describe('async request user input', () => {
       const messages = [assistantMessage(payload), userMessage('晴天')]
 
       expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+      const block = resolveAsyncRequestUserInputAnswers(messages)[0].blocks?.[0]
+      expect(block?.status).toBe('done')
+      expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+        response: { answers: { q1: { answers: [] }, q2: { answers: [] } } },
+      })
     })
 
     test('ignores unanswered and blocking questions', () => {
@@ -341,4 +349,164 @@ test('attributes a combined reply across consecutive async calls, including repe
   expect(resolveAsyncRequestUserInputReplies([first, second, userMessage('Ambiguous')]).size).toBe(
     0
   )
+})
+
+describe('async reply ownership', () => {
+  test('does not settle a question from the prompt that introduced its turn', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const turnPrompt = { ...userMessage('Start the review'), turnId: 'turn-1' }
+    const messages = [question, turnPrompt]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+    expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+  })
+
+  test('settles a question from same-turn guidance sent after it', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const guidance = {
+      ...userMessage('Use the compatibility-safe path'),
+      turnId: 'turn-1',
+      runtimeGuidance: true,
+    }
+    const messages = [question, guidance]
+
+    const resolved = resolveAsyncRequestUserInputAnswers(messages)
+    const block = resolved[0].blocks?.[0]
+
+    expect(block?.status).toBe('done')
+    expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+      response: {
+        answers: { question_1: { answers: ['Use the compatibility-safe path'] } },
+      },
+    })
+  })
+
+  test('settles a question from a later turn', () => {
+    const question = { ...assistantMessage(ASYNC_PAYLOAD), turnId: 'turn-1' }
+    const answer = { ...userMessage('Reading'), turnId: 'turn-2' }
+
+    const resolved = resolveAsyncRequestUserInputAnswers([question, answer])
+    const block = resolved[0].blocks?.[0]
+
+    expect(block?.status).toBe('done')
+    expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+      response: { answers: { question_1: { answers: ['Reading'] } } },
+    })
+  })
+})
+
+test('uses block timing when an out-of-order question follows its reply', () => {
+  const base = assistantMessage(ASYNC_PAYLOAD)
+  const first = {
+    ...base,
+    id: 'assistant-first',
+    turnId: 'turn-1',
+    blocks: base.blocks?.map(block => ({ ...block, createdAt: 1_000 })),
+  }
+  const second = {
+    ...base,
+    id: 'assistant-second',
+    turnId: 'turn-1',
+    blocks: base.blocks?.map(block => ({ ...block, id: 'second-block', createdAt: 3_000 })),
+  }
+  const reply = { ...userMessage('Reading'), createdAt: '1970-01-01T00:00:02.000Z', turnId: 'turn-1', runtimeGuidance: true }
+  const messages = [first, second, reply]
+
+  const resolved = resolveAsyncRequestUserInputAnswers(messages)
+  expect(resolved[0].blocks?.[0].status).toBe('done')
+  expect(resolved[1].blocks?.[0].status).toBe('pending')
+})
+
+test('attributes a combined reply across turns with block timing', () => {
+  const firstPayload: RequestUserInputPayload = {
+    ...ASYNC_PAYLOAD,
+    questions: [{ id: 'q1', question: 'Audience?' }],
+  }
+  const secondPayload: RequestUserInputPayload = {
+    ...ASYNC_PAYLOAD,
+    itemId: 'second',
+    questions: [
+      { id: 'q2', question: 'Format?' },
+      { id: 'q3', question: 'Delivery?' },
+    ],
+  }
+  const first = {
+    ...assistantMessage(firstPayload),
+    turnId: 'turn-1',
+    blocks: assistantMessage(firstPayload).blocks?.map(block => ({ ...block, createdAt: 1_000 })),
+  }
+  const second = {
+    ...assistantMessage(secondPayload),
+    id: 'assistant-2',
+    turnId: 'turn-2',
+    blocks: assistantMessage(secondPayload).blocks?.map(block => ({
+      ...block,
+      id: 'second-block',
+      createdAt: 2_000,
+    })),
+  }
+  const reply = {
+    ...userMessage('STAFF\nPDF\nTomorrow'),
+    createdAt: '1970-01-01T00:00:03.000Z',
+    turnId: 'turn-3',
+  }
+
+  expect(resolveAsyncRequestUserInputReplies([first, second, reply]).get(reply.id)).toEqual([
+    { question: 'Audience?', answer: 'STAFF' },
+    { question: 'Format?', answer: 'PDF' },
+    { question: 'Delivery?', answer: 'Tomorrow' },
+  ])
+})
+
+describe('async reply client identity', () => {
+  test('rejects the optimistic turn prompt without a turn id', () => {
+    const question = {
+      ...assistantMessage(ASYNC_PAYLOAD),
+      turnId: 'turn-1',
+      runtimeClientUserMessageId: 'queued-prompt',
+    }
+    const prompt = { ...userMessage('Start the review'), id: 'queued-prompt' }
+    const messages = [question, prompt]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+    expect(resolveAsyncRequestUserInputReplies(messages).size).toBe(0)
+  })
+
+  test('rejects same-turn guidance that predates the question', () => {
+    const baseQuestion = assistantMessage(ASYNC_PAYLOAD)
+    const question = {
+      ...baseQuestion,
+      createdAt: '2026-09-29T03:05:02.000Z',
+      turnId: 'turn-1',
+      blocks: baseQuestion.blocks?.map(block => ({
+        ...block,
+        createdAt: Date.parse('2026-09-29T03:05:02.000Z'),
+      })),
+    }
+    const guidance = {
+      ...userMessage('Start this turn'),
+      createdAt: '2026-09-29T03:05:01.000Z',
+      turnId: 'turn-1',
+      runtimeGuidance: true,
+    }
+    const messages = [question, guidance]
+
+    expect(resolveAsyncRequestUserInputAnswers(messages)).toBe(messages)
+  })
+
+  test('still settles from an ordinary reply without turn identity', () => {
+    const question = {
+      ...assistantMessage(ASYNC_PAYLOAD),
+      turnId: 'turn-1',
+      runtimeClientUserMessageId: 'queued-prompt',
+    }
+    const reply = userMessage('Reading')
+    const resolved = resolveAsyncRequestUserInputAnswers([question, reply])
+    const block = resolved[0].blocks?.[0]
+
+    expect(block?.status).toBe('done')
+    expect(block && 'renderPayload' in block && block.renderPayload).toMatchObject({
+      response: { answers: { question_1: { answers: ['Reading'] } } },
+    })
+  })
 })

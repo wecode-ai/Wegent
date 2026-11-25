@@ -40,6 +40,26 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My assistants** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. A completed stand-in turn generates at most one desktop notification showing its final reply. Background tasks routed through the stand-in deliver their results in the stand-in conversation. Primary notifications use the title **My assistants** and open the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+<a id="assistant-teams"></a>
+
+## Organize assistant teams
+
+Open **My assistants → Teams → Create team**, enter a name, choose a lead and members, and add team duties as needed. A specialist can join multiple teams, with duties configured separately for each team. Use the primary assistant or a specialist on the current device as lead. Other members can run on their configured devices.
+
+Open a saved team from **Teams** to give it work. The lead delegates based on the team roster and duties, and results return to the team conversation. Each team conversation has its own history. Changing the lead opens a conversation under the new lead.
+
+From **Teams**, edit or delete a team. Its assistants remain available individually and in other teams after deletion.
+
+<a id="assistant-sharing"></a>
+
+## Share an assistant or team
+
+Open **My assistants → Sharing → Share an assistant or team**. Choose what to share, search for and select a recipient, then select **Send share**. Select **Allow recipient to copy** to enable **Copy to my assistants** for the recipient under **My assistants → Sharing → Shared with me**. The recipient configures connections, execution devices, and workspaces for their own assistants.
+
+In **Shared with me**, select **Use directly** to start a separate conversation, then select **Open conversation** to return. The owner maintains the configuration, and the executor reads the current version before starting a new turn. Under **Shared by me**, select **Revoke share** to end the recipient’s access. Recipients retain any copies they created.
+
+When two teams include the same source assistant, copying them on the same device reuses the existing assistant copy. When a newer version is available, select **Update team** or **Update to shared version** under **Shared with me** and confirm to apply the new team duties or assistant prompt.
+
 <a id="assistant-role-delegation"></a>
 
 ## Delegate work to another assistant
@@ -150,7 +170,11 @@ The comparison uses conversations handled by the same role under both versions. 
 
 Reply examples and source observations from the past seven days can inform subsequent replies. Older records can still be reviewed or forgotten while their sources remain authorized. Each account retains up to 1,000 reply examples and 1,000 source observations. When either limit is reached, a new record replaces the earliest collected record of the same kind. Ordinary memories have a separate capacity.
 
-Once independent examples are available, the execution device compares trial answers from the current and proposed role instructions in isolated model sessions. With enough independent cases, the stand-in uses up to six to draft a revision and up to six others to test it. A candidate that passes the first comparison is checked again with the same answers in reverse order. At least one case must improve in both orders, with sufficient evidence and no regression in any case. Open **Pending configuration** for that identity to inspect the text changes, evidence and comparison. Accept to apply a revision, or inspect and undo the latest applicable revision in **Manage assistant → Last accepted assistant instructions**. Source work can use the default assistant's responsibilities, while private preferences are used in identity conversations. Turning learning off stops new examples and evaluations. Saved memories remain manageable. Offline comparisons currently require a Codex model on the execution device.
+Once independent examples are available, the execution device compares trial answers from the current and proposed role instructions in isolated model sessions. With enough independent cases, the stand-in uses up to six to draft a revision and up to six others to test it. A candidate that passes the first comparison is checked again with the same answers in reverse order. At least one case must improve in both orders, with sufficient evidence and no regression in any case. Open **Pending configuration** for that identity to inspect the text changes, evidence and comparison. Accept to apply a revision, or inspect and undo the latest applicable revision in **Manage assistant → Assistant learning report**. Source work can use the default assistant's responsibilities, while private preferences are used in identity conversations. Turning learning off stops new examples and evaluations. Saved memories remain manageable. Offline comparisons currently require a Codex model on the execution device.
+
+Open **Manage assistant → Assistant learning report** to see completed iterations on the identity’s execution device, its current instructions score, the latest before and after scores, and the improvement status. Scores weight wins and ties across independent cases on a 100-point scale. The after score describes the candidate. The current score reflects that candidate once you accept it. Scores are unavailable without comparable results.
+
+Capability retest shows intent, verification, judgment, actionability, and clarity on a 100-point scale. Each dimension uses its own set of comparable cases. The report uses a radar chart for three or more scored dimensions and comparison tracks for one or two. Insufficient evidence and not applicable appear as separate states, and a measured zero appears as a score. The overall blind verdict determines whether the assistant proposes an improvement. When the proposal is available for review, select **Review improvement** in the report. You can also review pending changes in order from **Assistant details → Pending configuration**.
 
 The default assistant memory panel also lists unreferenced **Legacy forgetting fingerprints** under **Forgetting rules**, with their time and short identifier. Older versions retained neither fact text nor scope, so these show **Unknown scope** without reconstructing content. They are never supplied to models or shown in project-specific panels. Choose **Delete rule** and confirm to remove only that fingerprint; one old memory may have multiple fingerprints, and other restrictions remain. Fingerprints referenced by current rules cannot be removed separately. Concurrent changes require reloading before deletion.
 
@@ -199,6 +223,16 @@ In **Collaboration → My work → Stand-in**, select **Chat** and use the compo
 Stand-in chats currently require the Codex runtime for operation approvals. If the profile uses a Claude Code model, select an available Codex model in the execution settings and save before continuing the chat.
 
 If the current model is unavailable, select **Reload models** in the chat. When an older session’s provider cannot be read or is incompatible with the profile model, select **Continue in a new session**. After confirmation, your next message starts a new session in the same stand-in chat and preserves its history and draft.
+
+<a id="stand-in-task-permissions"></a>
+
+## Assistant task permissions
+
+Open **My assistants → select an assistant → Assistant details → Manage assistant → Execution environment**. Under **Default task permissions**, choose **Read-only**, **Workspace**, or **Full access**, then save. Read-only is the default. Full access uses the same confirmation and high-risk command approval options as ordinary conversations.
+
+When an assistant creates a Codex task for work you initiate, the task starts with the assigned assistant’s saved mode. Open the full task conversation to change its mode in the composer. The change takes effect starting with the next turn you submit. Resolve approvals for the current turn in their original cards. Existing delegations without a selection default to read-only. Background follow-ups and work triggered by an Issue, connection, or calendar use their own execution policies.
+
+Moving an assistant to another execution device resets its default task permissions to Read-only on the receiving device. Save the move, then open the assistant on that device to choose its default task permissions.
 
 <a id="stand-in-source-session-policy"></a>
 

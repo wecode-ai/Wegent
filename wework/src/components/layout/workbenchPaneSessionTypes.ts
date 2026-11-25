@@ -14,6 +14,7 @@ import type {
 export interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled?: boolean
+  presentationActive?: boolean
   separateTranscript?: boolean
 }
 
@@ -55,6 +56,7 @@ export interface RuntimeMessageSendResult {
   accepted: boolean
   queued: boolean
   queuePosition?: number | null
+  guidanceTurnId?: string
 }
 
 export interface LoadedTranscriptRange {

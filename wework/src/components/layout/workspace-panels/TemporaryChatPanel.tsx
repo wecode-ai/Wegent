@@ -38,13 +38,17 @@ import {
   RequestUserInputCard,
   type RequestUserInputPayload,
 } from '@/components/chat/RequestUserInputCard'
-import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+} from '@/components/layout/requestUserInputOverlay'
 import {
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@/components/chat/requestUserInputMessages'
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
@@ -57,6 +61,7 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { findModelForSelection } from '@/features/workbench/runtimeContextUsage'
 import {
   deriveRuntimePaneStatus,
@@ -162,6 +167,7 @@ export function TemporaryChatPanel({
     loadRuntimeTranscriptForPane,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
+    refreshWorkLists,
   } = useWorkbenchPaneContext()
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: services.attachmentApi?.uploadAttachment,
@@ -198,6 +204,14 @@ export function TemporaryChatPanel({
     contextUsageStore.getSnapshot
   )
   const taskLifecycle = useRuntimeTaskLifecycle(address)
+  const taskPermissions = useRuntimeTaskPermissions(
+    address,
+    taskLifecycle?.task,
+    state.user?.id,
+    services.standInApi,
+    refreshWorkLists,
+    active && !readOnly
+  )
   const activeThreadId = taskLifecycle?.task?.threadId ?? address?.threadId
   const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const activeModelSelection =
@@ -291,6 +305,7 @@ export function TemporaryChatPanel({
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
+      ...taskPermissions,
       scopeKey: instanceId,
       trialTemplates: trialGuide?.templates ?? [],
       trialPluginName: trialGuide?.pluginName,
@@ -354,6 +369,7 @@ export function TemporaryChatPanel({
       attachmentSelection,
       contextUsage,
       projectChat,
+      taskPermissions,
       taskModelSelection,
       instanceId,
       trialGuide,
@@ -792,20 +808,15 @@ export function TemporaryChatPanel({
     const hosted = await requestUserInputHost?.submit(response, payload)
     if (hosted !== undefined) return hosted
     const appendUserMessage = isAsyncRequestUserInputPayload(payload)
-    // A non-blocking Codex question carries no runtime request to answer, so it
-    // is answered by the next user message: Codex steers the running turn while
-    // the model is still working and starts a new turn once it has stopped.
+    const attachments = requestUserInputResponseAttachments(response)
     if (appendUserMessage) {
-      const answerMessage: RuntimePaneQueuedMessage = {
-        id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
-        content: requestUserInputResponseText(response),
-        status: 'queued',
-        createdAt: new Date().toISOString(),
-        ...selectedModelFields,
+      return sendRuntimePaneMessage({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: { ...response, delivery: 'async' },
+        ...(attachments.length ? { attachments } : {}),
         ...runtimeContext,
-      }
-      conversationQueue.enqueue(answerMessage)
-      return sendQueuedMessageAsGuidance(answerMessage)
+      })
     }
     const key = submissionKey(requestKey)
     const fallback = t('interactions.failed')
@@ -818,6 +829,7 @@ export function TemporaryChatPanel({
           address,
           message: requestUserInputResponseText(response),
           requestUserInputResponse: response,
+          ...(attachments.length ? { attachments } : {}),
           ...runtimeContext,
         },
         {
@@ -1004,6 +1016,20 @@ export function TemporaryChatPanel({
                       requestUserInputHost?.setDraft(pendingRequest, answers)
                     }
                     onCollapse={onCollapse}
+                    onSkip={() => {
+                      const keys = (
+                        focusedRequest
+                          ? [pendingRequest]
+                          : pendingRequestUserInputPayloads(
+                              presentation.messages,
+                              hiddenRequestUserInputIds
+                            )
+                      )
+                        .filter(isAsyncRequestUserInputPayload)
+                        .map(requestUserInputPayloadKey)
+                        .filter((key): key is string => Boolean(key))
+                      setHiddenRequestUserInputIds(current => new Set([...current, ...keys]))
+                    }}
                     onSubmit={submitRequestUserInput}
                     onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
                   />

@@ -32,6 +32,7 @@ import {
   type ComposerFollowUpBehavior,
 } from './composerTextareaTypes'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
 import {
@@ -70,6 +71,7 @@ interface ProjectChatComposerProps {
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
   modelSelectorOpenSignal?: number
   onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   isModelSelectionReady: boolean
@@ -163,6 +165,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       selectedModel,
       activeModel,
       selectedModelOptions,
+      permissionControls,
       modelSelectorOpenSignal,
       onModelSelectorOpenChange,
       isModelSelectionReady,
@@ -442,6 +445,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               showPluginPicker={showPluginPicker}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
+              permissionControls={permissionControls}
               showModelSelector={showModelSelector}
               models={models}
               selectedModel={selectedModel}

@@ -24,6 +24,7 @@ const INDEX_VERSION: u64 = 1;
 const DELETED_ARCHIVED_TASK_ID_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
+    "answeredAsyncQuestions",
     "mcpAppContexts",
     "cloudProjectId",
     "cloud_project_id",
@@ -39,6 +40,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "modelSelection",
     "model_selection",
     "origin",
+    super::stand_in_task_permissions::TASK_PERMISSIONS,
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",
