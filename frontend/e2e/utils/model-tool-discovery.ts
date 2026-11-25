@@ -48,7 +48,7 @@ export function modelToolDefinitions(request: unknown): ModelToolDefinition[] {
       definitions.push({
         name,
         namespace: namespace ?? (typeof tool.namespace === 'string' ? tool.namespace : undefined),
-        ...(schema?.properties?.command && { shellCommand: true as const }),
+        ...(schema?.properties?.command ? { shellCommand: true as const } : {}),
       })
     }
   }
