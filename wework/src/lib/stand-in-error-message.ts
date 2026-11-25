@@ -134,6 +134,8 @@ export function getStandInErrorMessage(
   fallback:
     | 'failed'
     | 'load_settings_failed'
+    | 'load_assistant_inbox_failed'
+    | 'load_assistant_proposal_failed'
     | 'save_settings_failed'
     | 'task_permissions_save_failed'
     | 'load_environment_failed'

@@ -6484,6 +6484,8 @@
       "leader_not_ai": "该协作小组由人类负责人管理，请选择 AI 负责人或在项目中调整负责人。",
       "stale_context": "项目自动统筹已停止、被接管或权限已变化。请刷新状态后重试。",
       "project_unavailable": "项目或协作小组已不可访问，请返回项目检查权限和配置。",
+      "load_assistant_inbox_failed": "暂时无法加载助理收件箱。",
+      "load_assistant_proposal_failed": "暂时无法加载助理的配置建议。",
       "load_settings_failed": "未能加载助理设置。请检查执行设备是否在线，再点击「重新加载」。",
       "save_settings_failed": "助理设置未保存。请保留当前修改，检查执行设备连接后重新保存。",
       "cloud_definition_save_unconfirmed": "此设备的设置已保存。云端助理定义未确认保存，请保留当前修改，检查账号连接后重试。",
