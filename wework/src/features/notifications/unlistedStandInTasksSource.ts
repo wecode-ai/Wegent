@@ -7,6 +7,12 @@ export interface UnlistedTaskCandidate {
   address: RuntimeTaskReminderItem['address']
   signature: string
 }
+
+export function isStandInNotificationTask(task: RuntimeTaskReminderItem['task']): boolean {
+  const origin = task.runtimeHandle?.origin as { initiatedBy?: string } | undefined
+  return origin?.initiatedBy === 'stand_in' || isPersonalStandInTask({ task })
+}
+
 interface Retry {
   candidate: UnlistedTaskCandidate
   attempt: number
@@ -61,9 +67,8 @@ export function createUnlistedStandInTasksSource(
         return
       }
       const task = result.task
-      const origin = task.runtimeHandle?.origin as { initiatedBy?: string } | undefined
-      if (origin?.initiatedBy !== 'stand_in' && !isPersonalStandInTask({ task })) {
-        if (origin) ordinary.add(candidate.key)
+      if (!isStandInNotificationTask(task)) {
+        if (task.runtimeHandle?.origin) ordinary.add(candidate.key)
         return
       }
       const item: RuntimeTaskReminderItem = {

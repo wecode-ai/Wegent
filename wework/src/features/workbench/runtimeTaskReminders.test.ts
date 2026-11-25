@@ -6,6 +6,7 @@ import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
 import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
@@ -13,6 +14,7 @@ import { createNotificationCenterSummary } from '@/features/notifications/notifi
 import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { serializeTaskKeys } from './runtimeTaskLifecycle/taskKeyStorage'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
+import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
 
 vi.mock('@/desktop/windowFocus', () => ({
   isMainWindowFocused: () => false,
@@ -171,6 +173,41 @@ describe('runtime task reminders', () => {
     }
   })
 
+  test('only reads hidden tasks whose native summary cannot rule out a stand-in', async () => {
+    const ordinary = reminderItem('ordinary-native')
+    const cached = reminderItem('cached-native')
+    const standIn = reminderItem('stand-in-native')
+    const store = new RuntimeTaskLifecycleStore('unlisted-native-summary-test')
+    store.syncRuntimeTask(ordinary.address, {
+      ...ordinary.task,
+      runtimeHandle: { threadId: null },
+    })
+    store.syncRuntimeTask(cached.address, {
+      ...cached.task,
+      cachedProjection: true,
+      runtimeHandle: { threadId: null },
+    })
+    const standInTask = {
+      ...standIn.task,
+      runtimeHandle: { threadId: 'stand-in-thread', origin: { initiatedBy: 'stand_in' } },
+    }
+    store.syncRuntimeTask(standIn.address, standInTask)
+    const calls: string[] = []
+    const reader = {
+      async readTask(_deviceId: string, taskId: string) {
+        calls.push(taskId)
+        return taskId === standIn.task.taskId
+          ? { success: true, task: standInTask }
+          : { success: true, task: cached.task }
+      },
+    }
+    const { result } = renderHook(() => useUnlistedStandInTasks([], store.getSnapshot(), reader))
+    await waitFor(() =>
+      expect(result.current.map(item => item.task.taskId)).toEqual([standIn.task.taskId])
+    )
+    expect(calls).toEqual([cached.task.taskId, standIn.task.taskId])
+  })
+
   test('discovers hidden pending work without adding it to visible unread badges', () => {
     const item = reminderItem('hidden-pending')
     const machine = new RuntimeTaskMachine(item.address)
@@ -297,6 +334,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       items,
       listedItems: items,
       unreadMessageCounts: new Map(),
+      preferences: defaultAppPreferences,
       notificationPreferences: {
         ...defaultNotificationPreferences,
         tasks: { in_app: true, system: true, im: null },
@@ -370,6 +408,44 @@ test('excludes an existing memory review unread marker when restoring cached rem
     unmount()
     await act(async () => {})
   }
+})
+
+test('keeps the notification summary and native badge stable across read task updates', async () => {
+  const badge = vi.mocked(syncNotificationUnreadCount)
+  badge.mockClear()
+  const bell = createNotificationCenterSummary()
+  const input = {
+    taskSource: null,
+    collaborationUnreadCount: 0,
+    generalInbox: null,
+  }
+  const listener = vi.fn()
+  const stop = bell.subscribe(listener, input)
+  const snapshot = bell.getSnapshot()
+  stop()
+
+  const item = reminderItem('read-task')
+  const taskSource = {
+    items: [item],
+    unreadTaskKeys: new Set<string>(),
+    markRuntimeTaskRead: vi.fn(),
+  }
+  const stopRead = bell.subscribe(listener, { ...input, taskSource })
+  expect(bell.getSnapshot()).toBe(snapshot)
+  expect(listener).not.toHaveBeenCalled()
+  expect(badge.mock.calls).toEqual([[0]])
+  stopRead()
+
+  const stopUnread = bell.subscribe(listener, {
+    ...input,
+    taskSource: { ...taskSource, unreadTaskKeys: new Set([item.key]) },
+  })
+  expect(bell.getSnapshot().sortedTasks).toEqual([item])
+  expect(listener).toHaveBeenCalledTimes(1)
+  expect(badge.mock.calls).toEqual([[0], [1]])
+  stopUnread()
+  await act(async () => {})
+  expect(badge.mock.calls).toEqual([[0], [1], [0]])
 })
 
 test('notifies once when an unread completion survives a device alias migration', async () => {

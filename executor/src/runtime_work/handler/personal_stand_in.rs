@@ -365,6 +365,184 @@ impl RuntimeWorkRpcHandler {
         self.apply_backend_connection(&mut request);
         Ok(request)
     }
+    pub(super) async fn stand_in_share_definition(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        self.verify_runtime_user(&payload).await?;
+        let kind = super::stand_in_tasks::required(&payload, "kind")?;
+        let id = super::stand_in_tasks::required(&payload, "id")?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let settings = store
+            .read_personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let definition =
+            crate::task_runtime::personal_stand_in::assistant_share_definition(&settings, kind, id)
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "not_found",
+                        "Assistant or team is unavailable on this device",
+                    )
+                })?;
+        Ok(json!(definition))
+    }
+
+    pub(super) async fn copy_stand_in_share(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        let connection = self.require_runtime_connection()?;
+        if Self::connected_runtime_user(&connection).await? != user {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Share recipient must match the connected account",
+            ));
+        }
+        let owner = payload["ownerUserId"]
+            .as_i64()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| AppIpcError::new("bad_request", "Share owner is required"))?;
+        let (kind, source) = assistant_share_ref(&payload)?;
+        let share = Self::assistant_share_request_on(
+            &connection,
+            reqwest::Method::GET,
+            &format!("/v1/assistant-shares/{owner}/{kind}/{source}/snapshot/copy"),
+            None,
+        )
+        .await?;
+        let snapshot = serde_json::from_value::<
+            wegent_protocol::assistant_share::AssistantShareSnapshot,
+        >(share)
+        .map_err(|_| AppIpcError::new("server_error", "Invalid assistant share snapshot"))?;
+        if i64::from(snapshot.owner_user_id) != owner
+            || snapshot.root.definition.key() != (kind, source)
+        {
+            return Err(AppIpcError::new(
+                "server_error",
+                "Assistant share identity mismatch",
+            ));
+        }
+        if payload["expectedRevision"]
+            .as_u64()
+            .is_some_and(|version| version != snapshot.root.revision)
+        {
+            return Err(AppIpcError::new(
+                "version_conflict",
+                "Review the latest shared version before copying",
+            ));
+        }
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        store
+            .copy_assistant_share(
+                user,
+                &self.device_id,
+                &connection.backend_url,
+                &snapshot,
+                payload["update"] == true,
+            )
+            .map_err(settings_error)
+    }
+
+    pub(super) async fn share_stand_in_cloud(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        let connection = self.require_runtime_connection()?;
+        if Self::connected_runtime_user(&connection).await? != user {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Share account must match the connected account",
+            ));
+        }
+        use reqwest::Method;
+        match method {
+            "runtime.stand_in.share.list" => {
+                let mut response =
+                    Self::runtime_http_on(&connection, Method::GET, "/v1/assistant-shares", None)
+                        .await?;
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                let settings = store
+                    .read_personal_stand_in(user, &self.device_id)
+                    .map_err(settings_error)?;
+                for entry in response["received"].as_array_mut().into_iter().flatten() {
+                    let revision = entry["owner_user_id"]
+                        .as_i64()
+                        .and_then(|owner| i32::try_from(owner).ok())
+                        .and_then(|owner| {
+                            crate::task_runtime::personal_stand_in::assistant_share_copy_revision(
+                                &settings,
+                                &connection.backend_url,
+                                owner,
+                                entry["resource_kind"].as_str()?,
+                                entry["source_id"].as_str()?,
+                            )
+                        });
+                    entry["local_revision"] = json!(revision);
+                }
+                Ok(response)
+            }
+            "runtime.stand_in.share.search_users" => {
+                let query = super::stand_in_tasks::required(&payload, "query")?;
+                let query = url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("q", query)
+                    .append_pair("limit", "20")
+                    .finish();
+                Self::runtime_http_on(
+                    &connection,
+                    Method::GET,
+                    &format!("/users/search?{query}"),
+                    None,
+                )
+                .await
+            }
+            "runtime.stand_in.share.publish" => {
+                Self::runtime_http_on(
+                    &connection,
+                    Method::POST,
+                    "/v1/assistant-shares",
+                    Some(&payload["share"]),
+                )
+                .await
+            }
+            "runtime.stand_in.share.direct" => {
+                let (kind, source) = assistant_share_ref(&payload)?;
+                let owner = payload["ownerUserId"]
+                    .as_i64()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| AppIpcError::new("bad_request", "Share owner is required"))?;
+                Self::assistant_share_request_on(
+                    &connection,
+                    Method::PATCH,
+                    &format!("/v1/assistant-shares/{owner}/{kind}/{source}"),
+                    Some(&json!({"enabled":true})),
+                )
+                .await
+            }
+            "runtime.stand_in.share.revoke" => {
+                let (kind, source) = assistant_share_ref(&payload)?;
+                let recipient = payload["recipientUserId"]
+                    .as_i64()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Share recipient is required")
+                    })?;
+                Self::runtime_http_on(
+                    &connection,
+                    Method::DELETE,
+                    &format!("/v1/assistant-shares/{kind}/{source}/recipients/{recipient}"),
+                    None,
+                )
+                .await
+            }
+            _ => Err(AppIpcError::new(
+                "bad_request",
+                "Unknown assistant share operation",
+            )),
+        }
+    }
+
     pub(super) async fn personal_stand_in_settings(
         &self,
         payload: Value,
@@ -423,10 +601,12 @@ impl RuntimeWorkRpcHandler {
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
+            let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .save_personal_stand_in_with_verified_dingtalk_account(
+                .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
                     user,
                     &self.device_id,
+                    connection.as_ref().map(|entry| entry.backend_url.as_str()),
                     settings,
                     verified_account.as_ref(),
                 )
@@ -687,6 +867,23 @@ fn dispatch_authorizes_role(role: &Value, issue: &Value) -> bool {
         .rsplit_once(':')
         .map(|(_, role_id)| role["id"].as_str() == Some(role_id))
         .unwrap_or(true)
+}
+
+fn assistant_share_ref(payload: &Value) -> Result<(&str, &str), AppIpcError> {
+    let kind = super::stand_in_tasks::required(payload, "kind")?;
+    let source = super::stand_in_tasks::required(payload, "id")?;
+    if !matches!(kind, "assistant" | "team")
+        || source.len() > 64
+        || !source
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"@-_".contains(&byte))
+    {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Invalid assistant share reference",
+        ));
+    }
+    Ok((kind, source))
 }
 
 #[cfg(test)]

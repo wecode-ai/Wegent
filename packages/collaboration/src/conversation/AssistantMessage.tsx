@@ -64,6 +64,7 @@ export function AssistantMessage({
   isHistoricalTurn = false,
   forceExpanded = false,
   devices,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -93,6 +94,7 @@ export function AssistantMessage({
   isHistoricalTurn?: boolean
   forceExpanded?: boolean
   devices: Array<{ device_id: string; status: string }>
+  onContinueInNewConversation?: () => void
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (
@@ -137,6 +139,14 @@ export function AssistantMessage({
   // stable when the only thing that changed was the current reasoning text.
   if (projected.message !== message && !hasSameAssistantRenderInputs(projected.message, message)) {
     renderProjection = getAssistantRenderProjection(message)
+    const previousBlocks = projected.result.blocks
+    // Prose updates must not invalidate the unchanged processing history.
+    if (
+      renderProjection.blocks.length === previousBlocks.length &&
+      renderProjection.blocks.every((block, index) => block === previousBlocks[index])
+    ) {
+      renderProjection = { ...renderProjection, blocks: previousBlocks }
+    }
     setProjected({ message, result: renderProjection })
   }
   const {
@@ -482,6 +492,7 @@ export function AssistantMessage({
               errorInfo={message.errorInfo}
               rawError={hiddenErrorContent}
               message={message}
+              onContinueInNewConversation={onContinueInNewConversation}
               onRetry={onRetryFailedMessage}
               onSwitchModel={onSwitchModelForFailedMessage}
             />

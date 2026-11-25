@@ -132,7 +132,17 @@ impl LocalTaskStore {
         }
         // Validate with the same writer, then roll back its savepoint. Nothing is enabled.
         connection.execute_batch("SAVEPOINT validate_stand_in_proposal")?;
-        self.save_personal_stand_in_on(&connection, user, device, settings.clone(), false, None)?;
+        self.save_personal_stand_in_on(
+            &connection,
+            user,
+            device,
+            settings.clone(),
+            super::personal_stand_in::StandInSaveOptions {
+                direct_save: false,
+                verified_account: None,
+                backend: None,
+            },
+        )?;
         connection.execute_batch(
             "ROLLBACK TO validate_stand_in_proposal; RELEASE validate_stand_in_proposal",
         )?;
@@ -150,8 +160,20 @@ impl LocalTaskStore {
         accept: bool,
         prepared: Option<Value>,
     ) -> Result<Value, TaskRuntimeError> {
+        self.resolve_stand_in_proposal_for_backend(user, device, id, accept, prepared, None)
+    }
+
+    pub fn resolve_stand_in_proposal_for_backend(
+        &self,
+        user: i64,
+        device: &str,
+        id: &str,
+        accept: bool,
+        prepared: Option<Value>,
+        backend: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
         if id.starts_with("ghost:") {
-            return self.apply_ghost_decision(user, device, id, accept, None);
+            return self.apply_ghost_decision(user, device, id, accept, None, backend);
         }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -175,7 +197,17 @@ impl LocalTaskStore {
         let saved = if accept {
             let mut next = prepared.unwrap_or_else(|| proposal["settings"].clone());
             preserve_owner_choices(&previous, &mut next);
-            self.save_personal_stand_in_on(&connection, user, device, next, false, None)?
+            self.save_personal_stand_in_on(
+                &connection,
+                user,
+                device,
+                next,
+                super::personal_stand_in::StandInSaveOptions {
+                    direct_save: false,
+                    verified_account: None,
+                    backend,
+                },
+            )?
         } else {
             previous
         };

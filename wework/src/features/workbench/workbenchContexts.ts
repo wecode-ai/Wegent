@@ -10,4 +10,9 @@ export const WorkbenchQueueActionsContext = createContext<Pick<
   'forceStartRuntimeTask' | 'reorderQueuedRuntimeTask' | 'setWorkbenchError'
 > | null>(null)
 
+export const WorkbenchSidebarRemindersContext = createContext<Pick<
+  RuntimeTaskReminderState,
+  'unreadTaskKeys' | 'unreadMessageCounts' | 'markRuntimeTaskRead'
+> | null>(null)
+
 export const WorkbenchOwnerLeaseContext = createContext<(() => () => void) | null>(null)
