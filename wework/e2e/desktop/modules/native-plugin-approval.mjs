@@ -30,8 +30,10 @@ export async function withNativePluginDecision(
     target
   )
   try {
-    const [result] = await Promise.all([operation(), decision])
-    return result
+    const outcome = Promise.resolve().then(operation)
+    // The operation settles after the native response. On macOS the AX click can remain
+    // blocked after the sheet closes, so stop the driver when the application has acted.
+    return await Promise.race([outcome, decision.then(() => outcome)])
   } finally {
     abort.abort()
     await decision.catch(() => {})
@@ -369,23 +371,20 @@ on run argv
       end if
       repeat with w in targetWindows
         set dialogs to sheets of w
-        if inspectDialog then log {subrole of w, (count of dialogs)}
-        if subrole of w is "AXDialog" then set end of dialogs to w
+        if dialogs is {} then
+          set windowType to get subrole of w
+          if windowType is "AXDialog" then set dialogs to {w}
+        end if
+        if inspectDialog then log {count of dialogs}
         repeat with dialogReference in dialogs
           set nativeDialog to contents of dialogReference
-          set nativeElements to get entire contents of nativeDialog
-          repeat with elementReference in nativeElements
-            set nativeElement to contents of elementReference
-            if class of nativeElement is button then
-              set labelText to name of nativeElement
-              if inspectDialog then log {role of nativeElement, labelText}
-              if labelText is in acceptedLabels then
-                -- Pressing the button dismisses the sheet. The application verifies the decision.
-                ignoring application responses
-                  click nativeElement
-                end ignoring
-                return true
-              end if
+          repeat with candidate in buttons of nativeDialog
+            set nativeButton to contents of candidate
+            set labelText to get name of nativeButton
+            if labelText is in acceptedLabels then
+              log {"pressing native button", labelText}
+              click nativeButton
+              return true
             end if
           end repeat
         end repeat
