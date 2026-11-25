@@ -221,7 +221,7 @@ function StandInOnboardingContent({
                       <h3 id={`${scopeId}-examples`} className="text-sm font-medium">
                         {t('standIn.onboarding.examples_title')}
                       </h3>
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         {examples.map(({ id, icon: Icon }) => (
                           <ControlButton
                             variant="outline"
@@ -235,13 +235,13 @@ function StandInOnboardingContent({
                               onGuideClose?.()
                               onExampleSelect?.(t(`standIn.onboarding.examples.${id}.prompt`))
                             }}
-                            className="flex items-start gap-3 rounded-xl border border-border/50 bg-muted/40 p-3 text-left hover:border-text-muted hover:bg-muted disabled:opacity-45"
+                            className="flex min-w-0 items-start justify-start gap-3 whitespace-normal rounded-xl border border-border/50 bg-muted/40 p-3 text-left hover:border-text-muted hover:bg-muted disabled:opacity-45"
                           >
                             <Icon
                               aria-hidden="true"
                               className="mt-0.5 h-5 w-5 shrink-0 text-text-secondary"
                             />
-                            <div className="min-w-0 space-y-1">
+                            <div className="min-w-0 flex-1 space-y-1 break-words">
                               <h4 className="text-sm font-medium">
                                 {t(`standIn.onboarding.examples.${id}.title`)}
                               </h4>
