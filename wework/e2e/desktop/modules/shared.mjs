@@ -1053,6 +1053,9 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     return
   }
   if (!app.launcher) {
+    // Electron must finish its shutdown handlers before signaling Chromium children.
+    // A group signal can abort the host while Codex workers still hold SQLite open.
+    if (process.platform === 'linux') await stopProcess(app)
     await stopProcessGroup(app)
     return
   }
