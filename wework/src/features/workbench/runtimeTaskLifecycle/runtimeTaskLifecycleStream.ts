@@ -1,6 +1,10 @@
-import { hasRuntimeTranscriptAuthority } from '../runtimeConversationCacheStore'
+import {
+  beginTerminalTranscriptRead,
+  hasRuntimeTranscriptAuthority,
+} from '../runtimeConversationCacheStore'
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { isStandInIdentityTask } from '@/lib/runtime-task-visibility'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import {
   createExecutorClientForWorkbenchServices,
@@ -391,6 +395,13 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
         hasRuntimeTranscriptAuthority(address, terminalTurnId, outcome, store.notificationScope)
       )
         return
+      const finishTranscriptRead =
+        outcome === 'succeeded' &&
+        terminalTurnId &&
+        !terminalTurnIsPrior &&
+        isStandInIdentityTask(expectedSnapshot?.task ?? address)
+          ? beginTerminalTranscriptRead(address, terminalTurnId, store.notificationScope)
+          : undefined
       try {
         const transcript = await synchronizeRuntimeConversation(
           (request, options) => executorClient.runtime.getRuntimeTranscript(request, options),
@@ -422,6 +433,8 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
           taskId: address.taskId,
           error,
         })
+      } finally {
+        finishTranscriptRead?.()
       }
     }
 

@@ -1681,7 +1681,7 @@ impl RuntimeWorkRpcHandler {
             task_kind: _,
             local_task_id,
             runtime: _,
-            request,
+            mut request,
             send_payload: _,
             direct_thread_id,
             fork_thread_id,
@@ -1779,6 +1779,25 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
+            if let Err(error) = handler
+                .refresh_shared_conversation_request(&mut request)
+                .await
+            {
+                handler.store.update_task(&turn_local_task_id, |link| {
+                    let active = handler
+                        .active_local_executions
+                        .lock()
+                        .expect("active local execution map lock should not be poisoned");
+                    if active
+                        .get(&turn_local_task_id)
+                        .is_some_and(|control| control.execution_id == execution_id)
+                    {
+                        apply_local_task_failure(link, &error);
+                    }
+                });
+                scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
+                return;
+            }
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) =
                 mpsc::unbounded_channel::<CodexNotification>();

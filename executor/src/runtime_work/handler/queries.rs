@@ -78,6 +78,7 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(json!({
             "success": true,
+            "deviceId": self.device_id.as_str(),
             "task": task,
         }))
     }

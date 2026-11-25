@@ -1,9 +1,11 @@
 import type { WeworkNotificationPreferences } from '@/api/notifications'
+import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
 import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
-import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
+import type { RuntimeTaskReminderItem, RuntimeTaskReminderState } from './runtimeTaskReminders'
 import { isStandInIdentity } from './useStandInMessageReminders'
 import {
   getRuntimeTaskNotificationText,
@@ -16,6 +18,37 @@ interface Input {
   listedItems: RuntimeTaskReminderItem[]
   notificationPreferences: WeworkNotificationPreferences
   unreadMessageCounts: ReadonlyMap<string, number>
+  preferences: AppPreferences
+  publish?: (reminders: RuntimeTaskReminderState) => void
+}
+
+export const EMPTY_RUNTIME_TASK_REMINDERS: RuntimeTaskReminderState = {
+  unreadTaskKeys: new Set<string>(),
+  unreadCount: 0,
+  hasRunningTasks: false,
+  preferences: defaultAppPreferences,
+  markRuntimeTaskRead: () => {},
+  items: [],
+}
+
+export function projectRuntimeTaskReminders(
+  input: Pick<
+    RuntimeTaskReminderState,
+    | 'unreadTaskKeys'
+    | 'unreadMessageCounts'
+    | 'hasRunningTasks'
+    | 'preferences'
+    | 'items'
+    | 'markRuntimeTaskRead'
+  >
+): RuntimeTaskReminderState {
+  return {
+    ...input,
+    unreadCount: [...input.unreadTaskKeys].reduce(
+      (total, key) => total + (input.unreadMessageCounts?.get(key) ?? 1),
+      0
+    ),
+  }
 }
 
 function notificationIdentity(item: RuntimeTaskReminderItem): string {
@@ -32,7 +65,8 @@ function reportsToStandIn(task: RuntimeTaskReminderItem['task']): boolean {
 /** Canonical read markers, delivery de-duplication and visible unread keys share one owner. */
 export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore) {
   let input: Input | undefined
-  let snapshot: ReadonlySet<string> = new Set()
+  const markRuntimeTaskRead = (address: RuntimeTaskAddress) => store.markRead(address)
+  let snapshot = { ...EMPTY_RUNTIME_TASK_REMINDERS, markRuntimeTaskRead }
   let previousUnread: ReadonlySet<string> = new Set()
   const notified = new Set<string>()
   const awaitingMetadata = new Map<string, WeworkNotificationPreferences>()
@@ -75,6 +109,29 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         return sendSystemNotification({ ...notification, address: item.address })
       })
       .catch(error => console.warn('[Wework] Failed to send runtime task notification', error))
+  }
+  function publishSnapshot(current: Input, unreadTaskKeys: ReadonlySet<string>) {
+    const { unreadMessageCounts, items, preferences } = current
+    const hasRunningTasks = store.getSidebarSnapshot().runningTaskKeys.size > 0
+    if (
+      unreadTaskKeys === snapshot.unreadTaskKeys &&
+      unreadMessageCounts === snapshot.unreadMessageCounts &&
+      items === snapshot.items &&
+      preferences === snapshot.preferences &&
+      hasRunningTasks === snapshot.hasRunningTasks
+    )
+      return
+    const unreadChanged = unreadTaskKeys !== snapshot.unreadTaskKeys
+    snapshot = projectRuntimeTaskReminders({
+      unreadTaskKeys,
+      unreadMessageCounts,
+      hasRunningTasks,
+      preferences,
+      items,
+      markRuntimeTaskRead,
+    })
+    current.publish?.(snapshot)
+    if (unreadChanged) for (const listener of listeners) listener()
   }
   function reconcile() {
     if (!input || !listeners.size) return
@@ -159,18 +216,21 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
           ...[...unreadKeys].filter(key => visibleUnread.has(key)),
           ...[...current.unreadMessageCounts].filter(([, count]) => count > 0).map(([key]) => key),
         ])
-        if (next.size !== snapshot.size || [...next].some(key => !snapshot.has(key))) {
-          snapshot = next
-          for (const listener of listeners) listener()
-        }
+        const previous = snapshot.unreadTaskKeys
+        const sameUnreadKeys =
+          next.size === previous.size && [...next].every(key => previous.has(key))
+        publishSnapshot(current, sameUnreadKeys ? previous : next)
       } while (pending && listeners.size)
     } finally {
       reconciling = false
     }
   }
   return {
-    getSnapshot: () => snapshot,
+    getSnapshot: () => snapshot.unreadTaskKeys,
+    markRuntimeTaskRead,
     subscribe(listener: () => void, next: Input) {
+      const previousPublisher = input?.publish
+      const previousSnapshot = snapshot
       input = next
       const revision = ++observation
       listeners.add(listener)
@@ -179,6 +239,8 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         stopFocus = subscribeMainWindowFocus(reconcile)
       }
       reconcile()
+      if (next.publish !== previousPublisher && snapshot === previousSnapshot)
+        next.publish?.(snapshot)
       return () => {
         listeners.delete(listener)
         queueMicrotask(() => {
