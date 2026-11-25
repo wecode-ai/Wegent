@@ -4549,6 +4549,7 @@
     "web_connection_open_failed": "暂时无法打开助理设置，请重试。",
     "web_connection_trial_passed": "试跑通过 · {{rows}} 条查询结果 · {{events}} 条符合条件的事件",
     "web_connection_install": "安装连接",
+    "web_connection_installing": "正在安装连接…",
     "web_connection_query_example": "查询示例",
     "web_connection_match_example": "符合关注条件的记录示例：{{id}}",
     "web_connection_install_hint": "安装后，添加到助理并保存才会开启关注。",
