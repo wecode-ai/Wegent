@@ -2,6 +2,8 @@ import { dequal } from 'dequal'
 import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 
+import { checkTargetConnectionProviders, transferredConnection } from './standInConnectionTransfer'
+
 /** Stage the target before redirecting new intake; old tasks retain their source configuration. */
 export async function saveStandInRoleDevice(
   api: StandInExecutorApi,
@@ -75,6 +77,7 @@ export async function saveStandInRoleDevice(
     ].filter(device => device !== targetDevice),
   }
   delete transferred.taskPermissions
+  await checkTargetConnectionProviders(api, targetDevice, role.connections)
   const staged = await api.personalSave(
     userId,
     {
@@ -87,6 +90,11 @@ export async function saveStandInRoleDevice(
     targetDevice,
     role.id
   )
+  // Webhook subscriptions are addressed to one Executor. Transfer ownership only
+  // after redirecting the source, using the generation checked by the cloud.
+  const connections = staged.roles
+    .find(row => row.id === role.id)
+    ?.connections?.map(transferredConnection)
   let redirected: PersonalStandInSettings | undefined
   try {
     redirected = previous
@@ -115,7 +123,13 @@ export async function saveStandInRoleDevice(
         ...staged,
         cloudDefinitionRevision: target.cloudDefinitionRevision,
         roles: staged.roles.map(row =>
-          row.id === role.id ? { ...row, enabled: role.enabled } : row
+          row.id === role.id
+            ? {
+                ...row,
+                enabled: role.enabled,
+                connections,
+              }
+            : row
         ),
       },
       targetDevice,
@@ -127,7 +141,10 @@ export async function saveStandInRoleDevice(
     if (redirected) {
       try {
         const observed = await api.personalGet(userId, targetDevice)
-        if (observed.roles.some(row => row.id === role.id && row.enabled)) {
+        if (
+          connections?.some(connection => connection.pendingTakeover) ||
+          observed.roles.some(row => row.id === role.id && row.enabled)
+        ) {
           // An activation can commit before its response is lost. Never restore two receivers.
           throw new Error('Target activation is not known to have failed', { cause })
         }

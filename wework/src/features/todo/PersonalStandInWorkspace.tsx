@@ -1,3 +1,4 @@
+import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { isStandInBindingOwner } from '@/api/standIn'
@@ -49,6 +50,7 @@ type PersonalStandInWorkspaceProps = {
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
+  if (!cloud?.isConnected || !cloud.user) return <StandInCloudConnectionPrompt />
   const key = JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])
   if (
     cloud?.isConnected &&

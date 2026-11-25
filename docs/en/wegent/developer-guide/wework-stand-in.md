@@ -4,6 +4,8 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+My Assistant requires a cloud connection. When disconnected, the assistant page offers a Connect cloud action. Connected devices read the same account’s Bot and Ghost definitions. Users can select an execution device for a conversation. Moving a role transfers its source connection settings. The destination needs the corresponding providers and authorization. Git webhook subscriptions transfer receiver ownership using the subscription generation. Delegated tasks retain the destination role’s device address and wait when that device is offline.
+
 ## Local project directories and startup failures
 
 The stand-in runtime configuration stores the local project ID, workspace mode, and optional branch. When creating a task, the execution device reads the working directory from the project's current registration. Legacy copies of the directory are removed when the configuration is read. Updating the project directory keeps the stand-in configuration usable.

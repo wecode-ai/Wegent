@@ -2,6 +2,8 @@ import { dequal } from 'dequal'
 import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 
+import { checkTargetConnectionProviders, transferredConnection } from './standInConnectionTransfer'
+
 export class StandInMigrationError extends Error {
   readonly code: 'changed' | 'conflict' | 'same_device' | 'not_stopped'
   constructor(code: 'changed' | 'conflict' | 'same_device' | 'not_stopped') {
@@ -81,12 +83,18 @@ export async function migrateStandIn(
   )
     throw new StandInMigrationError('conflict')
   input.assertOwnership?.()
-  if (!existing)
+  if (!existing) {
+    if (sourceUser === targetUser && original.connections?.length) {
+      await checkTargetConnectionProviders(api, targetDevice, original.connections)
+      migrated.connections = original.connections.map(transferredConnection)
+    }
+    input.assertOwnership?.()
     await api.personalSave(
       targetUser,
       { ...target, roles: [...target.roles, migrated] },
       targetDevice
     )
+  }
   input.assertOwnership?.()
   const imported = await api.memories(targetUser, targetDevice)
   for (const memory of memories.filter(

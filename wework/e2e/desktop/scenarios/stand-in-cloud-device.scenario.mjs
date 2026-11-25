@@ -377,7 +377,6 @@ export function createDesktopScenario({
           language: 'zh-CN',
         })
       }
-      const initial = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       const localIdentity = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
       const localDevice = localIdentity.deviceId
       const remoteHome = dirname(cloud.remoteCodexHome)
@@ -440,20 +439,22 @@ export function createDesktopScenario({
         await finishStandInOnboarding(control)
         await stop(control)
       }
-      await bind(control, 0, localDevice)
-      await control.command('navigate', 'body', { value: '/settings/connections' })
-      await control.command('clickWhenEnabled', testId('settings-cloud-disconnect-button'))
-      await control.command('waitFor', testId('settings-cloud-connect-button'))
-      await control.command('navigate', 'body', { value: '/stand-in' })
-      await createRole(control, LOCAL_NAME)
-      const localBefore = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
-      const localRole = localBefore.roles.find(row => row.name === LOCAL_NAME)
-      assert.ok(localRole, 'Signed-out creation must persist under the local owner')
-      const localChat = await chat(control, localRole.id, LOCAL_PROMPT)
+      await bind(control, USER, localDevice)
+      await createRole(control, 'Account-local history')
+      const initial = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+      const historyRole = initial.roles.find(row => row.name === 'Account-local history')
+      assert.ok(historyRole)
+      const localChat = await chat(control, historyRole.id, LOCAL_PROMPT)
       await control.command('waitFor', localChat, {
         text: LOCAL_COMPLETE,
         timeoutMs: modelResponseTimeoutMs,
       })
+      await stop(control)
+      await bind(control, 0, localDevice)
+      await createRole(control, LOCAL_NAME)
+      const localBefore = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
+      const localRole = localBefore.roles.find(row => row.name === LOCAL_NAME)
+      assert.ok(localRole, 'The existing local profile must retain its role')
       const memory = await rpc(control, 'runtime.stand_in.memory.save', {
         userId: 0,
         memory: {
@@ -461,6 +462,14 @@ export function createDesktopScenario({
           scope: { kind: 'role', roleId: localRole.id },
         },
       })
+      await control.command('navigate', 'body', { value: '/settings/connections' })
+      await control.command('clickWhenEnabled', testId('settings-cloud-disconnect-button'))
+      await control.command('waitFor', testId('settings-cloud-connect-button'))
+      await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command('waitFor', testId('personal-assistant-connect-cloud'))
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+      await control.command('clickWhenEnabled', testId('personal-assistant-connect-cloud'))
+      await control.command('waitFor', testId('settings-cloud-connect-button'))
       await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
       await observeDevice(control, CLOUD_DEVICE_ID, '在线')
       assert.equal(
@@ -622,8 +631,8 @@ export function createDesktopScenario({
       assert.equal(await control.command('getValue', migrationRole), role.id)
       assert.deepEqual(await binding(control), stoppedBinding)
 
-      await bind(control, 0, localDevice)
-      await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${localRole.id}`))
+      await bind(control, USER, localDevice)
+      await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${historyRole.id}`))
       await control.command('waitFor', testId('stand-in-conversation'))
       await control.command('waitFor', localChat, { text: LOCAL_COMPLETE })
       assert.ok(
