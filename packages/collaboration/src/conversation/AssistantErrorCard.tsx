@@ -6,6 +6,8 @@ import { GitAccountConfigurationButton } from '../controls/GitAccountConfigurati
 import { Button as ControlButton } from '../markdown/Button'
 import { useConversationTranslation } from './ConversationTranslation'
 
+const primaryActionClass =
+  'h-8 min-h-11 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90 md:min-h-8'
 const secondaryActionClass =
   'h-8 min-h-11 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8'
 
@@ -54,6 +56,38 @@ export function AssistantErrorCard({
           ? t('assistant_error.types.generic_error.description_without_details')
           : t(parsedError.descriptionKey)
 
+  const prioritizeRetry = recommendsNewConversation && Boolean(onRetry)
+  const switchModelAction = onSwitchModel && !parsedError.gitFailure && (
+    <ControlButton
+      key="switch-model"
+      variant={prioritizeRetry ? 'outline' : 'primary'}
+      size="sm"
+      type="button"
+      data-testid="assistant-error-switch-model-retry"
+      onClick={() => onSwitchModel(message)}
+      className={prioritizeRetry ? secondaryActionClass : primaryActionClass}
+    >
+      {t('assistant_error.actions.switch_model_retry')}
+    </ControlButton>
+  )
+  const retryAction = onRetry && (
+    <ControlButton
+      key="retry"
+      variant={prioritizeRetry ? 'primary' : 'outline'}
+      size="sm"
+      type="button"
+      data-testid="assistant-error-retry"
+      onClick={() => onRetry(message)}
+      className={prioritizeRetry ? primaryActionClass : secondaryActionClass}
+    >
+      {t(
+        parsedError.retryPolicy === 'after_change' && !recommendsNewConversation
+          ? 'assistant_error.actions.retry_after_change'
+          : 'assistant_error.actions.retry'
+      )}
+    </ControlButton>
+  )
+
   return (
     <div
       data-testid="assistant-error-card"
@@ -83,38 +117,7 @@ export function AssistantErrorCard({
             translate={translate}
             testId="assistant-error-configure-git"
           />
-          {onSwitchModel && !parsedError.gitFailure ? (
-            <ControlButton
-              variant={recommendsNewConversation ? 'outline' : 'primary'}
-              size="sm"
-              type="button"
-              data-testid="assistant-error-switch-model-retry"
-              onClick={() => onSwitchModel(message)}
-              className={
-                recommendsNewConversation
-                  ? secondaryActionClass
-                  : 'h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90'
-              }
-            >
-              {t('assistant_error.actions.switch_model_retry')}
-            </ControlButton>
-          ) : null}
-          {onRetry ? (
-            <ControlButton
-              variant="outline"
-              size="sm"
-              type="button"
-              data-testid="assistant-error-retry"
-              onClick={() => onRetry(message)}
-              className={secondaryActionClass}
-            >
-              {t(
-                parsedError.retryPolicy === 'after_change' && !recommendsNewConversation
-                  ? 'assistant_error.actions.retry_after_change'
-                  : 'assistant_error.actions.retry'
-              )}
-            </ControlButton>
-          ) : null}
+          {prioritizeRetry ? [retryAction, switchModelAction] : [switchModelAction, retryAction]}
           {continueInNewConversation && (
             <ControlButton
               variant="outline"

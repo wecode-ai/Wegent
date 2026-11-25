@@ -178,6 +178,7 @@ describe("shared conversation cards without Electron", () => {
           errorType={type}
           onContinueInNewConversation={continueInNewConversation}
           onRetry={vi.fn()}
+          onSwitchModel={vi.fn()}
           message={{
             id: "failed",
             role: "assistant",
@@ -189,6 +190,7 @@ describe("shared conversation cards without Electron", () => {
       );
       expect(element("assistant-error-title").textContent).toBe(title);
       const retry = element("assistant-error-retry");
+      const switchModel = element("assistant-error-switch-model-retry");
       expect(retry.textContent).toBe("Retry");
       const recovery = container.querySelector<HTMLButtonElement>(
         '[data-testid="assistant-error-continue-in-new-conversation"]',
@@ -196,13 +198,19 @@ describe("shared conversation cards without Electron", () => {
       if (type === "llm_error") {
         if (!recovery) throw new Error("Missing new conversation action");
         expect(recovery.textContent).toBe("Continue in a new conversation");
-        expect(retry.compareDocumentPosition(recovery)).toBe(
+        expect(retry.compareDocumentPosition(switchModel)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        expect(switchModel.compareDocumentPosition(recovery)).toBe(
           Node.DOCUMENT_POSITION_FOLLOWING,
         );
         act(() => recovery.click());
         expect(continueInNewConversation).toHaveBeenCalledOnce();
       } else {
         expect(recovery).toBeNull();
+        expect(switchModel.compareDocumentPosition(retry)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
       }
       expect(
         document.querySelector('[data-testid="assistant-error-details"]'),
