@@ -64,8 +64,9 @@ fn after(value: &Value, cutoff: &Value) -> bool {
 }
 
 pub fn permits_delegated_message(identity: &Value, source: &Value, at: &Value) -> bool {
-    active_delegated_source(identity, source)
-        .is_some_and(|current| after(at, &current["enabledAfter"]))
+    active_delegated_source(identity, source).is_some_and(|current| {
+        after(at, &current["enabledAfter"]) && after(at, &identity["delegation"]["effectiveAfter"])
+    })
 }
 
 pub fn permits_delegated_reply(
@@ -82,11 +83,39 @@ pub fn permits_delegated_reply(
 }
 
 pub(super) fn migrate_delegation_version(primary: &mut Value) -> bool {
+    let source_boundary = primary["connections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|source| {
+            source_provider(source) == DINGTALK_PROVIDER
+                && source["delegated"] == true
+                && source["paused"] == false
+        })
+        .filter_map(|source| {
+            timestamp(&source["enabledAfter"]).map(|time| (time, source["enabledAfter"].clone()))
+        })
+        .min_by_key(|(time, _)| *time)
+        .map(|(_, value)| value)
+        .unwrap_or_else(|| json!(now()));
     let Some(delegation) = primary.get_mut("delegation") else {
         return false;
     };
     if delegation["authorized"] == true && delegation.get("version").is_none() {
         delegation["version"] = json!(1);
+        if timestamp(&delegation["effectiveAfter"]).is_none() {
+            delegation["effectiveAfter"] = source_boundary.clone();
+        }
+        if !delegation["templateEnabledAfter"].is_object() {
+            delegation["templateEnabledAfter"] = json!({});
+        }
+        for template in TEMPLATES {
+            if delegation["templates"][template] == true
+                && delegation["templateEnabledAfter"].get(template).is_none()
+            {
+                delegation["templateEnabledAfter"][template] = source_boundary.clone();
+            }
+        }
         return true;
     }
     false
@@ -313,6 +342,8 @@ pub(super) fn save_delegation(
         || previous["paused"] != paused
         || previous["templates"] != template_settings
         || source_scope(primary) != source_scope(previous_primary);
+    let delegation_boundary_changed =
+        !same_account || previous["authorized"] != authorized || previous["paused"] != paused;
     if !direct_save && (changed || requested.get("action").is_some()) {
         return Err(invalid(
             "Change DingTalk delegation in the assistant settings",
@@ -344,7 +375,7 @@ pub(super) fn save_delegation(
         "version": version, "profile": profile, "accountId": account, "authorized": authorized,
         "paused": paused, "templates": template_settings, "templateEnabledAfter": cutoffs,
         "accountInvalidated": !preparing && previous["accountInvalidated"] == true && !authorized,
-        "effectiveAfter": if !authorized { &Value::Null } else if changed { &boundary } else { &previous["effectiveAfter"] }
+        "effectiveAfter": if !authorized { &Value::Null } else if delegation_boundary_changed { &boundary } else { &previous["effectiveAfter"] }
     });
     primary["delegation"]
         .as_object_mut()

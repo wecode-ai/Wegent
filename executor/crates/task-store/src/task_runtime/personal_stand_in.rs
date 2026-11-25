@@ -777,6 +777,11 @@ impl LocalTaskStore {
         }
         settings["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(&connection, &settings)?;
+        super::stand_in_inbox::dots_inbox::expire_unsent_delegated_messages(
+            &connection,
+            user,
+            &settings,
+        )?;
         super::stand_in_ghost_proposals::retire_stale_candidates(
             &connection,
             user,
@@ -960,6 +965,9 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_inbox::dots_inbox::expire_unsent_delegated_messages(
+            connection, user, &value,
+        )?;
         if let Some(backend) = options.backend.filter(|backend| {
             !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
         }) {

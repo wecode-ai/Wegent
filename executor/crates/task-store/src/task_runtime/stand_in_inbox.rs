@@ -16,7 +16,7 @@ fn stand_in_source_key(user: i64, source: &Value) -> String {
 }
 
 #[path = "stand_in_dots_inbox.rs"]
-mod dots_inbox;
+pub(super) mod dots_inbox;
 
 enum MessageGrouping<'a> {
     Known(Option<&'a str>),

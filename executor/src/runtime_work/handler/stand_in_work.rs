@@ -697,7 +697,13 @@ impl RuntimeWorkRpcHandler {
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         validate_work_accounts(&store, user, &self.device_id, &work, target)?;
-        validate_message_accounts(&store, user, &self.device_id, &work, &[message.clone()])?;
+        validate_message_accounts(
+            &store,
+            user,
+            &self.device_id,
+            &work,
+            std::slice::from_ref(&message),
+        )?;
         store
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)

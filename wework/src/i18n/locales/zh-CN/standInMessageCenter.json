@@ -13,6 +13,7 @@
   "sourcePaused": "来源已暂停",
   "scopeSourcePaused": "{{name}}（已暂停）",
   "updated": "更新于 {{at}}",
+  "executionHint": "由 {{device}} 执行；电脑休眠或 Wework 退出时会暂停处理。",
   "coverage_one": "已选 {{count}} 个会话",
   "coverage_other": "已选 {{count}} 个会话",
   "sourceScope": "回答有依据的日常问题",

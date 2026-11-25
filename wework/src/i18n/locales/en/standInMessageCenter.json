@@ -13,6 +13,7 @@
   "sourcePaused": "Source paused",
   "scopeSourcePaused": "{{name}} (paused)",
   "updated": "Updated {{at}}",
+  "executionHint": "Runs on {{device}}. Processing pauses while the computer sleeps or Wework exits.",
   "coverage_one": "{{count}} selected conversation",
   "coverage_other": "{{count}} selected conversations",
   "sourceScope": "Answer everyday questions using shared information",

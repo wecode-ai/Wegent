@@ -293,8 +293,8 @@ function ConnectedNotificationCenter({
     inboxes.collaboration,
     taskSource,
     accountKey,
-    preferences.collaboration.in_app,
-    preferences.collaboration.system === true,
+    preferences.stand_in.in_app,
+    preferences.stand_in.system === true,
     userId
   )
   const [summary] = useState(createNotificationCenterSummary)

@@ -5,6 +5,7 @@ import {
   type StandInShareEntry,
   type StandInTeam,
 } from '@/api/personalStandIn'
+import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
@@ -268,10 +269,13 @@ export function StandInOverviewPage({
     rememberProfileTrigger(trigger)
     setProfile(target)
   }
-  const openMessageCenterSettings = (trigger: HTMLElement) => {
+  const openMessageCenterSettings = (
+    source: MessageCenterSource | undefined,
+    trigger: HTMLElement
+  ) => {
     rememberProfileTrigger(trigger)
     setCalendarRequest(0)
-    setProfile('primary', true)
+    setProfile('primary', source ?? true)
   }
   const focusTarget = useMemo(
     () => ({
@@ -676,7 +680,7 @@ export function StandInOverviewPage({
                 ? { userId: props.userId, deviceId }
                 : null
             }
-            onOpenSettings={(_, trigger) => openMessageCenterSettings(trigger)}
+            onOpenSettings={(source, trigger) => openMessageCenterSettings(source, trigger)}
             onOpenComponents={() => navigateTo('/settings/connections')}
           />
         ) : state.loading && !state.saved ? (

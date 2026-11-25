@@ -7,7 +7,8 @@ export type MessageCenterCategory =
   | 'exceptions'
   | 'in_progress'
 
-function messageCategory(record: MessageCenterRecord): MessageCenterCategory {
+/** The message center category is also the source of truth for alertable work. */
+export function messageCenterCategory(record: MessageCenterRecord): MessageCenterCategory {
   if (record.delivery === 'failed' || record.delivery === 'unknown') return 'exceptions'
   if (record.delivery === 'confirmed') {
     const { decision, receipt, reply } = record
@@ -43,7 +44,7 @@ export function classifyMessageCenterRecords(
   for (const record of sorted) {
     if (seen.has(record.id)) continue
     seen.add(record.id)
-    categories[messageCategory(record)].push(record)
+    categories[messageCenterCategory(record)].push(record)
   }
   return categories
 }

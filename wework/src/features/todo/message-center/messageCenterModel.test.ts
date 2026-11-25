@@ -110,6 +110,26 @@ describe('message center classification', () => {
     expect(classifyMessageCenterRecords([delivered]).replied).toEqual([delivered])
     expect(isToday(delivered.receipt?.verifiedAt, new Date(receivedAt))).toBe(false)
   })
+
+  it('keeps technical failures and failed work in exceptions instead of business handoffs', () => {
+    const technical = record('technical', {
+      decision: 'needs_user',
+      delivery: 'failed',
+      reason: 'The reply transport is unavailable.',
+    })
+    const failedWork = record('failed-work', {
+      decision: null,
+      progress: 'complete',
+      delivery: 'failed',
+      reason: 'The executor stopped before producing a decision.',
+    })
+
+    const views = classifyMessageCenterRecords([technical, failedWork])
+
+    expect(views.exceptions).toEqual([technical, failedWork])
+    expect(views.needs_user).toEqual([])
+    expect(views.in_progress).toEqual([])
+  })
 })
 
 describe('DingTalk conversation links', () => {

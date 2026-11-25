@@ -341,7 +341,10 @@ function readinessFixture() {
       describe: async () => authTarget,
       async callTool(_alias, input) {
         calls.push(input)
-        if (input.tool === 'componentInfo') return { componentSource: 'managed', version: '1.0.57' }
+        if (input.tool === 'componentInfo') {
+          if (state.componentError) throw state.componentError
+          return { componentSource: 'managed', version: '1.0.57' }
+        }
         if (input.tool === 'listProfiles')
           return { currentProfile: accounts[0].profile, profiles: accounts }
         if (input.tool === 'authStatus') {
@@ -364,7 +367,10 @@ function readinessFixture() {
             throw Object.assign(new Error('Read permission missing'), {
               code: 'dingtalk_permissions_required',
             })
-          if (input.tool === 'searchMessages' && state.scopedSearch) return state.scopedSearch
+          if (state.scopedSearch)
+            return typeof state.scopedSearch === 'function'
+              ? state.scopedSearch(input)
+              : state.scopedSearch
           return {
             success: true,
             result: {
@@ -412,6 +418,25 @@ test('reuses the W90 account fingerprint and only selects an unambiguous current
     calls.map(call => call.tool),
     ['componentInfo', 'listProfiles']
   )
+})
+
+test('keeps component readiness failures distinct and preserves the available host context', async () => {
+  for (const code of [
+    'connection_cli_unavailable',
+    'connection_cli_request_failed',
+    'dependency_missing',
+    'component_update_failed',
+  ]) {
+    const { ctx, provider, authTarget, state } = readinessFixture()
+    state.componentError = Object.assign(new Error('Plugin runtime is unavailable'), { code })
+
+    const readiness = await provider.check(ctx, { readiness: true })
+
+    assert.equal(readiness.status, 'component_unavailable')
+    assert.equal(readiness.code, code)
+    assert.deepEqual(readiness.authTarget, authTarget)
+    assert.equal(readiness.component, undefined)
+  }
 })
 
 test('probes only selected conversations and reports denied reads and mismatched profile tokens', async () => {
@@ -555,6 +580,61 @@ test('verifies and collects complete scoped pages from the native DingTalk searc
   assert.equal(incomplete.status, 'error')
   assert.equal(incomplete.code, 'dingtalk_response_invalid')
   await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_response_invalid' })
+})
+
+test('sorts delegated pages chronologically before releasing inbox events', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-24T00:10:00Z') })
+  const { ctx, provider, state } = readinessFixture()
+  const ready = await provider.check(ctx, {
+    readiness: true,
+    profile: 'org-a:owner',
+  })
+  const source = {
+    ...ready.identity,
+    kind: 'group',
+    id: 'group',
+    delegated: true,
+    enabledAfter: '2026-11-24T00:05:00Z',
+  }
+  const native = (id, at) => ({
+    senderOpenDingTalkId: 'alice',
+    content: id,
+    openMessageId: id,
+    createTime: at,
+  })
+  const page = (messages, hasMore, nextCursor) => ({
+    success: true,
+    result: {
+      conversationMessagesList: [
+        {
+          openConversationId: 'group',
+          singleChat: false,
+          messages,
+        },
+      ],
+      hasMore,
+      nextCursor,
+    },
+  })
+  state.scopedSearch = input => {
+    if (input.arguments.cursor === '0')
+      return page(
+        [native('late', '2026-11-24T00:09:00Z'), native('same-b', '2026-11-24T00:08:00Z')],
+        true,
+        'older'
+      )
+    return page([native('same-a', '2026-11-24T00:08:00Z')], false, '0')
+  }
+
+  const result = await provider.collect(ctx, {
+    source,
+    checkpoint: { after: '2026-11-24T00:05:00Z', cursor: '0' },
+  })
+
+  assert.deepEqual(
+    result.events.map(event => event.id),
+    ['same-a', 'same-b', 'late']
+  )
 })
 
 test('requires reauthorization before contact search when the legacy token cannot refresh', async () => {

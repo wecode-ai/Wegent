@@ -14,6 +14,15 @@ import { unavailableMessageCenterSnapshot } from './standInMessageCenterSource'
 
 const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const DETAIL_CONCURRENCY = 4
+const COMPONENT_UNAVAILABLE_CODES = new Set([
+  'component_unavailable',
+  'connection_cli_unavailable',
+  'connection_cli_request_unavailable',
+  'connection_cli_request_failed',
+  'dependency_missing',
+  'component_update_required',
+  'component_update_failed',
+])
 
 type AccountScope = { profile: string; accountId: string; organizationId: string }
 type Grant = Partial<AccountScope> & {
@@ -33,9 +42,16 @@ type DelegationFields = {
   finishedAt?: string
   reason?: string
   deliveryReason?: string
+  reasonCode?: string
   takenOver?: boolean
   text?: string
   evidenceIds?: string[]
+  evidence?: Array<{
+    messageId?: string
+    senderId?: string
+    at?: string
+    excerpt?: string
+  }>
   policyVersion?: number
 }
 type ScopedSource = StandInSourceConnection &
@@ -48,6 +64,10 @@ type NativeWork = StandInInboxWork & {
   delegationResult?: DelegationFields
   takenOverAt?: string
 }
+type NativeMessage = Omit<StandInInboxMessage, 'delegationResult'> & {
+  delegationResult?: DelegationFields
+  takenOverAt?: string
+}
 type NativeApi = Pick<StandInExecutorApi, 'personalGet' | 'inbox' | 'workMessages'> & {
   personalSave?: StandInExecutorApi['personalSave']
   connectionReadiness?(
@@ -56,6 +76,7 @@ type NativeApi = Pick<StandInExecutorApi, 'personalGet' | 'inbox' | 'workMessage
     profile: string
   ): Promise<{
     status: string
+    code?: string
     identity?: AccountScope & { accountName: string; organizationName: string }
   }>
   takeOverWork?(userId: number, deviceId: string, workId: string): Promise<void>
@@ -144,32 +165,75 @@ function version(value?: number) {
 }
 
 function projectedDelivery(result?: DelegationFields): MessageCenterRecord['delivery'] {
+  if (result?.status === 'failed') return 'failed'
   if (result?.action !== 'reply') return 'none'
   switch (result.status) {
     case 'sent':
       return result.receiptId?.trim() && result.text?.trim() ? 'confirmed' : 'unknown'
     case 'submitting':
       return 'submitted'
-    case 'failed':
-      return 'failed'
     default:
       return 'unknown'
   }
 }
 
+function resultForMessage(work: NativeWork, message: NativeMessage) {
+  if (message.delegationResult?.action) return message.delegationResult
+  const projected = work.delegationResult
+  if (projected && (!projected.recordId || projected.recordId === message.recordId))
+    return projected
+}
+
+function evidenceExcerpt(text: string) {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  return normalized.length > 280 ? `${normalized.slice(0, 277)}...` : normalized
+}
+
+function projectEvidence(
+  ids: string[] | undefined,
+  messages: NativeMessage[],
+  persisted: DelegationFields['evidence']
+) {
+  if (!ids?.length) return undefined
+  const byId = new Map<string, NativeMessage>()
+  for (const message of messages) {
+    byId.set(message.id, message)
+    byId.set(message.recordId, message)
+  }
+  return ids.map(id => {
+    const saved = persisted?.find(evidence => evidence.messageId === id)
+    const source = byId.get(id)
+    if (saved) {
+      return {
+        label: [saved.senderId, saved.at].filter(Boolean).join(' · ') || id,
+        excerpt: saved.excerpt?.trim() || undefined,
+      }
+    }
+    if (!source) return { label: id }
+    return {
+      label: [source.senderId, source.at].filter(Boolean).join(' · '),
+      excerpt: evidenceExcerpt(source.text),
+    }
+  })
+}
+
 function projectRecord(
   work: NativeWork,
-  message: StandInInboxMessage,
+  message: NativeMessage,
+  result: DelegationFields | undefined,
+  messages: NativeMessage[],
   deviceName: string,
   api: NativeApi
 ): MessageCenterRecord {
-  const result = work.delegationResult
-  const delivery = projectedDelivery(result)
-  const takenOver = Boolean(work.takenOverAt || result?.takenOver)
+  const failedWork = work.status === 'failed' && !result
+  const delivery = failedWork ? 'failed' : projectedDelivery(result)
+  const takenOver = Boolean(work.takenOverAt || message.takenOverAt || result?.takenOver)
   const finishedAt = timestamp(result?.finishedAt)
   const submittedAt = timestamp(result?.submittedAt)
   const reason =
-    [result?.reason ?? work.error, result?.deliveryReason].filter(Boolean).join('\n\n') || undefined
+    [result?.reason ?? (!result ? work.error : undefined), result?.deliveryReason]
+      .filter(Boolean)
+      .join('\n\n') || undefined
   const attempts: NonNullable<MessageCenterRecord['attempts']> = []
   if (result?.attemptId && submittedAt) attempts.push({ at: submittedAt, status: 'submitted' })
   if (result?.attemptId && finishedAt && delivery !== 'none' && delivery !== 'submitted') {
@@ -184,7 +248,8 @@ function projectRecord(
     message: message.text,
     at: message.at,
     decision: result?.action ?? null,
-    progress: result ? (delivery === 'submitted' ? 'submitting' : 'complete') : 'queued',
+    progress:
+      failedWork || result ? (delivery === 'submitted' ? 'submitting' : 'complete') : 'queued',
     delivery,
     ...(delivery === 'confirmed' && result?.receiptId
       ? {
@@ -193,15 +258,11 @@ function projectRecord(
       : {}),
     reply: result?.text,
     reason,
-    evidence: result?.evidenceIds?.map(id => ({ label: id })),
+    evidence: projectEvidence(result?.evidenceIds, messages, result?.evidence),
     attempts,
     takenOver,
     canTakeOver: Boolean(
-      api.takeOverWork &&
-      work.messageCount === 1 &&
-      !takenOver &&
-      result?.action !== 'skip' &&
-      delivery !== 'confirmed'
+      api.takeOverWork && !takenOver && result?.action !== 'skip' && delivery !== 'confirmed'
     ),
     canVerify: Boolean(
       api.verifyWorkDelivery && result?.status === 'unknown' && result.channelTaskId?.trim()
@@ -211,37 +272,30 @@ function projectRecord(
   }
 }
 
-function workRecordId(work: NativeWork) {
-  const result = work.delegationResult
+function messageBelongsToWork(message: NativeMessage, work: NativeWork, account: AccountScope) {
   return (
-    result?.recordId ??
-    (!result || work.messageCount === 1 ? work.latestMessage?.recordId : undefined)
+    isScopedSource(message.source, account) &&
+    message.source.delegated === true &&
+    sourceKey(message.source) === sourceKey(work.source)
   )
 }
 
-async function readWorkMessage(
+async function readWorkMessages(
   api: NativeApi,
   scope: MessageCenterScope,
   work: NativeWork,
   account: AccountScope
 ) {
-  const recordId = workRecordId(work)
-  if (!recordId) return undefined
-  const { latestMessage } = work
-  const message =
-    latestMessage?.recordId === recordId
-      ? latestMessage
-      : (await api.workMessages(scope.userId, scope.deviceId, work.id)).messages.find(
-          row => row.recordId === recordId
-        )
-  if (
-    message &&
-    isScopedSource(message.source, account) &&
-    message.source.delegated === true &&
-    sourceKey(message.source) === sourceKey(work.source)
-  ) {
-    return message
-  }
+  const latest = work.latestMessage as NativeMessage | undefined
+  const projectedRecordId = work.delegationResult?.recordId
+  const messages =
+    latest &&
+    work.messageCount <= 1 &&
+    (!projectedRecordId || projectedRecordId === latest.recordId)
+      ? [latest]
+      : ((await api.workMessages(scope.userId, scope.deviceId, work.id))
+          .messages as NativeMessage[])
+  return messages.filter(message => messageBelongsToWork(message, work, account))
 }
 
 function currentWork(items: NativeWork[], account: AccountScope) {
@@ -261,18 +315,59 @@ async function readRecords(
   deviceName: string
 ) {
   const records: MessageCenterRecord[] = []
-  // Most rows already carry their source message. The projected decision in a grouped work
-  // can belong to an older message, so fetch only those details with bounded concurrency.
+  const seen = new Set<string>()
+  let detailFailures = 0
   for (let start = 0; start < items.length; start += DETAIL_CONCURRENCY) {
-    const rows = await Promise.all(
+    const rows = await Promise.allSettled(
       items.slice(start, start + DETAIL_CONCURRENCY).map(async work => {
-        const message = await readWorkMessage(api, scope, work, account)
-        return message ? projectRecord(work, message, deviceName, api) : null
+        const messages = await readWorkMessages(api, scope, work, account)
+        const withResults = messages.filter(message => resultForMessage(work, message))
+        const pending = messages
+          .filter(message => !resultForMessage(work, message))
+          .sort((left, right) => Date.parse(right.at) - Date.parse(left.at))[0]
+        const projected = [...withResults, ...(pending ? [pending] : [])]
+        return projected.map(message =>
+          projectRecord(work, message, resultForMessage(work, message), messages, deviceName, api)
+        )
       })
     )
-    for (const record of rows) if (record) records.push(record)
+    for (const row of rows) {
+      if (row.status === 'rejected') {
+        detailFailures += 1
+        continue
+      }
+      for (const record of row.value) {
+        if (seen.has(record.id)) continue
+        seen.add(record.id)
+        records.push(record)
+      }
+    }
   }
-  return records
+  return { records, detailFailures }
+}
+
+async function findWorkRecord(
+  api: NativeApi,
+  scope: MessageCenterScope,
+  items: NativeWork[],
+  account: AccountScope,
+  recordId: string
+) {
+  const ordered = [...items].sort((left, right) => {
+    const score = (work: NativeWork) =>
+      Number(work.delegationResult?.recordId === recordId) * 2 +
+      Number(work.latestMessage?.recordId === recordId)
+    return score(right) - score(left)
+  })
+  for (const work of ordered) {
+    try {
+      const messages = await readWorkMessages(api, scope, work, account)
+      const message = messages.find(row => row.recordId === recordId)
+      if (message) return { work, message, messages }
+    } catch {
+      // A damaged work detail must not hide the exact record in another work.
+    }
+  }
 }
 
 export function createDingTalkMessageCenterApi(
@@ -298,6 +393,12 @@ export function createDingTalkMessageCenterApi(
       DINGTALK_PROVIDER,
       grant.profile
     )
+    if (
+      readiness.status === 'component_unavailable' ||
+      (readiness.code && COMPONENT_UNAVAILABLE_CODES.has(readiness.code))
+    ) {
+      return { snapshot: empty('component_unavailable') }
+    }
     if (readiness.status !== 'ready') {
       const disconnected =
         readiness.status === 'auth_required' || readiness.status === 'identity_required'
@@ -336,7 +437,7 @@ export function createDingTalkMessageCenterApi(
     const { settings, grant, identity } = context
     const inbox = await api.inbox(scope.userId, scope.deviceId)
     const items = currentWork(inbox.items, grant)
-    const records = await readRecords(api, scope, items, grant, deviceName)
+    const { records, detailFailures } = await readRecords(api, scope, items, grant, deviceName)
     if (!(await unchanged(scope, settings, grant))) return empty('unavailable')
     const policyVersion = version(grant.version) ?? null
     const capabilities: Array<MessageCenterSnapshot['capabilities'][number]> = ['refresh']
@@ -345,10 +446,16 @@ export function createDingTalkMessageCenterApi(
     if (policyVersion !== null && api.takeOverWork) capabilities.push('takeOver')
     if (policyVersion !== null && api.verifyWorkDelivery) capabilities.push('verifyDelivery')
     const errors = inbox.sourceErrors.filter(row => isScopedSource(row.source, grant))
-    const syncGap = errors
-      .filter(row => row.error.code === 'dingtalk_delegation_gap')
-      .map(row => row.error.message)
-      .join('\n')
+    const syncGap = [
+      ...errors
+        .filter(row => row.error.code === 'dingtalk_delegation_gap')
+        .map(row => row.error.message),
+      ...(detailFailures
+        ? [
+            `${detailFailures} DingTalk work detail${detailFailures === 1 ? '' : 's'} could not be synchronized.`,
+          ]
+        : []),
+    ].join('\n')
     const updatedAt = items.reduce<string | null>((latest, item) => {
       const at = timestamp(item.updatedAt)
       return at && (!latest || Date.parse(at) > Date.parse(latest)) ? at : latest
@@ -360,7 +467,7 @@ export function createDingTalkMessageCenterApi(
           ? 'paused'
           : errors.some(row => row.error.code !== 'dingtalk_delegation_gap')
             ? 'unavailable'
-            : settings.primary.model
+            : settings.primary.model?.runtime === 'codex'
               ? 'active'
               : 'model_unavailable'
     return {
@@ -426,14 +533,25 @@ export function createDingTalkMessageCenterApi(
         return read(scope)
       }
       const inbox = await api.inbox(scope.userId, scope.deviceId)
-      const work = currentWork(inbox.items, grant).find(
-        row => workRecordId(row) === command.recordId
+      const target = await findWorkRecord(
+        api,
+        scope,
+        currentWork(inbox.items, grant),
+        grant,
+        command.recordId
       )
-      const message = work ? await readWorkMessage(api, scope, work, grant) : undefined
-      if (!work || !message || !(await unchanged(scope, settings, grant))) {
+      if (!target || !(await unchanged(scope, settings, grant))) {
         throw new Error('DingTalk message is no longer available for this action')
       }
-      const record = projectRecord(work, message, deviceName, api)
+      const { work, message, messages } = target
+      const record = projectRecord(
+        work,
+        message,
+        resultForMessage(work, message),
+        messages,
+        deviceName,
+        api
+      )
       if (command.type === 'takeOver' && record.canTakeOver && api.takeOverWork) {
         await api.takeOverWork(scope.userId, scope.deviceId, work.id)
       } else if (command.type === 'verifyDelivery' && record.canVerify && api.verifyWorkDelivery) {

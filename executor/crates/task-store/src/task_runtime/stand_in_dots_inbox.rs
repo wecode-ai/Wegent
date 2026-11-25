@@ -23,24 +23,23 @@ fn nonempty_id(value: &Value) -> Option<&str> {
 
 pub(super) fn mark_delegation_taken_over(result: &mut Value) {
     if result.is_null() {
-        *result =
-            json!({"action":"skip","status":"complete","reason":"The owner took over this work."});
+        *result = json!({
+            "action":"skip",
+            "status":"complete",
+            "reason":"The owner took over this work.",
+            "reasonCode":"owner_intervened"
+        });
     }
     result["takenOver"] = json!(true);
 }
 
 pub(super) fn project_delegation_result(work: &Value, messages: &[Value]) -> Value {
-    let mut needs_user = None;
     let mut owner_intervention = None;
     let mut all_skipped = !messages.is_empty();
     for message in messages {
         let result = &message["delegationResult"];
         match result["action"].as_str() {
-            Some("reply") => return projected_message_result(work, Some(message)),
-            Some("needs_user") => {
-                needs_user.get_or_insert(message);
-                all_skipped = false;
-            }
+            Some("reply" | "needs_user") => return projected_message_result(work, Some(message)),
             Some("skip") => {
                 if result["reasonCode"] == "owner_intervened"
                     || (result["reasonCode"].is_null()
@@ -52,10 +51,106 @@ pub(super) fn project_delegation_result(work: &Value, messages: &[Value]) -> Val
             _ => all_skipped = false,
         }
     }
-    projected_message_result(
-        work,
-        needs_user.or_else(|| all_skipped.then(|| owner_intervention.unwrap_or(&messages[0]))),
-    )
+    let fallback = all_skipped
+        .then(|| owner_intervention.or_else(|| messages.first()))
+        .flatten();
+    projected_message_result(work, fallback)
+}
+
+fn expired_boundary_reason(identity: &Value, source: &Value) -> (&'static str, &'static str) {
+    let policy = &identity["delegation"];
+    if policy["authorized"] != true {
+        return (
+            "delegation_inactive",
+            "The message arrived outside an active DingTalk delegation and was not answered automatically.",
+        );
+    }
+    if policy["paused"] == true {
+        return (
+            "delegation_paused",
+            "Delegation was paused when this message was waiting. It was not answered automatically.",
+        );
+    }
+    match super::personal_stand_in::stand_in_connection(identity, source) {
+        None => (
+            "source_scope_removed",
+            "This DingTalk source is outside the current delegation scope and was not answered automatically.",
+        ),
+        Some(current) if current["paused"] == true => (
+            "source_paused",
+            "This DingTalk source was paused while the message was waiting. It was not answered automatically.",
+        ),
+        Some(_) => (
+            "delegation_boundary_exceeded",
+            "The message arrived before the current delegation boundary and was not answered automatically.",
+        ),
+    }
+}
+
+/// Close only unsent messages that the current pause or scope boundary no longer permits.
+/// A submission already marked sending has an unknown external outcome and must remain intact.
+pub(crate) fn expire_unsent_delegated_messages(
+    connection: &Connection,
+    user: i64,
+    settings: &Value,
+) -> Result<(), TaskRuntimeError> {
+    let identities = super::personal_stand_in::stand_in_identities(settings);
+    let Some(identity) = identities
+        .iter()
+        .find(|identity| identity["id"] == "@primary")
+    else {
+        return Ok(());
+    };
+    let rows = {
+        let mut statement = connection.prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
+             AND json_extract(metadata,'$.userId')=?1
+             AND json_extract(metadata,'$.roleId')='@primary'
+             AND json_extract(metadata,'$.source.delegated')=1
+             AND json_extract(metadata,'$.dispatchStatus')='pending'
+             AND json_extract(metadata,'$.delegationResult') IS NULL",
+        )?;
+        let queued = statement
+            .query_map(params![user], |row| row.get::<_, String>(0))?
+            .map(|row| {
+                serde_json::from_str::<Value>(&row?)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        queued
+    };
+    for mut message in rows {
+        if super::personal_stand_in::permits_delegated_message(
+            identity,
+            &message["source"],
+            &message["at"],
+        ) {
+            continue;
+        }
+        let (reason_code, reason) = expired_boundary_reason(identity, &message["source"]);
+        let record_id = message["recordId"].as_str().unwrap_or_default().to_owned();
+        message["delegationResult"] = json!({
+            "action":"skip",
+            "status":"complete",
+            "reason":reason,
+            "reasonCode":reason_code,
+            "recordId":record_id,
+            "policyVersion":identity["delegation"]["version"],
+            "decidedAt":now(),
+        });
+        message["dispatchStatus"] = json!("sent");
+        write_record(connection, &record_id, "stand_in_message", &message)?;
+        if let Some(mut work) = read_record(
+            connection,
+            message["workId"].as_str().unwrap_or_default(),
+            "stand_in_work",
+        )?
+        .filter(|work| work["userId"] == user)
+        {
+            refresh_work(connection, &mut work)?;
+        }
+    }
+    Ok(())
 }
 
 fn projected_message_result(work: &Value, message: Option<&Value>) -> Value {
@@ -220,11 +315,24 @@ impl LocalTaskStore {
         result["recordId"] = json!(record_id);
         result["decidedAt"] = json!(now());
         let submit = claim.is_some();
+        let terminal_failure = !submit && result["status"] == "failed";
         if submit {
             result["submittedAt"] = result["decidedAt"].clone();
         }
-        result["status"] = json!(if submit { "submitting" } else { "complete" });
-        message["dispatchStatus"] = json!(if submit { "sending" } else { "sent" });
+        result["status"] = json!(if submit {
+            "submitting"
+        } else if terminal_failure {
+            "failed"
+        } else {
+            "complete"
+        });
+        message["dispatchStatus"] = json!(if submit {
+            "sending"
+        } else if terminal_failure {
+            "failed"
+        } else {
+            "sent"
+        });
         message["delegationResult"] = result;
         write_record(&connection, record_id, "stand_in_message", &message)?;
         refresh_work(&connection, &mut work)?;

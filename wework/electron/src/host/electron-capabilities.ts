@@ -248,7 +248,10 @@ export function showElectronNotification(
           })
           navigation.events?.publish('notification-reply', {})
         }
-      : undefined
+      : undefined,
+    () => {
+      navigation.events?.publish('notification-lifecycle', { status: 'failed' })
+    }
   )
 }
 

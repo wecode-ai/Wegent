@@ -31,6 +31,36 @@ const decision = {
   attemptId: 'attempt',
   submittedAt: '2026-01-01T00:00:01Z',
   deliveryReason: 'The channel has not confirmed delivery',
+  evidenceIds: ['source-event'],
+  evidence: [
+    {
+      messageId: 'source-event',
+      senderId: 'seed-sender',
+      at: '2025-12-31T23:59:00Z',
+      excerpt: 'The original evidence text',
+    },
+  ],
+}
+const laterMessage = {
+  ...message,
+  id: 'later-source-event',
+  recordId: 'later-message',
+  senderId: 'later-sender',
+  text: 'A later thread message',
+  at: '2026-01-01T00:02:00Z',
+  delegationResult: {
+    ...decision,
+    recordId: 'later-message',
+    action: 'needs_user' as const,
+    status: 'complete' as const,
+    text: undefined,
+    channelTaskId: undefined,
+    attemptId: undefined,
+    submittedAt: undefined,
+    deliveryReason: undefined,
+    reason: 'This needs the account owner.',
+    evidenceIds: [],
+  },
 }
 const grouped = {
   id: 'grouped-work',
@@ -41,7 +71,7 @@ const grouped = {
   source,
   updatedAt: at,
   messageCount: 2,
-  latestMessage: { ...message, recordId: 'later-message', text: 'A later thread message' },
+  latestMessage: laterMessage,
   delegationResult: decision,
 }
 const staleSource = { ...source, organizationId: 'previous-organization' }
@@ -82,6 +112,7 @@ function executor() {
           {
             ...grouped,
             id: 'skipped-work',
+            messageCount: 1,
             latestMessage: { ...message, recordId: 'skipped-message' },
             delegationResult: {
               ...decision,
@@ -98,7 +129,9 @@ function executor() {
           },
         ],
       })),
-      workMessages: vi.fn(async () => ({ messages: [message] })),
+      workMessages: vi.fn(async (_userId: number, _deviceId: string, workId: string) => ({
+        messages: workId === 'grouped-work' ? [message, laterMessage] : [],
+      })),
       takeOverWork: vi.fn(async () => {}),
       verifyWorkDelivery: vi.fn(async () => {}),
     },
@@ -119,20 +152,31 @@ describe('DingTalk message center host projection', () => {
       {
         id: 'earlier-message',
         message: message.text,
-        canTakeOver: false,
+        canTakeOver: true,
         canVerify: true,
         delivery: 'unknown',
+        evidence: [
+          {
+            label: 'seed-sender · 2025-12-31T23:59:00Z',
+            excerpt: 'The original evidence text',
+          },
+        ],
         reason: decision.deliveryReason,
+      },
+      {
+        id: 'later-message',
+        message: laterMessage.text,
+        delivery: 'none',
+        canTakeOver: true,
+        reason: 'This needs the account owner.',
       },
       { id: 'skipped-message', decision: 'skip', delivery: 'none' },
     ])
-    expect(api.workMessages).toHaveBeenCalledExactlyOnceWith(42, 'local', 'grouped-work')
+    expect(api.workMessages).toHaveBeenCalledWith(42, 'local', 'grouped-work')
     const expected = { identityId: snapshot.identity!.id, policyVersion: 7 }
 
-    await expect(
-      center.apply(scope, expected, { type: 'takeOver', recordId: message.recordId })
-    ).rejects.toThrow('unavailable')
-    expect(api.takeOverWork).not.toHaveBeenCalled()
+    await center.apply(scope, expected, { type: 'takeOver', recordId: message.recordId })
+    expect(api.takeOverWork).toHaveBeenCalledExactlyOnceWith(42, 'local', 'grouped-work')
     await center.apply(scope, expected, { type: 'verifyDelivery', recordId: message.recordId })
     expect(api.verifyWorkDelivery).toHaveBeenCalledExactlyOnceWith(
       42,
@@ -269,5 +313,161 @@ describe('DingTalk message center host projection', () => {
       primary: { ...settings.primary, connections: [staleSource] },
     })
     expect((await center.read(scope)).capabilities).not.toContain('resume')
+  })
+
+  it('keeps readable records and exposes a sync gap when one work detail fails', async () => {
+    const { api } = executor()
+    const readable = {
+      ...grouped,
+      id: 'readable-work',
+      messageCount: 1,
+      latestMessage: message,
+    }
+    const broken = {
+      ...grouped,
+      id: 'broken-work',
+      delegationResult: { ...decision, recordId: 'broken-message' },
+    }
+    api.inbox.mockResolvedValueOnce({ items: [readable, broken], sourceErrors: [] })
+    api.workMessages.mockImplementation(async (_userId, _deviceId, workId) => {
+      if (workId === 'broken-work') throw new Error('Detail read failed')
+      return { messages: [] }
+    })
+
+    const snapshot = await createDingTalkMessageCenterApi(api).read(scope)
+
+    expect(snapshot.records).toHaveLength(1)
+    expect(snapshot.records[0]).toMatchObject({ id: message.recordId, delivery: 'unknown' })
+    expect(snapshot.syncGap).toBe('1 DingTalk work detail could not be synchronized.')
+  })
+
+  it('projects failed work and technical failures as exceptions, not business handoffs', async () => {
+    const { api } = executor()
+    const failedMessage = {
+      ...message,
+      id: 'failed-source',
+      recordId: 'failed-message',
+      text: 'This input failed before a decision was made.',
+    }
+    const technicalMessage = {
+      ...message,
+      id: 'technical-source',
+      recordId: 'technical-message',
+      text: 'This reply could not be prepared.',
+    }
+    const technicalResult = {
+      ...decision,
+      recordId: technicalMessage.recordId,
+      action: 'needs_user' as const,
+      status: 'failed' as const,
+      reason: 'The reply transport is unavailable.',
+      reasonCode: 'channel_prepare_failed',
+      text: undefined,
+      channelTaskId: undefined,
+      attemptId: undefined,
+      submittedAt: undefined,
+      deliveryReason: undefined,
+    }
+    api.inbox.mockResolvedValueOnce({
+      items: [
+        {
+          ...grouped,
+          id: 'failed-work',
+          status: 'failed' as const,
+          messageCount: 1,
+          latestMessage: failedMessage,
+          delegationResult: undefined,
+          error: 'The executor stopped before producing a decision.',
+        },
+        {
+          ...grouped,
+          id: 'technical-work',
+          messageCount: 1,
+          latestMessage: technicalMessage,
+          delegationResult: technicalResult,
+        },
+      ],
+      sourceErrors: [],
+    })
+
+    const snapshot = await createDingTalkMessageCenterApi(api).read(scope)
+
+    expect(snapshot.records).toMatchObject([
+      {
+        id: failedMessage.recordId,
+        decision: null,
+        delivery: 'failed',
+        progress: 'complete',
+        reason: 'The executor stopped before producing a decision.',
+      },
+      {
+        id: technicalMessage.recordId,
+        decision: 'needs_user',
+        delivery: 'failed',
+        reason: 'The reply transport is unavailable.',
+      },
+    ])
+  })
+
+  it('shows one latest pending record for a grouped work without per-message outcomes', async () => {
+    const { api } = executor()
+    const older = { ...message, id: 'older-source', recordId: 'older-pending' }
+    const newer = {
+      ...message,
+      id: 'newer-source',
+      recordId: 'newer-pending',
+      text: 'The newest pending message',
+      at: '2026-01-01T00:03:00Z',
+    }
+    api.inbox.mockResolvedValueOnce({
+      items: [
+        {
+          ...grouped,
+          id: 'pending-work',
+          status: 'pending' as const,
+          latestMessage: newer,
+          delegationResult: undefined,
+        },
+      ],
+      sourceErrors: [],
+    })
+    api.workMessages.mockResolvedValueOnce({ messages: [older, newer] })
+
+    const snapshot = await createDingTalkMessageCenterApi(api).read(scope)
+
+    expect(snapshot.records).toHaveLength(1)
+    expect(snapshot.records[0]).toMatchObject({
+      id: newer.recordId,
+      message: newer.text,
+      progress: 'queued',
+      delivery: 'none',
+    })
+  })
+
+  it('requires a Codex runtime and exposes component failures separately', async () => {
+    const { api, settings } = executor()
+    api.inbox.mockResolvedValue({ items: [], sourceErrors: [] })
+    api.personalGet.mockResolvedValue({
+      ...settings,
+      primary: {
+        ...settings.primary,
+        model: { ...settings.primary.model, runtime: 'chat' } as typeof settings.primary.model,
+        delegation: { ...settings.primary.delegation, paused: false },
+      },
+    })
+    await expect(createDingTalkMessageCenterApi(api).read(scope)).resolves.toMatchObject({
+      status: 'model_unavailable',
+    })
+
+    const component = executor()
+    component.api.connectionReadiness.mockResolvedValueOnce({
+      status: 'error',
+      code: 'connection_cli_unavailable',
+    })
+    await expect(createDingTalkMessageCenterApi(component.api).read(scope)).resolves.toMatchObject({
+      status: 'component_unavailable',
+      capabilities: ['refresh'],
+    })
+    expect(component.api.inbox).not.toHaveBeenCalled()
   })
 })

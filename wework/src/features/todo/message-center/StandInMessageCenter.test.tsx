@@ -54,6 +54,10 @@ it('uses the shared settings entry and identifies the exact source from details'
     />
   )
 
+  expect(screen.getByTestId('message-center-execution-hint')).toHaveTextContent(
+    '由 This Mac 执行；电脑休眠或 Wework 退出时会暂停处理。'
+  )
+
   const headerSettings = screen.getByTestId('message-center-open-settings')
   await user.click(headerSettings)
   expect(onOpenSettings).toHaveBeenNthCalledWith(1, undefined, headerSettings)

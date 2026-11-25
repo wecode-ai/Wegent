@@ -151,6 +151,13 @@ fn assert_reply(
     let reply = supported_reply(snapshot, proposed).expect("the reply has verifiable evidence");
     assert_eq!(reply.template, template);
     assert_eq!(reply.evidence_ids.as_slice(), evidence_ids);
+    assert_eq!(reply.evidence.len(), evidence_ids.len());
+    for (evidence, expected_id) in reply.evidence.iter().zip(evidence_ids) {
+        assert_eq!(evidence["messageId"], *expected_id);
+        assert!(evidence["excerpt"]
+            .as_str()
+            .is_some_and(|excerpt| !excerpt.is_empty()));
+    }
     assert_eq!(reply.text, text);
 }
 

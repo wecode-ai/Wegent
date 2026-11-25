@@ -5742,6 +5742,8 @@
     "stand_in_reply_action": "Reply",
     "stand_in_send": "Send to stand-in",
     "stand_in_unavailable": "Execution device unavailable. Check the device connection.",
+    "delegated_needs_user_title": "Dots needs your decision",
+    "delegated_needs_user_body": "{{source}}: {{message}}",
     "title": "Notifications",
     "settings": "Notification settings",
     "settings_requires_cloud": "Task updates can be changed locally. Connect to the cloud for Collaboration and Other notifications.",

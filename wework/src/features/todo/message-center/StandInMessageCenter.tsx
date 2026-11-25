@@ -213,6 +213,12 @@ function MessageCenterContent({
                         .filter(Boolean)
                         .join(' · ')}
                     </p>
+                    <p
+                      className="mt-1 text-xs text-text-secondary"
+                      data-testid="message-center-execution-hint"
+                    >
+                      {t('executionHint', { device: snapshot.deviceName })}
+                    </p>
                   </div>
                   {(status === 'disconnected' || status === 'disabled') && (
                     <Button

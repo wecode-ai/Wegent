@@ -309,6 +309,36 @@ fn source_and_template_changes_apply_only_to_their_effective_ranges() {
 }
 
 #[test]
+fn explicit_resume_starts_a_new_message_boundary() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let enabled = saved(&store, settings);
+    let old_message_at = instant_after(&enabled["primary"]["connections"][0]["enabledAfter"]);
+
+    let mut paused = enabled.clone();
+    paused["primary"]["delegation"]["action"] = json!("pause");
+    let paused = saved(&store, paused);
+    let mut resumed = paused;
+    resumed["primary"]["delegation"]["action"] = json!("resume");
+    let resumed = saved(&store, resumed);
+    let identity = primary(&resumed);
+    let current = &identity["connections"][0];
+
+    assert!(!permits_delegated_message(
+        &identity,
+        current,
+        &old_message_at
+    ));
+    assert!(permits_delegated_message(
+        &identity,
+        current,
+        &instant_after(&identity["delegation"]["effectiveAfter"])
+    ));
+}
+
+#[test]
 fn ordinary_saves_keep_pauses_and_account_switches_revoke_old_authority() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("tasks.sqlite");
@@ -394,10 +424,11 @@ fn an_existing_explicit_delegation_without_version_migrates_to_one() {
     let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
     settings["primary"]["delegation"] = json!({"action":"enable"});
     let mut settings = saved(&store, settings);
-    settings["primary"]["delegation"]
-        .as_object_mut()
-        .unwrap()
-        .remove("version");
+    let old_boundary = settings["primary"]["connections"][0]["enabledAfter"].clone();
+    let policy = settings["primary"]["delegation"].as_object_mut().unwrap();
+    policy.remove("version");
+    policy.remove("effectiveAfter");
+    policy.remove("templateEnabledAfter");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute(
@@ -408,6 +439,21 @@ fn an_existing_explicit_delegation_without_version_migrates_to_one() {
     let mut migrated = store.personal_stand_in(7, "desktop").unwrap();
     assert_eq!(migrated["primary"]["delegation"]["version"], 1);
     assert_eq!(
+        migrated["primary"]["delegation"]["effectiveAfter"],
+        old_boundary
+    );
+    for template in ["document", "schedule", "process"] {
+        assert_eq!(
+            migrated["primary"]["delegation"]["templateEnabledAfter"][template],
+            old_boundary
+        );
+    }
+    assert!(permits_delegated_message(
+        &primary(&migrated),
+        &migrated["primary"]["connections"][0],
+        &instant_after(&old_boundary)
+    ));
+    assert_eq!(
         migrated["primary"]["connections"],
         settings["primary"]["connections"]
     );
@@ -416,6 +462,60 @@ fn an_existing_explicit_delegation_without_version_migrates_to_one() {
         saved(&store, migrated)["primary"]["delegation"]["version"],
         2
     );
+}
+
+#[test]
+fn grouped_work_projects_the_newer_needs_user_result_over_an_older_reply() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let original =
+        json!({"id":"grouped-original", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &original, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let record = item["latestMessage"]["recordId"].as_str().unwrap();
+    let decision = reply_decision(&settings, "document", "attempt-grouped");
+    assert!(store
+        .record_delegation_decision(7, "desktop", work, record, decision)
+        .unwrap()
+        .is_some());
+    store
+        .finish_delegated_submission(
+            7,
+            work,
+            record,
+            &json!({"status":"sent","attemptId":"attempt-grouped","receiptId":"receipt-grouped"}),
+        )
+        .unwrap();
+
+    let followup = json!({
+        "id":"grouped-followup", "quotedMessageId":"grouped-original",
+        "text":"Please commit to delivering tomorrow.", "at":"2099-01-01T00:01:00Z"
+    });
+    let linked = store
+        .ingest_stand_in_message(7, "@primary", source, &followup, None)
+        .unwrap();
+    assert_eq!(linked["id"], work);
+    let followup_record = linked["latestMessage"]["recordId"].as_str().unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            work,
+            followup_record,
+            json!({"action":"needs_user","reason":"The owner must approve a new commitment."}),
+        )
+        .unwrap()
+        .is_none());
+
+    let projected = store.stand_in_work(7, work).unwrap();
+    assert_eq!(projected["delegationResult"]["action"], "needs_user");
+    assert_eq!(projected["delegationResult"]["recordId"], followup_record);
 }
 
 #[test]
@@ -638,6 +738,29 @@ fn owner_controls_block_already_queued_replies() {
         for (item, permitted) in [(group_item, false), (direct_item, change != "global pause")] {
             let id = item["id"].as_str().unwrap();
             let record = item["latestMessage"]["recordId"].as_str().unwrap();
+            let persisted = store.stand_in_work(7, id).unwrap();
+            if !permitted {
+                assert_eq!(persisted["status"], "sent", "Status after {change}");
+                assert_eq!(
+                    persisted["delegationResult"]["action"], "skip",
+                    "Action after {change}"
+                );
+                assert_eq!(
+                    persisted["delegationResult"]["status"], "complete",
+                    "Result after {change}"
+                );
+                let expected_code = match change {
+                    "source pause" => "source_paused",
+                    "global pause" => "delegation_paused",
+                    "scope removal" => "source_scope_removed",
+                    "takeover" => "owner_intervened",
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    persisted["delegationResult"]["reasonCode"], expected_code,
+                    "Reason after {change}"
+                );
+            }
             let decision = reply_decision(&settings, "document", record);
             let claim = store
                 .record_delegation_decision(7, "desktop", id, record, decision)
@@ -646,12 +769,6 @@ fn owner_controls_block_already_queued_replies() {
             let persisted = store.stand_in_work(7, id).unwrap();
             if permitted {
                 assert_eq!(persisted["delegationResult"]["status"], "submitting");
-            } else if change == "takeover" {
-                assert_eq!(persisted["delegationResult"]["takenOver"], true);
-                assert_eq!(persisted["status"], "sent");
-            } else {
-                assert_eq!(persisted["status"], "pending");
-                assert!(persisted["delegationResult"].is_null());
             }
         }
     }
@@ -1004,8 +1121,6 @@ fn unsupported_actions_never_claim_a_send_and_handoff_keeps_its_reason() {
         assert!(persisted["delegationResult"].is_null());
     }
 
-    settings["primary"]["delegation"]["action"] = json!("pause");
-    saved(&store, settings);
     let reason = "No guide has been shared in this conversation.";
     let decision = json!({"action":"needs_user","reason":reason});
     assert!(store
@@ -1017,6 +1132,90 @@ fn unsupported_actions_never_claim_a_send_and_handoff_keeps_its_reason() {
     assert_eq!(result["delegationResult"]["status"], "complete");
     assert_eq!(result["delegationResult"]["reason"], reason);
     assert!(result["delegationResult"]["receiptId"].is_null());
+
+    let queued =
+        json!({"id":"queued-before-pause", "text":"Any update?", "at":"2099-01-01T00:01:00Z"});
+    let queued = store
+        .ingest_stand_in_message(7, "@primary", source, &queued, Some(work))
+        .unwrap();
+    let queued_record = queued["latestMessage"]["recordId"].as_str().unwrap();
+    settings["primary"]["delegation"]["action"] = json!("pause");
+    saved(&store, settings);
+    let queued = store
+        .delegated_work_message(7, work, queued_record)
+        .unwrap();
+    assert_eq!(queued["delegationResult"]["action"], "skip");
+    assert_eq!(
+        queued["delegationResult"]["reasonCode"],
+        "delegation_paused"
+    );
+}
+
+#[test]
+fn technical_failures_remain_distinct_from_business_handoffs() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let event =
+        json!({"id":"technical", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let record = item["latestMessage"]["recordId"].as_str().unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            work,
+            record,
+            json!({
+                "action":"needs_user",
+                "status":"failed",
+                "reason":"The configured model could not evaluate this message.",
+                "reasonCode":"model_decision_failed"
+            }),
+        )
+        .unwrap()
+        .is_none());
+
+    let persisted = store.stand_in_work(7, work).unwrap();
+    assert_eq!(persisted["status"], "failed");
+    assert_eq!(persisted["delegationResult"]["action"], "needs_user");
+    assert_eq!(persisted["delegationResult"]["status"], "failed");
+    assert_eq!(
+        persisted["delegationResult"]["reasonCode"],
+        "model_decision_failed"
+    );
+    assert!(persisted["delegationResult"]["receiptId"].is_null());
+    assert_eq!(
+        store.stand_in_messages(7, work).unwrap()[0]["dispatchStatus"],
+        "failed"
+    );
+
+    let business =
+        json!({"id":"business", "text":"Should I approve this?", "at":"2099-01-01T00:01:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &business, None)
+        .unwrap();
+    let business_work = item["id"].as_str().unwrap();
+    let business_record = item["latestMessage"]["recordId"].as_str().unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            business_work,
+            business_record,
+            json!({"action":"needs_user","reason":"The owner must approve this."}),
+        )
+        .unwrap()
+        .is_none());
+    let persisted = store.stand_in_work(7, business_work).unwrap();
+    assert_eq!(persisted["delegationResult"]["status"], "complete");
+    assert!(persisted["delegationResult"]["reasonCode"].is_null());
 }
 
 #[test]

@@ -9,7 +9,8 @@ const pendingNotifications = new Set<ElectronNotificationHandle>()
 export function showRetainedNotification(
   notification: ElectronNotificationHandle,
   onClick?: () => void,
-  onReply?: (reply: string) => void
+  onReply?: (reply: string) => void,
+  onFailed?: (error: unknown) => void
 ): void {
   const release = () => pendingNotifications.delete(notification)
   pendingNotifications.add(notification)
@@ -26,7 +27,8 @@ export function showRetainedNotification(
     })
   notification.once('failed', (_event, error) => {
     release()
-    console.error('[notification] Failed to deliver native notification', error)
+    if (onFailed) onFailed(error)
+    else console.error('[notification] Failed to deliver native notification', error)
   })
   try {
     notification.show()
