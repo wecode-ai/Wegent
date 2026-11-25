@@ -24,7 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "systeminformation": "5.33.15"
+    "systeminformation": "5.33.26"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

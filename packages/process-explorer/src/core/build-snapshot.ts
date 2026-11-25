@@ -1,4 +1,5 @@
 import type {
+  ExitedProcessRecord,
   HostProcessDescriptor,
   ProcessDegradation,
   ProcessKind,
@@ -51,7 +52,25 @@ export interface BuildProcessSnapshotInput {
   windows?: readonly WindowProcessInfo[]
   system?: readonly SystemProcessInfo[]
   hostProcesses?: readonly HostProcessDescriptor[]
+  /** Recently exited records, kept so their orphaned children stay in the tree. */
+  recentlyExited?: readonly ExitedProcessRecord[]
+  /** Child pid to the pid of its exited parent, for children the OS reparented to launchd. */
+  reparentedChildren?: ReadonlyMap<number, number>
   degraded?: readonly ProcessDegradation[]
+}
+
+const UTILITY_SUB_TYPE = /--utility-sub-type=([^\s]+)/
+
+/**
+ * Labels an unnamed Electron utility process by its Chromium sub-type, for
+ * example `node.mojom.NodeService` becomes "Node Service". Electron only names
+ * utilities that declare a service name, so Node services would otherwise all
+ * appear as the application's generic helper name.
+ */
+export function utilityProcessLabel(command: string | null | undefined): string | null {
+  const subType = command?.match(UTILITY_SUB_TYPE)?.[1]?.split('.').pop()
+  if (!subType) return null
+  return subType.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
 }
 
 export function kindFromElectronType(type: string): ProcessKind {
@@ -149,16 +168,28 @@ export function collectDescendantPids(
 }
 
 export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessSnapshot {
+  const reparented = input.reparentedChildren
+  const systemRows =
+    reparented && reparented.size > 0
+      ? (input.system ?? []).map(row => {
+          const parentPid = reparented.get(row.pid)
+          return parentPid === undefined ? row : { ...row, parentPid }
+        })
+      : (input.system ?? [])
   const systemByPid = new Map<number, SystemProcessInfo>()
-  for (const processInfo of input.system ?? []) {
+  for (const processInfo of systemRows) {
     systemByPid.set(processInfo.pid, processInfo)
   }
+  const exitedByPid = new Map<number, ProcessRecord>()
+  for (const record of input.recentlyExited ?? []) exitedByPid.set(record.pid, record)
 
   const records = new Map<number, ProcessRecord>()
   for (const metric of input.metrics) {
     const systemRow = systemByPid.get(metric.pid)
     const kind =
       metric.pid === input.applicationPid ? 'application' : kindFromElectronType(metric.type)
+    const utilityLabel =
+      kind === 'utility' && !metric.serviceName ? utilityProcessLabel(systemRow?.command) : null
     records.set(metric.pid, {
       id: `${metric.pid}:${metric.creationTime}`,
       pid: metric.pid,
@@ -169,7 +200,7 @@ export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessS
       name:
         metric.pid === input.applicationPid
           ? (input.applicationName ?? metric.name ?? defaultKindName(kind))
-          : (metric.name ?? metric.serviceName ?? defaultKindName(kind)),
+          : (utilityLabel ?? metric.name ?? metric.serviceName ?? defaultKindName(kind)),
       // The system table supplies launch details Electron does not report.
       detail: systemRow?.command ?? metric.serviceName ?? null,
       cpuPercent: finiteOrNull(metric.cpu.percentCPUUsage),
@@ -219,22 +250,31 @@ export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessS
     })
   }
 
-  const systemProcesses = input.system ?? []
-  if (systemProcesses.length > 0) {
-    const parentByPid = new Map(systemProcesses.map(row => [row.pid, row.parentPid]))
+  if (systemRows.length > 0) {
+    const parentByPid = new Map(systemRows.map(row => [row.pid, row.parentPid]))
     const roots = [input.applicationPid, ...injectedRoots]
-    for (const pid of collectDescendantPids(systemProcesses, roots)) {
+    const descendants = collectDescendantPids(systemRows, roots)
+    // Children reparented by an exit stay in the tree while the parent lingers.
+    if (reparented) for (const pid of reparented.keys()) descendants.add(pid)
+    for (const pid of descendants) {
       if (records.has(pid)) continue
       const systemRow = systemByPid.get(pid)
       if (!systemRow) continue
       const owner = findInjectedOwner(pid, injectedOwners, parentByPid)
+      const exitedParent = exitedByPid.get(systemRow.parentPid)
+      const inheritedOwner =
+        !owner &&
+        exitedParent &&
+        (exitedParent.kind === 'host-service' || exitedParent.kind === 'host-child')
+          ? exitedParent.owner
+          : null
       records.set(pid, {
         id: `${pid}:${systemRow.identity}`,
         pid,
         parentPid: systemRow.parentPid,
-        kind: owner ? 'host-child' : 'system',
+        kind: owner || inheritedOwner ? 'host-child' : 'system',
         source: 'system',
-        owner: owner ?? defaultOwnerForKind('system'),
+        owner: owner ?? inheritedOwner ?? defaultOwnerForKind('system'),
         name: systemRow.name || defaultKindName('system'),
         detail: systemRow.command,
         cpuPercent: systemRow.cpuPercent,
@@ -252,6 +292,7 @@ export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessS
     platform: input.platform,
     applicationPid: input.applicationPid,
     processes,
+    recentlyExited: [],
     degraded: [...(input.degraded ?? [])],
   }
 }

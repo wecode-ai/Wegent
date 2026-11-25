@@ -13,9 +13,10 @@ read-only: it never terminates processes.
 
 The package has no runtime dependency on Electron. `createElectronMetricsSource`
 takes the embedding app's object structurally, so tests can pass plain values.
-OS process collection is delegated to
-[`systeminformation`](https://www.npmjs.com/package/systeminformation), which
-owns the platform-specific implementations.
+On macOS the host reads `ps` directly with explicit columns, because the
+kernel-reported executable name is the only reliable one. Other platforms are
+delegated to [`systeminformation`](https://www.npmjs.com/package/systeminformation),
+which owns their platform-specific implementations.
 
 ## Host
 
@@ -55,6 +56,10 @@ await service.snapshot()
 - Host descriptors supply labels and stable identity only.
 - `snapshot()` caches briefly and shares one CPU measurement window across
   concurrent consumers.
+- A process missing between two complete tables is kept in
+  `snapshot.recentlyExited` for five seconds with its last measurements, keyed by
+  `pid:creationTime`. Failed reads and sampling gaps longer than the linger
+  window never report exits. `processes` only contains running processes.
 
 ## Rendering
 

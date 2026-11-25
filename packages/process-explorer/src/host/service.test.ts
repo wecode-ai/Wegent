@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { ProcessDegradation } from '../contract.js'
 import type { ElectronProcessMetric } from '../core/build-snapshot.js'
 import { ProcessExplorerService } from './service.js'
 import type { SystemProcessTableResult } from './system-process-table.js'
@@ -64,6 +65,36 @@ function createService(
     metrics,
     advance: (milliseconds: number) => {
       now += milliseconds
+    },
+  }
+}
+
+function systemRow(pid: number, parentPid: number, identity: string) {
+  return {
+    pid,
+    parentPid,
+    name: `Process ${pid}`,
+    command: `process-${pid}`,
+    cpuPercent: 1,
+    memoryBytes: 4096,
+    startedAt: 1000,
+    identity,
+  }
+}
+
+/** A table whose rows the test replaces between samples. */
+function mutableTable() {
+  let rows = [systemRow(40, 10, 'created-40'), systemRow(41, 40, 'created-41')]
+  let degraded: ProcessDegradation[] = []
+  const read = vi.fn(async () => ({ processes: rows, degraded }))
+  return {
+    read,
+    setRows(next: ReturnType<typeof systemRow>[]) {
+      rows = next
+      degraded = []
+    },
+    fail() {
+      degraded = [{ code: 'system-process-table-failed', detail: 'ps failed' }]
     },
   }
 }
@@ -253,6 +284,89 @@ describe('ProcessExplorerService', () => {
       expect((await service.snapshot()).degraded).toEqual([
         { code: 'system-process-table-unavailable', detail: 'unsupported' },
       ])
+    })
+  })
+
+  describe('exited processes', () => {
+    it('keeps an exited process for the linger window and keeps its orphan in the group', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [executorProcess]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'created-41')])
+      const snapshot = await service.snapshot()
+
+      expect(snapshot.processes.map(row => row.pid)).toEqual([10, 20, 30, 41])
+      expect(snapshot.recentlyExited).toHaveLength(1)
+      expect(snapshot.recentlyExited[0]).toMatchObject({
+        pid: 40,
+        name: 'Executor',
+        owner: { id: 'executor' },
+        cpuPercent: 1,
+        memoryBytes: 4096,
+        exitedAt: 2000,
+      })
+      expect(snapshot.processes.find(row => row.pid === 41)).toMatchObject({
+        // The OS reported parentPid 1; the snapshot keeps the exited parent
+        // so the child renders under it while the parent lingers.
+        parentPid: 40,
+        kind: 'host-child',
+        owner: { id: 'executor' },
+      })
+
+      advance(5000)
+      expect((await service.snapshot()).recentlyExited).toHaveLength(1)
+      advance(1000)
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+    })
+
+    it('does not report exits after a sampling gap longer than the linger window', async () => {
+      const table = mutableTable()
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(6000)
+      table.setRows([systemRow(41, 1, 'created-41')])
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+    })
+
+    it('does not treat a failed system table read as every process exiting', async () => {
+      const table = mutableTable()
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([])
+      table.fail()
+      const failed = await service.snapshot()
+      expect(failed.processes.map(row => row.pid)).toEqual([10, 20, 30])
+      expect(failed.recentlyExited).toEqual([])
+
+      // The next complete table is compared with the last complete one.
+      advance(1000)
+      table.setRows([systemRow(41, 1, 'created-41')])
+      const recovered = await service.snapshot()
+      expect(recovered.degraded).toEqual([])
+      expect(recovered.recentlyExited.map(row => row.pid)).toEqual([40])
+    })
+
+    it('tells a reused pid apart from a process that kept running', async () => {
+      const table = mutableTable()
+      table.setRows([systemRow(50, 10, 'first')])
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([systemRow(50, 10, 'second')])
+      const snapshot = await service.snapshot()
+      expect(snapshot.processes.map(row => row.id)).toContain('50:second')
+      expect(snapshot.recentlyExited.map(row => row.id)).toEqual(['50:first'])
     })
   })
 

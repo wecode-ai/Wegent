@@ -18,3 +18,4 @@ minimumReleaseAgeExclude:
   - '@trycua/cua-driver-win32-arm64-msvc@0.52.13'
   - '@trycua/cua-driver-win32-x64-msvc@0.52.13'
   - '@trycua/cua-driver@0.52.13'
+  - systeminformation@5.33.26

@@ -3,15 +3,23 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type {
   ProcessExplorerClient,
   ProcessOwnerRef,
-  ProcessRecord,
   ProcessSnapshot,
 } from '@wegent/process-explorer'
-import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Pin,
+  RefreshCw,
+} from 'lucide-react'
 import {
   useCallback,
   useMemo,
@@ -36,7 +44,12 @@ import {
   buildProcessTree,
   filterProcessTree,
   flattenProcessTree,
+  DEFAULT_PROCESS_SORT,
+  isExited,
+  type ProcessRow,
+  type ProcessSort,
   type ProcessTreeNode,
+  type SortColumn,
 } from './processTree'
 
 export interface ProcessExplorerViewProps {
@@ -47,15 +60,37 @@ export interface ProcessExplorerViewProps {
   refreshIntervalMs?: number
 }
 
-const DEFAULT_REFRESH_INTERVAL_MS = 2000
+const DEFAULT_REFRESH_INTERVAL_MS = 1000
 
-const COLUMN_LABELS = [
-  { label: 'process_explorer.column_process', align: 'text-left', padding: 'pl-3 pr-3' },
-  { label: 'process_explorer.column_pid', align: 'text-right', padding: 'pl-2 pr-3' },
-  { label: 'process_explorer.column_cpu', align: 'text-right', padding: 'pl-2 pr-3' },
-  { label: 'process_explorer.column_memory', align: 'text-right', padding: 'pl-2 pr-3' },
-  { label: 'process_explorer.column_uptime', align: 'text-right', padding: 'pl-2 pr-3' },
-] as const
+interface ProcessColumn {
+  key: SortColumn
+  label: string
+  align: 'text-left' | 'text-right'
+  padding: string
+}
+
+const COLUMNS: readonly ProcessColumn[] = [
+  {
+    key: 'name',
+    label: 'process_explorer.column_process',
+    align: 'text-left',
+    padding: 'pl-3 pr-3',
+  },
+  { key: 'pid', label: 'process_explorer.column_pid', align: 'text-right', padding: 'pl-2 pr-3' },
+  { key: 'cpu', label: 'process_explorer.column_cpu', align: 'text-right', padding: 'pl-2 pr-3' },
+  {
+    key: 'memory',
+    label: 'process_explorer.column_memory',
+    align: 'text-right',
+    padding: 'pl-2 pr-3',
+  },
+  {
+    key: 'uptime',
+    label: 'process_explorer.column_uptime',
+    align: 'text-right',
+    padding: 'pl-2 pr-3',
+  },
+]
 
 interface RenderGroup {
   owner: ProcessOwnerRef
@@ -83,6 +118,7 @@ export function ProcessExplorerView({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [collapsedOwners, setCollapsedOwners] = useState<Set<string>>(() => new Set())
   const [columnWidths, setColumnWidths] = useState<number[]>(() => [...DEFAULT_COLUMN_WIDTHS])
+  const [sort, setSort] = useState<ProcessSort>(DEFAULT_PROCESS_SORT)
   const tableRef = useRef<HTMLTableElement>(null)
   const { startResize: startPanelResize, stopResize } = usePanelResizeDrag()
 
@@ -94,6 +130,10 @@ export function ProcessExplorerView({
   const snapshot = state.data?.snapshot ?? null
   const error = state.error ?? null
   const load = source.reload
+  // A hidden window stops sampling; the first frame after it is shown is fresh.
+  useDocumentEvent('visibilitychange', () => {
+    if (!document.hidden) void load()
+  })
   useWindowEvent('keydown', event => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
       event.preventDefault()
@@ -101,11 +141,13 @@ export function ProcessExplorerView({
     }
   })
 
-  const groups = useMemo(() => buildRenderGroups(snapshot, filter), [snapshot, filter])
+  const groups = useMemo(() => buildRenderGroups(snapshot, filter, sort), [snapshot, filter, sort])
   const totalCpu = groups.reduce((total, group) => total + group.cpuPercent, 0)
   const totalMemory = groups.reduce((total, group) => total + group.memoryBytes, 0)
   const totalCount = groups.reduce((total, group) => total + group.count, 0)
-  const selectedRecord = snapshot?.processes.find(record => record.id === selectedId) ?? null
+  const selectedRecord =
+    snapshot?.processes.concat(snapshot.recentlyExited).find(record => record.id === selectedId) ??
+    null
   const selectedDetail = selectedRecord?.detail
     ? normalizeLaunchDetail(selectedRecord.detail)
     : null
@@ -278,7 +320,7 @@ export function ProcessExplorerView({
           <colgroup>
             {columnWidths.map((width, index) => (
               <col
-                key={COLUMN_LABELS[index]?.label ?? index}
+                key={COLUMNS[index]?.key ?? index}
                 data-testid={`process-explorer-column-${index}`}
                 style={{ width: `${width}%` }}
               />
@@ -286,36 +328,76 @@ export function ProcessExplorerView({
           </colgroup>
           <thead className="sticky top-0 z-10 bg-surface text-xs text-text-secondary">
             <tr>
-              {COLUMN_LABELS.map((column, index) => (
-                <th
-                  key={column.label}
-                  data-testid={`process-explorer-header-${index}`}
-                  className={cn(
-                    'relative overflow-hidden py-1.5 font-medium',
-                    column.align,
-                    column.padding
-                  )}
-                >
-                  {t(column.label)}
-                  {index < COLUMN_LABELS.length - 1 ? (
-                    <span
-                      role="separator"
-                      aria-orientation="vertical"
-                      aria-label={t('process_explorer.resize_column_hint')}
-                      aria-valuemin={8}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.round(columnWidths[index] ?? 0)}
-                      title={t('process_explorer.resize_column_hint')}
-                      data-testid={`process-explorer-resize-${index}`}
-                      tabIndex={0}
-                      onPointerDown={event => startResize(event, index)}
-                      onDoubleClick={resetColumnWidths}
-                      onKeyDown={event => resizeWithKeyboard(event, index)}
-                      className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize touch-none select-none after:absolute after:inset-y-1 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:content-[''] hover:after:bg-text-muted focus-visible:after:bg-text-muted focus-visible:outline-none"
-                    />
-                  ) : null}
-                </th>
-              ))}
+              {COLUMNS.map((column, index) => {
+                const sorted = sort.column === column.key
+                return (
+                  <th
+                    key={column.key}
+                    data-testid={`process-explorer-header-${index}`}
+                    aria-sort={
+                      sorted ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined
+                    }
+                    className={cn(
+                      'relative overflow-hidden py-1.5 font-medium',
+                      column.align,
+                      column.padding
+                    )}
+                  >
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      data-testid={`process-explorer-sort-${column.key}`}
+                      onClick={() =>
+                        setSort(current =>
+                          current.column === column.key
+                            ? {
+                                column: column.key,
+                                direction: current.direction === 'asc' ? 'desc' : 'asc',
+                              }
+                            : {
+                                column: column.key,
+                                direction:
+                                  column.key === 'name' || column.key === 'pid' ? 'asc' : 'desc',
+                              }
+                        )
+                      }
+                      aria-label={t('process_explorer.sort_by', { column: t(column.label) })}
+                      title={t('process_explorer.sort_by', { column: t(column.label) })}
+                      className={cn(
+                        'flex w-full items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                        column.align === 'text-right' ? 'justify-end' : 'justify-start',
+                        sorted ? 'text-text-primary' : 'hover:text-text-primary'
+                      )}
+                    >
+                      <span>{t(column.label)}</span>
+                      {sorted ? (
+                        sort.direction === 'asc' ? (
+                          <ArrowUp className="h-3 w-3 shrink-0" />
+                        ) : (
+                          <ArrowDown className="h-3 w-3 shrink-0" />
+                        )
+                      ) : null}
+                    </ControlButton>
+                    {index < COLUMNS.length - 1 ? (
+                      <span
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={t('process_explorer.resize_column_hint')}
+                        aria-valuemin={8}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(columnWidths[index] ?? 0)}
+                        title={t('process_explorer.resize_column_hint')}
+                        data-testid={`process-explorer-resize-${index}`}
+                        tabIndex={0}
+                        onPointerDown={event => startResize(event, index)}
+                        onDoubleClick={resetColumnWidths}
+                        onKeyDown={event => resizeWithKeyboard(event, index)}
+                        className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize touch-none select-none after:absolute after:inset-y-1 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:content-[''] hover:after:bg-text-muted focus-visible:after:bg-text-muted focus-visible:outline-none"
+                      />
+                    ) : null}
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           {groups.length === 0 ? (
@@ -476,6 +558,7 @@ function createProcessSnapshotSource(client: ProcessExplorerClient, refreshInter
     {
       refreshIntervalMs,
       refreshIntervalMode: 'after-settle',
+      refreshEnabled: () => !document.hidden,
       success({ snapshot, sequence, startedAt }) {
         traceSnapshotLoad('received', sequence, startedAt, {
           accepted: true,
@@ -513,22 +596,30 @@ function traceSnapshotLoad(
   )
 }
 
-function buildRenderGroups(snapshot: ProcessSnapshot | null, filter: string): RenderGroup[] {
+function buildRenderGroups(
+  snapshot: ProcessSnapshot | null,
+  filter: string,
+  sort: ProcessSort
+): RenderGroup[] {
   const normalizedFilter = filter.trim().toLowerCase()
-  return groupProcesses(snapshot?.processes ?? []).flatMap(group => {
-    let tree = buildProcessTree(group.processes)
+  // Exited processes stay in the tree while they fade, so a short-lived child
+  // remains visible under the parent that forked it.
+  const rows = snapshot?.processes.concat(snapshot.recentlyExited) ?? []
+  return groupProcesses(rows).flatMap(group => {
+    let tree = buildProcessTree(group.processes, sort)
     if (normalizedFilter) {
       tree = filterProcessTree(tree, record => matchesFilter(record, normalizedFilter))
     }
     const flat = flattenProcessTree(tree)
     if (flat.length === 0) return []
+    const running = flat.filter(node => !isExited(node.record))
     return [
       {
         owner: group.owner,
         tree,
-        count: flat.length,
-        cpuPercent: sum(flat.map(node => node.record.cpuPercent)),
-        memoryBytes: sum(flat.map(node => node.record.memoryBytes)),
+        count: running.length,
+        cpuPercent: sum(running.map(node => node.record.cpuPercent)),
+        memoryBytes: sum(running.map(node => node.record.memoryBytes)),
       },
     ]
   })
@@ -542,10 +633,12 @@ function renderNodes(
   select: (id: string) => void
 ): ReactElement[] {
   const record = node.record
+  const exited = isExited(record)
   return [
     <tr
       key={record.id}
       data-testid={`process-explorer-row-${record.pid}`}
+      data-state={exited ? 'exited' : undefined}
       tabIndex={0}
       aria-current={selectedId === record.id ? 'true' : undefined}
       onClick={() => select(record.id)}
@@ -555,13 +648,17 @@ function renderNodes(
         select(record.id)
       }}
       className={cn(
-        'cursor-pointer border-b border-border/40 hover:bg-muted/40 focus-visible:bg-muted focus-visible:outline-none',
-        selectedId === record.id && 'bg-muted'
+        'cursor-pointer border-b border-border/40 transition-opacity duration-300 hover:bg-muted/40 focus-visible:bg-muted focus-visible:outline-none',
+        selectedId === record.id && 'bg-muted',
+        exited && 'text-text-muted opacity-60'
       )}
     >
       <td className="overflow-hidden py-1.5 pr-3" style={{ paddingLeft: 32 + depth * 16 }}>
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate" title={record.name}>
+          <span
+            className="truncate"
+            title={exited ? `${record.name} · ${t('process_explorer.exited')}` : record.name}
+          >
             {record.name}
           </span>
         </div>
@@ -574,14 +671,14 @@ function renderNodes(
         {formatMemory(record.memoryBytes)}
       </td>
       <td className="overflow-hidden px-2 py-1.5 text-right tabular-nums">
-        {formatAge(record.startedAt)}
+        {formatAge(record.startedAt, exited ? record.exitedAt : undefined)}
       </td>
     </tr>,
     ...node.children.flatMap(child => renderNodes(child, depth + 1, t, selectedId, select)),
   ]
 }
 
-function matchesFilter(record: ProcessRecord, filter: string): boolean {
+function matchesFilter(record: ProcessRow, filter: string): boolean {
   if (/^\d+$/.test(filter)) return String(record.pid) === filter
   return (
     record.name.toLowerCase().includes(filter) ||
