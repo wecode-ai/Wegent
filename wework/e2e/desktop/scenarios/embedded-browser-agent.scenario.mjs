@@ -796,7 +796,7 @@ export function createDesktopScenario({
         )
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-          timeoutMs: uiTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
         setupCompleted = true
       } finally {
