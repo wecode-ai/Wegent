@@ -317,6 +317,8 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 Executor E2E 的设备用例和独立沙箱用例在不同 runner 上并行执行，各自使用独立的服务和数据库。
 设备用例保留单 worker，沙箱用例保留双 worker。Rust Backend 的 Clippy 与测试并行运行，
 `Test Summary` 要求两项都通过。
+macOS 渲染性能门禁失败时上传首次测量报告。需要进一步定位时，可在 macOS 上手动执行
+`pnpm --filter wework profile:renderer --capture` 采集 trace。
 
 Linux 桌面 E2E 分片从共享镜像获取原生测试工具。平台 E2E 在 Rust 后端构建期间准备依赖和服务，
 使用前等待同一次 CI 运行的后端产物。同仓库 PR 可复用该 PR 中构建输入完全匹配的 Linux 桌面包。普通 PR 的 macOS 桌面检查构建本地应用和 Executor。

@@ -1427,15 +1427,9 @@ jobs:
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
       - name: Enforce renderer performance budgets
-        id: renderer-budgets
         if: needs.changes.outputs.wework_desktop_renderer_profile == 'true'
         timeout-minutes: 8
         run: node wework/scripts/profile-renderer.mjs --check
-
-      - name: Capture renderer workload after a budget failure
-        if: failure() && steps.renderer-budgets.conclusion == 'failure'
-        timeout-minutes: 8
-        run: node wework/scripts/profile-renderer.mjs --capture
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')

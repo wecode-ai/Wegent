@@ -25,7 +25,7 @@ summary = jobs.fetch("platform-e2e-summary").fetch("steps").first.fetch("env")
       values.each { |key, value| expression = expression.gsub(key, value.inspect) }
       eval(expression)
     end
-    runtime_required = event != "pull_request" || (!draft && (platform || desktop))
+    runtime_required = (platform || desktop) && (event != "pull_request" || !draft)
     delivery_required = delivery && (event != "pull_request" || !draft)
     [
       [producer.fetch("if"), runtime_required],
