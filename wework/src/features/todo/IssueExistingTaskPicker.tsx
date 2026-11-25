@@ -81,7 +81,7 @@ export function IssueExistingTaskPicker({
             <p className="text-base font-medium">{t('todo.link_existing_task')}</p>
             <p className="mt-1 text-xs text-text-muted">{t('todo.link_existing_hint')}</p>
           </div>
-          <div className="mb-2 flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 focus-within:ring-2 focus-within:ring-focus">
+          <div className="mb-2 flex shrink-0 items-center gap-2 rounded-lg border border-border px-3">
             <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
             <ControlInput
               appearance="plain"

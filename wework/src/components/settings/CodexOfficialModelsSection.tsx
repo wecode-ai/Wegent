@@ -44,6 +44,7 @@ function LocalModelDiscardChangesDialog({
       cancelLabel={t('common.cancel')}
       confirmLabel={t('workbench.local_model_discard_changes_confirm')}
       confirmTestId="local-model-discard-changes-confirm-button"
+      destructive
       onClose={onCancel}
       onConfirm={onConfirm}
     />

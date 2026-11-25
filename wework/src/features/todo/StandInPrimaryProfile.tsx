@@ -260,21 +260,19 @@ export function StandInPrimaryProfile({
                   : 'standIn.workspace.profile_instructions'
               )}
             </span>
-            <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
-              <ControlTextarea
-                data-testid="stand-in-preferences"
-                value={draft.preferences}
-                disabled={blocked}
-                onChange={event => setDraft({ ...draft, preferences: event.target.value })}
-                placeholder={t(
-                  separatePrompt
-                    ? 'standIn.workspace.ghost_private_preferences_placeholder'
-                    : 'standIn.workspace.profile_instructions_placeholder'
-                )}
-                rows={5}
-                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none placeholder:text-text-secondary"
-              />
-            </div>
+            <ControlTextarea
+              data-testid="stand-in-preferences"
+              value={draft.preferences}
+              disabled={blocked}
+              onChange={event => setDraft({ ...draft, preferences: event.target.value })}
+              placeholder={t(
+                separatePrompt
+                  ? 'standIn.workspace.ghost_private_preferences_placeholder'
+                  : 'standIn.workspace.profile_instructions_placeholder'
+              )}
+              rows={5}
+              className="block resize-y"
+            />
             <span className="text-xs text-text-secondary">
               {t(
                 separatePrompt

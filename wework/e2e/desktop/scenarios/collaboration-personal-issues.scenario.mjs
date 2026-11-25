@@ -10,6 +10,7 @@ import {
   pressFocusedIssueKey,
 } from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyIssueChildMode, verifyIssueSendModes } from '../modules/issue-comment-workflow.mjs'
@@ -341,6 +342,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await navigate(control, 'collaboration-primary-create-issue')
       await wait(control, '[data-testid="independent-issue-dialog"]')
       await verifyIssueCreationColumns(control)
+      await verifyProjectFieldFocus(control, 'independent-issue-search-people', {
+        includeParent: true,
+      })
       await captureScreenshot(control, 'new-issue-shared-layout.png')
       await click(control, 'independent-issue-close')
       await verifyIssueAssociationRecovery(control, {

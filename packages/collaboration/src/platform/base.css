@@ -379,17 +379,10 @@
   background: rgb(var(--color-bg-base));
 }
 
-.collaboration-project-create-dialog input:focus,
-.collaboration-project-create-dialog textarea:focus,
-.collaboration-project-create-dialog select:focus {
-  border-color: rgb(var(--color-focus, var(--color-primary)));
-  outline: none;
-  box-shadow: 0 0 0 1px rgb(var(--color-focus, var(--color-primary)) / 0.25);
-}
-
-.collaboration-project-create-dialog button:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .collaboration-project-create-dialog button:focus-visible {
   outline: 2px solid rgb(var(--color-focus, var(--color-primary)));
   outline-offset: 2px;
+  box-shadow: var(--tw-shadow, none);
 }
 
 .collaboration-project-create-dialog input[type='checkbox'] {
@@ -494,7 +487,7 @@
   color: rgb(var(--color-text-muted));
 }
 
-.collaboration-project-collaborator-search:focus-within {
+:where(html:not([data-input-modality='pointer'])) .collaboration-project-collaborator-search:focus-within {
   outline: 2px solid rgb(var(--color-focus, var(--color-primary)));
   outline-offset: 2px;
 }
