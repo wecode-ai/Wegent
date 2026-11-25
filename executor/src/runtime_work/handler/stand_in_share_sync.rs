@@ -20,9 +20,10 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         let user = Self::connected_runtime_user(&connection).await?;
+        let backend = connection.backend_url.as_str();
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         for receipt in store
-            .pending_assistant_share_copy_receipts(user)
+            .pending_assistant_share_copy_receipts(user, backend)
             .map_err(settings_error)?
         {
             Self::runtime_http_on(
@@ -36,11 +37,11 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
             store
-                .acknowledge_assistant_share_copy_receipt(user, &receipt)
+                .acknowledge_assistant_share_copy_receipt(user, backend, &receipt)
                 .map_err(settings_error)?;
         }
-        let Some(version) = store
-            .pending_assistant_share_sync(user)
+        let Some(settings) = store
+            .pending_assistant_share_sync(user, backend)
             .map_err(settings_error)?
         else {
             return Ok(());
@@ -54,15 +55,15 @@ impl RuntimeWorkRpcHandler {
         .await?;
         let sources: Vec<ShareSource> = serde_json::from_value(sources)
             .map_err(|_| AppIpcError::new("server_error", "Invalid assistant share sources"))?;
-        let settings = store
-            .read_personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
+        let version = settings["version"]
+            .as_u64()
+            .ok_or_else(|| AppIpcError::new("server_error", "Invalid assistant share revision"))?;
         let published: HashSet<String> = sources
             .iter()
             .filter(|source| source.kind == "assistant")
             .map(|source| source.source.clone())
             .collect();
-        // The current snapshot may be newer than the marker. Reconcile it now,
+        // Reconcile the settings captured for this backend,
         // then acknowledge only the marker that was actually observed.
         for source in sources {
             if source.kind == "assistant"
@@ -86,7 +87,7 @@ impl RuntimeWorkRpcHandler {
             .await?;
         }
         store
-            .acknowledge_assistant_share_sync(user, version)
+            .acknowledge_assistant_share_sync(user, backend, version)
             .map_err(settings_error)
     }
 }
@@ -107,10 +108,10 @@ async fn published_team_members(
     let mut definitions = Vec::new();
     let mut remote = Vec::new();
     for id in team.members.keys().filter(|id| !published.contains(*id)) {
-        if let Some(definition) = assistant_share_definition(settings, "assistant", id) {
-            definitions.push(definition);
-        } else if let Some(route) = routes.get(id) {
+        if let Some(route) = routes.get(id) {
             remote.push((id, route.execution_device_id.as_str()));
+        } else if let Some(definition) = assistant_share_definition(settings, "assistant", id) {
+            definitions.push(definition);
         }
     }
     if remote.is_empty() {

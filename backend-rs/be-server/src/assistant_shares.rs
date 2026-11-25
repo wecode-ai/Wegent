@@ -1,5 +1,5 @@
 //! Account-owned assistant definitions and recipient-specific use grants.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "assistant_share_storage.rs"]
 mod storage;
@@ -22,6 +22,8 @@ struct PublishShare {
     root: Definition,
     #[serde(default)]
     assistants: Vec<Definition>,
+    #[serde(default)]
+    base_revisions: BTreeMap<String, u64>,
 }
 
 #[derive(FromMysqlRow)]
@@ -125,6 +127,7 @@ struct ShareListEntry {
 struct ShareList {
     received: Vec<ShareListEntry>,
     sent: Vec<ShareListEntry>,
+    publication_revisions: BTreeMap<String, u64>,
 }
 
 fn share_list_select() -> String {
@@ -206,7 +209,18 @@ async fn list_shares(
         )
         .await
         .map_err(internal)?;
-    Ok(ShareList { received, sent })
+    let sources: Vec<ShareSource> = state.mysql.fetch_all(
+        format!("SELECT d.resource_kind AS kind,d.source_id AS source,d.revision FROM {PUBLICATIONS} d WHERE d.owner_user_id=?"), (id,)
+    ).await.map_err(internal)?;
+    let publication_revisions = sources
+        .into_iter()
+        .map(|row| (format!("{}:{}", row.kind, row.source), row.revision))
+        .collect();
+    Ok(ShareList {
+        received,
+        sent,
+        publication_revisions,
+    })
 }
 
 #[brz_http_server::post("/api/v1/assistant-shares")]
@@ -230,7 +244,7 @@ async fn publish_share(
             .mysql
             .with_transaction(async |tx| {
                 if !storage::lock_publisher(tx, owner).await? {
-                    return Ok(None);
+                    return Ok(PublishOutcome::Missing);
                 }
                 let active: Option<UserRow> = tx
                     .fetch_optional(
@@ -239,8 +253,18 @@ async fn publish_share(
                     )
                     .await?;
                 let Some(recipient) = active.map(|row| row.id) else {
-                    return Ok(None);
+                    return Ok(PublishOutcome::Missing);
                 };
+                for definition in std::iter::once(&body.root).chain(&body.assistants) {
+                    let (kind, source) = definition.key();
+                    if let Some(current) = storage::publication(tx, owner, kind, source).await?
+                        && &current.definition.0 != definition
+                        && body.base_revisions.get(&format!("{kind}:{source}"))
+                            != Some(&current.revision)
+                    {
+                        return Ok(PublishOutcome::Conflict);
+                    }
+                }
                 // Publish members and the root in the same transaction as the grant.
                 let mut notices = Vec::new();
                 for member in &body.assistants {
@@ -271,15 +295,33 @@ async fn publish_share(
                         (owner, kind, source, source, recipient.to_string()),
                     )
                     .await?;
-                Ok(Some((row.into_preview(owner), notices)))
+                Ok(PublishOutcome::Published(row.into_preview(owner), notices))
             })
             .await
             .map_err(internal)?;
-    let (preview, notices) = result.ok_or_else(missing)?;
+    let (preview, notices) = match result {
+        PublishOutcome::Missing => return Err(missing()),
+        PublishOutcome::Conflict => {
+            return Err(FastApiError::detail(
+                StatusCode::CONFLICT,
+                "Assistant publication changed while preparing the share",
+            ));
+        }
+        PublishOutcome::Published(preview, notices) => (preview, notices),
+    };
     for notification in notices {
         notifications::deliver(state, notification).await;
     }
     Ok(preview)
+}
+
+enum PublishOutcome {
+    Missing,
+    Conflict,
+    Published(
+        SharePreview,
+        Vec<crate::background_jobs::project::notifications::Pending>,
+    ),
 }
 
 async fn publish_definition(

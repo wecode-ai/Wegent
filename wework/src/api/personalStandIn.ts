@@ -123,13 +123,18 @@ export interface StandInSharePublish {
   allow_copy: boolean
   root: StandInShareDefinition
   assistants?: StandInShareDefinition[]
+  base_revisions?: Record<string, number>
 }
 
 export interface StandInShareApi {
   list(
     userId: number,
     deviceId: string
-  ): Promise<{ received: StandInShareEntry[]; sent: StandInShareEntry[] }>
+  ): Promise<{
+    received: StandInShareEntry[]
+    sent: StandInShareEntry[]
+    publication_revisions: Record<string, number>
+  }>
   searchUsers(
     userId: number,
     deviceId: string,

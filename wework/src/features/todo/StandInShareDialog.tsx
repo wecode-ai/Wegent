@@ -151,7 +151,18 @@ function ShareContents({
   const [revoking, setRevoking] = useState<StandInShareEntry | null>(null)
   const [updating, setUpdating] = useState<StandInShareEntry | null>(null)
   const { userId, executionDeviceId: device } = settings
-  const directory = new Map([...roles, ...settings.roles].map(role => [role.id, role]))
+  const directory = new Map(
+    [...roles, ...settings.roles].map(role => [
+      JSON.stringify([role.id, role.executionDeviceId]),
+      role,
+    ])
+  )
+  const repeatedIds = new Set<string>()
+  const seenIds = new Set<string>()
+  for (const role of directory.values()) {
+    if (seenIds.has(role.id)) repeatedIds.add(role.id)
+    seenIds.add(role.id)
+  }
 
   const shareKey = (entry: StandInShareEntry) =>
     `${entry.owner_user_id}:${entry.resource_kind}:${entry.source_id}`
@@ -165,11 +176,13 @@ function ShareContents({
   async function publish() {
     if (recipient === null) return
     const separator = source.indexOf(':')
-    const id = source.slice(separator + 1)
+    const selected = directory.get(source)
+    const id = selected?.id ?? source.slice(separator + 1)
     const team = settings.teams?.find(team => team.id === id && source.startsWith('team:'))
+    const { publication_revisions: baseRevisions } = await api.list(userId, device)
     const root = await api.definition(
       userId,
-      team ? device : (directory.get(id)?.executionDeviceId ?? device),
+      selected?.executionDeviceId ?? device,
       team ? 'team' : 'assistant',
       id
     )
@@ -178,9 +191,7 @@ function ShareContents({
           Object.keys(team.members).map(id =>
             api.definition(
               userId,
-              directory.get(id)?.executionDeviceId ??
-                team.memberRoutes?.[id]?.executionDeviceId ??
-                device,
+              team.memberRoutes?.[id]?.executionDeviceId ?? device,
               'assistant',
               id
             )
@@ -192,6 +203,7 @@ function ShareContents({
       allow_copy: allowCopy,
       root,
       assistants,
+      base_revisions: baseRevisions,
     })
     setPublishing(false)
     setRecipient(null)
@@ -214,10 +226,13 @@ function ShareContents({
               onChange={setSource}
               options={[
                 { value: 'assistant:@primary', label: t('standIn.personal.default_role') },
-                ...[...directory.values()].map((role, index) => ({
-                  value: `assistant:${role.id}`,
-                  label: standInRoleName(role, index, t('standIn.personal.unnamed_assistant')),
-                })),
+                ...[...directory].map(([value, role], index) => {
+                  const name = standInRoleName(role, index, t('standIn.personal.unnamed_assistant'))
+                  return {
+                    value,
+                    label: repeatedIds.has(role.id) ? `${name} · ${role.executionDeviceId}` : name,
+                  }
+                }),
                 ...(settings.teams ?? []).map(team => ({
                   value: `team:${team.id}`,
                   label: team.name,
@@ -415,12 +430,7 @@ function ShareContents({
           const entry = revoking
           void perform(async () => {
             await api.revoke(userId, device, entry)
-            onPublished({
-              received,
-              sent: sent.map(row =>
-                row === entry ? { ...row, revoked: true, direct_enabled: false } : row
-              ),
-            })
+            onPublished(await api.list(userId, device))
             setRevoking(null)
           })
         }}

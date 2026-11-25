@@ -10,6 +10,7 @@ impl LocalTaskStore {
         &self,
         user: i64,
         device: &str,
+        backend: &str,
         snapshot: &AssistantShareSnapshot,
         update: bool,
     ) -> Result<Value, TaskRuntimeError> {
@@ -17,7 +18,13 @@ impl LocalTaskStore {
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (mut settings, _) = personal_snapshot(&transaction, user, device)?;
         if apply_share_copy(&mut settings, snapshot, update)? {
-            settings = self.save_personal_stand_in_on(&transaction, user, device, settings)?;
+            settings = self.save_personal_stand_in_on(
+                &transaction,
+                user,
+                device,
+                settings,
+                Some(backend),
+            )?;
         }
         for entry in std::iter::once(&snapshot.root).chain(&snapshot.assistants) {
             let (kind, source) = entry.definition.key();
@@ -27,6 +34,7 @@ impl LocalTaskStore {
                 super::share_sync::queue_assistant_share_copy_receipt(
                     &transaction,
                     user,
+                    backend,
                     snapshot.owner_user_id,
                     kind,
                     source,

@@ -62,6 +62,7 @@ pub(crate) async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
                 allow_copy,
                 root: team(name, false),
                 assistants: vec![assistant("data", "Original prompt")],
+                base_revisions: BTreeMap::new(),
             },
         )
         .await
@@ -152,6 +153,7 @@ pub(crate) async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
             allow_copy: true,
             root: team("release", false),
             assistants: vec![assistant("data", "Original prompt")],
+            base_revisions: BTreeMap::new(),
         },
     )
     .await
@@ -239,6 +241,21 @@ pub(crate) async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
     .err()
     .unwrap();
     assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let stale_publication = publish_share(
+        &state,
+        user(OWNER),
+        PublishShare {
+            recipient_user_id: STRANGER,
+            allow_copy: true,
+            root: assistant("data", "Stale prompt"),
+            assistants: Vec::new(),
+            base_revisions: BTreeMap::from([("assistant:data".into(), 1)]),
+        },
+    )
+    .await
+    .err()
+    .unwrap();
+    assert_eq!(stale_publication.status(), StatusCode::CONFLICT);
     sync_definition(
         &state,
         user(OWNER),

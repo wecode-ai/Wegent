@@ -80,6 +80,12 @@ function StandInTeamsDialog({
     role => role.executionDeviceId === settings.executionDeviceId
   )
   const directory = new Map([...roles, ...settings.roles].map(role => [role.id, role]))
+  const memberDevices = new Map<string, Map<string, StandInRole>>()
+  for (const role of [...roles, ...settings.roles]) {
+    const locations = memberDevices.get(role.id) ?? new Map<string, StandInRole>()
+    locations.set(role.executionDeviceId, role)
+    memberDevices.set(role.id, locations)
+  }
   const candidates = new Map(
     [...directory.values()].map((role, index) => [
       role.id,
@@ -173,7 +179,7 @@ function StandInTeamsDialog({
               const memberRoutes = Object.fromEntries(
                 Object.keys(draft.members).flatMap(id => {
                   if (id === draft.leadId) return []
-                  const route = directory.get(id) ?? draft.memberRoutes?.[id]
+                  const route = draft.memberRoutes?.[id]
                   if (!route || route.executionDeviceId === settings.executionDeviceId) return []
                   return [[id, { executionDeviceId: route.executionDeviceId, name: route.name }]]
                 })
@@ -231,6 +237,9 @@ function StandInTeamsDialog({
                     const included = Object.hasOwn(draft.members, id)
                     const name = candidates.get(id) ?? id
                     const isLead = draft.leadId === id
+                    const locations = memberDevices.get(id)
+                    const currentDevice =
+                      draft.memberRoutes?.[id]?.executionDeviceId ?? settings.executionDeviceId
                     return (
                       <div key={id} className="space-y-1">
                         <label className="flex min-h-11 items-center gap-2 md:min-h-8">
@@ -240,8 +249,21 @@ function StandInTeamsDialog({
                             disabled={busy || isLead}
                             onCheckedChange={checked => {
                               const members = { ...draft.members, [id]: '' }
-                              if (checked !== true) delete members[id]
-                              setDraft({ ...draft, members })
+                              const memberRoutes = { ...draft.memberRoutes }
+                              const role = directory.get(id)
+                              if (checked !== true) {
+                                delete members[id]
+                                delete memberRoutes[id]
+                              } else if (
+                                role &&
+                                role.executionDeviceId !== settings.executionDeviceId
+                              ) {
+                                memberRoutes[id] = {
+                                  executionDeviceId: role.executionDeviceId,
+                                  name: role.name,
+                                }
+                              }
+                              setDraft({ ...draft, members, memberRoutes })
                             }}
                           />
                           {name}
@@ -249,6 +271,31 @@ function StandInTeamsDialog({
                             <span className="text-text-secondary">{t('standIn.teams.lead')}</span>
                           )}
                         </label>
+                        {included && !isLead && locations && locations.size > 1 && (
+                          <SelectField
+                            accessibleLabel={name}
+                            testId={`stand-in-team-member-device-${id}`}
+                            value={currentDevice}
+                            disabled={busy}
+                            options={[...new Set([currentDevice, ...locations.keys()])].map(
+                              device => ({
+                                value: device,
+                                label: device,
+                              })
+                            )}
+                            onChange={device => {
+                              const memberRoutes = { ...draft.memberRoutes }
+                              if (device === settings.executionDeviceId) delete memberRoutes[id]
+                              else {
+                                memberRoutes[id] = {
+                                  executionDeviceId: device,
+                                  name: locations.get(device)?.name ?? name,
+                                }
+                              }
+                              setDraft({ ...draft, memberRoutes })
+                            }}
+                          />
+                        )}
                         {included && (
                           <label className="grid gap-1 pl-6 text-text-secondary">
                             {t('standIn.teams.duty')}

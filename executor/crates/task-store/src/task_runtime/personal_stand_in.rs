@@ -652,9 +652,19 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.save_personal_stand_in_for_backend(user, device, None, value)
+    }
+
+    pub fn save_personal_stand_in_for_backend(
+        &self,
+        user: i64,
+        device: &str,
+        backend: Option<&str>,
+        value: Value,
+    ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved = self.save_personal_stand_in_on(&connection, user, device, value)?;
+        let saved = self.save_personal_stand_in_on(&connection, user, device, value, backend)?;
         connection.commit()?;
         Ok(saved)
     }
@@ -716,7 +726,7 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let result = self
-            .save_personal_stand_in_on(&transaction, user, device, value)
+            .save_personal_stand_in_on(&transaction, user, device, value, None)
             .map(|_| ());
         transaction.rollback()?;
         result
@@ -729,6 +739,7 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         mut value: Value,
+        backend: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
@@ -807,8 +818,10 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
-        if share_sync::share_configuration_changed(&previous, &value) {
-            share_sync::queue_assistant_share_sync(connection, user, &value["version"])?;
+        if let Some(backend) = backend.filter(|backend| {
+            !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
+        }) {
+            share_sync::queue_assistant_share_sync(connection, user, backend, &value)?;
         }
         super::stand_in_ghost_proposals::retire_stale_candidates(
             connection,

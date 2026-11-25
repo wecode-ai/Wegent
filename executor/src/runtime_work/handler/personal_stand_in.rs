@@ -337,7 +337,13 @@ impl RuntimeWorkRpcHandler {
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         store
-            .copy_assistant_share(user, &self.device_id, &snapshot, payload["update"] == true)
+            .copy_assistant_share(
+                user,
+                &self.device_id,
+                &connection.backend_url,
+                &snapshot,
+                payload["update"] == true,
+            )
             .map_err(settings_error)
     }
 
@@ -496,8 +502,14 @@ impl RuntimeWorkRpcHandler {
             self.preflight_git_connections(&settings, &previous).await?;
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
+            let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .save_personal_stand_in(user, &self.device_id, settings)
+                .save_personal_stand_in_for_backend(
+                    user,
+                    &self.device_id,
+                    connection.as_ref().map(|entry| entry.backend_url.as_str()),
+                    settings,
+                )
                 .map_err(settings_error)?;
             Ok(saved)
         } else {

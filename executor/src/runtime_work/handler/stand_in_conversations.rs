@@ -261,8 +261,16 @@ impl RuntimeWorkRpcHandler {
             } else {
                 None
             };
+            let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .resolve_stand_in_proposal(user, &device, id, accept, prepared)
+                .resolve_stand_in_proposal_for_backend(
+                    user,
+                    &device,
+                    id,
+                    accept,
+                    prepared,
+                    connection.as_ref().map(|entry| entry.backend_url.as_str()),
+                )
                 .map_err(settings_error)?;
             drop(_guard);
             if let Err(error) = self.flush_stand_in_proposal_continuations().await {
