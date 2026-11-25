@@ -98,7 +98,7 @@ export class ReplyPredictionService {
   private entries = new Map<string, PredictionEntry>()
   private owners = new Map<string, number>()
   private failedScopes = new Set<string>()
-  private listeners = new Set<() => void>()
+  private listeners = new Set<(scope?: string) => void>()
   private revision = 0
 
   constructor(api: PredictionApi) {
@@ -113,10 +113,10 @@ export class ReplyPredictionService {
     }
   }
 
-  private static notifyPersistedChanges() {
+  private static notifyPersistedChanges(scope?: string) {
     for (const reference of liveServices) {
       const service = reference.deref()
-      if (service) service.notify()
+      if (service) service.notify(scope)
       else liveServices.delete(reference)
     }
   }
@@ -130,7 +130,7 @@ export class ReplyPredictionService {
     this.notify()
   }
 
-  subscribe = (listener: () => void) => {
+  subscribe = (listener: (scope?: string) => void) => {
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
@@ -157,9 +157,9 @@ export class ReplyPredictionService {
     return this.failedScopes.has(scope)
   }
 
-  private notify() {
+  private notify(scope?: string) {
     this.revision += 1
-    for (const listener of this.listeners) listener()
+    for (const listener of this.listeners) listener(scope)
   }
 
   invalidate(scope: string) {
@@ -207,16 +207,18 @@ export class ReplyPredictionService {
       const activeEntry = entry
       void promise.then(() => {
         activeEntry.settled = true
-        this.notify()
+        this.notify(source.scope)
       })
       this.entries.set(key, entry)
-      this.notify()
       while (this.entries.size > 100) {
         const oldest = this.entries.keys().next().value!
         this.entries.get(oldest)?.controller.abort()
         this.entries.delete(oldest)
-        this.failedScopes.delete(oldest.split('\u0000')[0])
+        const scope = oldest.split('\u0000')[0]
+        this.failedScopes.delete(scope)
+        this.notify(scope)
       }
+      this.notify(source.scope)
     }
     const text = await entry.promise
     entry.accepted ||= readReplyPrediction(source.scope, key)?.accepted ?? false
@@ -239,7 +241,7 @@ export class ReplyPredictionService {
         if (!isCurrent()) return
         entry.accepted = true
         writeReplyPrediction(source.scope, { key, text, accepted: true, failed: false })
-        this.notify()
+        this.notify(source.scope)
       },
     }
   }

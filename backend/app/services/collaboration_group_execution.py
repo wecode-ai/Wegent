@@ -251,7 +251,7 @@ def _notify_human_leader(
         actor_user_id=user_id,
         kind="assignment",
         title=f"请协调：{item.title}",
-        body="你是该协作小组的负责人。请打开 Issue 分配本轮任务并验收结果。",
+        body="你是该协作小组的负责人。请打开事项分配本轮任务并验收结果。",
         project_id=str(project.id),
         item_id=item.id,
         payload={
