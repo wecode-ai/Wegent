@@ -476,32 +476,35 @@ export function useDesktopSidebarModel({
     setPriorityForceArchiveItems(null)
   }
 
-  const setRuntimeTaskPinnedOptimistically = async (data: RuntimeTaskPinRequest) => {
-    if (!onSetRuntimeTaskPinned) return
-    const projectTask = sidebarRuntimeProjectSource
-      .flatMap(projectWork =>
-        getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).map(item => ({
-          ...item,
-          stateDeviceId: projectWork.project.stateDeviceId ?? item.workspace.deviceId,
-        }))
-      )
-      .find(
-        ({ stateDeviceId, task }) =>
-          stateDeviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
-      )
-    const runtimeTask =
-      projectTask ??
-      chatTaskItems.find(
-        ({ workspace, task }) =>
-          workspace.deviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
-      )
-    if (!runtimeTask) {
-      await onSetRuntimeTaskPinned(data)
-      return
-    }
+  const setRuntimeTaskPinnedOptimistically = useCallback(
+    async (data: RuntimeTaskPinRequest) => {
+      if (!onSetRuntimeTaskPinned) return
+      const projectTask = sidebarRuntimeProjectSource
+        .flatMap(projectWork =>
+          getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).map(item => ({
+            ...item,
+            stateDeviceId: projectWork.project.stateDeviceId ?? item.workspace.deviceId,
+          }))
+        )
+        .find(
+          ({ stateDeviceId, task }) =>
+            stateDeviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
+        )
+      const runtimeTask =
+        projectTask ??
+        chatTaskItems.find(
+          ({ workspace, task }) =>
+            workspace.deviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
+        )
+      if (!runtimeTask) {
+        await onSetRuntimeTaskPinned(data)
+        return
+      }
 
-    await pinSource.pin(data, onSetRuntimeTaskPinned)
-  }
+      await pinSource.pin(data, onSetRuntimeTaskPinned)
+    },
+    [chatTaskItems, onSetRuntimeTaskPinned, pinSource, sidebarRuntimeProjectSource]
+  )
   const projectSectionArchiveItems = useMemo(() => {
     return allSidebarRuntimeProjects
       .map(projectWork => ({
