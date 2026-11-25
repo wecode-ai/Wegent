@@ -499,6 +499,38 @@ const IMAGE_EDIT_COMPLETION_TEXT = {
   image_erase: 'Image erase received',
 }
 
+async function verifyCloudRuntimeIdentity(endpoint, expectedUserId) {
+  const fail = message => {
+    console.error(message)
+    process.exitCode = 1
+  }
+  const token = process.env.WEGENT_RUNTIME_AUTH_TOKEN?.trim()
+  const username = process.env.WEGENT_SKILL_USER_NAME
+  if (!token) return fail('Cloud task Shell did not receive a runtime token')
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: 'Bearer ' + token },
+      redirect: 'error',
+      signal: AbortSignal.timeout(3000),
+    })
+    if (response.status !== 200)
+      return fail('CI Backend did not accept the task runtime token (HTTP ' + response.status + ')')
+    const { user } = await response.json()
+    if (typeof user !== 'string' || !user) return fail('CI Backend did not return a runtime user')
+    const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'))
+    if (
+      claims.type !== 'task_token' ||
+      claims.user_id !== expectedUserId ||
+      !username ||
+      claims.user_name !== username
+    )
+      return fail('CI Backend accepted a task runtime token for a different identity')
+    process.stdout.write(username)
+  } catch {
+    fail('Cloud task Shell could not verify its runtime token with the CI Backend')
+  }
+}
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -906,6 +938,18 @@ class DesktopE2EServer {
         this.failedCloudModelWaiter = resolvePromise
       })
     )
+  }
+
+  setPersonalRemoteCloudInitialScenario(backendUrl, expectedUserId) {
+    const backend = new URL(backendUrl)
+    assert.ok(
+      backend.protocol === 'http:' && backend.hostname === '127.0.0.1' && backend.port,
+      'The cloud identity probe must use the isolated CI Backend'
+    )
+    assert.ok(Number.isSafeInteger(expectedUserId) && expectedUserId > 0, 'Invalid CI user ID')
+    const endpoint = `${backend.origin}/api/users/me/wegent-runtime`
+    this.personalRemoteCloudIdentityCommand = `node -e "(${verifyCloudRuntimeIdentity})('${endpoint}', ${expectedUserId})"`
+    this.setScenario('cloud_initial')
   }
 
   setScenario(scenario) {
@@ -3177,7 +3221,8 @@ class DesktopE2EServer {
       )
       const tool = selectShellToolCommand(
         body,
-        `node -e "process.stdout.write(process.env.WEGENT_SKILL_USER_NAME || '')"`,
+        this.personalRemoteCloudIdentityCommand ??
+          `node -e "process.stdout.write(process.env.WEGENT_SKILL_USER_NAME || '')"`,
         this.cloudWorkspacePath,
         { yieldTimeMs: 10_000 }
       )
@@ -3200,10 +3245,14 @@ class DesktopE2EServer {
         'The real cloud Codex request did not report its tool output to the model service'
       )
       const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
-      assert.match(identityToolOutput, /Process exited with code 0\b/)
-      assert.equal(
-        identityToolOutput.trim().split('\n').at(-1),
-        CLOUD_AUTHENTICATED_USER_NAME,
+      assert.ok(
+        /Process exited with code 0\b/.test(identityToolOutput),
+        this.personalRemoteCloudIdentityCommand
+          ? 'The remote personal task Shell did not authenticate to the CI Backend'
+          : 'The cloud task Shell did not return its authenticated username'
+      )
+      assert.ok(
+        identityToolOutput.trim().split('\n').at(-1) === CLOUD_AUTHENTICATED_USER_NAME,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
       const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)

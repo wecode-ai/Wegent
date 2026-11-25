@@ -46,6 +46,26 @@ function lifecycle(work: RuntimeWorkListResponse) {
 }
 
 describe('buildTrayMenuTaskGroups', () => {
+  test('reuses pinned and recent groups when only live task status changes', () => {
+    const work = runtimeWork({
+      chats: [
+        workspace({
+          workspaceKind: 'chat',
+          tasks: [task({ workspaceKind: 'chat', pinned: true })],
+        }),
+      ],
+    })
+    const initial = buildTrayMenuTaskGroups(work)
+    const updated = buildTrayMenuTaskGroups(work, {
+      lifecycle: { runningTaskKeys: new Set(['device-a\0task']) },
+    })
+
+    expect(updated.running).toEqual(initial.recent)
+    expect(updated.activeTaskIds).toEqual(['task'])
+    expect(updated.recent).toBe(initial.recent)
+    expect(updated.pinned).toBe(initial.pinned)
+  })
+
   test('builds running, pinned, and recent task groups from runtime work', () => {
     const work = runtimeWork({
       projects: [

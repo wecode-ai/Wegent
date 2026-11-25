@@ -145,15 +145,17 @@ function measureAttachedRows(
   // Read layout once for the batch before updating any virtual positions.
   rows.forEach(row => initialBounds.set(row, row.getBoundingClientRect()))
   try {
-    for (const row of rows) {
-      if (!row.isConnected || !list.contains(row)) continue
+    const attached = rows.filter(row => row.isConnected && list.contains(row))
+    // Register the complete batch before resizing, since resizeItem can commit
+    // React synchronously and expose a partially registered row range.
+    attached.forEach(row => virtualizer.measureElement(row))
+    for (const row of attached) {
       // TanStack skips synchronous measurement during native scrolling. Commit
-      // the current DOM size before registering it for ongoing observation.
+      // the current DOM size before paint while ongoing observation stays active.
       const index = Number(row.dataset.index)
       const size = virtualizer.options.measureElement(row, undefined, virtualizer)
       const item = virtualizer.getVirtualItems().find(item => item.index === index)
       if (item && item.size !== size) virtualizer.resizeItem(index, size)
-      if (row.isConnected && list.contains(row)) virtualizer.measureElement(row)
     }
   } finally {
     rows.forEach(row => initialBounds.delete(row))

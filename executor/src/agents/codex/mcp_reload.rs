@@ -13,7 +13,7 @@ pub(super) fn mcp_thread_configuration(params: &Value) -> Map<String, Value> {
         .collect()
 }
 
-/// Admission identity covers tool authority, inference profiles and native policy.
+/// Admission identity covers tool authority, runtime Shell identity, inference profiles and native policy.
 pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value> {
     use sha2::{Digest, Sha256};
     let mut configuration = mcp_thread_configuration(params);
@@ -33,6 +33,14 @@ pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value>
         configuration.insert(
             "developerInstructions.sha256".into(),
             json!(format!("{:x}", Sha256::digest(instructions.as_bytes()))),
+        );
+    }
+    if let Some(token) =
+        params["config"]["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"].as_str()
+    {
+        configuration.insert(
+            "runtimeShellIdentity.sha256".into(),
+            json!(format!("{:x}", Sha256::digest(token.as_bytes()))),
         );
     }
     let providers: Map<String, Value> = params["config"]
@@ -161,6 +169,50 @@ impl CodexAppServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_shell_identity_changes_reload_the_same_resume_thread() {
+        let thread_id = "thread-1";
+        let config_key = "shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN";
+        let request = ExecutionRequest::default();
+        let params = json!({"threadId": thread_id, "config": {}});
+        let mut loaded = thread_context_configuration(&params);
+
+        for (step, token, reload) in [
+            ("absent", None, false),
+            ("added", Some("synthetic-runtime-first"), true),
+            ("unchanged", Some("synthetic-runtime-first"), false),
+            ("rotated", Some("synthetic-runtime-second"), true),
+            ("removed", None, true),
+            ("still absent", None, false),
+        ] {
+            let mut params = params.clone();
+            if let Some(token) = token {
+                params["config"][config_key] = json!(token);
+            }
+            let desired = thread_context_configuration(&params);
+            let plan = CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params,
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+                reload.then_some(thread_id),
+                "{step}"
+            );
+            if let Some(token) = token {
+                assert!(
+                    !serde_json::to_string(&desired).unwrap().contains(token),
+                    "{step}"
+                );
+            }
+            loaded = desired;
+        }
+    }
 
     #[test]
     fn issue_delegation_policy_changes_and_removal_reload_an_existing_thread() {

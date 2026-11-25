@@ -12,6 +12,7 @@ export interface DesktopControlCommand {
   stableMs?: number
   key?: string
   by?: 'label' | 'value'
+  includeOptionsOnError?: boolean
   filename?: string
   fileSize?: number
   mimeType?: string

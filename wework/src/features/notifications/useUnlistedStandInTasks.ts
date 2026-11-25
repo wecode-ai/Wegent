@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { createUnlistedStandInTasksSource } from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 
@@ -9,15 +8,11 @@ import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/run
 export function useUnlistedStandInTasks(
   items: RuntimeTaskReminderItem[],
   snapshot: RuntimeTaskLifecycleStoreSnapshot,
-  reader?: StandInExecutorApi,
-  runtimeApi?: WorkbenchServices['runtimeWorkApi']
+  reader?: StandInExecutorApi
 ): RuntimeTaskReminderItem[] {
-  const source = useMemo(
-    () => createUnlistedStandInTasksSource(reader, runtimeApi),
-    [reader, runtimeApi]
-  )
+  const source = useMemo(() => createUnlistedStandInTasksSource(reader), [reader])
+  const visible = useMemo(() => new Set(items.map(item => item.key)), [items])
   const pending = useMemo(() => {
-    const visible = new Set(items.map(item => item.key))
     return [...snapshot.tasks.values()]
       .filter(task => !visible.has(task.key))
       .map(task => ({
@@ -32,7 +27,7 @@ export function useUnlistedStandInTasks(
           task.task?.updatedAt,
         ]),
       }))
-  }, [items, snapshot.tasks])
+  }, [visible, snapshot.tasks])
 
   const subscribe = useCallback(
     (notify: () => void) => source.subscribe(notify, pending),
@@ -41,12 +36,20 @@ export function useUnlistedStandInTasks(
   const loaded = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
 
   return useMemo(() => {
-    const visible = new Set(items.map(item => item.key))
-    return [
-      ...items,
-      ...[...loaded.values()].filter(
-        item => !visible.has(item.key) && snapshot.tasks.has(item.key)
-      ),
-    ].map(item => ({ ...item, lifecycle: snapshot.tasks.get(item.key) }))
-  }, [items, loaded, snapshot.tasks])
+    let next: RuntimeTaskReminderItem[] | undefined
+    for (const [index, item] of items.entries()) {
+      const lifecycle = snapshot.tasks.get(item.key)
+      if (lifecycle === item.lifecycle) continue
+      next ??= items.slice()
+      next[index] = { ...item, lifecycle }
+    }
+    for (const item of loaded.values()) {
+      if (visible.has(item.key)) continue
+      const lifecycle = snapshot.tasks.get(item.key)
+      if (!lifecycle) continue
+      next ??= items.slice()
+      next.push({ ...item, lifecycle })
+    }
+    return next ?? items
+  }, [items, loaded, snapshot.tasks, visible])
 }

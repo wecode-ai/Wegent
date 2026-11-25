@@ -401,13 +401,21 @@ export function getToolActivityGroupKind(
   return primaryKinds.every((kind) => kind === firstKind) ? firstKind : "tool";
 }
 
-function getCommandActivityKind(command?: string): ToolActivityKind {
-  const executable = getCommandExecutable(command);
+function getCommandActivityKind(command = ""): ToolActivityKind {
+  const parsed = getParsedShellCommand(command);
+  return (parsed.kind ??= classifyShellCommand(command, parsed.unwrapped));
+}
+
+function classifyShellCommand(
+  command: string,
+  unwrapped: string,
+): ToolActivityKind {
+  const executable = getCommandExecutable(unwrapped);
   if (!executable) return "command";
   if (SEARCH_COMMANDS.has(executable)) return "search";
   if (FILE_COMMANDS.has(executable)) return "file";
-  if (executable === "git" && command?.includes(" grep ")) return "search";
-  if (executable === "git" && command?.includes(" ls-files")) return "search";
+  if (executable === "git" && command.includes(" grep ")) return "search";
+  if (executable === "git" && command.includes(" ls-files")) return "search";
   return "command";
 }
 
@@ -742,16 +750,40 @@ function splitShellWords(command: string): string[] {
   return words;
 }
 
-function getCommandExecutable(command?: string): string {
-  const innerCommand = unwrapShellCommand(command ?? "");
-  const match = innerCommand.match(
+function getCommandExecutable(command: string): string {
+  const match = command.match(
     /^(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:sudo\s+)?([^\s]+)/,
   );
   const executable = match?.[1]?.split("/").pop();
   return executable?.toLowerCase() ?? "";
 }
 
+interface ParsedShellCommand {
+  unwrapped: string;
+  kind?: ToolActivityKind;
+}
+
+const parsedShellCommands = new Map<string, ParsedShellCommand>();
+
 export function unwrapShellCommand(command: string): string {
+  return getParsedShellCommand(command).unwrapped;
+}
+
+function getParsedShellCommand(command: string): ParsedShellCommand {
+  const cached = parsedShellCommands.get(command);
+  if (cached) return cached;
+  const parsed = { unwrapped: parseShellCommand(command) };
+  if (command.length <= 16_384) {
+    if (parsedShellCommands.size === 256) {
+      const oldest = parsedShellCommands.keys().next();
+      if (!oldest.done) parsedShellCommands.delete(oldest.value);
+    }
+    parsedShellCommands.set(command, parsed);
+  }
+  return parsed;
+}
+
+function parseShellCommand(command: string): string {
   let current = command.trim();
 
   for (let depth = 0; depth < 4; depth += 1) {

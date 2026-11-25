@@ -149,7 +149,7 @@ export function StandInOverviewPage({
     resolveProposal,
     requestNavigation,
   } = overview
-  const [review, setReview] = useState<'proposal' | 'status' | 'work' | null>(null)
+  const [review, setReview] = useState<{ proposalId: string } | 'status' | 'work' | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
   const [imDialogOpen, setImDialogOpen] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
@@ -300,6 +300,11 @@ export function StandInOverviewPage({
       setProfile(null)
     })
   const currentProposal = proposal && (proposal.roleId ?? undefined) === roleId ? proposal : null
+  const viewedProposalId = typeof review === 'object' ? review?.proposalId : undefined
+  const openProposal = (proposalId: string) => {
+    setDetailsAnchor(null)
+    setReview({ proposalId })
+  }
   const proposalFailureMessage =
     (proposalSaveError?.id === currentProposal?.id ? proposalSaveError?.message : null) ||
     proposalError
@@ -385,22 +390,43 @@ export function StandInOverviewPage({
       description: t('standIn.memory.settings_help'),
       onClick: openMemory,
     })
-    if (
-      (roleId ? saved.roles.find(item => item.id === roleId) : saved.primary)
-        ?.selfLearningEnabled !== undefined
-    ) {
+    const savedRole = roleId ? saved.roles.find(item => item.id === roleId) : undefined
+    const savedIdentity = roleId ? savedRole : saved.primary
+    if (savedIdentity?.selfLearningEnabled !== undefined) {
+      const reportDeviceId = savedRole?.executionDeviceId || saved.executionDeviceId
       shortcuts.push({
         id: 'revision',
         testId: 'stand-in-ghost-revision-open',
-        label: t('standIn.workspace.ghost_revision'),
+        label: t('standIn.workspace.learning_report.title'),
         content: (
           <StandInGhostRevisionPanel
-            key={JSON.stringify([saved.userId, saved.executionDeviceId, saved.version, roleId])}
+            key={JSON.stringify([saved.userId, reportDeviceId, saved.version, roleId])}
             api={api}
             userId={saved.userId}
-            deviceId={saved.executionDeviceId}
+            deviceId={reportDeviceId}
             roleId={roleId}
+            identityName={
+              savedRole
+                ? standInRoleName(
+                    savedRole,
+                    saved.roles.indexOf(savedRole),
+                    t('standIn.personal.unnamed_assistant')
+                  )
+                : t('standIn.personal.default_role')
+            }
             requestLeave={leavePanel}
+            pendingProposal={
+              deviceId === reportDeviceId && currentProposal?.id.startsWith('ghost:')
+                ? {
+                    id: currentProposal.id,
+                    open: () =>
+                      leavePanel(() => {
+                        setProfile(null)
+                        openProposal(currentProposal.id)
+                      }),
+                  }
+                : undefined
+            }
           />
         ),
       })
@@ -471,12 +497,7 @@ export function StandInOverviewPage({
               setReview('status')
             }}
             onProposal={
-              currentProposal && state.saved
-                ? () => {
-                    setDetailsAnchor(null)
-                    setReview('proposal')
-                  }
-                : undefined
+              currentProposal && state.saved ? () => openProposal(currentProposal.id) : undefined
             }
             onOpenTask={onOpenTask}
           />
@@ -637,7 +658,7 @@ export function StandInOverviewPage({
                 }}
                 renderDetails={renderDetails}
                 contentFooter={
-                  review !== 'proposal' && (proposalCard || proposalFailure) ? (
+                  !viewedProposalId && (proposalCard || proposalFailure) ? (
                     <>
                       {proposalCard}
                       {proposalFailure}
@@ -694,7 +715,7 @@ export function StandInOverviewPage({
           />
         </StandInReviewDialog>
         <StandInReviewDialog
-          open={active && review === 'proposal' && !!currentProposal && !!state.saved}
+          open={active && !!viewedProposalId}
           title={t('standIn.workspace.pending_configuration')}
           testId="stand-in-proposal-dialog"
           busy={resolving}
@@ -703,8 +724,16 @@ export function StandInOverviewPage({
             detailsTrigger.current?.focus()
           }}
         >
-          {proposalCard}
-          {proposalFailure}
+          {currentProposal?.id === viewedProposalId && saved ? (
+            <>
+              {proposalCard}
+              {proposalFailure}
+            </>
+          ) : (
+            <p role="status" className="text-sm text-text-secondary">
+              {t('standIn.workspace.proposal_no_longer_pending')}
+            </p>
+          )}
         </StandInReviewDialog>
         <StandInReviewDialog
           open={active && review === 'status'}

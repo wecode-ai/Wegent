@@ -27,6 +27,23 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+fn personal_runtime_scope(request: &ExecutionRequest, runtime_handle: &Value) -> bool {
+    let is_empty_origin = |origin: &Value| {
+        origin.is_null() || origin.as_object().is_some_and(|object| object.is_empty())
+    };
+    request.extra.get("origin").map_or(true, is_empty_origin)
+        && cloud_project_id(request).is_none()
+        && !request.extra.contains_key("standInDelegation")
+        && !request.extra.contains_key("standInSchedule")
+        && super::super::util::runtime_origin(runtime_handle).map_or(true, is_empty_origin)
+        && ["cloudProjectId", "cloud_project_id", "wegentTeam"]
+            .iter()
+            .all(|key| runtime_handle[*key].is_null())
+        && ["standInDelegation", "standInSchedule"]
+            .iter()
+            .all(|key| runtime_handle["executionRequest"][*key].is_null())
+}
+
 fn interrupted_by_runtime_stop(result: &Result<crate::agents::CodexAppServerTurn, String>) -> bool {
     matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
         || error == CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED)
@@ -1426,11 +1443,31 @@ impl RuntimeWorkRpcHandler {
                     .insert("standInGuidanceSources".into(), sources);
             }
         }
-        let continuation = turn_id.is_some_and(|turn_id| {
+        let client_id = request
+            .extra
+            .get("client_user_message_id")
+            .or_else(|| request.extra.get("clientUserMessageId"))
+            .and_then(Value::as_str);
+        // A new send may reuse a request subtask before turn/start returns.
+        // Only this client's native binding distinguishes an autonomous continuation.
+        let continuation = turn_id.zip(client_id).is_some_and(|(turn_id, client_id)| {
             self.store.read_task(local_task_id, |link| {
-                link.runtime_handle
-                    .get("turnIdsBySubtask")
-                    .and_then(|mappings| mappings.get(request.subtask_id.as_str()))
+                link.runtime_handle["userMessagePresentations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|presentation| {
+                        presentation
+                            .get("clientUserMessageId")
+                            .or_else(|| presentation.get("client_user_message_id"))
+                            .and_then(Value::as_str)
+                            == Some(client_id)
+                    })
+                    .and_then(|presentation| {
+                        presentation
+                            .get("turnId")
+                            .or_else(|| presentation.get("turn_id"))
+                    })
                     .and_then(Value::as_str)
                     .is_some_and(|initial| initial != turn_id)
             }) == Some(true)
@@ -1507,6 +1544,20 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        if turn
+            .request
+            .extra
+            .remove(super::runtime_rpc::REMOTE_PERSONAL_RUNTIME_IDENTITY)
+            == Some(Value::Bool(true))
+            && !self
+                .store
+                .read_task(&turn.local_task_id, |link| {
+                    personal_runtime_scope(&turn.request, &link.runtime_handle)
+                })
+                .unwrap_or(false)
+        {
+            turn.request.runtime_auth_token = None;
+        }
         let _lifecycle_guard = self
             .stand_in_lifecycle_gate
             .lock()
@@ -2800,6 +2851,21 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_personal_identity_respects_the_stored_task_scope() {
+        let request = ExecutionRequest::default();
+        assert!(personal_runtime_scope(&request, &json!({})));
+        for handle in [
+            json!({"origin": {"type": "connection_work"}}),
+            json!({"executionRequest": {"origin": {"type": "issue_dispatch"}}}),
+            json!({"executionRequest": {"standInDelegation": {}}}),
+            json!({"cloudProjectId": "shared"}),
+            json!({"wegentTeam": {"id": 42}}),
+        ] {
+            assert!(!personal_runtime_scope(&request, &handle));
+        }
+    }
 
     #[test]
     fn recovered_goal_does_not_rebind_persisted_user_message() {

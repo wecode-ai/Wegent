@@ -186,6 +186,15 @@ export function createComposerAttachmentsModel(
     })
   }
 
+  const adoptExternalAttachmentsForScope = (targetScopeKey: string, attachments: Attachment[]) => {
+    updateScopeState(targetScopeKey, current =>
+      current.attachments.length === attachments.length &&
+      current.attachments.every((attachment, index) => attachment === attachments[index])
+        ? current
+        : { ...current, attachments }
+    )
+  }
+
   const discardSourceAttachment = (source: AttachmentSource) => {
     const attachment = source.attachment
     if (!attachment) return Promise.resolve()
@@ -543,6 +552,8 @@ export function createComposerAttachmentsModel(
   }
 
   function createScopeActions(scopeKey: string) {
+    const adoptExternalAttachments = (attachments: Attachment[]) =>
+      adoptExternalAttachmentsForScope(scopeKey, attachments)
     const addExistingAttachment = (attachment: Attachment) =>
       addExistingAttachmentForScope(scopeKey, attachment)
     const addExistingSourceAttachment = (attachment: Attachment, file: File) =>
@@ -573,6 +584,7 @@ export function createComposerAttachmentsModel(
       dismissAttachmentErrorForScope(scopeKey, filename)
 
     return {
+      adoptExternalAttachments,
       captureAttachmentsForScope,
       captureAttachments: () => captureAttachmentsForScope(scopeKey),
       getSnapshot: () => getScopeSnapshot(scopeKey),

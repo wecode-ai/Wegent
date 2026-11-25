@@ -1,4 +1,4 @@
-import { useCallback, useState, type RefObject } from 'react'
+import { useCallback, useRef, useState, type RefObject } from 'react'
 import { SELECTED_TEXT_DRAG_TYPE } from '@wegent/chat-core/selected-text-drag'
 import type { ComposerEditorHandle } from './ComposerProseMirrorEditor'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
@@ -34,17 +34,58 @@ export function useComposerTransfers({
   commitEditorValue,
   disabled,
   onPasteFiles,
+  onTransferReadyChange,
   services = browserComposerTransferServices,
 }: {
   editorRef: RefObject<ComposerEditorHandle | null>
   commitEditorValue: (value: string, cursor: number) => void
   disabled?: boolean
   onPasteFiles?: (files: File[]) => void | Promise<void>
+  onTransferReadyChange?: (ready: boolean) => void
   services?: ComposerTransferServices
 }) {
   const [transferError, setTransferError] = useState<string | null>(null)
-  const reportError = (cause: unknown) =>
-    setTransferError(cause instanceof Error ? cause.message : String(cause))
+  const [pendingTransfers, setPendingTransfers] = useState(0)
+  const activeTransfers = useRef(0)
+  const transferErrorRef = useRef<string | null>(null)
+  const readyRef = useRef(true)
+  const publishTransferReadiness = useCallback(
+    (ready: boolean) => {
+      if (readyRef.current === ready) return
+      readyRef.current = ready
+      onTransferReadyChange?.(ready)
+    },
+    [onTransferReadyChange]
+  )
+  const dismissTransferError = useCallback(() => {
+    if (activeTransfers.current !== 0) return
+    transferErrorRef.current = null
+    setTransferError(null)
+    publishTransferReadiness(true)
+  }, [publishTransferReadiness])
+  const runTransfer = useCallback(
+    (transfer: () => void | Promise<void>) => {
+      activeTransfers.current += 1
+      transferErrorRef.current = null
+      setTransferError(null)
+      setPendingTransfers(count => count + 1)
+      publishTransferReadiness(false)
+      void (async () => {
+        try {
+          await transfer()
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          transferErrorRef.current = message
+          setTransferError(message)
+        } finally {
+          activeTransfers.current -= 1
+          setPendingTransfers(count => count - 1)
+          publishTransferReadiness(activeTransfers.current === 0 && !transferErrorRef.current)
+        }
+      })()
+    },
+    [publishTransferReadiness]
+  )
   const insertPathReferences = useCallback(
     (entries: ComposerPathEntry[]) => {
       if (entries.length === 0) return
@@ -74,33 +115,24 @@ export function useComposerTransfers({
       const files = Array.from(clipboardData.files)
       if (files.length > 0 || services.hasPathTransfer(clipboardData)) {
         event.preventDefault()
-        setTransferError(null)
-        const accept = ({ attachmentFiles, referenceEntries }: ComposerPathTransfer) => {
-          insertPathReferences(referenceEntries)
-          return attachmentFiles.length > 0 ? onPasteFiles?.(attachmentFiles) : undefined
-        }
-        try {
+        runTransfer(() => {
+          const accept = ({ attachmentFiles, referenceEntries }: ComposerPathTransfer) => {
+            insertPathReferences(referenceEntries)
+            return attachmentFiles.length > 0 ? onPasteFiles?.(attachmentFiles) : undefined
+          }
           const transfer = services.resolveTransfer(clipboardData, 'clipboard')
-          const accepted = transfer instanceof Promise ? transfer.then(accept) : accept(transfer)
-          void Promise.resolve(accepted).catch(reportError)
-        } catch (cause) {
-          reportError(cause)
-        }
+          return transfer instanceof Promise ? transfer.then(accept) : accept(transfer)
+        })
         return true
       }
       if (!onPasteFiles) return false
       const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
       if (!textAttachment) return false
       event.preventDefault()
-      setTransferError(null)
-      try {
-        void Promise.resolve(onPasteFiles([textAttachment])).catch(reportError)
-      } catch (cause) {
-        reportError(cause)
-      }
+      runTransfer(() => onPasteFiles([textAttachment]))
       return true
     },
-    [disabled, insertPathReferences, onPasteFiles, services]
+    [disabled, insertPathReferences, onPasteFiles, runTransfer, services]
   )
 
   const handleDrop = useCallback(
@@ -136,17 +168,32 @@ export function useComposerTransfers({
         return false
       event.preventDefault()
       event.stopPropagation()
-      setTransferError(null)
-      void Promise.resolve(services.resolveTransfer(dataTransfer, 'drop'))
-        .then(async ({ attachmentFiles, referenceEntries }) => {
+      runTransfer(() => {
+        const accept = ({ attachmentFiles, referenceEntries }: ComposerPathTransfer) => {
           insertPathReferences(referenceEntries)
-          if (attachmentFiles.length > 0) await onPasteFiles?.(attachmentFiles)
-        })
-        .catch(reportError)
+          return attachmentFiles.length > 0 ? onPasteFiles?.(attachmentFiles) : undefined
+        }
+        const transfer = services.resolveTransfer(dataTransfer, 'drop')
+        return transfer instanceof Promise ? transfer.then(accept) : accept(transfer)
+      })
       return true
     },
-    [commitEditorValue, disabled, editorRef, insertPathReferences, onPasteFiles, services]
+    [
+      commitEditorValue,
+      disabled,
+      editorRef,
+      insertPathReferences,
+      onPasteFiles,
+      runTransfer,
+      services,
+    ]
   )
 
-  return { handlePaste, handleDrop, transferError }
+  return {
+    handlePaste,
+    handleDrop,
+    transferError,
+    dismissTransferError,
+    isTransferring: pendingTransfers > 0,
+  }
 }

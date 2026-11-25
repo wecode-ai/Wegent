@@ -17,6 +17,7 @@ import {
   findProjectSpaceContextForTaskInStores,
   isDefaultWorkItemProject,
   ProjectSpaceTaskContextUnavailableError,
+  ProjectSpaceTaskContextLookupTimeoutError,
   projectSpaceForRuntimeTask,
   projectSpaceTaskContextApisForTask,
   publishProjectSpaceTaskBindingChanged,
@@ -255,7 +256,13 @@ export function createWorkbenchCloudProjectContextSource(
             attempt === 50 ||
             error instanceof ProjectSpaceTaskContextUnavailableError ||
             !valid() ||
-            !registry.has(address)
+            (!registry.has(address) &&
+              !(
+                error instanceof AggregateError &&
+                error.errors.some(
+                  cause => cause instanceof ProjectSpaceTaskContextLookupTimeoutError
+                )
+              ))
           )
             throw error
           await new Promise(done => setTimeout(done, 100))

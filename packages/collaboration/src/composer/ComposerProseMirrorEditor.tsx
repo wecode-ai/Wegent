@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useImperativeHandle,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type RefObject,
@@ -75,9 +76,10 @@ export const ComposerProseMirrorEditor = forwardRef<
     widget.getSnapshot
   )
   const attach = useCallback(
-    (element: HTMLDivElement | null) => (element ? widget.attach(element, props) : undefined),
-    [widget, props]
+    (element: HTMLDivElement | null) => (element ? widget.attach(element) : undefined),
+    [widget]
   )
+  useLayoutEffect(() => widget.update(props), [widget, props])
   useImperativeHandle(forwardedRef, () => widget.handle, [widget])
   return (
     <div

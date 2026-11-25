@@ -109,7 +109,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
     startNewChat: onNewChat,
-    runtimeTaskReminders,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
     openRuntimeTask: onOpenRuntimeTask,
@@ -133,7 +132,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
   const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const activeItem = 'chat'
-  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const taskReminders = useWorkbench().runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
@@ -521,6 +520,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                             source={currentRuntimeTask}
                             messages={paneMessages}
                             onCollapse={onCollapse}
+                            onSkip={() =>
+                              paneSession.skipRequestUserInput(
+                                pendingRequestUserInputPayloads(
+                                  paneMessages,
+                                  paneSession.answeredRequestUserInputIds
+                                )
+                              )
+                            }
                             onSubmit={response => {
                               const isImplementationPlanRequest =
                                 isImplementationPlanRequestUserInput(pendingRequestUserInput)

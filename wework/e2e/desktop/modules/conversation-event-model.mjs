@@ -66,8 +66,8 @@ export function createConversationEventModel({
       const goalCompleted = requestContainsToolOutput(body, `${marker}_complete`)
       if (phase === 'human') {
         assert.equal(eventInputs.length, 1, 'The input must contain exactly one event message')
-        // The request after update_goal retains the same event in its conversation history.
-        if (!goalCompleted) onEvent()
+        // The request after update_goal retains the same message ID in its history.
+        onEvent(input.id)
       }
       if (input.id !== undefined) {
         assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')
