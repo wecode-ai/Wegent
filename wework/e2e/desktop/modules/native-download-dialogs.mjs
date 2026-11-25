@@ -155,6 +155,13 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   await execute('xdotool', args, { encoding: 'utf8', timeout: 3_000 })
 }
 
+export async function readLinuxPointerState() {
+  const commands = [['getmouselocation', '--shell'], ['getactivewindow']]
+  return Promise.allSettled(
+    commands.map(args => execute('xdotool', args, { encoding: 'utf8', timeout: 3_000 }))
+  )
+}
+
 export async function clickLinuxPointer(button = 1) {
   await execute('xdotool', ['click', '--clearmodifiers', String(button)], {
     encoding: 'utf8',

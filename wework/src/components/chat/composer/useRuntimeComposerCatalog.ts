@@ -29,7 +29,18 @@ export function useRuntimeComposerCatalog(
     const source = createRuntimeComposerPluginSource(
       (target, refresh) => {
         if (!readCatalog) throw new Error('Composer catalog service is unavailable')
-        return readCatalog(target, refresh)
+        if (import.meta.env.VITE_WEWORK_E2E !== 'true') return readCatalog(target, refresh)
+        return readCatalog(target, refresh).then(snapshot => {
+          console.debug(
+            '[Wework] Composer catalog resolved',
+            JSON.stringify({
+              target,
+              workspacePath: snapshot.workspacePath,
+              skills: snapshot.skills.map(skill => skill.name),
+            })
+          )
+          return snapshot
+        })
       },
       scope ? { deviceId, scope, workspacePath } : { deviceId, taskId: taskId! },
       translate,

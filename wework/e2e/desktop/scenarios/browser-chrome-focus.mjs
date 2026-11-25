@@ -12,6 +12,7 @@ import {
   activateLinuxMainWindow,
   clickLinuxPointer,
   moveLinuxWindowPointer,
+  readLinuxPointerState,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -256,7 +257,23 @@ async function verifySearchOverlay(
     state => state.moves > beforeMove.moves,
     'Native pointer movement must reach the restored guest',
     5_000
-  )
+  ).catch(async error => {
+    const [hit, input, windowState, pointerState] = await Promise.allSettled([
+      read(readHit),
+      readGuestInput(),
+      control.command('getNativeWindowState', 'body'),
+      linuxWindow ? readLinuxPointerState() : Promise.resolve(null),
+    ])
+    await writeFile(
+      join(resultDir, 'search-overlay-input-failure.json'),
+      JSON.stringify(
+        { linuxWindow, clickTarget, beforeMove, readyHit, hit, input, windowState, pointerState },
+        null,
+        2
+      )
+    ).catch(cause => console.error('Failed to retain native pointer diagnostics', cause))
+    throw error
+  })
   assert.deepEqual(readyInput, closedInput, 'Moving into the guest must not click it')
   await pressAndRelease(clickTarget)
   const pageClicked = await bridgeCall({
