@@ -20,11 +20,12 @@ import { isChatShell, teamRequiresWorkspace } from '../../service/messageService
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
 import { generateMessageId } from '@wegent/chat-core'
-import {
-  useMessageSendQueue,
-  type QueuedMessage,
-  type QueuedMessageStatus,
-} from './useMessageSendQueue'
+import { useMessageSendQueue } from './useMessageSendQueue'
+import type {
+  PreparedChatSend,
+  QueuedMessage,
+  QueuedMessageStatus,
+} from '../../session/messageSendQueue'
 import { useGuidanceQueue, type GuidanceQueueItem } from './useGuidanceQueue'
 import { useChatTransientState } from './useChatTransientState'
 import { useGuidanceSocketHandlers } from './useGuidanceSocketHandlers'
@@ -270,6 +271,7 @@ export function useChatStreamHandlers({
 
   const {
     currentTaskId,
+    messageSendQueue,
     selectedTaskDetail,
     selectTask,
     refreshTasks,
@@ -300,14 +302,6 @@ export function useChatStreamHandlers({
 
   type ContextSendRequest = Parameters<typeof contextSendMessage>[0]
   type ContextSendOptions = NonNullable<Parameters<typeof contextSendMessage>[1]>
-
-  interface PreparedChatSend {
-    localMessageId: string
-    displayMessage: string
-    sourceMessage: string
-    request: ContextSendRequest
-    options: ContextSendOptions
-  }
 
   const { retryMessage, sendChatGuidance, registerChatHandlers } = useSocket()
 
@@ -888,7 +882,10 @@ export function useChatStreamHandlers({
   const activeTaskId = currentTaskId && currentTaskId > 0 ? currentTaskId : null
   const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
   const isActiveTaskBlocked =
-    Boolean(runtimeDerived?.isStreaming) || hasPendingUserMessage || isRuntimeBlockingQueue
+    !taskState?.runtime.taskStatus ||
+    Boolean(runtimeDerived?.isStreaming) ||
+    hasPendingUserMessage ||
+    isRuntimeBlockingQueue
   const canQueueMessage = Boolean(
     activeTaskId && (isStreaming || hasPendingUserMessage || runtimeDerived?.canQueueMessage)
   )
@@ -927,10 +924,15 @@ export function useChatStreamHandlers({
 
   const dispatchQueuedMessage = useCallback(
     async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
-      const prepared = queuedMessage.snapshot
-      await sendPreparedChatMessage(prepared, { onError: undefined })
+      await sendPreparedChatMessage(queuedMessage.snapshot, {
+        onMessageSent: (_localMessageId, taskId) => {
+          if (selectedTaskDetail?.id === taskId && selectedTaskDetail.is_group_chat) {
+            markTaskAsViewed(taskId, selectedTaskDetail.status, new Date().toISOString())
+          }
+        },
+      })
     },
-    [sendPreparedChatMessage]
+    [markTaskAsViewed, selectedTaskDetail, sendPreparedChatMessage]
   )
 
   const handleQueuedDispatchError = useCallback(
@@ -959,6 +961,7 @@ export function useChatStreamHandlers({
     cancelMessage,
     updateQueuedMessage,
   } = useMessageSendQueue<PreparedChatSend>({
+    queue: messageSendQueue,
     taskId: activeTaskId,
     isDispatchBlocked: isActiveTaskBlocked,
     dispatchMessage: dispatchQueuedMessage,
@@ -1171,11 +1174,12 @@ export function useChatStreamHandlers({
             }
           })
         } else {
+          const { onMessageSent: _onMessageSent, onError: _onError, ...options } = prepared.options
           enqueueMessage({
             taskId: activeTaskId,
             localMessageId,
             displayMessage: prepared.displayMessage,
-            snapshot: prepared,
+            snapshot: { ...prepared, options },
           })
         }
         if (!sendOptions?.artifactContext) {

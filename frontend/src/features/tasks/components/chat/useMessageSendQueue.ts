@@ -1,23 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
+import type {
+  EnqueueMessageInput,
+  MessageSendQueue,
+  QueuedMessage,
+} from '../../session/messageSendQueue'
 
-export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
-export type QueueDispatchMode = 'drain' | 'one-per-unblock'
-
-export interface EnqueueMessageInput<TSnapshot> {
-  taskId: number
-  localMessageId: string
-  displayMessage: string
-  snapshot: TSnapshot
-}
-
-export interface QueuedMessage<TSnapshot> extends EnqueueMessageInput<TSnapshot> {
-  id: string
-  createdAt: number
-  status: QueuedMessageStatus
-  error?: string
-}
+type QueueDispatchMode = 'drain' | 'one-per-unblock'
 
 interface UseMessageSendQueueOptions<TSnapshot> {
+  queue: MessageSendQueue<TSnapshot>
   taskId?: number | null
   isDispatchBlocked: boolean
   dispatchMessage: (message: QueuedMessage<TSnapshot>) => Promise<void>
@@ -26,97 +17,97 @@ interface UseMessageSendQueueOptions<TSnapshot> {
 }
 
 export function useMessageSendQueue<TSnapshot>({
+  queue,
   taskId,
   isDispatchBlocked,
   dispatchMessage,
   onDispatchError,
   dispatchMode = 'drain',
 }: UseMessageSendQueueOptions<TSnapshot>) {
-  const [queuedMessages, setQueuedMessages] = useState<Array<QueuedMessage<TSnapshot>>>([])
-  const isDispatchingRef = useRef(false)
-  const hasDispatchedInUnblockedWindowRef = useRef(false)
+  const dispatchedTaskRef = useRef<number | null>(null)
   const dispatchMessageRef = useRef(dispatchMessage)
   const onDispatchErrorRef = useRef(onDispatchError)
 
   dispatchMessageRef.current = dispatchMessage
   onDispatchErrorRef.current = onDispatchError
 
-  const enqueueMessage = useCallback((input: EnqueueMessageInput<TSnapshot>) => {
-    const queuedMessage: QueuedMessage<TSnapshot> = {
-      ...input,
-      id: `${input.taskId}:${input.localMessageId}`,
-      createdAt: Date.now(),
-      status: 'queued',
-    }
+  const getMessages = useCallback(() => queue.getMessages(taskId), [queue, taskId])
+  const activeTaskQueue = useSyncExternalStore(queue.subscribe, getMessages, getMessages)
 
-    setQueuedMessages(current => [...current, queuedMessage])
-    return queuedMessage
-  }, [])
+  const enqueueMessage = useCallback(
+    (input: EnqueueMessageInput<TSnapshot>) => {
+      const queuedMessage: QueuedMessage<TSnapshot> = {
+        ...input,
+        id: `${input.taskId}:${input.localMessageId}`,
+        createdAt: Date.now(),
+        status: 'queued',
+      }
+      queue.update(input.taskId, current => [...current, queuedMessage])
+    },
+    [queue]
+  )
 
-  const retryMessage = useCallback((id: string) => {
-    hasDispatchedInUnblockedWindowRef.current = false
-    setQueuedMessages(current =>
-      current.map(message =>
-        message.id === id && message.status === 'failed'
-          ? { ...message, status: 'queued', error: undefined }
-          : message
+  const retryMessage = useCallback(
+    (id: string) => {
+      if (!taskId) return
+      dispatchedTaskRef.current = null
+      queue.update(taskId, current =>
+        current.map(message =>
+          message.id === id && message.status === 'failed'
+            ? { ...message, status: 'queued', error: undefined }
+            : message
+        )
       )
-    )
-  }, [])
+    },
+    [queue, taskId]
+  )
 
-  const cancelMessage = useCallback((id: string) => {
-    setQueuedMessages(current =>
-      current.filter(message => message.id !== id || message.status === 'sending')
-    )
-  }, [])
+  const cancelMessage = useCallback(
+    (id: string) => {
+      if (!taskId) return
+      queue.update(taskId, current =>
+        current.filter(message => message.id !== id || message.status === 'sending')
+      )
+    },
+    [queue, taskId]
+  )
 
   const updateQueuedMessage = useCallback(
     (id: string, updater: (message: QueuedMessage<TSnapshot>) => QueuedMessage<TSnapshot>) => {
-      setQueuedMessages(current =>
+      if (!taskId) return
+      queue.update(taskId, current =>
         current.map(message =>
           message.id === id && message.status === 'queued' ? updater(message) : message
         )
       )
     },
-    []
+    [queue, taskId]
   )
 
-  const activeTaskQueue = useMemo(() => {
-    if (!taskId) return []
-    return queuedMessages.filter(message => message.taskId === taskId)
-  }, [queuedMessages, taskId])
-
   useEffect(() => {
-    if (isDispatchBlocked) {
-      hasDispatchedInUnblockedWindowRef.current = false
-      return
+    if (isDispatchBlocked || dispatchedTaskRef.current !== taskId) {
+      dispatchedTaskRef.current = null
     }
+    if (!taskId || isDispatchBlocked) return
+    if (dispatchMode === 'one-per-unblock' && dispatchedTaskRef.current === taskId) return
 
-    if (!taskId || isDispatchingRef.current) return
-    if (dispatchMode === 'one-per-unblock' && hasDispatchedInUnblockedWindowRef.current) return
-    if (activeTaskQueue.some(message => message.status === 'failed')) return
-
-    const nextMessage = activeTaskQueue.find(message => message.status === 'queued')
+    // Another view may have started sending since this render took its snapshot.
+    const messages = queue.getMessages(taskId)
+    if (messages.some(message => message.status !== 'queued')) return
+    const nextMessage = messages[0]
     if (!nextMessage) return
 
-    isDispatchingRef.current = true
-    if (dispatchMode === 'one-per-unblock') {
-      hasDispatchedInUnblockedWindowRef.current = true
-    }
-    setQueuedMessages(current =>
-      current.map(message =>
-        message.id === nextMessage.id ? { ...message, status: 'sending' } : message
-      )
-    )
+    if (dispatchMode === 'one-per-unblock') dispatchedTaskRef.current = taskId
+    queue.update(taskId, current => [{ ...nextMessage, status: 'sending' }, ...current.slice(1)])
 
     dispatchMessageRef
       .current(nextMessage)
       .then(() => {
-        setQueuedMessages(current => current.filter(message => message.id !== nextMessage.id))
+        queue.update(taskId, current => current.filter(message => message.id !== nextMessage.id))
       })
       .catch(error => {
         const normalizedError = error instanceof Error ? error : new Error(String(error))
-        setQueuedMessages(current =>
+        queue.update(taskId, current =>
           current.map(message =>
             message.id === nextMessage.id
               ? { ...message, status: 'failed', error: normalizedError.message }
@@ -125,13 +116,9 @@ export function useMessageSendQueue<TSnapshot>({
         )
         onDispatchErrorRef.current?.(nextMessage, normalizedError)
       })
-      .finally(() => {
-        isDispatchingRef.current = false
-      })
-  }, [activeTaskQueue, dispatchMode, isDispatchBlocked, taskId])
+  }, [activeTaskQueue, dispatchMode, isDispatchBlocked, queue, taskId])
 
   return {
-    queuedMessages,
     activeTaskQueue,
     enqueueMessage,
     retryMessage,

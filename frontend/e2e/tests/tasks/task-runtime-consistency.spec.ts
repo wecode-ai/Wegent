@@ -475,6 +475,48 @@ test.describe('Task runtime consistency', () => {
     await expectNoQueuedMessages(page)
   })
 
+  test('retains an unsent follow-up when leaving and reopening the conversation', async ({
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} start a turn before navigation`
+    const streamMarker = `${TEST_PREFIX}-navigation-stream`
+    const followUp = `${TEST_PREFIX} follow up after navigation`
+    const followUpMarker = `${TEST_PREFIX}-navigation-follow-up`
+    await configureStreamRule(request, messageText, {
+      responseContent: streamMarker,
+      doneDelayMs: 30_000,
+    })
+    await configureStreamRule(request, followUp, { responseContent: followUpMarker })
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    const messages = page.getByTestId('messages-container')
+    const queuedMessage = page.getByTestId('queued-message-item').filter({ hasText: followUp })
+    await expect(messages).toContainText(streamMarker, { timeout: 15_000 })
+    await fillMessageInput(page, followUp)
+    const queueButton = page.getByRole('button', { name: 'Queue message' })
+    await expect(queueButton).toBeEnabled({ timeout: 5_000 })
+    await queueButton.click()
+    await expect(queuedMessage).toBeVisible({ timeout: 5_000 })
+
+    await page.getByTestId('task-sidebar-nav-flow-button').click()
+    await expect(page).toHaveURL(/\/feed(?:[/?]|$)/, { timeout: 8_000 })
+    await expect(queuedMessage).toHaveCount(0, { timeout: 5_000 })
+    await page.goBack()
+    await expect(page).toHaveURL(new RegExp(`[?&]taskId=${taskId}(?:&|$)`), { timeout: 8_000 })
+    await expect(queuedMessage).toBeVisible({ timeout: 5_000 })
+    await expect(messages.getByText(followUp, { exact: true })).toHaveCount(0)
+
+    const stopButton = page.getByTestId('stop-generating-button')
+    await expect(stopButton).toBeEnabled({ timeout: 5_000 })
+    await stopButton.click()
+    await expect(messages).toContainText(followUpMarker, { timeout: 15_000 })
+    await expect(messages.getByText(followUp, { exact: true })).toHaveCount(1)
+    await expect(queuedMessage).toHaveCount(0)
+  })
+
   async function createTestResources(request: APIRequestContext): Promise<void> {
     const modelResponse = await request.post(`${API_BASE_URL}/api/v1/namespaces/default/models`, {
       headers: authHeaders(),

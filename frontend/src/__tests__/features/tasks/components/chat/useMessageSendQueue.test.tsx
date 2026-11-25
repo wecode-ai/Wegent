@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useMessageSendQueue } from '@/features/tasks/components/chat/useMessageSendQueue'
+import { createMessageSendQueue } from '@/features/tasks/session/messageSendQueue'
 
 interface Snapshot {
   message: string
@@ -15,12 +16,19 @@ function queued(message: string, taskId = 42) {
 }
 
 describe('useMessageSendQueue', () => {
+  let queue: ReturnType<typeof createMessageSendQueue<Snapshot>>
+
+  beforeEach(() => {
+    queue = createMessageSendQueue<Snapshot>()
+  })
+
   it('dispatches queued messages in FIFO order when the task is unblocked', async () => {
     const dispatchMessage = jest.fn().mockResolvedValue(undefined)
     let isDispatchBlocked = true
 
     const { result, rerender } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked,
         dispatchMessage,
@@ -57,6 +65,7 @@ describe('useMessageSendQueue', () => {
 
     const { result } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked: false,
         dispatchMessage,
@@ -85,6 +94,7 @@ describe('useMessageSendQueue', () => {
 
     const { result, rerender } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked,
         dispatchMessage,
@@ -131,6 +141,7 @@ describe('useMessageSendQueue', () => {
 
     const { result } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked: false,
         dispatchMessage,
@@ -174,6 +185,7 @@ describe('useMessageSendQueue', () => {
 
     const { result, rerender } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked,
         dispatchMessage,
@@ -211,6 +223,7 @@ describe('useMessageSendQueue', () => {
 
     const { result, rerender } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked,
         dispatchMessage,
@@ -240,6 +253,7 @@ describe('useMessageSendQueue', () => {
 
     const { result } = renderHook(() =>
       useMessageSendQueue<Snapshot>({
+        queue,
         taskId: 42,
         isDispatchBlocked: false,
         dispatchMessage,
@@ -256,9 +270,7 @@ describe('useMessageSendQueue', () => {
     })
     expect(dispatchMessage.mock.calls[0][0].snapshot.message).toBe('active-task')
     await waitFor(() => {
-      expect(result.current.queuedMessages.map(item => item.snapshot.message)).toEqual([
-        'other-task',
-      ])
+      expect(queue.getMessages(100).map(item => item.snapshot.message)).toEqual(['other-task'])
     })
   })
 })
