@@ -400,14 +400,13 @@ impl RuntimeWorkRpcHandler {
                 if requires_dingtalk_delegation(role, grant) {
                     if let Some(grant) = active_delegated_source(role, source) {
                         self.store_delegated_event(store, user, role, grant, &message)
-                            .map_err(|error| {
+                            .inspect_err(|_| {
                                 log_dingtalk_group_intake(
                                     source,
                                     &message,
                                     role_id,
                                     "delegation_intake_failed",
                                 );
-                                error
                             })?;
                         log_dingtalk_group_intake(source, &message, role_id, "delegation_checked");
                     } else {
