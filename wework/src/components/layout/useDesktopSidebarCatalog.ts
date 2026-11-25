@@ -11,7 +11,6 @@ import {
   getRuntimeTaskReminderKey,
 } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
-import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { getLocalRuntimeStateDeviceId } from '@/lib/runtime-project-state'
@@ -20,7 +19,6 @@ import { useCollapsedReadConversations } from './useCollapsedReadConversations'
 
 import {
   getRuntimeChatSidebarTaskItems,
-  getRuntimeTaskAddress,
   getRuntimeSidebarTaskItems,
 } from './runtimeTaskSidebarHelpers'
 
@@ -253,10 +251,9 @@ export function useDesktopSidebarCatalog({
       }),
     [runtimeTaskPinOverrides, visibleChatTaskItems]
   )
-  const { collapsibleTaskKeys, keepVisibleTaskKeys } = useMemo(() => {
+  const { collapsibleTaskKeys, catalogWaitingTaskKeys } = useMemo(() => {
     const collapsibleTaskKeys = new Set<string>()
-    const keepVisibleTaskKeys = new Set(visibleUnreadRuntimeTaskKeys)
-    if (currentRuntimeTask) keepVisibleTaskKeys.add(getRuntimeTaskReminderKey(currentRuntimeTask))
+    const catalogWaitingTaskKeys = new Set<string>()
     const items = [
       ...allSidebarRuntimeProjects.flatMap(projectWork =>
         getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces)
@@ -265,24 +262,33 @@ export function useDesktopSidebarCatalog({
     ]
     for (const { workspace, task } of items) {
       const key = getRuntimeTaskReminderItemKey(workspace, task)
-      const lifecycleKey = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
       collapsibleTaskKeys.add(key)
-      if (
-        busyTaskKeys.has(lifecycleKey) ||
-        waitingTaskKeys.has(lifecycleKey) ||
-        isRuntimeTaskWaiting(task)
-      ) {
-        keepVisibleTaskKeys.add(key)
-      }
+      if (isRuntimeTaskWaiting(task)) catalogWaitingTaskKeys.add(key)
     }
-    return { collapsibleTaskKeys, keepVisibleTaskKeys }
+    return { collapsibleTaskKeys, catalogWaitingTaskKeys }
+  }, [allSidebarRuntimeProjects, chatTaskItems])
+  const currentRuntimeTaskKey = currentRuntimeTask
+    ? getRuntimeTaskReminderKey(currentRuntimeTask)
+    : null
+  const keepVisibleTaskKeys = useMemo(() => {
+    const keys = new Set(visibleUnreadRuntimeTaskKeys)
+    if (currentRuntimeTaskKey !== null) keys.add(currentRuntimeTaskKey)
+    for (const key of catalogWaitingTaskKeys) keys.add(key)
+    // The lifecycle and reminder keys both identify the device and task.
+    for (const key of busyTaskKeys) {
+      if (collapsibleTaskKeys.has(key)) keys.add(key)
+    }
+    for (const key of waitingTaskKeys) {
+      if (collapsibleTaskKeys.has(key)) keys.add(key)
+    }
+    return keys
   }, [
-    allSidebarRuntimeProjects,
-    chatTaskItems,
-    currentRuntimeTask,
     busyTaskKeys,
-    waitingTaskKeys,
+    catalogWaitingTaskKeys,
+    collapsibleTaskKeys,
+    currentRuntimeTaskKey,
     visibleUnreadRuntimeTaskKeys,
+    waitingTaskKeys,
   ])
   const { collapsedReadTaskKeys, collapseReadConversations, expandReadConversations } =
     useCollapsedReadConversations(storageScope, collapsibleTaskKeys, keepVisibleTaskKeys)
