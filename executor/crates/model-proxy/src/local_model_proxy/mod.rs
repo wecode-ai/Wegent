@@ -753,9 +753,6 @@ pub fn unregister(token: &str) {
     let (retained_idle, active_references) = match registry.routes.get_mut(token) {
         Some(registered) => {
             registered.active_references = registered.active_references.saturating_sub(1);
-            if registered.active_references == 0 {
-                registered.gateway_credentials = None;
-            }
             registered.last_used = Instant::now();
             (
                 registered.active_references == 0,

@@ -122,25 +122,48 @@ mod tests {
             &token,
             GatewayCredentials::new(Arc::clone(&snapshot), backend_url, request_url, 7),
         ));
-        let send = || {
+        let send = |thread: &str| {
             super::super::handlers::handle_for_token(
                 token.clone(),
                 HeaderMap::new(),
-                Bytes::from_static(br#"{"model":"m","input":"hi","stream":false}"#),
+                Bytes::from(
+                    json!({
+                        "model": "m", "input": "hi", "stream": false,
+                        "client_metadata": { "thread_id": thread },
+                    })
+                    .to_string(),
+                ),
             )
         };
 
-        assert_eq!(send().await.unwrap().status(), StatusCode::OK);
+        let parent = "cloud-gateway-parent";
+        let prediction = "cloud-gateway-prediction";
+        super::super::bind_thread(&token, parent).unwrap();
+        assert_eq!(send(parent).await.unwrap().status(), StatusCode::OK);
         snapshot.lock().unwrap().as_mut().unwrap().auth_token = "wg-after-rotation".to_owned();
-        assert_eq!(send().await.unwrap().status(), StatusCode::OK);
+        assert_eq!(send(parent).await.unwrap().status(), StatusCode::OK);
+        super::super::unregister(&token);
+        assert_eq!(
+            send(parent).await.unwrap_err().status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            super::super::bind_prediction_thread("unused-prepared-route", parent, prediction)
+                .unwrap(),
+            token,
+        );
+        assert_eq!(send(prediction).await.unwrap().status(), StatusCode::OK);
         snapshot
             .lock()
             .unwrap()
             .as_mut()
             .unwrap()
             .authenticated_user_id = Some(8);
-        assert_eq!(send().await.unwrap_err().status, StatusCode::UNAUTHORIZED);
-        assert_eq!(accepted.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            send(prediction).await.unwrap_err().status,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(accepted.load(Ordering::Relaxed), 3);
 
         super::super::unregister(&token);
         server.abort();

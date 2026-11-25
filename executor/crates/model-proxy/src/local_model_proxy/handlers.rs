@@ -307,6 +307,12 @@ pub(super) fn authorize_request(token: &str, body: &[u8]) -> Result<AuthorizedRe
         status: StatusCode::NOT_FOUND,
         detail: "unknown or expired local model proxy token".to_owned(),
     })?;
+    if route.active_references == 0 && route.gateway_credentials.is_some() {
+        return Err(HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "inactive model gateway route".to_owned(),
+        });
+    }
     authorize_task_thread(route, body)?;
     route.last_used = Instant::now();
     Ok(AuthorizedRequest {
