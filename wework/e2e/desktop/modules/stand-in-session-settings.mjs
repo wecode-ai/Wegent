@@ -1,9 +1,10 @@
+import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 
 /** Reuse the installed DingTalk protocol fixture and real renderer/settings persistence. */
-export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId) {
+export async function verifyStandInSessionSettings(control, uiTimeoutMs) {
   const id = 'stand-in-dingtalk-policy-connection-migration-fixture'
   const timing = `[data-testid="${id}"]`
   const strategy = `[data-testid="${id}-session-strategy"]`
@@ -30,14 +31,14 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
         String(independent)
       )
         await control.command('clickWhenEnabled', strategy)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      // Saving a source returns to the open role settings.
-      await control.command('waitFor', '[data-testid="stand-in-connections-open"]')
-      await control.command('waitFor', '[data-testid="stand-in-saved"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+        visible: false,
+      })
       const saved = await load()
-      const source = saved.roles
-        .find(role => role.id === roleId)
-        .connections.find(row => row.id === 'connection-migration-fixture')
+      const source = saved.primary.connections.find(
+        row => row.id === 'connection-migration-fixture'
+      )
       assert.deepEqual(
         { ...source.policy, sessionStrategy: source.policy.sessionStrategy ?? 'reuse' },
         {
@@ -47,7 +48,8 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
           sessionStrategy,
         }
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
+      await openStandInSettings(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
       await control.command(

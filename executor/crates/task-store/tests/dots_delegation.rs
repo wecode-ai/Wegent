@@ -1,5 +1,7 @@
 use chrono::{DateTime, TimeDelta, Utc};
+use rusqlite::Connection;
 use serde_json::{json, Value};
+use std::path::Path;
 use wegent_local_task_store::personal_stand_in::{
     active_delegated_source, permits_delegated_message, permits_delegated_reply,
     requires_dingtalk_delegation, source_namespace, stand_in_identities, DINGTALK_PROVIDER,
@@ -36,6 +38,21 @@ fn primary(settings: &Value) -> Value {
 fn instant_after(boundary: &Value) -> Value {
     let time = DateTime::parse_from_rfc3339(boundary.as_str().unwrap()).unwrap();
     json!((time.with_timezone(&Utc) + TimeDelta::nanoseconds(1)).to_rfc3339())
+}
+
+fn reply_claims(path: &Path) -> Vec<Value> {
+    let connection = Connection::open(path).unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT metadata FROM loop_items
+             WHERE resource_type='stand_in_delegation_reply_claim'",
+        )
+        .unwrap();
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+        .collect()
 }
 
 #[test]
@@ -564,6 +581,83 @@ fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_indepe
         independent["delegationResult"]["receiptId"],
         "channel-receipt"
     );
+}
+
+#[test]
+fn reply_chain_claim_uses_the_existing_primary_key_without_a_schema_index() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let indexed: bool = Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index'
+             AND name='ix_stand_in_delegated_reply_chain')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!indexed, "Reply claims must not require a schema index");
+
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let settings = saved(&store, settings);
+    let source = &settings["primary"]["connections"][0];
+    let original =
+        json!({"id":"claim-original", "text":"Where is the guide?", "at":"2099-01-01T00:00:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &original, None)
+        .unwrap();
+    let work = item["id"].as_str().unwrap();
+    let record = item["latestMessage"]["recordId"].as_str().unwrap();
+    let decision = json!({"action":"reply","template":"document","reason":"Quoted guide."});
+    assert!(store
+        .record_delegation_decision(7, "desktop", work, record, decision.clone())
+        .unwrap()
+        .is_some());
+    assert_eq!(reply_claims(&path).len(), 1);
+
+    store
+        .finish_delegated_submission(7, work, record, Some("channel-receipt"))
+        .unwrap();
+    let claims = reply_claims(&path);
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0]["status"], "sent");
+    assert_eq!(claims[0]["receiptId"], "channel-receipt");
+
+    let followup = json!({"id":"claim-followup","quotedMessageId":"claim-original","text":"Any update?","at":"2099-01-01T00:01:00Z"});
+    let linked = store
+        .ingest_stand_in_message(7, "@primary", source, &followup, None)
+        .unwrap();
+    let linked_record = linked["latestMessage"]["recordId"].as_str().unwrap();
+    let split = store
+        .adjust_stand_in_message(7, work, linked_record, None)
+        .unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            split["id"].as_str().unwrap(),
+            linked_record,
+            decision.clone(),
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(reply_claims(&path).len(), 1);
+
+    drop(store);
+    let store = LocalTaskStore::open(&path).unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            split["id"].as_str().unwrap(),
+            linked_record,
+            decision,
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(reply_claims(&path).len(), 1);
 }
 
 #[test]

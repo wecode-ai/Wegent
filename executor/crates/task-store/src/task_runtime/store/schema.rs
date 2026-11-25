@@ -308,9 +308,8 @@ pub(super) fn runtime_query_indexes_are_current(
     connection: &Connection,
 ) -> Result<bool, rusqlite::Error> {
     connection.query_row(
-        "SELECT count(*) = 3 FROM sqlite_master WHERE type = 'index'
-         AND name IN ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user',
-                      'ix_stand_in_delegated_reply_chain')",
+        "SELECT count(*) = 2 FROM sqlite_master WHERE type = 'index'
+         AND name IN ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user')",
         [],
         |row| row.get(0),
     )
@@ -325,14 +324,7 @@ fn ensure_runtime_query_indexes(connection: &Connection) -> Result<(), rusqlite:
             ON loop_items(resource_type, json_extract(metadata,'$.userId'))
             WHERE resource_type='stand_in_action' AND json_valid(metadata)
               AND json_extract(metadata,'$.kind')='run_arrangement'
-              AND json_extract(metadata,'$.status') IN ('pending','sending');
-         CREATE INDEX IF NOT EXISTS ix_stand_in_delegated_reply_chain
-            ON loop_items(json_extract(metadata,'$.userId'),
-                          COALESCE(json_extract(metadata,'$.delegationChainId'),
-                                   json_extract(metadata,'$.originalWorkId'),
-                                   json_extract(metadata,'$.workId')))
-            WHERE resource_type='stand_in_message' AND json_valid(metadata)
-              AND json_extract(metadata,'$.delegationResult.action')='reply';",
+              AND json_extract(metadata,'$.status') IN ('pending','sending');",
     )
 }
 

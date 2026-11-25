@@ -302,8 +302,7 @@ impl RuntimeWorkRpcHandler {
         let mut items = store
             .list_stand_in_work(user, payload["roleId"].as_str())
             .map_err(settings_error)?;
-        items
-            .retain(|work| matches_delegation_account(&settings, &work["roleId"], &work["source"]));
+        items.retain(|work| work_visible_to_account(&settings, work));
         for work in &mut items {
             self.reconcile_connection_dispatch(&store, user, work)?;
             work["task"] = self
@@ -337,7 +336,18 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         validate_work_accounts(&store, user, &self.device_id, &work, None)?;
-        Ok(json!({"messages":store.stand_in_messages(user,&work).map_err(settings_error)?}))
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let work_value = store.stand_in_work(user, &work).map_err(settings_error)?;
+        let messages = visible_work_messages(
+            &settings,
+            &work_value["roleId"],
+            store
+                .stand_in_messages(user, &work)
+                .map_err(settings_error)?,
+        );
+        Ok(json!({"messages":messages}))
     }
 
     pub(super) async fn run_connection_stand_in_work(
@@ -411,6 +421,10 @@ impl RuntimeWorkRpcHandler {
         let messages = store
             .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
             .map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let messages = visible_work_messages(&settings, &work["roleId"], messages);
         let mut request: ExecutionRequest = serde_json::from_value(
             task.runtime_handle["executionRequest"].clone(),
         )
@@ -475,6 +489,7 @@ impl RuntimeWorkRpcHandler {
         let messages = store
             .stand_in_messages(user, work_id)
             .map_err(settings_error)?;
+        let messages = visible_work_messages(&settings, &work["roleId"], messages);
         let pending = selected_pending_connection_messages(messages, manual, selected_records)?;
         let task_id = work["taskId"]
             .as_str()
@@ -656,6 +671,7 @@ impl RuntimeWorkRpcHandler {
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         validate_work_accounts(&store, user, &self.device_id, &work, target)?;
+        validate_message_accounts(&store, user, &self.device_id, &work, &ids)?;
         store
             .organize_stand_in_messages(user, &work, &ids, target)
             .map_err(settings_error)
@@ -681,6 +697,7 @@ impl RuntimeWorkRpcHandler {
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         validate_work_accounts(&store, user, &self.device_id, &work, target)?;
+        validate_message_accounts(&store, user, &self.device_id, &work, &[message.clone()])?;
         store
             .adjust_stand_in_message(user, &work, &message, target)
             .map_err(settings_error)
@@ -703,6 +720,74 @@ fn validate_work_accounts(
             return Err(AppIpcError::new(
                 "permission_denied",
                 "This work belongs to a different DingTalk account",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn source_visible_to_account(settings: &Value, role: &Value, source: &Value) -> bool {
+    source.is_object() && matches_delegation_account(settings, role, source)
+}
+
+fn message_role<'a>(message: &'a Value, work_role: &'a Value) -> &'a Value {
+    if message["roleId"].is_string() {
+        &message["roleId"]
+    } else {
+        work_role
+    }
+}
+
+fn message_visible_to_account(settings: &Value, work_role: &Value, message: &Value) -> bool {
+    source_visible_to_account(
+        settings,
+        message_role(message, work_role),
+        &message["source"],
+    )
+}
+
+fn work_visible_to_account(settings: &Value, work: &Value) -> bool {
+    if !source_visible_to_account(settings, &work["roleId"], &work["source"]) {
+        return false;
+    }
+    let latest = &work["latestMessage"];
+    latest.is_null() || message_visible_to_account(settings, &work["roleId"], latest)
+}
+
+fn visible_work_messages(settings: &Value, work_role: &Value, messages: Vec<Value>) -> Vec<Value> {
+    messages
+        .into_iter()
+        .filter(|message| message_visible_to_account(settings, work_role, message))
+        .collect()
+}
+
+fn validate_message_accounts(
+    store: &LocalTaskStore,
+    user: i64,
+    device: &str,
+    work: &str,
+    ids: &[String],
+) -> Result<(), AppIpcError> {
+    let settings = store
+        .personal_stand_in(user, device)
+        .map_err(settings_error)?;
+    let work = store.stand_in_work(user, work).map_err(settings_error)?;
+    let selected = ids
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    for message in store
+        .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+        .map_err(settings_error)?
+    {
+        if message["recordId"]
+            .as_str()
+            .is_some_and(|id| selected.contains(id))
+            && !message_visible_to_account(&settings, &work["roleId"], &message)
+        {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "This message belongs to a different DingTalk account",
             ));
         }
     }
@@ -810,6 +895,54 @@ mod authorization_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegated_messages_remain_scoped_to_their_account_inside_a_shared_work() {
+        let settings = json!({
+            "primary": {"delegation": {"accountId": "account-new", "profile": "current"}}
+        });
+        let old_message = json!({
+            "recordId": "old-record",
+            "roleId": "@primary",
+            "text": "old-account secret",
+            "source": {
+                "providerId": DINGTALK_PROVIDER,
+                "profile": "current",
+                "accountId": "account-old",
+                "kind": "direct",
+                "id": "peer",
+                "delegated": true
+            }
+        });
+        let email_message = json!({
+            "recordId": "mail-record",
+            "roleId": "@primary",
+            "text": "email content",
+            "source": {"providerId": "connection/email", "profile": "mailbox"}
+        });
+        let mut work = json!({
+            "roleId": "@primary",
+            "source": {"providerId": "connection/email", "profile": "mailbox"},
+            "latestMessage": old_message
+        });
+
+        assert!(!work_visible_to_account(&settings, &work));
+        assert_eq!(
+            visible_work_messages(
+                &settings,
+                &work["roleId"],
+                vec![work["latestMessage"].clone(), email_message.clone()]
+            ),
+            vec![email_message]
+        );
+
+        work["latestMessage"] = json!({
+            "recordId": "mail-record",
+            "roleId": "@primary",
+            "source": {"providerId": "connection/email", "profile": "mailbox"}
+        });
+        assert!(work_visible_to_account(&settings, &work));
+    }
 
     #[test]
     fn inbox_polling_uses_task_summaries_without_copying_conversation_history() {
