@@ -59,14 +59,15 @@ describe('DeviceCard Wework badge', () => {
     }
   )
 
-  it.each<DeviceInfo['device_type']>(['app', 'remote'])(
-    'replaces upgrades with manual guidance on %s devices',
-    deviceType => {
+  it.each<DeviceInfo['status']>(['offline', 'online', 'busy'])(
+    'hides upgrade prompts on Wework devices: %s',
+    status => {
       render(
         <DeviceCard
           device={{
             ...baseDevice,
-            device_type: deviceType,
+            device_type: 'app',
+            status,
             executor_version: '2.0.20',
             latest_version: '2.0.21',
             update_available: true,
@@ -75,10 +76,12 @@ describe('DeviceCard Wework badge', () => {
           onUpgrade={jest.fn()}
         />
       )
+      expect(screen.getByTestId('wework-device-badge')).toHaveTextContent('wework_device_badge')
+      if (status !== 'offline') {
+        expect(screen.getByText('v2.0.20')).toBeInTheDocument()
+      }
       expect(screen.queryByTestId('device-upgrade-badge')).not.toBeInTheDocument()
-      expect(screen.getByTestId('device-manual-upgrade-hint')).toHaveTextContent(
-        deviceType === 'app' ? 'version.upgradeInWework' : 'version.repullRemoteImage'
-      )
+      expect(screen.queryByTestId('device-manual-upgrade-hint')).not.toBeInTheDocument()
     }
   )
 
@@ -126,11 +129,6 @@ describe('DeviceCard Wework badge', () => {
     )
     expect(onRestart).toHaveBeenCalledTimes(2)
     expect(onUpgrade).not.toHaveBeenCalled()
-  })
-
-  it('shows the Wework badge on app devices', () => {
-    render(<DeviceCard device={{ ...baseDevice, device_type: 'app' }} {...callbacks} />)
-    expect(screen.getByTestId('wework-device-badge')).toHaveTextContent('wework_device_badge')
   })
 
   it.each<DeviceInfo['device_type']>(['local', 'remote', 'cloud'])(
