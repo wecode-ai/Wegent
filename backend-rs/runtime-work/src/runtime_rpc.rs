@@ -353,7 +353,7 @@ pub async fn call(
         route.response_device_id(),
         &route.logical_device_id,
     )
-    .map_err(CallFailure::Rpc)
+    .map_err(|error| CallFailure::Rpc(*error))
 }
 
 fn project_runtime_result(
@@ -361,16 +361,18 @@ fn project_runtime_result(
     method: &str,
     runtime_device_id: &str,
     logical_device_id: &str,
-) -> Result<Value, RuntimeRpcError> {
+) -> Result<Value, Box<RuntimeRpcError>> {
     // A proposal read returns null when the assistant has no pending suggestion.
     if result.is_null() && method == "runtime.stand_in.proposal.get" {
         return Ok(result);
     }
-    let result = result.as_object().ok_or_else(|| RuntimeRpcError {
-        code: "runtime_rpc_invalid_response".to_string(),
-        message: "Runtime RPC returned an invalid response".to_string(),
-        retryable: None,
-        details: Some(json!({"deviceId": logical_device_id})),
+    let result = result.as_object().ok_or_else(|| {
+        Box::new(RuntimeRpcError {
+            code: "runtime_rpc_invalid_response".to_string(),
+            message: "Runtime RPC returned an invalid response".to_string(),
+            retryable: None,
+            details: Some(json!({"deviceId": logical_device_id})),
+        })
     })?;
     Ok(Value::Object(project_response_device_ids(
         result,
