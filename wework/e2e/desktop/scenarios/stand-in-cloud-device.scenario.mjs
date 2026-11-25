@@ -154,9 +154,8 @@ export function createDesktopScenario({
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
     })
-    await control.command('waitFor', `${selector} [data-testid="send-message-button"]:enabled`)
-    await control.command('press', `${selector} [data-testid="chat-message-input"]`, {
-      key: 'Enter',
+    await control.command('clickWhenEnabled', `${selector} [data-testid="send-message-button"]`, {
+      timeoutMs: uiTimeoutMs,
     })
   }
   async function observeDevice(control, device, status) {
