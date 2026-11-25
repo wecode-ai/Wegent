@@ -861,20 +861,35 @@ class SandboxManager(metaclass=SingletonMeta):
                     {"sandbox_id": sandbox.sandbox_id, "reason": "archive_failed"}
                 )
                 continue
-            success, message = await self.terminate_sandbox(sandbox.sandbox_id)
-            if success:
+            cleanup = await self._cleanup_selected_sandbox(
+                sandbox_id, sandbox, idle_before=now - max_age_seconds
+            )
+            runtime_absent = (cleanup.get("delete_result") or {}).get(
+                "status"
+            ) == "not_found"
+            if cleanup["deleted"] or (runtime_absent and cleanup["redis_cleared"]):
                 result["deleted"].append(
                     {
                         "sandbox_id": sandbox.sandbox_id,
                         "container_name": sandbox.container_name,
                     }
                 )
+            elif cleanup["reason"] in {
+                "sandbox_lifecycle_busy",
+                "sandbox_replaced",
+                "not_stale",
+            }:
+                result["skipped"].append(
+                    {"sandbox_id": sandbox.sandbox_id, "reason": cleanup["reason"]}
+                )
             else:
                 result["failed"].append(
                     {
                         "sandbox_id": sandbox.sandbox_id,
                         "reason": "delete_failed",
-                        "error": message,
+                        "error": (cleanup.get("delete_result") or {}).get(
+                            "error_msg", cleanup["reason"]
+                        ),
                     }
                 )
 
@@ -922,6 +937,19 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 return {**result, "skipped": True, "reason": "archive_failed"}
 
+        return await self._cleanup_selected_sandbox(sandbox_id, sandbox, result=result)
+
+    async def _cleanup_selected_sandbox(
+        self,
+        sandbox_id: str,
+        sandbox: Optional[Sandbox],
+        *,
+        result: Optional[Dict[str, Any]] = None,
+        idle_before: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Revalidate the archived runtime under the task lifecycle lease."""
+        if result is None:
+            result = {"deleted": False, "redis_cleared": False, "delete_attempts": []}
         lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
         if lease is None:
             return {**result, "skipped": True, "reason": "sandbox_lifecycle_busy"}
@@ -935,6 +963,12 @@ class SandboxManager(metaclass=SingletonMeta):
             )
             if expected_runtime != current_runtime:
                 return {**result, "skipped": True, "reason": "sandbox_replaced"}
+            if (
+                idle_before is not None
+                and current
+                and (current.last_activity_at or 0) > idle_before
+            ):
+                return {**result, "skipped": True, "reason": "not_stale"}
             cleanup = asyncio.create_task(
                 self._delete_sandbox_runtime(sandbox_id, current, result, lease)
             )
@@ -1739,21 +1773,11 @@ class SandboxManager(metaclass=SingletonMeta):
             )
             return
 
-        # Archiving can take minutes; a new execution may have renewed the
-        # sandbox in the meantime. Re-read the record before deleting it.
-        refreshed = self._repository.load_sandbox(task_id_str)
-        if refreshed is None:
-            self._repository.remove_from_active_set(task_id_str)
-            return
-        idle_seconds = time.time() - (refreshed.last_activity_at or 0)
-        if idle_seconds < self._config.timeout.redis_ttl:
-            logger.info(
-                "[SandboxManager] Sandbox %s became active during archiving; "
-                "skipping termination",
-                task_id_str,
-            )
-            return
-        await self.terminate_sandbox(task_id_str)
+        await self._cleanup_selected_sandbox(
+            task_id_str,
+            sandbox,
+            idle_before=time.time() - self._config.timeout.redis_ttl,
+        )
 
     async def _delete_orphaned_executor(self, task_id: str) -> bool:
         """Delete a Pod whose sandbox record is gone but is still tracked.
