@@ -24,7 +24,6 @@ import type { useAssistantSources } from './useAssistantSources'
 
 const mocks = vi.hoisted(() => ({
   workbench: {} as Record<string, unknown>,
-  reminders: { items: [] as ReturnType<typeof collectRuntimeTaskReminderItems> },
   source: {} as ReturnType<typeof useAssistantSources>,
   attachments: {} as Record<string, unknown>,
   controls: {} as Record<string, unknown>,
@@ -42,9 +41,10 @@ vi.mock('@/hooks/useTranslation', () => ({
     i18n: { language: 'en' },
   }),
 }))
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => mocks.workbench,
-  useWorkbenchReminderItems: () => mocks.reminders.items,
+vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => mocks.workbench }))
+vi.mock('@/features/workbench/runtimeTaskReminders', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/runtimeTaskReminders')>()),
+  useWorkbenchTaskReminders: () => mocks.workbench.runtimeTaskReminders,
 }))
 vi.mock('./useAssistantSources', () => ({ useAssistantSources: () => mocks.source }))
 vi.mock('@/lib/navigation', () => ({ navigateTo: (...args: unknown[]) => mocks.navigate(...args) }))
@@ -130,12 +130,12 @@ function setupWorkbench() {
     runtimeWorkLoad: { phase: 'ready', error: null } as RuntimeWorkLoadState,
   }
   const reminders = { items: collectRuntimeTaskReminderItems(state.runtimeWork) }
-  mocks.reminders = reminders
   const refreshWorkLists = vi.fn().mockResolvedValue(undefined)
   mocks.workbench = {
     state,
     services: { standInApi: api, sharedWorkspaceApi: { issues: { create: createIssue } } },
     projectChat,
+    runtimeTaskReminders: reminders,
     openRuntimeTask: vi.fn(),
     refreshWorkLists,
   }

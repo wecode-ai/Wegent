@@ -994,8 +994,8 @@ export function OwnedWorkbenchProvider({
   return (
     <WorkbenchContextProviders
       value={value}
-      taskReminders={runtimeTaskReminders}
       retainOwner={observation.retain}
+      runtimeTaskReminders={runtimeTaskReminders}
       paneValue={paneValue}
       sharedLifecycleStore={sharedLifecycleStore}
       lifecycleStore={lifecycleStore}

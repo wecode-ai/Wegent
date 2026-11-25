@@ -1,5 +1,6 @@
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useMemo, useRef, useState } from 'react'
-import { useWorkbench, useWorkbenchReminderItems } from '@/features/workbench/useWorkbench'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { standInState } from '@/features/notifications/standInNotifications'
 import { mergeStandInWorkItems, standInWorkRole } from '@/features/todo/standInWork'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -17,7 +18,7 @@ export function useExperienceTeamState(
   projects: readonly ExperienceProjectData[]
 ) {
   const { state, refreshWorkLists } = useWorkbench()
-  const reminderItems = useWorkbenchReminderItems()
+  const runtimeTaskReminders = useWorkbenchTaskReminders()
   const { t } = useTranslation('collaborationExp')
   const source = useAssistantSources(active)
   const scope = source.scope
@@ -39,7 +40,7 @@ export function useExperienceTeamState(
   const refreshFailure = refreshState.failure
   const ownerId = source.ownerId ?? source.userId
   const work = mergeStandInWorkItems(
-    reminderItems.filter(item => {
+    runtimeTaskReminders.items.filter(item => {
       const origin = item.task.runtimeHandle?.origin as Record<string, unknown> | undefined
       return standInWorkRole(item) !== null && origin?.userId === ownerId
     }),

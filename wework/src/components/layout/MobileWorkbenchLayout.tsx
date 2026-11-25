@@ -25,11 +25,8 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
-import {
-  useWorkbench,
-  useWorkbenchPaneContext,
-  useWorkbenchSidebarReminders,
-} from '@/features/workbench/useWorkbench'
+import { useWorkbenchSidebarReminders } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { useTranslation } from '@/hooks/useTranslation'

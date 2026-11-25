@@ -6,7 +6,7 @@ import { createDesktopLayoutState } from './desktopLayoutState'
 import { createDesktopLayoutSession } from './desktopLayoutSession'
 import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
-import { useWorkbench, useWorkbenchSidebarReminders } from '@/features/workbench/useWorkbench'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
@@ -26,6 +26,7 @@ import {
   useWorkbenchShellEventHandlers,
   type ProjectCreateRequestOptions,
 } from './workbenchShellEvents'
+import { useWorkbenchSidebarReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'

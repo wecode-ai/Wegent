@@ -130,11 +130,8 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
-import {
-  useWorkbench,
-  useWorkbenchReminderItems,
-  useWorkbenchSidebarReminders,
-} from './useWorkbench'
+import { useWorkbench } from './useWorkbench'
+import { useWorkbenchTaskReminders, useWorkbenchSidebarReminders } from './runtimeTaskReminders'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 
@@ -3050,7 +3047,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       return null
     })
     function ReminderReader() {
-      const ids = useWorkbenchReminderItems().map(item => item.address.taskId)
+      const ids = useWorkbenchTaskReminders().items.map(item => item.address.taskId)
       return <span data-testid="reminder-ids">{ids.join(',')}</span>
     }
     const { lifecycleStore } = renderWorkbenchWithLifecycleCoordinator(
