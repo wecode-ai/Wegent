@@ -182,6 +182,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => 'test-runtime',
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
