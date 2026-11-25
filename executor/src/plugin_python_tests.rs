@@ -91,7 +91,7 @@ fn managed_environment_and_arguments_are_scoped_to_the_plugin_child() {
         source: "managed".into(),
         version: "3.12.12".into(),
     };
-    let command = plugin_command(&selected, &script, args.map(OsString::from)).unwrap();
+    let command = plugin_command(&selected, &script, args.map(OsString::from), false).unwrap();
     assert_eq!(command.as_std().get_program(), interpreter);
     assert_eq!(command.as_std().get_current_dir(), None);
     let expected = std::iter::once(script.into_os_string())
@@ -120,6 +120,12 @@ fn managed_environment_and_arguments_are_scoped_to_the_plugin_child() {
     assert_eq!(env::var_os("PATH"), original_path);
     assert_eq!(env::var("PYTHONHOME").unwrap(), "ordinary-python-home");
     assert_eq!(env::var("PYTHONPATH").unwrap(), "ordinary-python-path");
+
+    let mcp = plugin_command(&selected, Path::new("server.py"), [], true).unwrap();
+    assert_eq!(
+        mcp.as_std().get_args().collect::<Vec<_>>(),
+        ["-E", "-s", "-B", "server.py"]
+    );
 }
 
 #[test]
@@ -133,6 +139,12 @@ fn preparation_failure_stops_before_script_execution() {
 }
 
 async fn assert_preparation_failure() {
+    for mcp in [false, true] {
+        assert_preparation_failure_for_mode(mcp).await;
+    }
+}
+
+async fn assert_preparation_failure_for_mode(mcp: bool) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!(
         "http://{}/runtime/python/ensure",
@@ -142,7 +154,8 @@ async fn assert_preparation_failure() {
     let count = hits.clone();
     let router = axum::Router::new().route(
         "/runtime/python/resolve",
-        axum::routing::post(move || {
+        axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            assert_eq!(body["allowSystemFallback"], !mcp);
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
         }),
@@ -156,7 +169,7 @@ async fn assert_preparation_failure() {
         ("WEGENT_PYTHON_PATH", interpreter.to_str().unwrap()),
     ]);
     let (_root, script) = fixture();
-    let error = run_script(&script, []).await.unwrap_err();
+    let error = run_script(&script, [], mcp).await.unwrap_err();
     server.abort();
     assert_eq!(error, "Plugin Python preparation request failed");
     assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);

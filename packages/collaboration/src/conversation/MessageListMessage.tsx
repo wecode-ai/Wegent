@@ -18,6 +18,7 @@ type MessageListMessageProps = Pick<
   | 'onOpenWorkspaceFile'
   | 'onOpenLocalSkillFile'
   | 'onEditLastUserMessage'
+  | 'onContinueInNewConversation'
   | 'onRetryFailedMessage'
   | 'onSwitchModelForFailedMessage'
   | 'onLoadFileChangesDiff'
@@ -70,6 +71,7 @@ export const MessageListMessage = memo(function MessageListMessage({
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   onEditLastUserMessage,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -123,6 +125,7 @@ export const MessageListMessage = memo(function MessageListMessage({
       isActiveTurn={isActiveTurn}
       isHistoricalTurn={isHistoricalTurn}
       devices={devices}
+      onContinueInNewConversation={onContinueInNewConversation}
       onRetryFailedMessage={onRetryFailedMessage}
       onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
       onLoadFileChangesDiff={onLoadFileChangesDiff}

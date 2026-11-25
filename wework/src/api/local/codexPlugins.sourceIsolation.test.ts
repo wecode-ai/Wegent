@@ -40,6 +40,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   }),
   ensureBundledPluginMarketplaceRegistered: async () => {},
   getKnownLocalExecutorDeviceId: () => mocks.deviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => mocks.runtimeInstanceId,
   getInitializedBundledPluginMarketplace: () => mocks.bundled,
   resumeBundledPluginUpdates: () => {},
 }))
@@ -715,6 +716,44 @@ describe('local plugin source isolation', () => {
     expect(
       (await api.listInstalledPlugins()).items.map(item => item.spec.source.pluginKey).sort()
     ).toEqual(['managed-tool', 'personal-tool'])
+  })
+
+  test('shares concurrent disk inventory reads and reads disk again after they settle', async () => {
+    const method = 'executor.plugins.personal.list'
+    const readCount = () => mocks.request.mock.calls.filter(([name]) => name === method).length
+    const [first, second] = await Promise.all([
+      readLocalInstalledInventoryFromDisk(),
+      readLocalInstalledInventoryFromDisk(),
+    ])
+    expect(first.items).toEqual(second.items)
+    expect(readCount()).toBe(1)
+
+    await readLocalInstalledInventoryFromDisk()
+    expect(readCount()).toBe(2)
+  })
+
+  test('starts a fresh disk inventory read if the local Runtime changes', async () => {
+    const method = 'executor.plugins.store.list'
+    const original = mocks.request.getMockImplementation()!
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    mocks.request.mockImplementation(async (name, params) => {
+      if (name === method && mocks.runtimeInstanceId === 'runtime-a') {
+        started.resolve()
+        await release.promise
+      }
+      return original(name, params)
+    })
+    const previous = readLocalInstalledInventoryFromDisk()
+    await started.promise
+    mocks.runtimeInstanceId = 'runtime-b'
+    try {
+      await readLocalInstalledInventoryFromDisk()
+      expect(mocks.request.mock.calls.filter(([name]) => name === method)).toHaveLength(2)
+    } finally {
+      release.resolve()
+      await previous
+    }
   })
 
   test.each([false, true])(

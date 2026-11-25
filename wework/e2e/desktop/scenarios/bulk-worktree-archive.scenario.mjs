@@ -14,7 +14,12 @@ import {
 } from '../modules/shared.mjs'
 import { currentRuntimeTaskFromDebugSnapshot } from '../modules/workspace-flows.mjs'
 
-export function createDesktopScenario({ workspacePath, electronUserDataDirectory, uiTimeoutMs }) {
+export function createDesktopScenario({
+  workspacePath,
+  electronUserDataDirectory,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+}) {
   return {
     async verify(control) {
       await createSingleRootLocalProject(control, workspacePath, 'Bulk worktree archive')
@@ -39,7 +44,7 @@ export function createDesktopScenario({ workspacePath, electronUserDataDirectory
         await control.command('clickWhenEnabled', '[data-testid="send-message-button"]')
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: CHECKPOINT_TASK_COMPLETION_TEXT,
-          timeoutMs: uiTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
         const task = currentRuntimeTaskFromDebugSnapshot(
           JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
