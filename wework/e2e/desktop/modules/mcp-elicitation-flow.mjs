@@ -25,6 +25,7 @@ import {
   resultDir,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
+  waitForLogPattern,
 } from './shared.mjs'
 import {
   captureVerificationScreenshot,
@@ -160,6 +161,8 @@ async function verifyMcpElicitationInFullAccess(control) {
 }
 
 async function verifyUnansweredToolApproval(control, taskId, evidencePath) {
+  const logPath = join(resultDir, 'executor.log')
+  const logOffset = (await readFile(logPath, 'utf8')).length
   await sendPromptUntilScenarioRequest(
     control,
     ACTIVE_COMPOSER_SELECTOR,
@@ -183,14 +186,16 @@ async function verifyUnansweredToolApproval(control, taskId, evidencePath) {
     false,
     'The MCP server received a tool call without approval'
   )
-  const executorLog = await readFile(join(resultDir, 'executor.log'), 'utf8')
-  const request = executorLog
-    .split('\n')
-    .find(
-      line =>
-        line.includes('desktop e2e skipped MCP approval observer') &&
-        line.includes(`server_name=${UNANSWERED_MCP_APPROVAL_SERVER} `)
-    )
+  const observer = new RegExp(
+    `desktop e2e skipped MCP approval observer .*server_name=${UNANSWERED_MCP_APPROVAL_SERVER}\\s`
+  )
+  const executorLog = (
+    await waitForLogPattern(logPath, observer, {
+      fromOffset: logOffset,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  ).slice(logOffset)
+  const request = executorLog.split('\n').find(line => observer.test(line))
   assert.ok(request, 'The real native approval must reach the injected missing observer')
   const requestId = request.match(/ request_id=(\S+)/)?.[1]
   assert.ok(requestId, 'The unanswered native approval must have a request ID')

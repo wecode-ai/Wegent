@@ -1,13 +1,16 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { RESPONSIVE_BREAKPOINTS } from '@/lib/responsive'
 
-export function useIsDesktop(minWidth: number = RESPONSIVE_BREAKPOINTS.desktopMin): boolean {
+export function useIsDesktop(
+  minWidth: number = RESPONSIVE_BREAKPOINTS.desktopMin,
+  observeViewport = true
+): boolean {
   const media = useMemo(
     () =>
-      typeof window.matchMedia === 'function'
+      observeViewport && typeof window.matchMedia === 'function'
         ? window.matchMedia(`(min-width: ${minWidth}px)`)
         : undefined,
-    [minWidth]
+    [minWidth, observeViewport]
   )
   const subscribe = useCallback(
     (listener: () => void) => {
@@ -16,5 +19,9 @@ export function useIsDesktop(minWidth: number = RESPONSIVE_BREAKPOINTS.desktopMi
     },
     [media]
   )
-  return useSyncExternalStore(subscribe, () => window.innerWidth >= minWidth)
+  const getSnapshot = useCallback(
+    () => !observeViewport || window.innerWidth >= minWidth,
+    [minWidth, observeViewport]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
 }

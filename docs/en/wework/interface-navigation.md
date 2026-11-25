@@ -105,6 +105,8 @@ For clone authentication failures, execution-environment device errors or Git au
 
 For red errors above the task composer, see [Dismiss notice in Individual composer controls](./tasks.md#task-controls).
 
+Select **Continue in a new conversation** on a task's conversation history error card to open a draft with a reference to the original conversation. See [Recover a conversation](./tasks.md#recover-conversation-history).
+
 Prepare a voice input model: **bottom-left account menu → Settings → Personal → General → Voice input**. This section appears when the official voice plugin has loaded; prepare a model, then record from the task composer. See [Voice input model](./settings.md#voice-input-model).
 
 To report a problem or export runtime logs, select **Report a problem** in the upper-right corner of any Wework desktop page. Plugins, My assistants, Scheduled and Settings use the same entry; task pages can also include task context. See [Getting help](./troubleshooting.md#getting-help).

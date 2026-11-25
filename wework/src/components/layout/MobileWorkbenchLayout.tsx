@@ -30,6 +30,7 @@ import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useW
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import {
   isCloudDevice,
   isDeviceBelowWeWorkVersion,
@@ -440,6 +441,17 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 )
               }
               devices={state.devices}
+              onContinueInNewConversation={
+                currentRuntimeTask
+                  ? () => {
+                      const reference = createConversationMentionReference(
+                        runtimeTaskSummary?.title ?? currentRuntimeTask.taskId,
+                        currentRuntimeTask
+                      )
+                      onNewChat({ initialInput: `${reference} ` })
+                    }
+                  : undefined
+              }
               onRetryFailedMessage={message => {
                 void paneSession.retryFailedMessage(message)
               }}
