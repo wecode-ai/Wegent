@@ -9,7 +9,8 @@ import {
 } from './workbenchDebugPublisher'
 import { createWorkbenchNotificationProducer } from './workbenchNotificationProducer'
 import type { NotificationTaskRegistry } from '@/features/notifications/notificationTaskRegistry'
-import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
+import { EMPTY_RUNTIME_TASK_REMINDERS, type RuntimeTaskReminderState } from './runtimeTaskReminders'
+import type { RuntimeTaskLifecycleStoreSnapshot } from './runtimeTaskLifecycle'
 import { createCoreDshModelPublisher } from '@/features/dsh-models/coreDshModelPublisher'
 import { createWorkbenchTelemetry } from './workbenchTelemetry'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -51,7 +52,6 @@ export interface WorkbenchSessionInput extends WorkbenchStreamInput {
   harnessAppLaunch: Parameters<ReturnType<typeof createHarnessAppLaunchActor>['observe']>[0]
   operations: WorkbenchSessionOperations
   notificationRegistry?: NotificationTaskRegistry | null
-  notificationTaskReminders?: RuntimeTaskReminderState
   debugSnapshot: WorkbenchDiagnosticInput | null
   coreDshModels: UnifiedModel[] | null
   telemetry: Omit<AiGenerationTelemetryInput, 'contextUsageByRuntimeTask'>
@@ -85,6 +85,8 @@ export function createWorkbenchSession(
 ) {
   let accountOwner: TabAccountOwner | null = null
   let input: WorkbenchSessionInput | null = null
+  let taskReminders = EMPTY_RUNTIME_TASK_REMINDERS
+  let reminderLifecycle: RuntimeTaskLifecycleStoreSnapshot | undefined
   let releaseAppshots: (() => void) | undefined
   const suspendAppshots = () => {
     releaseAppshots?.()
@@ -293,10 +295,7 @@ export function createWorkbenchSession(
       previousReadyCallback = input.onStartupReadyChange
       input.onStartupReadyChange?.(ready)
     }
-    routeNavigation.update(
-      observers > 0 && active && input.taskRouteActive === true,
-      input.notificationTaskReminders
-    )
+    routeNavigation.update(observers > 0 && active && input.taskRouteActive === true, taskReminders)
     if (observers && active && input.appshotReceiver) {
       releaseAppshots ??= retainAppshotReceiver(
         () => {
@@ -312,6 +311,16 @@ export function createWorkbenchSession(
   }
   function startRequestedChat() {
     if (canNavigate() && consumeWorkbenchNewChatRequest()) operations.stableStartNewChat()
+  }
+  function publishReminderConsumers() {
+    if (!input || !isHeld()) return
+    diagnostics.update(input.debugSnapshot)
+    notifications.update(
+      input.notificationRegistry ?? null,
+      taskReminders,
+      input.services,
+      canNavigate()
+    )
   }
   /** Committed child readers hold the same native owner as the Provider state observer. */
   function acquire(next: WorkbenchSessionInput) {
@@ -330,14 +339,8 @@ export function createWorkbenchSession(
       state.resources.localAppsInflightRef.current = null
     }
     reconcile()
-    diagnostics.update(isHeld() ? next.debugSnapshot : null)
-    if (isHeld())
-      notifications.update(
-        next.notificationRegistry ?? null,
-        next.notificationTaskReminders ?? null,
-        next.services,
-        canNavigate()
-      )
+    if (isHeld()) publishReminderConsumers()
+    else diagnostics.suspend()
     let released = false
     return () => {
       if (released) return
@@ -369,6 +372,21 @@ export function createWorkbenchSession(
     canNavigate,
     canSyncLifecycle,
     isHeld,
+    getTaskReminders: () => taskReminders,
+    publishTaskReminders(
+      reminders: RuntimeTaskReminderState,
+      lifecycle: RuntimeTaskLifecycleStoreSnapshot
+    ) {
+      const remindersChanged = taskReminders !== reminders
+      if (!remindersChanged && reminderLifecycle === lifecycle) return
+      taskReminders = reminders
+      reminderLifecycle = lifecycle
+      if (!observers || !isHeld()) return
+      if (remindersChanged) {
+        routeNavigation.update(canNavigate() && input?.taskRouteActive === true, reminders)
+        publishReminderConsumers()
+      } else if (input) diagnostics.update(input.debugSnapshot)
+    },
     startRequestedChat,
     consumeQueuedPluginTrial: () => {
       if (canNavigate() && input?.consumePluginTrials) operations.stableConsumeQueuedPluginTrial()
