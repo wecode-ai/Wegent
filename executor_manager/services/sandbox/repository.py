@@ -719,6 +719,46 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
             return None
 
+    def renew_docker_callback_binding(
+        self, task_id: int, executor_name: str, token: str
+    ) -> None:
+        """Refresh a running Docker executor's lease without replacing another binding."""
+        if self.redis_client is None:
+            return
+
+        binding = {
+            "executor_name": executor_name,
+            "task_id": task_id,
+            "created_at": time.time(),
+            "callback_token": token,
+        }
+        try:
+            self.redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if not current then
+                    redis.call('SETEX', KEYS[1], ARGV[1], ARGV[2])
+                    return
+                end
+                local binding = cjson.decode(current)
+                if binding.executor_name == ARGV[3] and binding.callback_token == ARGV[4] then
+                    redis.call('EXPIRE', KEYS[1], ARGV[1])
+                end
+                """,
+                1,
+                f"task_executor:{task_id}",
+                self._config.executor.executor_binding_ttl,
+                json.dumps(binding),
+                executor_name,
+                token,
+            )
+        except (redis.RedisError, ValueError) as error:
+            logger.warning(
+                "Could not renew Docker callback binding for task %s: %s",
+                task_id,
+                type(error).__name__,
+            )
+
     def load_executor_callback_token(self, task_id: int) -> Optional[str]:
         """Load the callback credential issued for one task runtime.
 
@@ -747,9 +787,10 @@ class SandboxRepository(metaclass=SingletonMeta):
             binding_key = f"task_executor:{task_id}"
             binding_json = self.redis_client.get(binding_key)
 
-            if binding_json:
-                return json.loads(binding_json)
-            return None
+            if not binding_json:
+                return None
+            binding = json.loads(binding_json)
+            return None if binding.get("revoked") else binding
         except Exception as e:
             logger.warning(f"[SandboxRepository] Failed to load executor binding: {e}")
             return None
@@ -761,9 +802,15 @@ class SandboxRepository(metaclass=SingletonMeta):
 
         try:
             binding_key = f"task_executor:{task_id}"
-            self.redis_client.delete(binding_key)
+            # An inventory pass may have inspected the container before deletion.
+            # Retain no credential and prevent that pass from restoring the lease.
+            self.redis_client.setex(
+                binding_key,
+                max(300, self._config.executor.executor_binding_ttl),
+                '{"revoked":true}',
+            )
             logger.info(
-                "[SandboxRepository] Deleted executor binding: task_id=%s",
+                "[SandboxRepository] Revoked executor binding: task_id=%s",
                 task_id,
             )
             return True

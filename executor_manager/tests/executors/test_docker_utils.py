@@ -217,3 +217,36 @@ class TestDockerUtils:
         assert result["status"] == "success"
         assert "123" not in result["task_ids"]  # Task 123 is completed
         assert "124" in result["task_ids"]  # Task 124 is still running
+
+
+def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
+    from executor_manager.executors.docker import utils
+
+    token = "a" * 64
+    repository = mocker.patch(
+        "executor_manager.services.sandbox.repository.get_sandbox_repository"
+    ).return_value
+    docker = mocker.patch.object(
+        utils.subprocess,
+        "run",
+        side_effect=[
+            mocker.Mock(stdout="active-id exited-id foreign-id legacy-id"),
+            mocker.Mock(
+                stdout="\n".join(
+                    [
+                        f'true /active executor_manager 42 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        f'false /exited executor_manager 43 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        f'true /foreign other-owner 44 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        'true /legacy executor_manager 45 ["OTHER=true"]',
+                    ]
+                )
+            ),
+        ],
+    )
+
+    utils.renew_running_docker_callback_bindings()
+
+    assert "label=owner=executor_manager" in docker.call_args_list[0].args[0]
+    repository.renew_docker_callback_binding.assert_called_once_with(
+        42, "active", token
+    )

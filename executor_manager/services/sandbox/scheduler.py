@@ -11,13 +11,20 @@ This module handles scheduled tasks for sandbox management:
 Uses APScheduler for task scheduling.
 """
 
+import asyncio
 import os
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from executor_manager.common.config import get_config
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
+from executor_manager.executors.docker.utils import (
+    renew_running_docker_callback_bindings,
+)
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -36,9 +43,10 @@ QUEUE_STALL_CHECK_INTERVAL = int(
 class SandboxScheduler:
     """Scheduler for sandbox background tasks.
 
-    Manages two periodic jobs:
+    Manages periodic lifecycle jobs:
     - Heartbeat check: Runs every HEARTBEAT_CHECK_INTERVAL (default 10s)
     - Sandbox GC: Runs every GC_INTERVAL (default 1 hour)
+    - Docker callback lease reconciliation: Runs before the binding TTL elapses
     """
 
     def __init__(self, sandbox_manager: "SandboxManager"):
@@ -110,6 +118,16 @@ class SandboxScheduler:
             replace_existing=True,
         )
 
+        if EXECUTOR_DISPATCHER_MODE == "docker":
+            ttl = get_config().executor.executor_binding_ttl
+            self._scheduler.add_job(
+                self._renew_docker_bindings,
+                IntervalTrigger(seconds=min(300, ttl / 3)),
+                next_run_time=datetime.now(timezone.utc),
+                id="docker_callback_lease",
+                replace_existing=True,
+            )
+
         self._scheduler.start()
         logger.info(
             f"[SandboxScheduler] Started with jobs: "
@@ -118,6 +136,9 @@ class SandboxScheduler:
             f"sandbox_gc (every {GC_INTERVAL}s), "
             f"queue_stall_check (every {QUEUE_STALL_CHECK_INTERVAL}s)"
         )
+
+    async def _renew_docker_bindings(self) -> None:
+        await asyncio.to_thread(renew_running_docker_callback_bindings)
 
     async def stop(self) -> None:
         """Stop the scheduler."""

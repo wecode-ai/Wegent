@@ -132,6 +132,11 @@ class TestSandboxScheduler:
         mock_scheduler_instance.running = False
         mock_scheduler_class.return_value = mock_scheduler_instance
 
+        mocker.patch(
+            "executor_manager.services.sandbox.scheduler.EXECUTOR_DISPATCHER_MODE",
+            "k8s",
+        )
+
         # Patch the interval trigger to capture intervals
         mocker.patch("executor_manager.services.sandbox.scheduler.IntervalTrigger")
 
@@ -140,6 +145,44 @@ class TestSandboxScheduler:
         # Verify four jobs were added: sandbox_heartbeat_check,
         # task_heartbeat_check, sandbox_gc and queue_stall_check.
         assert mock_scheduler_instance.add_job.call_count == 4
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["docker", "k8s"])
+    async def test_docker_callback_renewal_schedule(
+        self, sandbox_scheduler, mocker, mode
+    ):
+        from executor_manager.services.sandbox import scheduler
+
+        mocker.patch.object(scheduler, "EXECUTOR_DISPATCHER_MODE", mode)
+        mocker.patch.object(
+            scheduler,
+            "get_config",
+            return_value=mocker.Mock(executor=mocker.Mock(executor_binding_ttl=30)),
+        )
+        clock_start = scheduler.datetime.now(scheduler.timezone.utc)
+        scheduler_instance = mocker.patch.object(
+            scheduler, "AsyncIOScheduler"
+        ).return_value
+
+        await sandbox_scheduler.start()
+
+        job = next(
+            (
+                call
+                for call in scheduler_instance.add_job.call_args_list
+                if call.kwargs["id"] == "docker_callback_lease"
+            ),
+            None,
+        )
+        if mode == "k8s":
+            assert job is None
+        else:
+            assert job.args[1].interval.total_seconds() == 10
+            assert (
+                clock_start
+                <= job.kwargs["next_run_time"]
+                <= scheduler.datetime.now(scheduler.timezone.utc)
+            )
 
     # ----- stop Tests -----
 
