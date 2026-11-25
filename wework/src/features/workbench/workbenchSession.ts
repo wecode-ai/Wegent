@@ -311,7 +311,9 @@ export function createWorkbenchSession(
     projects.reconcile()
   }
   function startRequestedChat() {
-    if (canNavigate() && consumeWorkbenchNewChatRequest()) operations.stableStartNewChat()
+    if (!canNavigate()) return
+    const requested = consumeWorkbenchNewChatRequest()
+    if (requested) operations.stableStartNewChat(requested)
   }
   /** Committed child readers hold the same native owner as the Provider state observer. */
   function acquire(next: WorkbenchSessionInput) {

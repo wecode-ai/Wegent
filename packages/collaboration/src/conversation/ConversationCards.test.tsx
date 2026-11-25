@@ -166,15 +166,17 @@ describe("shared conversation cards without Electron", () => {
       "llm_error",
       "No tool output found for tool call call_1.",
       "The model could not process the conversation history",
-      "Type @ followed by a word from the original title",
+      "The new conversation will reference this one",
     ],
   ])(
     "shows localized terminal %s separately from diagnostics",
     (type, error, title, guidance) => {
+      const continueInNewConversation = vi.fn();
       render(
         <AssistantErrorCard
           error={error}
           errorType={type}
+          onContinueInNewConversation={continueInNewConversation}
           onRetry={vi.fn()}
           message={{
             id: "failed",
@@ -187,6 +189,16 @@ describe("shared conversation cards without Electron", () => {
       );
       expect(element("assistant-error-title").textContent).toBe(title);
       expect(element("assistant-error-retry").textContent).toBe("Retry");
+      const recovery = container.querySelector<HTMLButtonElement>(
+        '[data-testid="assistant-error-continue-in-new-conversation"]',
+      );
+      if (type === "llm_error") {
+        expect(recovery?.textContent).toBe("Continue in a new conversation");
+        act(() => recovery?.click());
+        expect(continueInNewConversation).toHaveBeenCalledOnce();
+      } else {
+        expect(recovery).toBeNull();
+      }
       expect(
         document.querySelector('[data-testid="assistant-error-details"]'),
       ).toBeNull();

@@ -15,6 +15,7 @@ export function AssistantErrorCard({
   errorInfo,
   rawError,
   message,
+  onContinueInNewConversation,
   onRetry,
   onSwitchModel,
 }: {
@@ -23,13 +24,16 @@ export function AssistantErrorCard({
   errorType?: string
   rawError?: string
   message: WorkbenchMessage
+  onContinueInNewConversation?: () => void
   onRetry?: (message: WorkbenchMessage) => void
   onSwitchModel?: (message: WorkbenchMessage) => void
 }) {
   const { t, translate } = useConversationTranslation()
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
   const parsedError = parseChatError(rawError || error || '', errorType, errorInfo)
-  const recommendsNewConversation = parsedError.type === 'invalid_message_history'
+  const recommendsNewConversation =
+    parsedError.type === 'invalid_message_history' || parsedError.type === 'invalid_role'
+  const continueInNewConversation = recommendsNewConversation ? onContinueInNewConversation : undefined
   const displayError = parsedError.gitFailure
     ? `${parsedError.gitFailure.domain}: ${parsedError.gitFailure.message}`
     : rawError || error
@@ -69,7 +73,9 @@ export function AssistantErrorCard({
           data-testid="assistant-error-description"
           className="mt-0.5 break-words text-xs leading-[18px] text-text-secondary"
         >
-          {description}
+          {continueInNewConversation
+            ? t('assistant_error.types.invalid_message_history.description_with_action')
+            : description}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <GitAccountConfigurationButton
@@ -77,6 +83,17 @@ export function AssistantErrorCard({
             translate={translate}
             testId="assistant-error-configure-git"
           />
+          {continueInNewConversation && (
+            <ControlButton
+              variant="primary"
+              size="sm"
+              type="button"
+              data-testid="assistant-error-continue-in-new-conversation"
+              onClick={continueInNewConversation}
+            >
+              {t('assistant_error.actions.continue_in_new_conversation')}
+            </ControlButton>
+          )}
           {onSwitchModel && !parsedError.gitFailure ? (
             <ControlButton
               variant={recommendsNewConversation ? 'outline' : 'primary'}

@@ -23,6 +23,7 @@ export const assistantErrorMessages: Record<
       "仓库访问检查已通过，但克隆失败。请检查分支、目标目录、磁盘空间和设备权限。",
     "conversation.assistant_error.actions.switch_model_retry": "切换模型并重试",
     "conversation.assistant_error.actions.retry": "重试",
+    "conversation.assistant_error.actions.continue_in_new_conversation": "在新对话中继续",
     "conversation.assistant_error.actions.retry_after_change": "修复后重试",
     "conversation.assistant_error.types.context_length_exceeded.title":
       "对话内容超出当前模型的上下文长度限制",
@@ -105,7 +106,9 @@ export const assistantErrorMessages: Record<
     "conversation.assistant_error.types.invalid_message_history.title":
       "模型无法处理对话历史",
     "conversation.assistant_error.types.invalid_message_history.description":
-      "点击左侧栏的「新建任务」。输入 @ 加标题关键词，选择「会话」结果后继续。",
+      "可以在新对话中用 @ 引用原对话，再继续提问。",
+    "conversation.assistant_error.types.invalid_message_history.description_with_action":
+      "新对话会自动引用原对话。你可以补充要继续的内容，再发送。",
     "conversation.assistant_error.types.invalid_role.title":
       "模型参数异常：消息角色格式不兼容",
     "conversation.assistant_error.types.invalid_role.description":
@@ -189,6 +192,8 @@ export const assistantErrorMessages: Record<
     "conversation.assistant_error.actions.switch_model_retry":
       "Switch model and retry",
     "conversation.assistant_error.actions.retry": "Retry",
+    "conversation.assistant_error.actions.continue_in_new_conversation":
+      "Continue in a new conversation",
     "conversation.assistant_error.actions.retry_after_change":
       "Retry after fixing",
     "conversation.assistant_error.types.context_length_exceeded.title":
@@ -274,7 +279,9 @@ export const assistantErrorMessages: Record<
     "conversation.assistant_error.types.invalid_message_history.title":
       "The model could not process the conversation history",
     "conversation.assistant_error.types.invalid_message_history.description":
-      "Choose New task in the sidebar. Type @ followed by a word from the original title, select the conversation result, then continue.",
+      "You can reference this conversation with @ in a new conversation and continue there.",
+    "conversation.assistant_error.types.invalid_message_history.description_with_action":
+      "The new conversation will reference this one. Add what you want to continue, then send.",
     "conversation.assistant_error.types.invalid_role.title":
       "Model parameter error: Message role format is incompatible",
     "conversation.assistant_error.types.invalid_role.description":

@@ -78,6 +78,7 @@ export interface MessageListProps {
   forceVirtualMessageId?: string | null
   searchMessageId?: string
   devices?: Array<{ device_id: string; status: string }>
+  onContinueInNewConversation?: () => void
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (
@@ -164,6 +165,7 @@ export const MessageList = memo(function MessageList({
   forceVirtualMessageId = null,
   searchMessageId,
   devices = EMPTY_DEVICES,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -663,6 +665,7 @@ export const MessageList = memo(function MessageList({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onOpenLocalSkillFile={onOpenLocalSkillFile}
               onEditLastUserMessage={onEditLastUserMessage}
+              onContinueInNewConversation={onContinueInNewConversation}
               onRetryFailedMessage={onRetryFailedMessage}
               onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
