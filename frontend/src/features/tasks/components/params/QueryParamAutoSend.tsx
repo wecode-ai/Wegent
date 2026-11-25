@@ -279,7 +279,11 @@ export default function QueryParamAutoSend({
         waitForReadiness()
         return
       }
-      if (targetTeam && currentSelectedTeam?.id !== targetTeam.id) {
+      if (
+        targetTeam &&
+        (currentSelectedTeam?.id !== targetTeam.id ||
+          (teamIdParam !== null && !isTeamSelectionReadyRef.current))
+      ) {
         if (requestedTeamId !== targetTeam.id) {
           requestedTeamId = targetTeam.id
           onTeamChangeRef.current(targetTeam)

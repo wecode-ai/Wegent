@@ -269,11 +269,12 @@ it('honors an explicit ID ahead of a team name without waiting for the catalog',
 })
 
 it.each([
-  ['empty', ''],
-  ['non-numeric', 'abc'],
-])('falls back to the team name when teamId is %s', (_label, teamId) => {
+  ['empty', '', defaultTeam],
+  ['non-numeric', 'abc', defaultTeam],
+  ['non-numeric and the named team is already selected', 'abc', recentTeam],
+])('falls back to the team name when teamId is %s', (_label, teamId, selectedTeam) => {
   setQuery(`q=hello&autoSend=true&teamId=${teamId}&teamName=recent-team&teamNamespace=default`)
-  const initial = props({ isTeamSelectionReady: false })
+  const initial = props({ isTeamSelectionReady: false, selectedTeam })
   const { rerender } = render(<QueryParamAutoSend {...initial} />)
 
   expect(initial.onTeamChange).toHaveBeenCalledWith(recentTeam)
