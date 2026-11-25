@@ -150,15 +150,27 @@ describe("shared conversation cards without Electron", () => {
   });
 
   it.each([
-    ["server_overloaded", "connection interrupted", "Model service is busy"],
+    [
+      "server_overloaded",
+      "connection interrupted",
+      "Model service is busy",
+      "overloaded",
+    ],
     [
       "timeout_error",
       "codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted",
       "Timed out waiting for a response",
+      "within 180 seconds",
+    ],
+    [
+      "llm_error",
+      "No tool output found for tool call call_1.",
+      "The model could not process the conversation history",
+      "Type @ followed by a word from the original title",
     ],
   ])(
     "shows localized terminal %s separately from diagnostics",
-    (type, error, title) => {
+    (type, error, title, guidance) => {
       render(
         <AssistantErrorCard
           error={error}
@@ -176,10 +188,9 @@ describe("shared conversation cards without Electron", () => {
       expect(
         document.querySelector('[data-testid="assistant-error-details"]'),
       ).toBeNull();
-      if (type === "timeout_error")
-        expect(element("assistant-error-description").textContent).toContain(
-          "within 180 seconds",
-        );
+      expect(element("assistant-error-description").textContent).toContain(
+        guidance,
+      );
       act(() => element("assistant-error-details-toggle").click());
       expect(element("assistant-error-details").textContent).toBe(error);
     },

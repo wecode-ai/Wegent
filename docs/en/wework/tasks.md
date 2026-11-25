@@ -131,6 +131,8 @@ Type `@` in the composer and select a conversation or Issue to insert a referenc
 
 Conversation references retain completed visible assistant replies. A later tool-record update does not make a reply process text solely because of record order; explicit process messages and text still being generated retain their phase-based handling.
 
+If the error card says the model could not process the conversation history, create a task from the sidebar or start a new conversation in the original project. In the new composer, type `@` immediately followed by a word from the original title, select the conversation result, and describe what to continue. The new conversation can access the original through the reference and has its own message history.
+
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
 <a id="image-preview"></a>

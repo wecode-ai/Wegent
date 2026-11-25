@@ -139,6 +139,37 @@ describe("parseChatError", () => {
     expect(parsed.type).toBe("model_service_connection_error");
   });
 
+  test.each([
+    [
+      'unexpected status 400 Bad Request: {"error":{"type":"invalid_request_error","message":"No tool output found for tool call call_1."}}',
+      "invalid_message_history",
+    ],
+    [
+      "Failed to deserialize the JSON body into the target type: input[3].content: invalid type",
+      "invalid_message_history",
+    ],
+    [
+      "Invalid 'input[0].id': 'fc_old'. Expected an ID that begins with 'ctc'.",
+      "invalid_message_history",
+    ],
+    [
+      "Failed to deserialize the JSON body into the target type: temperature: invalid type",
+      "model_unavailable",
+    ],
+    ["504 Gateway Timeout", "timeout_error"],
+  ])("classifies a model request failure by its cause", (error, type) => {
+    expect(parseChatError(error, "llm_error").type).toBe(type);
+  });
+
+  test.each([
+    ["model_unavailable", "invalid_message_history"],
+    ["provider_error", "invalid_message_history"],
+    ["timeout_error", "timeout_error"],
+  ])("handles history diagnostics inside structured %s", (code, type) => {
+    const error = "No tool output found for tool call call_1.";
+    expect(parseChatError(error, "llm_error", { code }).type).toBe(type);
+  });
+
   test.each([180, 30])(
     "classifies the %ss progress watchdog without blaming the provider",
     (seconds) => {

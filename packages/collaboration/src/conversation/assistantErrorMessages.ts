@@ -102,10 +102,14 @@ export const assistantErrorMessages: Record<
       "当前模型不支持此请求格式。请切换兼容模型后重试。",
     "conversation.assistant_error.types.model_protocol_error.description_with_model":
       "{{model}} 不支持当前运行协议。请切换兼容模型后重试。",
+    "conversation.assistant_error.types.invalid_message_history.title":
+      "模型无法处理对话历史",
+    "conversation.assistant_error.types.invalid_message_history.description":
+      "点击左侧栏的「新建任务」。输入 @ 加标题关键词，选择「会话」结果后继续。",
     "conversation.assistant_error.types.invalid_role.title":
       "模型参数异常：消息角色格式不兼容",
     "conversation.assistant_error.types.invalid_role.description":
-      "当前模型不支持此消息格式，建议切换模型后重试。",
+      "请新建对话，在输入框中输入 @ 并选择原对话，然后告诉模型要继续做什么。",
     "conversation.assistant_error.types.permission_denied.title":
       "无权限使用当前模型，请切换到有权限的模型",
     "conversation.assistant_error.types.permission_denied.description":
@@ -267,10 +271,14 @@ export const assistantErrorMessages: Record<
       "The current model does not support this request format. Switch to a compatible model and retry.",
     "conversation.assistant_error.types.model_protocol_error.description_with_model":
       "{{model}} does not support the current runtime protocol. Switch to a compatible model and retry.",
+    "conversation.assistant_error.types.invalid_message_history.title":
+      "The model could not process the conversation history",
+    "conversation.assistant_error.types.invalid_message_history.description":
+      "Choose New task in the sidebar. Type @ followed by a word from the original title, select the conversation result, then continue.",
     "conversation.assistant_error.types.invalid_role.title":
       "Model parameter error: Message role format is incompatible",
     "conversation.assistant_error.types.invalid_role.description":
-      "The current model does not support this message format. Switch models and retry.",
+      "Start a new conversation, type @ and select the original conversation, then tell the model what to continue.",
     "conversation.assistant_error.types.permission_denied.title":
       "No permission to use the current model",
     "conversation.assistant_error.types.permission_denied.description":
