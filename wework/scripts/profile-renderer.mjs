@@ -30,6 +30,7 @@ import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window
 import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
+  resolveCpuProfileLocations,
   startPerformanceRecording,
   stopPerformanceRecording,
   writeDiagnosticFile,
@@ -793,6 +794,7 @@ export function createDesktopScenario({
       }
       let recording = false
       let recordingTurnCpu = false
+      let turnCpuEvidence
       const command = (method, params) => client({ action: 'command', target, method, params })
       let probingTurnUpdates = false
       try {
@@ -935,12 +937,12 @@ export function createDesktopScenario({
           const slowUpdates = turnUpdates.filter(
             update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
           )
+          turnCpuEvidence = { navigationStartUs, slowUpdates, profile }
           if (slowUpdates.length > 0) {
-            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
-              navigationStartUs,
-              slowUpdates,
-              profile,
-            })
+            await writeDiagnosticFile(
+              join(resultDir, 'renderer-turn-long-task-profile.json'),
+              turnCpuEvidence
+            )
           }
         }
         assert.ok(
@@ -1022,6 +1024,21 @@ export function createDesktopScenario({
           await stopPerformanceRecording(client, resultDir, target, reportPath)
         }
         if (enforceBudgets) {
+          if (
+            turnCpuEvidence &&
+            (turnCpuEvidence.slowUpdates.length > 0 ||
+              measurements.singleTaskCpuPercent >= limits.singleTaskCpuPercent)
+          ) {
+            const sourceMapEvidence = await resolveCpuProfileLocations(
+              client,
+              target,
+              turnCpuEvidence.profile
+            ).catch(error => ({ error: error.message }))
+            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
+              ...turnCpuEvidence,
+              sourceMapEvidence,
+            })
+          }
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
