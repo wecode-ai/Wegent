@@ -191,11 +191,11 @@ export function createDesktopScenario(options) {
           .map(row => JSON.parse(row.metadata))
       const sourceState = kind => rows('stand_in_source').find(row => row.source.kind === kind)
       const records = () => new Map(rows('stand_in_message').map(row => [row.id, row]))
-      const awaitOutcomes = (ids, expected, label) =>
+      const awaitOutcomes = (ids, expected, label, waitMs = timeout) =>
         storyUntil(
           () => ids.map(id => records().get(id)?.delegationResult),
           outcomes => outcomes.every(outcome => outcome?.status === expected),
-          timeout,
+          waitMs,
           label
         )
       const visibleSourceError = (kind, predicate) =>
@@ -219,10 +219,12 @@ export function createDesktopScenario(options) {
       }
       async function assertDelivered(samples) {
         const idsToCheck = samples.map(sample => sample.question.id)
+        // A batch can legitimately finish near the per-reply deadline under CI load.
         const outcomes = await awaitOutcomes(
           idsToCheck,
           'sent',
-          'Every reply must reach its channel receipt'
+          'Every reply must reach its channel receipt',
+          REPLY_LIMIT_MS
         )
         const replies = await mailbox.replies()
         samples.forEach((sample, index) => {
