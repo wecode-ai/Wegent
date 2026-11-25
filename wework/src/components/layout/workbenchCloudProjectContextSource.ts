@@ -10,6 +10,7 @@ import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeH
 import { hydrateLocalWorkItems, type LocalWorkItem } from '@/features/todo/todoModel'
 import {
   createCloudProjectTaskRuntimeApi,
+  ProjectSpaceTaskContextChangedError,
   projectTaskRuntimeApiForProject,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
@@ -260,7 +261,9 @@ export function createWorkbenchCloudProjectContextSource(
               !(
                 error instanceof AggregateError &&
                 error.errors.some(
-                  cause => cause instanceof ProjectSpaceTaskContextLookupTimeoutError
+                  cause =>
+                    cause instanceof ProjectSpaceTaskContextLookupTimeoutError ||
+                    cause instanceof ProjectSpaceTaskContextChangedError
                 )
               ))
           )
@@ -432,23 +435,35 @@ export function createWorkbenchCloudProjectContextSource(
     bindPending()
     mentions()
   }
-  const openBound = () => {
+  const openBound = (preferExecution: boolean) => {
     if (!listeners.size) return
     const project = snapshot.boundCloudProject,
       item = snapshot.boundCloudItem,
       address = task()
-    // Durable source IDs navigate immediately; the destination checks current access.
-    const execution = address?.issueExecution
-    const ref: RuntimeProjectSpaceRef | null = execution
-      ? {
-          projectId: execution.projectId,
-          projectStore: address?.projectSession ? 'backend' : 'local',
-        }
-      : project
-        ? projectSpaceRef(project)
+    const boundTarget =
+      snapshot.taskScope === contextIdentity(address) &&
+      project &&
+      item &&
+      item.cloud_project_id === project.id
+        ? { ref: projectSpaceRef(project), itemId: item.id }
         : null
-    const itemId = execution?.issueId ?? item?.id
-    if (!ref || !itemId) return
+    // Explicit execution views can return to their source before context loads.
+    // The destination still checks current access.
+    const execution = address?.issueExecution
+    const executionTarget: { ref: RuntimeProjectSpaceRef; itemId: string } | null = execution
+      ? {
+          ref: {
+            projectId: execution.projectId,
+            projectStore: address?.projectSession ? 'backend' : 'local',
+          },
+          itemId: execution.issueId,
+        }
+      : null
+    const target = preferExecution
+      ? (executionTarget ?? boundTarget)
+      : (boundTarget ?? executionTarget)
+    if (!target?.itemId) return
+    const { ref, itemId } = target
     const route = projectSpaceContentRoute(ref, itemId)
     const options = {
       contentRoute: route,
@@ -605,10 +620,11 @@ export function createWorkbenchCloudProjectContextSource(
     getSnapshot: () => snapshot,
     projectSpaceApiFor: projectApi,
     prepareSubmission: prepare,
-    openBoundProjectSpaceTask: openBound,
+    openBoundProjectSpaceTask: () => openBound(false),
+    openIssueExecutionSource: () => openBound(true),
     finishDelivery() {
       publish({ deliveryDialogOpen: false })
-      openBound()
+      openBound(false)
     },
     openDelivery() {
       if (

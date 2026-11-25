@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import type { CloudLoopItem } from '@/api/deliveries'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  DEFAULT_WORK_ITEM_PROJECT_KEY,
+  type CloudLoopItem,
+} from '@/api/deliveries'
+import { ApiError } from '@/api/http'
 import {
   findProjectSpaceContextSourceForTask,
   projectSpaceRef,
@@ -8,8 +13,14 @@ import {
 } from '@/features/todo/projectSpaceSelection'
 import type { DeliveryApi } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import * as navigation from '@/lib/navigation'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
+
+const systemProject = {
+  ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+  project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+}
 
 test('defers project context lookup until optimistic task creation is accepted', async () => {
   const board = project('creation-board')
@@ -105,38 +116,215 @@ test('retains the same owner binding during alias refresh but isolates another d
   expect(result.current.boundCloudItem).toBeNull()
 })
 
-test('recovers a persisted task association after a transient lookup timeout', async () => {
-  vi.useFakeTimers()
-  try {
+test.each([false, true])(
+  'recovers a persisted task association after a transient lookup timeout (system Issue: %s)',
+  async hasSystemIssue => {
+    vi.useFakeTimers()
     const board = project('persisted-board')
     const item = loopItem(board.id)
-    const findCloudContextForTask = vi
-      .fn()
-      .mockImplementationOnce(() => new Promise<never>(() => {}))
-      .mockResolvedValue({ project: board, loop_item: item })
-    const services = { workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }) }
+    const response = Promise.withResolvers<{ project: typeof board; loop_item: CloudLoopItem }>()
+    try {
+      const findCloudContextForTask = vi
+        .fn()
+        .mockReturnValueOnce(response.promise)
+        .mockResolvedValue({ project: board, loop_item: item })
+      const services = {
+        workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }),
+        ...(hasSystemIssue
+          ? {
+              projectSpaceApis: {
+                local: {
+                  findCloudContextForTask: async () => ({
+                    project: systemProject,
+                    loop_item: loopItem(systemProject.id),
+                  }),
+                } as DeliveryApi,
+              },
+            }
+          : {}),
+      }
+      const { result, unmount } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: {
+            deviceId: 'persisted-device',
+            taskId: `persisted-task-${hasSystemIssue}`,
+          },
+          defaultProjectSpace: null,
+          paneKey: 'runtime:persisted-device:persisted-task',
+          runtimeTaskTitle: 'Persisted task',
+          services,
+          userId: 1,
+        })
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_200)
+      })
+      expect(result.current.boundCloudProject?.id).toBe(board.id)
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      await act(async () => {
+        response.resolve({ project: systemProject, loop_item: loopItem(systemProject.id) })
+      })
+      expect(result.current.boundCloudProject?.id).toBe(board.id)
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      unmount()
+    } finally {
+      response.resolve({ project: board, loop_item: item })
+      vi.useRealTimers()
+    }
+  }
+)
+
+test('reopening a task resolves its remote Issue even when the system Issue was remembered', async () => {
+  const board = project('reopened-board')
+  const item = { ...loopItem(board.id), id: 'REMOTE-42' }
+  let linked = false
+  const services = {
+    projectSpaceApis: {
+      local: {
+        findCloudContextForTask: async () => ({
+          project: systemProject,
+          loop_item: loopItem(systemProject.id),
+        }),
+      } as DeliveryApi,
+    },
+    workspaceRuntimePort: cloudRuntimePort({
+      async findCloudContextForTask() {
+        if (!linked) throw new ApiError('Not bound to a cloud project', 404)
+        return { project: board, loop_item: item }
+      },
+    }),
+  }
+  const options = {
+    active: true,
+    currentRuntimeTask: { deviceId: 'reopened-device', taskId: 'reopened-task' },
+    defaultProjectSpace: null,
+    paneKey: 'runtime:reopened-device:reopened-task',
+    runtimeTaskTitle: 'Reopened task',
+    services,
+    userId: 1,
+  }
+  const original = renderHook(() => useWorkbenchCloudProjectContext(options))
+  await waitFor(() => expect(original.result.current.boundCloudProject?.id).toBe(systemProject.id))
+  original.unmount()
+
+  linked = true
+  const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+  try {
+    const reopened = renderHook(() => useWorkbenchCloudProjectContext(options))
+    await waitFor(() => expect(reopened.result.current.boundCloudItem?.id).toBe(item.id))
+    expect(reopened.result.current.boundCloudProject?.id).toBe(board.id)
+    act(() => reopened.result.current.openBoundProjectSpaceTask())
+    expect(navigate).toHaveBeenCalledWith(
+      `/todo?projectStore=backend&projectId=${board.id}&itemId=${item.id}`
+    )
+    reopened.unmount()
+  } finally {
+    navigate.mockRestore()
+  }
+})
+
+test('retries a cloud association that changes between the project and Issue reads', async () => {
+  vi.useFakeTimers()
+  const previous = project('previous-board')
+  const latest = project('changed-board')
+  const latestItem = { ...loopItem(latest.id), id: 'CHANGED-42' }
+  const issueReadStarted = Promise.withResolvers<void>()
+  const issueResponse = Promise.withResolvers<CloudLoopItem>()
+  try {
+    let context = { project: previous, loop_item: loopItem(previous.id) }
+    const port = cloudRuntimePort({ findCloudContextForTask: async () => context })
+    vi.spyOn(port, 'findIssueForTask').mockImplementationOnce(() => {
+      issueReadStarted.resolve()
+      return issueResponse.promise
+    })
+    const services = {
+      projectSpaceApis: {
+        local: {
+          findCloudContextForTask: async () => ({
+            project: systemProject,
+            loop_item: loopItem(systemProject.id),
+          }),
+        } as DeliveryApi,
+      },
+      workspaceRuntimePort: port,
+    }
     const { result, unmount } = renderHook(() =>
       useWorkbenchCloudProjectContext({
         active: true,
-        currentRuntimeTask: { deviceId: 'persisted-device', taskId: 'persisted-task' },
+        currentRuntimeTask: { deviceId: 'changed-device', taskId: 'changed-task' },
         defaultProjectSpace: null,
-        paneKey: 'runtime:persisted-device:persisted-task',
-        runtimeTaskTitle: 'Persisted task',
+        paneKey: 'runtime:changed-device:changed-task',
+        runtimeTaskTitle: 'Changed task',
         services,
-        userId: 1,
       })
     )
-
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_200)
+      await issueReadStarted.promise
+      context = { project: latest, loop_item: latestItem }
+      issueResponse.resolve(latestItem)
     })
-    expect(result.current.boundCloudProject?.id).toBe(board.id)
-    expect(result.current.boundCloudItem?.id).toBe(item.id)
+    expect(result.current.boundCloudProject).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(100))
+    expect(result.current.boundCloudProject?.id).toBe(latest.id)
+    expect(result.current.boundCloudItem?.id).toBe(latestItem.id)
     unmount()
   } finally {
+    issueResponse.resolve(latestItem)
     vi.useRealTimers()
   }
 })
+
+test.each(['local', 'backend'] as const)(
+  'opens the current association while an explicit %s execution can return to its source',
+  async projectStore => {
+    const execution = { projectId: 'source-project', issueId: 'source-issue' }
+    const board = project('latest-board')
+    const item = { ...loopItem(board.id), id: 'LATEST-42' }
+    const response = Promise.withResolvers<{ project: typeof board; loop_item: CloudLoopItem }>()
+    const services = {
+      workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask: () => response.promise }),
+    }
+    const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+    try {
+      const { result, unmount } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: {
+            deviceId: 'execution-device',
+            taskId: `execution-task-${projectStore}`,
+            issueExecution: execution,
+            ...(projectStore === 'backend' ? { projectSession: execution } : {}),
+          },
+          defaultProjectSpace: null,
+          paneKey: `execution-pane-${projectStore}`,
+          runtimeTaskTitle: 'Execution',
+          services,
+        })
+      )
+      const sourceRoute = `/todo?projectStore=${projectStore}&projectId=source-project&itemId=source-issue`
+      act(() => result.current.openIssueExecutionSource())
+      expect(navigate).toHaveBeenLastCalledWith(sourceRoute)
+      act(() => result.current.openBoundProjectSpaceTask())
+      expect(navigate).toHaveBeenLastCalledWith(sourceRoute)
+
+      await act(async () => response.resolve({ project: board, loop_item: item }))
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      act(() => result.current.openBoundProjectSpaceTask())
+      expect(navigate).toHaveBeenLastCalledWith(
+        `/todo?projectStore=backend&projectId=${board.id}&itemId=${item.id}`
+      )
+
+      act(() => result.current.openIssueExecutionSource())
+      expect(navigate).toHaveBeenLastCalledWith(sourceRoute)
+      unmount()
+    } finally {
+      response.resolve({ project: board, loop_item: item })
+      navigate.mockRestore()
+    }
+  }
+)
 
 test('completes task association when the board items load during tracking', async () => {
   const board = project('tracking-board')

@@ -152,6 +152,7 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
     handleTodoBound: source.handleTodoBound,
     openDelivery: source.openDelivery,
     openBoundProjectSpaceTask: source.openBoundProjectSpaceTask,
+    openIssueExecutionSource: source.openIssueExecutionSource,
     pendingCloudProject,
     pendingTodoItem,
     prepareSubmission: source.prepareSubmission,

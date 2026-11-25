@@ -6,6 +6,13 @@ import type { WorkbenchServices } from './workbenchServices'
 
 const cloudRuntimeApis = new WeakMap<WeworkWorkspaceRuntimePort, ProjectTaskRuntimeApi>()
 
+export class ProjectSpaceTaskContextChangedError extends Error {
+  constructor() {
+    super('Project-space task context changed during lookup')
+    this.name = 'ProjectSpaceTaskContextChangedError'
+  }
+}
+
 export interface ProjectTaskRuntimeContext {
   project: CloudProject
   loop_item: CloudLoopItem | null
@@ -61,6 +68,8 @@ export function createCloudProjectTaskRuntimeApi(
       const sharedTask = toWorkspaceRuntimeTaskAddress(task)
       const context = await port.findCloudContextForTask(sharedTask)
       const issue = context.issueId ? await port.findIssueForTask(sharedTask) : null
+      if (issue && (issue.id !== context.issueId || issue.cloud_project_id !== context.project.id))
+        throw new ProjectSpaceTaskContextChangedError()
       return {
         project: toCloudProject(context.project),
         loop_item: issue ? toCloudLoopItem(issue) : null,
