@@ -363,16 +363,64 @@ function connectDshExecutorEventStream(
     delivery.port2.postMessage(null)
   }
   delivery.port1.onmessage = () => {
-    const deadline = performance.now() + EVENT_DELIVERY_SLICE_MS
+    const startedAt = performance.now()
+    const deadline = startedAt + EVENT_DELIVERY_SLICE_MS
+    let delivered = 0
+    let lastEvent: DshExecutorEventEnvelope | undefined
+    let turnUpdate:
+      | { status: string; sequence: number; startedAt: number; endedAt: number }
+      | undefined
     while (head) {
       const { event, throughSubscriber, next } = head
       head = next
       if (!head) tail = undefined
+      const status =
+        import.meta.env.VITE_WEWORK_E2E === 'true' && event.event === 'runtime.turn.updated'
+          ? (event.payload.data as { status?: unknown } | undefined)?.status
+          : undefined
+      const turnStartedAt = status === 'started' || status === 'settled' ? performance.now() : 0
       listener(event, throughSubscriber)
+      if (status === 'started' || status === 'settled') {
+        turnUpdate = {
+          status,
+          sequence: event.sequence,
+          startedAt: turnStartedAt,
+          endedAt: performance.now(),
+        }
+      }
+      delivered += 1
+      lastEvent = event
       if (performance.now() >= deadline) break
+    }
+    if (import.meta.env.VITE_WEWORK_E2E === 'true' && lastEvent) {
+      const durationMs = performance.now() - startedAt
+      if (durationMs >= 50) {
+        logRuntimeTaskCreateStage('executor-slow-delivery-slice', {
+          durationMs,
+          delivered,
+          event: lastEvent.event,
+          sequence: lastEvent.sequence,
+          subscriberCount: executorEventSubscribers.size,
+        })
+      }
     }
     deliveryScheduled = false
     if (head) scheduleDelivery()
+    if (turnUpdate) {
+      const turn = turnUpdate
+      const sliceEndedAt = performance.now()
+      // The renderer budget measures the browser task, including its microtasks.
+      // Use the renderer clock so these phases line up with the measured turn.
+      queueMicrotask(() => {
+        logRuntimeTaskCreateStage('executor-turn-delivery-timing', {
+          ...turn,
+          delivered,
+          sliceStartedAt: startedAt,
+          sliceEndedAt,
+          microtaskAt: performance.now(),
+        })
+      })
+    }
   }
 
   function enqueue(event: DshExecutorEventEnvelope, throughSubscriber: number) {

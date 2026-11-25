@@ -767,7 +767,6 @@ mod tests {
         .unwrap()
         .unwrap();
         let token = register("websocket-switch-delta", upstream);
-        // The WebSocket handshake uses the registered route, including desktop headers.
         let connected_upstream = registry().lock().unwrap().routes[&token].upstream.clone();
         bind_thread(&token, "ws-switch-thread").unwrap();
         mark_model_switch(&token);

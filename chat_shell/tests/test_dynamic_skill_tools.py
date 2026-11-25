@@ -263,8 +263,12 @@ class TestLoadSkillToolDynamicTools:
         # Tools should be available
         assert len(tool.get_available_tools()) == 1
 
+        assert set(tool.iter_loaded_sandbox_skills()) == {"skill_a"}
+
         # Clear expanded skills
         tool.clear_expanded_skills()
+
+        assert list(tool.iter_loaded_sandbox_skills()) == []
 
         # Tools should no longer be available (but still registered)
         assert tool.get_available_tools() == []
@@ -725,9 +729,7 @@ class TestSkillRetentionAcrossTurns:
         tool.restore_from_history(history)
         assert tool.is_skill_loaded("skill_a")
 
-        # Clear the skill manually
-        tool._expanded_skills.clear()
-        tool._loaded_skill_prompts.clear()
+        tool.clear_expanded_skills()
 
         # Second restore should not run (already restored)
         tool.restore_from_history(history)

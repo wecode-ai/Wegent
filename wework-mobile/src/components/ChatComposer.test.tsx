@@ -10,13 +10,66 @@ import type { MobileFilePreviewActions } from './files/FilePreviewContext'
 const preview = vi.hoisted(() => ({ current: null as MobileFilePreviewActions | null }))
 vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => preview.current }))
 
+const keyboard = vi.hoisted(() => ({ visible: false }))
+const speech = vi.hoisted(() => {
+  const listeners = new Map<string, (event?: unknown) => void>()
+  return {
+    abort: vi.fn(),
+    androidTriggerOfflineModelDownload: vi.fn().mockResolvedValue({ status: 'download_success' }),
+    emit: (name: string, event?: unknown) => listeners.get(name)?.(event),
+    getSupportedLocales: vi.fn().mockResolvedValue({
+      installedLocales: ['zh-CN'],
+      locales: ['zh-CN'],
+    }),
+    isRecognitionAvailable: vi.fn(() => true),
+    listeners,
+    requestPermissionsAsync: vi.fn().mockResolvedValue({ granted: true }),
+    start: vi.fn(),
+    stop: vi.fn(),
+    supportsOnDeviceRecognition: vi.fn(() => true),
+  }
+})
+vi.mock('expo-speech-recognition', () => ({
+  ExpoSpeechRecognitionModule: speech,
+  useSpeechRecognitionEvent: (name: string, listener: (event?: unknown) => void) => {
+    speech.listeners.set(name, listener)
+  },
+}))
+
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
+vi.mock('react-native-svg', () => ({ __esModule: true, default: 'Svg', Circle: 'Circle' }))
+vi.mock('react-native-reanimated', () => {
+  const Animated = {
+    View: 'AnimatedView',
+    createAnimatedComponent: (component: unknown) => component,
+  }
+  return {
+    __esModule: true,
+    default: Animated,
+    useAnimatedProps: (factory: () => object) => factory(),
+    useAnimatedStyle: (factory: () => object) => factory(),
+    useSharedValue: (value: number) => ({ value }),
+    withSpring: (value: number) => value,
+  }
+})
 vi.mock('expo-document-picker', () => ({ getDocumentAsync: vi.fn() }))
 vi.mock('expo-image-picker', () => ({}))
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
+  Animated: {
+    View: 'AnimatedView',
+    Value: class {
+      interpolate() {
+        return this
+      }
+    },
+    loop: () => ({ start: vi.fn(), stop: vi.fn() }),
+    timing: () => ({ start: vi.fn(), stop: vi.fn() }),
+  },
+  Easing: { linear: 'linear' },
   Image: 'Image',
-  Platform: { OS: 'android' },
+  Keyboard: { isVisible: () => keyboard.visible },
+  Platform: { OS: 'android', Version: 33 },
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
@@ -53,6 +106,12 @@ describe('ChatComposer', () => {
     blur.mockClear()
     vi.mocked(getDocumentAsync).mockReset()
     preview.current = null
+    keyboard.visible = false
+    speech.listeners.clear()
+    speech.abort.mockClear()
+    speech.requestPermissionsAsync.mockClear()
+    speech.start.mockClear()
+    speech.stop.mockClear()
   })
 
   const element = (testID: string) =>
@@ -316,16 +375,92 @@ describe('ChatComposer', () => {
     expect(focus).toHaveBeenCalledTimes(state.focuses ? 1 : 0)
   })
 
-  it('shows the speed shortcut only when the selected model supplies a real action', async () => {
+  it('keeps a dismissed keyboard closed when starting voice input', async () => {
+    keyboard.visible = false
+    await render()
+    await act(async () => element('composer-voice-mic').props.onPress())
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('keeps an open keyboard open when starting voice input', async () => {
+    keyboard.visible = true
+    await render()
+    await act(async () => element('composer-voice-mic').props.onPress())
+    expect(focus).toHaveBeenCalled()
+  })
+  it('starts local dictation and appends the final transcript', async () => {
     const props = await render()
     await act(() => element('chat-input').props.onFocus())
-    expect(renderer.root.findAllByProps({ testID: 'composer-speed' })).toHaveLength(0)
-    const onToggleSpeed = vi.fn()
-    await act(() =>
-      renderer.update(<ChatComposer {...props} speed="fast" onToggleSpeed={onToggleSpeed} />)
+    await act(async () => element('composer-voice-mic').props.onPress())
+    expect(speech.requestPermissionsAsync).toHaveBeenCalledOnce()
+    expect(speech.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lang: 'zh-CN',
+        requiresOnDeviceRecognition: true,
+      })
     )
-    expect(element('composer-speed').props.accessibilityState.selected).toBe(true)
-    await act(() => element('composer-speed').props.onPress())
-    expect(onToggleSpeed).toHaveBeenCalledOnce()
+    await act(() => speech.emit('start'))
+    expect(element('composer-voice-bar')).toBeTruthy()
+    await act(() => speech.emit('volumechange', { value: 6 }))
+    expect(element('composer-voice-waveform')).toBeTruthy()
+    await act(() =>
+      speech.emit('result', {
+        isFinal: true,
+        results: [{ confidence: 1, segments: [], transcript: '你好' }],
+      })
+    )
+    expect(element('composer-voice-bar')).toBeTruthy()
+    await act(() => element('composer-voice-stop').props.onPress())
+    await act(() => speech.emit('end'))
+    expect(element('chat-input').props.value).toBe('你好')
+    expect(renderer.root.findAllByProps({ testID: 'composer-voice-bar' })).toHaveLength(0)
+    expect(props.onSend).not.toHaveBeenCalled()
+  })
+
+  it('stops recording and sends once the final transcript arrives', async () => {
+    const props = await render()
+    await act(() => element('chat-input').props.onFocus())
+    await act(async () => element('composer-voice-mic').props.onPress())
+    await act(() => speech.emit('start'))
+    await act(() => element('composer-voice-stop').props.onPress())
+    expect(speech.stop).toHaveBeenCalledOnce()
+    expect(element('composer-voice-spinner')).toBeTruthy()
+    await act(() => element('composer-voice-send').props.onPress())
+    await act(() =>
+      speech.emit('result', {
+        isFinal: true,
+        results: [{ confidence: 1, segments: [], transcript: '发出去' }],
+      })
+    )
+    await act(() => speech.emit('end'))
+    expect(props.onSend).toHaveBeenCalledWith(
+      '发出去',
+      expect.objectContaining({ pursueGoal: false })
+    )
+  })
+
+  it('shows the transcript error state and retries', async () => {
+    await render()
+    await act(() => element('chat-input').props.onFocus())
+    await act(async () => element('composer-voice-mic').props.onPress())
+    await act(() => speech.emit('start'))
+    await act(() => speech.emit('error', { error: 'no-speech', message: '' }))
+    await act(() => speech.emit('end'))
+    expect(element('composer-voice-error').props.children).toBe('转文字出错')
+    expect(element('composer-voice-retry')).toBeTruthy()
+    speech.start.mockClear()
+    await act(async () => element('composer-voice-retry').props.onPress())
+    expect(speech.start).toHaveBeenCalledOnce()
+  })
+
+  it('cancels local dictation without changing the draft', async () => {
+    await render()
+    await act(() => element('chat-input').props.onFocus())
+    await act(async () => element('composer-voice-mic').props.onPress())
+    await act(() => speech.emit('start'))
+    await act(() => element('composer-voice-cancel').props.onPress())
+    expect(speech.abort).toHaveBeenCalledOnce()
+    expect(renderer.root.findAllByProps({ testID: 'composer-voice-bar' })).toHaveLength(0)
+    expect(element('chat-input').props.value).toBe('')
   })
 })

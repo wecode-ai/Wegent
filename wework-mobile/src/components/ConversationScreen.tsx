@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useKeyboardChatComposerInset } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
-import { useFocusEffect, useIsFocused } from '@react-navigation/native'
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native'
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import {
   BackHandler,
@@ -115,6 +116,7 @@ interface ConversationScreenProps {
 
 export function ConversationScreen(props: ConversationScreenProps) {
   const isFocused = useIsFocused()
+  const navigation = useNavigation<NativeStackNavigationProp<{ conversation: undefined }>>()
   const theme = useTheme()
   const insets = useSafeAreaInsets()
   const listRef = useRef<LegendListRef>(null)
@@ -271,7 +273,6 @@ export function ConversationScreen(props: ConversationScreenProps) {
     dispatchModelControl('close')
   }, [])
   const openQuickModel = useCallback(() => {
-    Keyboard.dismiss()
     dispatchModelControl('openQuick')
   }, [])
   const openAdvancedModel = useCallback(() => {
@@ -298,6 +299,12 @@ export function ConversationScreen(props: ConversationScreenProps) {
   useEffect(() => {
     closeModelControls()
   }, [closeModelControls, conversationKey])
+
+  useFocusEffect(
+    useCallback(() => {
+      navigation.setOptions({ gestureEnabled: !quickModelVisible })
+    }, [navigation, quickModelVisible])
+  )
 
   useFocusEffect(
     useCallback(() => {
@@ -486,16 +493,8 @@ export function ConversationScreen(props: ConversationScreenProps) {
             disabled={props.sending}
             emptyContextPlaceholder={props.isNew ? '向 Wework 提问' : '跟进'}
             modelLabel={selectedModelLabel}
-            speed={props.modelOptions.speed}
-            onToggleSpeed={
-              modelSupportsSpeed(props.model)
-                ? () =>
-                    selectModelOptions({
-                      ...props.modelOptions,
-                      speed: props.modelOptions.speed === 'fast' ? 'standard' : 'fast',
-                    })
-                : undefined
-            }
+            reasoningEffort={selectedEffort}
+            reasoningEfforts={efforts}
             onClearPlanMode={() =>
               selectModelOptions({ ...props.modelOptions, collaborationMode: 'default' })
             }
@@ -548,7 +547,6 @@ export function ConversationScreen(props: ConversationScreenProps) {
 
         {quickModelVisible ? (
           <QuickModelSelector
-            bottomInset={composerBottom}
             effort={selectedEffort}
             efforts={efforts}
             label={props.model ? modelLabel(props.model) : '选择模型'}
@@ -699,7 +697,7 @@ const styles = StyleSheet.create({
   bottomControlDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   composerLayer: { width: '100%' },
   contextPills: { flexDirection: 'row', justifyContent: 'center', gap: 8, paddingBottom: 8 },
-  collapsedComposer: { display: 'none' },
+  collapsedComposer: { position: 'absolute', left: 0, right: 0, opacity: 0 },
   configuration: {
     paddingHorizontal: 24,
     gap: 2,
