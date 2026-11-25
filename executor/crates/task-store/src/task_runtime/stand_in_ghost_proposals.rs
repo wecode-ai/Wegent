@@ -700,9 +700,11 @@ impl LocalTaskStore {
                 user,
                 &profile_device,
                 settings,
-                false,
-                None,
-                backend,
+                super::personal_stand_in::PersonalStandInSaveOptions {
+                    direct_save: false,
+                    verified_account: None,
+                    backend,
+                },
             )?;
         }
         tx.execute(

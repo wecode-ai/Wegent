@@ -137,9 +137,11 @@ impl LocalTaskStore {
             user,
             device,
             settings.clone(),
-            false,
-            None,
-            None,
+            super::personal_stand_in::PersonalStandInSaveOptions {
+                direct_save: false,
+                verified_account: None,
+                backend: None,
+            },
         )?;
         connection.execute_batch(
             "ROLLBACK TO validate_stand_in_proposal; RELEASE validate_stand_in_proposal",
@@ -195,7 +197,17 @@ impl LocalTaskStore {
         let saved = if accept {
             let mut next = prepared.unwrap_or_else(|| proposal["settings"].clone());
             preserve_owner_choices(&previous, &mut next);
-            self.save_personal_stand_in_on(&connection, user, device, next, false, None, backend)?
+            self.save_personal_stand_in_on(
+                &connection,
+                user,
+                device,
+                next,
+                super::personal_stand_in::PersonalStandInSaveOptions {
+                    direct_save: false,
+                    verified_account: None,
+                    backend,
+                },
+            )?
         } else {
             previous
         };

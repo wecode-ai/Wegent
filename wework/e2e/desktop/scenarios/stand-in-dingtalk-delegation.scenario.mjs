@@ -26,6 +26,8 @@ import { STORY_USER, storyUntil } from '../modules/stand-in-source-story-evidenc
 
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const REPLY_LIMIT_MS = 120_000
+// The positive batch queues 18 model decisions and can span multiple collection ticks.
+const BATCH_DELIVERY_TIMEOUT_MS = 90_000
 // The first transient failure retries after 30s on the next 15s collection tick.
 const COLLECTION_RECOVERY_WAIT_MS = 60_000
 const TEMPLATE_CONTENT = {
@@ -218,12 +220,13 @@ export function createDesktopScenario(options) {
           }
         }
       }
-      async function assertDelivered(samples) {
+      async function assertDelivered(samples, timeoutMs = timeout) {
         const idsToCheck = samples.map(sample => sample.question.id)
         const outcomes = await awaitOutcomes(
           idsToCheck,
           'sent',
-          'Every reply must reach its channel receipt'
+          'Every reply must reach its channel receipt',
+          timeoutMs
         )
         const replies = await mailbox.replies()
         samples.forEach((sample, index) => {
@@ -358,7 +361,7 @@ export function createDesktopScenario(options) {
           .map(sample => sample.question)
         await mailbox.configureDelivery({ automatic })
         await publishCases(positive)
-        await assertDelivered(positive)
+        await assertDelivered(positive, Math.max(timeout, BATCH_DELIVERY_TIMEOUT_MS))
         assert.equal(results.length, 18)
         assert.ok(
           (await work()).items.every(row => !row.task),
