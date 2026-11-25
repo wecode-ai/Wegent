@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   assertNoNativeSaveDialog,
   triggerEmbeddedBrowserContextMenuItem,
@@ -204,6 +205,42 @@ async function clickDownloadLink(bridgeCall, selector) {
     result.ok,
     true,
     `Failed to click download link ${selector}: ${JSON.stringify(result)}`
+  )
+}
+
+async function settleDownloadNotifications(control, fileNames, status = '已下载') {
+  const visible = { visible: true, timeoutMs: 5_000 }
+  // Keep the list open until all preceding downloads are terminal; their
+  // completion events must not open another peek before the next native click.
+  await control.command('click', DOWNLOAD_BUTTON)
+  for (const fileName of fileNames) {
+    const row = `${DOWNLOAD_PANEL} [data-file-name=${JSON.stringify(fileName)}]`
+    await control.command('waitFor', `${row} [data-testid="workspace-browser-download-status"]`, {
+      ...visible,
+      text: status,
+    })
+  }
+  await control.command(
+    'click',
+    `${DOWNLOAD_PANEL} [data-testid="workspace-browser-downloads-close"]`
+  )
+  await control.command('waitFor', DOWNLOAD_PANEL, { ...visible, visible: false })
+  await control.command('waitFor', '[data-testid="workspace-browser-download-peek"]', {
+    ...visible,
+    visible: false,
+  })
+  const label = await control.command(
+    'getAttribute',
+    `${ACTIVE_WORKBENCH} [data-testid="workspace-browser-panel"]:not(.hidden)`,
+    { value: 'data-embedded-browser-label' }
+  )
+  assert.ok(label, 'The active browser panel must have a native view label')
+  const view = `[data-testid="workspace-browser-electron-webview"][data-wework-browser-webview=${JSON.stringify(label)}]`
+  await waitForValue(
+    async () => JSON.parse(await control.command('getElementMetrics', view)),
+    metrics => metrics.length === 1 && metrics[0].hitTestVisible,
+    'The guest must receive pointer input after dismissing download notifications',
+    5_000
   )
 }
 
@@ -542,15 +579,9 @@ async function verifyClearBrowserData(control, db, historyPath, fixtureUrl, down
   const visible = { visible: true, timeoutMs: 5_000 }
   const status = '[data-testid="browser-settings-status"]'
   const confirm = '[data-testid="browser-clear-data-confirm"]'
-  const row = `${DOWNLOAD_PANEL} [data-file-name="${CLEAR_HISTORY_FILE}"]`
   const downloadCount = () => db.prepare('SELECT COUNT(*) AS count FROM downloads').get().count
   const history = async () => JSON.parse(await readFile(historyPath, 'utf8'))
-  await control.command('click', DOWNLOAD_BUTTON)
-  await control.command('waitFor', `${row} [data-testid="workspace-browser-download-status"]`, {
-    ...visible,
-    text: '已下载',
-  })
-  await control.command('click', DOWNLOAD_BUTTON)
+  await settleDownloadNotifications(control, [CLEAR_HISTORY_FILE])
   assert.equal(downloadCount(), 1, 'A real completed download must be stored before clearing')
   assert.ok((await history()).some(entry => entry.url === fixtureUrl))
 
@@ -768,7 +799,7 @@ export async function verifyBrowserDownloadPolicy({
     // Concurrent case-variant downloads preserve both payloads without collision.
     await clickDownloadLink(bridgeCall, '#download-case-1')
     await clickDownloadLink(bridgeCall, '#download-case-2')
-    const caseVariantContents = await waitForCondition(
+    const caseVariantDownloads = await waitForCondition(
       async () => {
         const entries = (await readdir(downloadsPath)).filter(name =>
           /^report(?: \(1\))?\.zip$/i.test(name)
@@ -778,12 +809,14 @@ export async function verifyBrowserDownloadPolicy({
           entries.map(name => readFile(join(downloadsPath, name), 'utf8'))
         )
         const sorted = contents.sort()
-        return sorted[0] === 'CASE_LOWER' && sorted[1] === 'CASE_UPPER' ? sorted : null
+        return sorted[0] === 'CASE_LOWER' && sorted[1] === 'CASE_UPPER'
+          ? { entries, contents: sorted }
+          : null
       },
       uiTimeoutMs,
       'concurrent case-variant downloads Report.zip and report.zip'
     )
-    assert.deepEqual(caseVariantContents, ['CASE_LOWER', 'CASE_UPPER'])
+    assert.deepEqual(caseVariantDownloads.contents, ['CASE_LOWER', 'CASE_UPPER'])
 
     // 3. Main window (session.defaultSession) blob download saves directly without prompting.
     await control.command('triggerBlobDownload', 'body', {
@@ -802,6 +835,11 @@ export async function verifyBrowserDownloadPolicy({
 
     // 4. Real link right-click menu ("Save Link As...") with HTTP 302 redirect:
     //    cancel once, save to user-chosen location, then verify subsequent direct save recovers.
+    await settleDownloadNotifications(control, [
+      'clip (1).mp4',
+      'clip (2).mp4',
+      ...caseVariantDownloads.entries,
+    ])
     await withNativeSaveDialog(
       control,
       () =>
@@ -817,6 +855,7 @@ export async function verifyBrowserDownloadPolicy({
       { action: 'cancel', resultDir, stepName: 'link-save-as-cancel', timeoutMs: uiTimeoutMs }
     )
     assert.equal(existsSync(join(downloadsPath, 'saved-link.mp4')), false)
+    await settleDownloadNotifications(control, ['saved-link.mp4'], '下载失败')
 
     const chosenLinkPath = join(chosenDir, 'chosen-link.mp4')
     await withNativeSaveDialog(
@@ -858,6 +897,7 @@ export async function verifyBrowserDownloadPolicy({
 
     // 5. Real image right-click menu ("Save Image As..."):
     //    cancel once, save to user-chosen location, then verify subsequent direct save recovers.
+    await settleDownloadNotifications(control, ['chosen-link.mp4', 'after-link-save-as.mp4'])
     await withNativeSaveDialog(
       control,
       () =>
@@ -873,6 +913,7 @@ export async function verifyBrowserDownloadPolicy({
       { action: 'cancel', resultDir, stepName: 'image-save-as-cancel', timeoutMs: uiTimeoutMs }
     )
     assert.equal(existsSync(join(downloadsPath, 'embedded-browser-download-image.png')), false)
+    await settleDownloadNotifications(control, ['embedded-browser-download-image.png'], '下载失败')
 
     const chosenImagePath = join(chosenDir, 'chosen-image.png')
     await withNativeSaveDialog(
