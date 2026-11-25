@@ -194,11 +194,11 @@ export function createDesktopScenario(options) {
           .map(row => JSON.parse(row.metadata))
       const sourceState = kind => rows('stand_in_source').find(row => row.source.kind === kind)
       const records = () => new Map(rows('stand_in_message').map(row => [row.id, row]))
-      const awaitOutcomes = (ids, expected, label) =>
+      const awaitOutcomes = (ids, expected, label, timeoutMs = timeout) =>
         storyUntil(
           () => ids.map(id => records().get(id)?.delegationResult),
           outcomes => outcomes.every(outcome => outcome?.status === expected),
-          timeout,
+          timeoutMs,
           label
         )
       const visibleSourceError = (kind, predicate) =>
