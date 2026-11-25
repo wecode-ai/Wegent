@@ -31,31 +31,90 @@ export interface QueuedMessage<TSnapshot> extends EnqueueMessageInput<TSnapshot>
 }
 
 export function createMessageSendQueue<TSnapshot>() {
-  type Messages = readonly QueuedMessage<TSnapshot>[]
-  const emptyQueue: Messages = []
-  const queues = new Map<number, Messages>()
+  type Message = QueuedMessage<TSnapshot>
+  interface Entry {
+    message: Message
+    previous?: Entry
+    next?: Entry
+  }
+  interface TaskQueue {
+    entries: Map<string, Entry>
+    first?: Entry
+    last?: Entry
+    snapshot?: readonly Message[]
+  }
+  const emptyQueue: readonly Message[] = []
+  const queues = new Map<number, TaskQueue>()
   const listeners = new Set<() => void>()
 
-  const getMessages = (taskId?: number | null): Messages => queues.get(taskId ?? 0) ?? emptyQueue
+  const notify = (queue: TaskQueue) => {
+    queue.snapshot = undefined
+    listeners.forEach(listener => listener())
+  }
 
   return {
-    getMessages,
+    getMessages(taskId?: number | null) {
+      const queue = queues.get(taskId ?? 0)
+      if (!queue) return emptyQueue
+      queue.snapshot ??= Array.from(queue.entries.values(), entry => entry.message)
+      return queue.snapshot
+    },
+    getMessage(taskId: number | null, id: string) {
+      return queues.get(taskId ?? 0)?.entries.get(id)?.message
+    },
+    peek(taskId: number) {
+      return queues.get(taskId)?.first?.message
+    },
+    peekLast(taskId: number) {
+      return queues.get(taskId)?.last?.message
+    },
     subscribe(listener: () => void) {
       listeners.add(listener)
       return () => {
         listeners.delete(listener)
       }
     },
-    update(taskId: number, updateMessages: (messages: Messages) => Messages) {
-      const current = getMessages(taskId)
-      const next = updateMessages(current)
-      if (next === current) return
-      if (next.length) {
-        queues.set(taskId, next)
-      } else {
-        queues.delete(taskId)
+    enqueue(message: Message) {
+      let queue = queues.get(message.taskId)
+      if (!queue) {
+        queue = { entries: new Map() }
+        queues.set(message.taskId, queue)
       }
-      listeners.forEach(listener => listener())
+      if (queue.entries.has(message.id)) return
+      const entry: Entry = { message, previous: queue.last }
+      if (queue.last) {
+        queue.last.next = entry
+      } else {
+        queue.first = entry
+      }
+      queue.last = entry
+      queue.entries.set(message.id, entry)
+      notify(queue)
+    },
+    update(taskId: number, id: string, updateMessage: (message: Message) => Message | undefined) {
+      const queue = queues.get(taskId)
+      const entry = queue?.entries.get(id)
+      if (!queue || !entry) return
+      const updated = updateMessage(entry.message)
+      if (updated === entry.message) return
+      if (updated) {
+        entry.message = updated
+      } else {
+        const { previous, next } = entry
+        if (previous) {
+          previous.next = next
+        } else {
+          queue.first = next
+        }
+        if (next) {
+          next.previous = previous
+        } else {
+          queue.last = previous
+        }
+        queue.entries.delete(id)
+        if (queue.entries.size === 0) queues.delete(taskId)
+      }
+      notify(queue)
     },
   }
 }

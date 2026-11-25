@@ -12,7 +12,7 @@ interface UseMessageSendQueueOptions<TSnapshot> {
   taskId?: number | null
   isDispatchBlocked: boolean
   dispatchMessage: (message: QueuedMessage<TSnapshot>) => Promise<void>
-  onDispatchError?: (message: QueuedMessage<TSnapshot>, error: Error) => void
+  onDispatchError?: (error: Error, retry: () => void) => void
   dispatchMode?: QueueDispatchMode
 }
 
@@ -42,32 +42,25 @@ export function useMessageSendQueue<TSnapshot>({
         createdAt: Date.now(),
         status: 'queued',
       }
-      queue.update(input.taskId, current => [...current, queuedMessage])
+      queue.enqueue(queuedMessage)
     },
     [queue]
   )
 
   const retryMessage = useCallback(
-    (id: string) => {
-      if (!taskId) return
-      dispatchedTaskRef.current = null
-      queue.update(taskId, current =>
-        current.map(message =>
-          message.id === id && message.status === 'failed'
-            ? { ...message, status: 'queued', error: undefined }
-            : message
-        )
+    (messageTaskId: number, id: string) => {
+      if (dispatchedTaskRef.current === messageTaskId) dispatchedTaskRef.current = null
+      queue.update(messageTaskId, id, message =>
+        message.status === 'failed' ? { ...message, status: 'queued', error: undefined } : message
       )
     },
-    [queue, taskId]
+    [queue]
   )
 
   const cancelMessage = useCallback(
     (id: string) => {
       if (!taskId) return
-      queue.update(taskId, current =>
-        current.filter(message => message.id !== id || message.status === 'sending')
-      )
+      queue.update(taskId, id, message => (message.status === 'sending' ? message : undefined))
     },
     [queue, taskId]
   )
@@ -75,10 +68,8 @@ export function useMessageSendQueue<TSnapshot>({
   const updateQueuedMessage = useCallback(
     (id: string, updater: (message: QueuedMessage<TSnapshot>) => QueuedMessage<TSnapshot>) => {
       if (!taskId) return
-      queue.update(taskId, current =>
-        current.map(message =>
-          message.id === id && message.status === 'queued' ? updater(message) : message
-        )
+      queue.update(taskId, id, message =>
+        message.status === 'queued' ? updater(message) : message
       )
     },
     [queue, taskId]
@@ -92,31 +83,27 @@ export function useMessageSendQueue<TSnapshot>({
     if (dispatchMode === 'one-per-unblock' && dispatchedTaskRef.current === taskId) return
 
     // Another view may have started sending since this render took its snapshot.
-    const messages = queue.getMessages(taskId)
-    if (messages.some(message => message.status !== 'queued')) return
-    const nextMessage = messages[0]
-    if (!nextMessage) return
+    const nextMessage = queue.peek(taskId)
+    if (nextMessage?.status !== 'queued') return
 
     if (dispatchMode === 'one-per-unblock') dispatchedTaskRef.current = taskId
-    queue.update(taskId, current => [{ ...nextMessage, status: 'sending' }, ...current.slice(1)])
+    queue.update(taskId, nextMessage.id, message => ({ ...message, status: 'sending' }))
 
     dispatchMessageRef
       .current(nextMessage)
       .then(() => {
-        queue.update(taskId, current => current.filter(message => message.id !== nextMessage.id))
+        queue.update(taskId, nextMessage.id, () => undefined)
       })
       .catch(error => {
         const normalizedError = error instanceof Error ? error : new Error(String(error))
-        queue.update(taskId, current =>
-          current.map(message =>
-            message.id === nextMessage.id
-              ? { ...message, status: 'failed', error: normalizedError.message }
-              : message
-          )
-        )
-        onDispatchErrorRef.current?.(nextMessage, normalizedError)
+        queue.update(taskId, nextMessage.id, message => ({
+          ...message,
+          status: 'failed',
+          error: normalizedError.message,
+        }))
+        onDispatchErrorRef.current?.(normalizedError, () => retryMessage(taskId, nextMessage.id))
       })
-  }, [activeTaskQueue, dispatchMode, isDispatchBlocked, queue, taskId])
+  }, [activeTaskQueue, dispatchMode, isDispatchBlocked, queue, retryMessage, taskId])
 
   return {
     activeTaskQueue,

@@ -163,7 +163,7 @@ describe('useMessageSendQueue', () => {
 
     const failedId = result.current.activeTaskQueue[0].id
     act(() => {
-      result.current.retryMessage(failedId)
+      result.current.retryMessage(42, failedId)
     })
 
     await waitFor(() => {
@@ -176,6 +176,48 @@ describe('useMessageSendQueue', () => {
     ])
     await waitFor(() => {
       expect(result.current.activeTaskQueue).toEqual([])
+    })
+  })
+
+  it('retries a rejected send in its original conversation after switching tasks', async () => {
+    let rejectFirstSend!: (reason: Error) => void
+    const dispatchMessage = jest
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<void>((_, reject) => {
+          rejectFirstSend = reject
+        })
+      )
+      .mockResolvedValue(undefined)
+    const onDispatchError = jest.fn()
+    const { result, rerender } = renderHook(
+      ({ taskId }) =>
+        useMessageSendQueue<Snapshot>({
+          queue,
+          taskId,
+          isDispatchBlocked: false,
+          dispatchMessage,
+          onDispatchError,
+        }),
+      { initialProps: { taskId: 42 } }
+    )
+
+    act(() => result.current.enqueueMessage(queued('follow-up')))
+    rerender({ taskId: 43 })
+    await act(async () => rejectFirstSend(new Error('network down')))
+    expect(queue.getMessages(42)[0]?.status).toBe('failed')
+    const retry = onDispatchError.mock.calls[0][1]
+
+    act(retry)
+    expect(queue.getMessages(42)[0]?.status).toBe('queued')
+    expect(dispatchMessage).toHaveBeenCalledTimes(1)
+    expect(result.current.activeTaskQueue).toEqual([])
+
+    rerender({ taskId: 42 })
+    await waitFor(() => expect(dispatchMessage).toHaveBeenCalledTimes(2))
+    expect(dispatchMessage.mock.calls[1][0]).toMatchObject({
+      taskId: 42,
+      displayMessage: 'follow-up',
     })
   })
 

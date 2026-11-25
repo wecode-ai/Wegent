@@ -509,9 +509,7 @@ test.describe('Task runtime consistency', () => {
     await expect(queuedMessage).toBeVisible({ timeout: 5_000 })
     await expect(messages.getByText(followUp, { exact: true })).toHaveCount(0)
 
-    const stopButton = page.getByTestId('stop-generating-button')
-    await expect(stopButton).toBeEnabled({ timeout: 5_000 })
-    await stopButton.click()
+    await stopActiveStream(page)
     await expect(messages).toContainText(followUpMarker, { timeout: 15_000 })
     await expect(messages.getByText(followUp, { exact: true })).toHaveCount(1)
     await expect(queuedMessage).toHaveCount(0)

@@ -202,6 +202,7 @@ describe('useChatStreamHandlers queue integration', () => {
     hasRuntimeStatusMock = false
     const returnedView = renderQueueableHook()
     expect(returnedView.result.current.queuedMessages[0]).toMatchObject({ status: 'queued' })
+    expect(mockCheckHealth).toHaveBeenCalledTimes(1)
     expect(mockContextSendMessage).not.toHaveBeenCalled()
 
     let acknowledgeSend!: (taskId: number) => void
