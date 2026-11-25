@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, writeFile } from 'node:fs/promises'
+import { availableParallelism, freemem, loadavg } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -523,7 +524,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
-  const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
+  const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
   const processSamples = []
@@ -767,6 +768,11 @@ export function createDesktopScenario({
         processSamples.push({
           phase,
           at: snapshot.capturedAt,
+          system: {
+            availableParallelism: availableParallelism(),
+            freeMemoryBytes: freemem(),
+            loadAverage: loadavg(),
+          },
           incomplete: Boolean(snapshot.collectingSystemProcesses),
           degradation: snapshot.degraded?.map(entry => entry.code) ?? [],
           processes: snapshot.processes.map(process => ({
