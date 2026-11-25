@@ -13,6 +13,12 @@ function workflow(name) {
   }))
 }
 
+function workflowOutput(t) {
+  const directory = mkdtempSync(join(tmpdir(), 'ci-scheduling-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  return name => join(directory, name)
+}
+
 const desktop = workflow('wework-e2e')
 const warmup = workflow('ci-cache-warmup')
 const context = (action, label = '') => ({
@@ -47,15 +53,14 @@ test('unrelated labels execute neither desktop builds nor a replacement success 
 
 test('renderer performance runs for affected inputs and explicit full regressions', t => {
   const classify = desktop.jobs.changes.steps.find(step => step.id === 'classify').run
-  const directory = mkdtempSync(join(tmpdir(), 'ci-scheduling-'))
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const outputPath = workflowOutput(t)
   for (const [path, forceAll, expected] of [
     ['.github/workflows/wework-e2e.yml', false, false],
     ['wework/src/components/chat/ChatMessage.tsx', false, true],
     ['wework/scripts/profile-renderer.mjs', false, true],
     ['.github/workflows/wework-e2e.yml', true, true],
   ]) {
-    const output = join(directory, path.replaceAll('/', '-') + '-' + forceAll)
+    const output = outputPath(path.replaceAll('/', '-') + '-' + forceAll)
     execFileSync('bash', ['-e', '-c',
       'git() { printf "%s\\n" "$CHANGED_PATH"; }\n' + classify,
     ], {
@@ -81,10 +86,11 @@ test('obsolete main warmups cancel and branch dispatches cannot populate shared 
   assert.equal(evaluate(warmup.jobs.changes.if, { ref: 'refs/heads/topic', event_name: 'workflow_dispatch' }), false)
 })
 
-test('replacement warmup includes inputs since the last successful push', () => {
+test('replacement warmup includes inputs since the last successful push', t => {
   const classify = warmup.jobs.changes.steps.find(step => step.id === 'classify').run
   const lastSuccessful = 'a'.repeat(40)
-  const output = execFileSync('bash', ['-e', '-o', 'pipefail', '-c', `
+  const output = workflowOutput(t)('warmup')
+  execFileSync('bash', ['-e', '-o', 'pipefail', '-c', `
     gh() { printf '%s\\n' "$LAST_SUCCESSFUL"; }
     git() {
       case "$1" in
@@ -106,10 +112,10 @@ test('replacement warmup includes inputs since the last successful push', () => 
       GITHUB_SHA: 'c'.repeat(40),
       GITHUB_EVENT_NAME: 'push',
       GITHUB_REPOSITORY: 'example/project',
-      GITHUB_OUTPUT: '',
+      GITHUB_OUTPUT: output,
     },
   })
-  assert.ok(output.split('\n').includes('backend_rs_rust=true'))
+  assert.ok(readFileSync(output, 'utf8').split('\n').includes('backend_rs_rust=true'))
 })
 
 test('unit, lint and runtime producers survive unrelated label events', () => {
