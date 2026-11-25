@@ -922,41 +922,80 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 return {**result, "skipped": True, "reason": "archive_failed"}
 
+        lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            return {**result, "skipped": True, "reason": "sandbox_lifecycle_busy"}
+        try:
+            current = self._repository.load_sandbox(sandbox_id)
+            expected_runtime = (
+                (sandbox.container_name, sandbox.created_at) if sandbox else None
+            )
+            current_runtime = (
+                (current.container_name, current.created_at) if current else None
+            )
+            if expected_runtime != current_runtime:
+                return {**result, "skipped": True, "reason": "sandbox_replaced"}
+            cleanup = asyncio.create_task(
+                self._delete_sandbox_runtime(sandbox_id, current, result, lease)
+            )
+            try:
+                return await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                # A cancelled caller must keep the lease until Docker/K8s returns.
+                await cleanup
+                raise
+        finally:
+            await self._release_task_lifecycle_lease(lease)
+
+    async def _delete_sandbox_runtime(
+        self,
+        sandbox_id: str,
+        sandbox: Optional[Sandbox],
+        result: Dict[str, Any],
+        lease: _TaskLifecycleLease,
+    ) -> Dict[str, Any]:
+        """Remove the selected runtime while holding its task lifecycle lease."""
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-            direct_delete_status = None
+            delete_status = None
             if sandbox is not None and sandbox.container_name:
-                direct_delete_status = executor.delete_executor(sandbox.container_name)
+                delete_status = await asyncio.to_thread(
+                    executor.delete_executor, sandbox.container_name
+                )
                 result["delete_attempts"].append(
                     {
                         "mode": "container_name",
                         "container_name": sandbox.container_name,
-                        "result": direct_delete_status,
+                        "result": delete_status,
                     }
                 )
 
-            if (
-                not direct_delete_status
-                or direct_delete_status.get("status") != "success"
+            if not lease.lost.is_set() and (
+                not delete_status or delete_status.get("status") != "success"
             ):
-                fallback_delete_status = executor.delete_executor_by_task_id(
-                    sandbox_id, sandbox_only=True
+                delete_status = await asyncio.to_thread(
+                    executor.delete_executor_by_task_id, sandbox_id, sandbox_only=True
                 )
                 result["delete_attempts"].append(
                     {
                         "mode": "task_id",
                         "task_id": sandbox_id,
-                        "result": fallback_delete_status,
+                        "result": delete_status,
                     }
                 )
-                delete_status = fallback_delete_status
-            else:
-                delete_status = direct_delete_status
-
             result["delete_result"] = delete_status
-            result["deleted"] = delete_status.get("status") == "success"
+            result["deleted"] = bool(
+                delete_status and delete_status.get("status") == "success"
+            )
         except Exception as e:
             result["delete_result"] = {"status": "failed", "error_msg": str(e)}
+
+        if lease.lost.is_set():
+            return {
+                **result,
+                "skipped": not result["deleted"],
+                "reason": "sandbox_lifecycle_lease_lost",
+            }
 
         result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
         if result["deleted"]:

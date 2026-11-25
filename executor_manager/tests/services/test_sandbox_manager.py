@@ -1311,6 +1311,45 @@ class TestSandboxManager:
         mock_redis_client.zrem.assert_called()
         mock_redis_client.delete.assert_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reuse_name", [False, True])
+    async def test_task_cleanup_preserves_runtime_replaced_during_archive(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+        reuse_name,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        original = json.loads(sample_sandbox_redis_data)
+        replacement = {**original, "created_at": original["created_at"] + 1}
+        if not reuse_name:
+            replacement["container_name"] = "replacement"
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+
+        async def archive(sandbox):
+            assert sandbox.created_at == original["created_at"]
+            mock_redis_client.hget.return_value = json.dumps(replacement)
+            return True
+
+        mocker.patch.object(
+            manager, "_archive_sandbox_before_cleanup", side_effect=archive
+        )
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
+        ).return_value
+
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+
+        assert result["archived"] is True
+        assert result["skipped"] is True
+        assert result["reason"] == "sandbox_replaced"
+        assert result["redis_cleared"] is False
+        executor.delete_executor.assert_not_called()
+        executor.delete_executor_by_task_id.assert_not_called()
+        mock_redis_client.delete.assert_not_called()
+
     # ----- keep_alive Tests -----
 
     @pytest.mark.asyncio
