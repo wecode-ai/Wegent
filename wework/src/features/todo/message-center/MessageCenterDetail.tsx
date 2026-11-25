@@ -27,7 +27,7 @@ export function MessageCenterDetail({
   busy: boolean
   formatTime(at: string): string
   onClose(): void
-  onOpenSettings(source?: MessageCenterSource): void
+  onOpenSettings(source: MessageCenterSource | undefined, trigger: HTMLElement): void
   onCommand(command: MessageCenterCommand): Promise<boolean>
 }) {
   const { t } = useTranslation('standInMessageCenter')
@@ -269,7 +269,7 @@ export function MessageCenterDetail({
             size="sm"
             className="min-h-11 md:min-h-9"
             data-testid="message-center-detail-settings"
-            onClick={() => onOpenSettings(source)}
+            onClick={event => onOpenSettings(source, event.currentTarget)}
           >
             {t(source ? 'scopeSettings' : 'settings')}
           </Button>

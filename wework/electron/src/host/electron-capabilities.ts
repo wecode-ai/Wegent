@@ -1171,6 +1171,7 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'length')
     )
   )
+  router.register('notification.isSupported', () => Notification.isSupported())
   router.register('notification.openSettings', async () => {
     const url =
       process.platform === 'darwin'

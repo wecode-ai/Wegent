@@ -4,6 +4,7 @@ import type {
   MessageCenterSource,
   StandInMessageCenterApi,
 } from '@/api/standInMessageCenter'
+import { useStandInNotificationUnavailable } from '@/features/notifications/useStandInNotificationUnavailable'
 import { StandInMessageCenter } from './message-center/StandInMessageCenter'
 import {
   createStandInMessageCenterSource,
@@ -13,7 +14,7 @@ import {
 type Props = {
   api?: StandInMessageCenterApi
   scope: MessageCenterScope | null
-  onOpenSettings: (source?: MessageCenterSource) => void
+  onOpenSettings: (source: MessageCenterSource | undefined, trigger: HTMLElement) => void
   onOpenComponents?: () => void
 }
 
@@ -55,9 +56,15 @@ function MessageCenterSession({
     [api, userId, deviceId]
   )
   const state = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getServerSnapshot)
+  const notificationUnavailable = useStandInNotificationUnavailable()
   return (
     <StandInMessageCenter
       {...state}
+      snapshot={
+        state.snapshot && notificationUnavailable
+          ? { ...state.snapshot, notificationUnavailable }
+          : state.snapshot
+      }
       onRefresh={source.refresh}
       onCommand={source.apply}
       {...actions}

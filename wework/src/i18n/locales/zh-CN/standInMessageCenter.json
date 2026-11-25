@@ -2,6 +2,8 @@
   "title": "我的助理",
   "center": "消息处理中心",
   "settings": "修改代管设置",
+  "pauseDelegation": "暂停代管",
+  "resumeDelegation": "恢复代管",
   "scopeSettings": "修改此来源范围",
   "manageConnection": "管理连接与模型",
   "componentSettings": "查看组件状态",

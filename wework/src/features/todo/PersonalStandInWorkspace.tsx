@@ -84,6 +84,11 @@ function AccountStandInWorkspace({
   )
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
+  const [workspaceView, setWorkspaceView] = useState<'conversation' | 'messages'>(() =>
+    services.standInApi && 'connectionReadiness' in services.standInApi && !query.get('profileId')
+      ? 'messages'
+      : 'conversation'
+  )
   const userId = Number(user.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
   const instance = useStandInInstance(
@@ -356,6 +361,8 @@ function AccountStandInWorkspace({
           <StandInOverviewPage
             key={`${ownerId}:${selectedDevice}`}
             ref={overview}
+            workspaceView={workspaceView}
+            onWorkspaceViewChange={setWorkspaceView}
             headerActions={actions}
             initialProfileId={
               roleLocation?.settings

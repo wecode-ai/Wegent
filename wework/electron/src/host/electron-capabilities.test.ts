@@ -312,6 +312,18 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('reports native notification support without showing a notification', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.notificationIsSupported.mockReturnValueOnce(false)
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'notification.isSupported', {})).resolves.toBe(
+      false
+    )
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'notification.isSupported', {})).resolves.toBe(
+      true
+    )
+    expect(electronMocks.notificationShow).not.toHaveBeenCalled()
+  })
+
   test('opens only the fixed platform notification settings destination', async () => {
     const { router } = createIsolatedClipboardRouter()
     electronMocks.shellOpenExternal.mockClear()

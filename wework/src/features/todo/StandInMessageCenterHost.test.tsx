@@ -1,11 +1,32 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { MessageCenterSnapshot, StandInMessageCenterApi } from '@/api/standInMessageCenter'
+import {
+  cacheNotificationPreferences,
+  defaultNotificationPreferences,
+  notificationPreferenceAccountKey,
+  OPEN_NOTIFICATION_SETTINGS_EVENT,
+} from '@/features/notifications/notificationPreferences'
 import '@/i18n'
 import { StandInMessageCenterHost } from './StandInMessageCenterHost'
 
+vi.mock('@/api/dsh/desktopHost', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/dsh/desktopHost')>()),
+  invokeDesktopHost: vi.fn(),
+}))
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  isElectronRuntime: () => true,
+}))
+
 const scope = { userId: 0, deviceId: 'local-executor' }
+
+beforeEach(() => {
+  localStorage.clear()
+  vi.mocked(invokeDesktopHost).mockReset().mockResolvedValue(true)
+})
 
 function deferred<T>() {
   let resolve!: (result: T) => void
@@ -68,6 +89,42 @@ function hostApi() {
     invalidate: (...args: Parameters<typeof invalidate>) => invalidate(...args),
   }
 }
+
+it('reflects the current account notification preference and opens the existing settings', async () => {
+  const { api } = hostApi()
+  api.read.mockResolvedValue(snapshot('active account'))
+  render(<StandInMessageCenterHost api={api} scope={scope} onOpenSettings={vi.fn()} />)
+  await screen.findByText('active account record')
+  const settingsTestId = 'message-center-notification-settings'
+  const localAccountKey = notificationPreferenceAccountKey()
+  const disabled = {
+    ...defaultNotificationPreferences,
+    stand_in: { ...defaultNotificationPreferences.stand_in, system: false },
+  }
+
+  act(() => cacheNotificationPreferences('another-account', disabled))
+  expect(screen.queryByTestId(settingsTestId)).not.toBeInTheDocument()
+
+  act(() => cacheNotificationPreferences(localAccountKey, disabled))
+  const openSettings = vi.fn()
+  window.addEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings, { once: true })
+  await userEvent.setup().click(screen.getByTestId(settingsTestId))
+  expect(openSettings).toHaveBeenCalledOnce()
+
+  act(() => cacheNotificationPreferences(localAccountKey, defaultNotificationPreferences))
+  expect(screen.queryByTestId(settingsTestId)).not.toBeInTheDocument()
+  expect(api.read).toHaveBeenCalledOnce()
+})
+
+it('shows the notification settings when the native sender is unsupported', async () => {
+  const { api } = hostApi()
+  vi.mocked(invokeDesktopHost).mockResolvedValueOnce(false)
+  api.read.mockResolvedValue(snapshot('active account'))
+  render(<StandInMessageCenterHost api={api} scope={scope} onOpenSettings={vi.fn()} />)
+
+  expect(await screen.findByTestId('message-center-notification-settings')).toBeVisible()
+  expect(invokeDesktopHost).toHaveBeenCalledWith('notification.isSupported')
+})
 
 it('clears old identity records immediately and rejects an older in-flight read', async () => {
   const { api, invalidate } = hostApi()

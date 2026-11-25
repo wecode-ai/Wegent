@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { createDingTalkMessageCenterApi } from './dingTalkMessageCenterApi'
 
 const scope = { userId: 42, deviceId: 'local' }
@@ -55,8 +56,15 @@ function executor() {
       prompt: '',
       preferences: '',
       enabled: true,
+      model: { runtime: 'codex' as const, provider: 'fixture', model_id: 'fixture' },
       connections: [source, staleSource],
-      delegation: { ...account, version: 7, authorized: true, paused: true },
+      delegation: {
+        ...account,
+        version: 7,
+        authorized: true,
+        paused: true,
+        templates: { document: true, schedule: false, process: true },
+      },
     },
   }
   return {
@@ -152,5 +160,114 @@ describe('DingTalk message center host projection', () => {
     expect(snapshot.identity).toBeNull()
     expect(snapshot.records).toEqual([])
     expect(api.inbox).not.toHaveBeenCalled()
+  })
+
+  it('distinguishes missing readiness support from a missing delegation binding', async () => {
+    const { api, settings } = executor()
+    const { connectionReadiness, ...olderApi } = api
+    await expect(createDingTalkMessageCenterApi(olderApi).read(scope)).resolves.toMatchObject({
+      status: 'unavailable',
+      capabilities: ['refresh'],
+    })
+    api.personalGet.mockResolvedValueOnce({
+      ...settings,
+      primary: { ...settings.primary, delegation: { ...settings.primary.delegation, profile: '' } },
+    })
+    await expect(createDingTalkMessageCenterApi(api).read(scope)).resolves.toMatchObject({
+      status: 'disconnected',
+      capabilities: ['refresh'],
+    })
+    expect(connectionReadiness).not.toHaveBeenCalled()
+    expect(api.inbox).not.toHaveBeenCalled()
+  })
+
+  it('uses the versioned settings save for resume and pause and preserves the saved scope', async () => {
+    const { api, settings: fixture } = executor()
+    const settings = { ...fixture, primary: { ...fixture.primary, connections: [source] } }
+    let persisted = settings
+    api.personalGet.mockImplementation(async () => persisted)
+    type Draft = typeof settings & {
+      primary: { delegation: { action: 'resume' | 'pause' } }
+    }
+    const personalSave = vi.fn(async (_userId: number, draft: PersonalStandInSettings) => {
+      const { action, ...delegation } = (draft as Draft).primary.delegation
+      persisted = {
+        ...persisted,
+        version: persisted.version + 1,
+        primary: {
+          ...persisted.primary,
+          delegation: {
+            ...delegation,
+            version: delegation.version + 1,
+            paused: action === 'pause',
+          },
+        },
+      }
+      return persisted
+    })
+    const center = createDingTalkMessageCenterApi({ ...api, personalSave })
+    const paused = await center.read(scope)
+    expect(paused.capabilities).toContain('resume')
+    expect(paused.capabilities).not.toContain('pause')
+
+    const expected = { identityId: paused.identity!.id, policyVersion: 7 }
+    const resumed = await center.apply(scope, expected, { type: 'resume' })
+    expect(resumed).toMatchObject({ status: 'active', policyVersion: 8 })
+    expect(resumed.capabilities).toContain('pause')
+    expect(personalSave).toHaveBeenCalledExactlyOnceWith(
+      scope.userId,
+      {
+        ...settings,
+        primary: {
+          ...settings.primary,
+          delegation: { ...settings.primary.delegation, action: 'resume' },
+        },
+      },
+      scope.deviceId
+    )
+    await expect(center.apply(scope, expected, { type: 'pause' })).rejects.toThrow('changed')
+    expect(personalSave).toHaveBeenCalledTimes(1)
+
+    const pausedAgain = await center.apply(
+      scope,
+      { ...expected, policyVersion: 8 },
+      { type: 'pause' }
+    )
+    expect(pausedAgain).toMatchObject({ status: 'paused', policyVersion: 9 })
+    expect(pausedAgain.capabilities).toContain('resume')
+    expect(personalSave).toHaveBeenLastCalledWith(
+      scope.userId,
+      expect.objectContaining({
+        version: settings.version + 1,
+        primary: expect.objectContaining({
+          delegation: expect.objectContaining({ ...account, action: 'pause' }),
+        }),
+      }),
+      scope.deviceId
+    )
+  })
+
+  it('hides resume without a live scoped source and rejects settings changed during verification', async () => {
+    const { api, settings } = executor()
+    const personalSave = vi.fn()
+    const center = createDingTalkMessageCenterApi({ ...api, personalSave })
+    const snapshot = await center.read(scope)
+    api.personalGet
+      .mockResolvedValueOnce(settings)
+      .mockResolvedValueOnce({ ...settings, version: settings.version + 1 })
+    await expect(
+      center.apply(
+        scope,
+        { identityId: snapshot.identity!.id, policyVersion: 7 },
+        { type: 'resume' }
+      )
+    ).rejects.toThrow('no longer available')
+    expect(personalSave).not.toHaveBeenCalled()
+
+    api.personalGet.mockResolvedValue({
+      ...settings,
+      primary: { ...settings.primary, connections: [staleSource] },
+    })
+    expect((await center.read(scope)).capabilities).not.toContain('resume')
   })
 })

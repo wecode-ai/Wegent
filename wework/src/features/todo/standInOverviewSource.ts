@@ -33,6 +33,7 @@ interface OverviewObservation {
 interface OverviewSnapshot {
   roleId?: string
   profile: StandInOverviewProfile
+  openConnectionSettings: boolean
   calendarRequest: number
   focusRequest: number
   exampleDraft?: { id: number; text: string }
@@ -62,6 +63,7 @@ export function createStandInOverviewSource(initial: {
   let snapshot: OverviewSnapshot = {
     roleId: initial.roleId,
     profile: initial.profile,
+    openConnectionSettings: false,
     calendarRequest: initial.calendarRequest,
     focusRequest: 0,
     proposal: null,
@@ -189,9 +191,10 @@ export function createStandInOverviewSource(initial: {
     }
     void poll()
   }
-  const setProfile = (profile: StandInOverviewProfile) =>
+  const setProfile = (profile: StandInOverviewProfile, openConnectionSettings = false) =>
     publish({
       profile,
+      openConnectionSettings,
       focusRequest:
         snapshot.focusRequest +
         (observation?.active && snapshot.profile !== null && profile === null ? 1 : 0),

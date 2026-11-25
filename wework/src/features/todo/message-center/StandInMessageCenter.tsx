@@ -41,7 +41,7 @@ type Props = {
   actionError: boolean
   onRefresh(): void
   onCommand(command: MessageCenterCommand): Promise<boolean>
-  onOpenSettings(source?: MessageCenterSource): void
+  onOpenSettings(source: MessageCenterSource | undefined, trigger: HTMLElement): void
   onOpenComponents?(): void
 }
 
@@ -119,6 +119,9 @@ function MessageCenterContent({
   const hasRecords = Object.values(groups).some(items => items.length > 0)
   const showAttention = selected !== 'needs_user' && groups.needs_user.length > 0
   const includedSources = snapshot?.sources.filter(source => source.included) ?? []
+  const delegationAction = snapshot?.capabilities.find(
+    capability => capability === 'pause' || capability === 'resume'
+  )
 
   return (
     <section
@@ -131,18 +134,33 @@ function MessageCenterContent({
         <div
           className={`${record ? 'hidden lg:flex lg:w-1/2' : 'flex'} min-h-0 min-w-0 flex-1 flex-col`}
         >
-          <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 lg:px-5">
+          <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 lg:px-5">
             <h1 className="heading-sm min-w-0 break-words">{t('title')}</h1>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="min-h-11 min-w-11 md:min-h-9"
-              data-testid="message-center-open-settings"
-              onClick={() => onOpenSettings()}
-            >
-              {t('settings')}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {delegationAction && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 min-w-11 md:min-h-9"
+                  data-testid="message-center-toggle-pause"
+                  disabled={busy || loading || error}
+                  onClick={() => void onCommand({ type: delegationAction })}
+                >
+                  {t(delegationAction === 'pause' ? 'pauseDelegation' : 'resumeDelegation')}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="min-h-11 min-w-11 md:min-h-9"
+                data-testid="message-center-open-settings"
+                onClick={event => onOpenSettings(undefined, event.currentTarget)}
+              >
+                {t('settings')}
+              </Button>
+            </div>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto" data-testid="message-center-scroll">
             <div className="mx-auto w-full max-w-3xl space-y-7 px-3 pb-8 pt-5 lg:px-5">
@@ -194,7 +212,7 @@ function MessageCenterContent({
                       type="button"
                       className="min-h-11 md:min-h-9"
                       data-testid="message-center-start-setup"
-                      onClick={() => onOpenSettings()}
+                      onClick={event => onOpenSettings(undefined, event.currentTarget)}
                     >
                       {t(status === 'disabled' ? 'setupRequired' : 'connectionRequired')}
                     </Button>
@@ -216,7 +234,7 @@ function MessageCenterContent({
                       variant="outline"
                       className="min-h-11 md:min-h-9"
                       data-testid="message-center-model-settings"
-                      onClick={() => onOpenSettings()}
+                      onClick={event => onOpenSettings(undefined, event.currentTarget)}
                     >
                       {t('manageConnection')}
                     </Button>
@@ -247,7 +265,7 @@ function MessageCenterContent({
                         type="button"
                         className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                         data-testid="message-center-scope"
-                        onClick={() => onOpenSettings()}
+                        onClick={event => onOpenSettings(undefined, event.currentTarget)}
                       >
                         <ShieldCheck aria-hidden="true" className="size-4 shrink-0" />
                         <span className="min-w-0 flex-1 break-words">

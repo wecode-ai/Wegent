@@ -54,11 +54,58 @@ it('uses the shared settings entry and identifies the exact source from details'
     />
   )
 
-  await user.click(screen.getByTestId('message-center-open-settings'))
-  expect(onOpenSettings).toHaveBeenNthCalledWith(1)
+  const headerSettings = screen.getByTestId('message-center-open-settings')
+  await user.click(headerSettings)
+  expect(onOpenSettings).toHaveBeenNthCalledWith(1, undefined, headerSettings)
 
   await user.click(screen.getByRole('button', { name: /项目链接/ }))
-  await user.click(screen.getByTestId('message-center-detail-settings'))
-  expect(onOpenSettings).toHaveBeenNthCalledWith(2, source)
+  const detailSettings = screen.getByTestId('message-center-detail-settings')
+  await user.click(detailSettings)
+  expect(onOpenSettings).toHaveBeenNthCalledWith(2, source, detailSettings)
   expect(screen.getByTestId('message-center-detail')).toBeInTheDocument()
+})
+
+it('uses the host pause and resume capabilities in the header and disables them while saving', async () => {
+  const user = userEvent.setup()
+  const snapshot: MessageCenterSnapshot = {
+    identity: { id: 'account', account: '测试账号', organization: '测试组织' },
+    deviceName: 'This Mac',
+    updatedAt: null,
+    status: 'active',
+    records: [],
+    sources: [],
+    policyVersion: 5,
+    capabilities: ['pause'],
+  }
+  const onCommand = vi.fn(async () => true)
+  const props = {
+    loading: false,
+    error: false,
+    actionError: false,
+    onCommand,
+    onOpenSettings: vi.fn(),
+    onRefresh: vi.fn(),
+  }
+  const { rerender } = render(<StandInMessageCenter {...props} snapshot={snapshot} busy={false} />)
+
+  const control = screen.getByTestId('message-center-toggle-pause')
+  expect(control).toHaveTextContent('暂停代管')
+  await user.click(control)
+  expect(onCommand).toHaveBeenCalledExactlyOnceWith({ type: 'pause' })
+
+  rerender(<StandInMessageCenter {...props} snapshot={snapshot} busy />)
+  expect(control).toBeDisabled()
+  await user.click(control)
+  expect(onCommand).toHaveBeenCalledTimes(1)
+
+  const paused = { ...snapshot, status: 'paused', capabilities: ['resume'] } as const
+  rerender(<StandInMessageCenter {...props} snapshot={paused} busy={false} />)
+  expect(control).toHaveTextContent('恢复代管')
+  await user.click(control)
+  expect(onCommand).toHaveBeenLastCalledWith({ type: 'resume' })
+
+  rerender(
+    <StandInMessageCenter {...props} snapshot={{ ...paused, capabilities: [] }} busy={false} />
+  )
+  expect(control).not.toBeInTheDocument()
 })

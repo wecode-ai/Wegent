@@ -36,6 +36,8 @@ export interface MessageCenterRecord {
 }
 
 export type MessageCenterCommand =
+  | { type: 'pause' }
+  | { type: 'resume' }
   | { type: 'takeOver'; recordId: string }
   | { type: 'verifyDelivery'; recordId: string }
 

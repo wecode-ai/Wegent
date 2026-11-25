@@ -18,7 +18,7 @@ import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { useDOMEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { Check, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
+import { Check, Inbox, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
   useCallback,
@@ -30,12 +30,14 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { createDingTalkMessageCenterApi } from './dingTalkMessageCenterApi'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
 import type { activeStandInBranchRows } from './standInDelegatedBranches'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
+import { StandInMessageCenterHost } from './StandInMessageCenterHost'
 import { StandInOnboarding } from './StandInOnboarding'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
@@ -75,6 +77,8 @@ export function StandInOverviewPage({
   entryRoute = '/stand-in',
   primaryDeviceId,
   roleLocations,
+  workspaceView,
+  onWorkspaceViewChange,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -91,8 +95,11 @@ export function StandInOverviewPage({
   entryRoute?: string
   primaryDeviceId?: string
   roleLocations?: StandInRoleLocation[]
+  workspaceView: 'conversation' | 'messages'
+  onWorkspaceViewChange(view: 'conversation' | 'messages'): void
 }) {
   const { t } = useTranslation('common')
+  const { t: tMessageCenter } = useTranslation('standInMessageCenter')
   const workbench = useContext(WorkbenchContext)
   const state = usePersonalStandIn(
     props.services,
@@ -211,6 +218,7 @@ export function StandInOverviewPage({
   )
   const view = useSyncExternalStore(subscribe, overview.getSnapshot, overview.getSnapshot)
   const { roleId, profile, calendarRequest, exampleDraft } = view
+  const showingMessageCenter = Boolean(api && !roleId && workspaceView === 'messages')
   const sameOwner = view.api === api && view.userId === props.userId && view.deviceId === deviceId
   const proposal = sameOwner ? view.proposal : null
   const resolvedProposal = sameOwner ? view.resolvedProposal : null
@@ -220,6 +228,11 @@ export function StandInOverviewPage({
   const openProfile = (target: NonNullable<typeof profile>, trigger?: HTMLElement) => {
     rememberProfileTrigger(trigger)
     setProfile(target)
+  }
+  const openMessageCenterSettings = (trigger: HTMLElement) => {
+    rememberProfileTrigger(trigger)
+    setCalendarRequest(0)
+    setProfile('primary', true)
   }
   const focusTarget = useMemo(
     () => ({
@@ -281,6 +294,7 @@ export function StandInOverviewPage({
   })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
+      onWorkspaceViewChange('conversation')
       const target =
         executionDevice ??
         (id
@@ -336,6 +350,10 @@ export function StandInOverviewPage({
   )
   const device = props.devices.find(
     device => device.device_id === deviceId || device.app_device_id === deviceId
+  )
+  const messageCenterApi = useMemo(
+    () => api && createDingTalkMessageCenterApi(api, { deviceName: device?.name }),
+    [api, device?.name]
   )
   const processingFailure = standInProcessingFailure(
     processing.status,
@@ -494,17 +512,43 @@ export function StandInOverviewPage({
             data-testid="stand-in-role-selector"
           >
             <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
+              {api && (
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="stand-in-message-center-open"
+                  aria-current={showingMessageCenter ? 'page' : undefined}
+                  onClick={() =>
+                    leavePanel(() => {
+                      onWorkspaceViewChange('messages')
+                      if (primaryDeviceId && deviceId !== primaryDeviceId && onSelectLocation) {
+                        onSelectLocation(primaryDeviceId)
+                        return
+                      }
+                      setRoleId(undefined)
+                      setDetailsAnchor(null)
+                      setProfile(null)
+                    })
+                  }
+                  className={roleTabClass(showingMessageCenter)}
+                >
+                  <Inbox aria-hidden="true" className="size-4" />
+                  {tMessageCenter('center')}
+                </ControlButton>
+              )}
               <ControlButton
                 variant="unstyled"
                 type="button"
                 data-testid="stand-in-primary-open"
-                aria-current={!roleId ? 'page' : undefined}
+                aria-current={!roleId && !showingMessageCenter ? 'page' : undefined}
                 onClick={() => chooseRole()}
-                className={roleTabClass(!roleId)}
+                className={roleTabClass(!roleId && !showingMessageCenter)}
               >
                 <UserRound aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.title')}
-                {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+                {!roleId && !showingMessageCenter && (
+                  <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
               </ControlButton>
               {roles.map((value, index) => {
                 const projects = props.projects.filter(project =>
@@ -608,7 +652,18 @@ export function StandInOverviewPage({
             {t('standIn.workspace.role_help')}
           </p>
         </header>
-        {state.loading && !state.saved ? (
+        {showingMessageCenter ? (
+          <StandInMessageCenterHost
+            api={messageCenterApi}
+            scope={
+              deviceId && deviceId === state.currentDeviceId
+                ? { userId: props.userId, deviceId }
+                : null
+            }
+            onOpenSettings={(_, trigger) => openMessageCenterSettings(trigger)}
+            onOpenComponents={() => navigateTo('/settings/connections')}
+          />
+        ) : state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-secondary">
             {t('standIn.loading')}
           </p>
@@ -855,6 +910,7 @@ export function StandInOverviewPage({
                     }
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
+                    initialConnections={view.openConnectionSettings}
                     settings={state.draft}
                     saving={state.saving}
                     loading={state.loading}
@@ -951,6 +1007,7 @@ export function StandInOverviewPage({
       onGuideClose={() => setGuideOpen(false)}
       onExampleSelect={text =>
         leavePanel(() => {
+          onWorkspaceViewChange('conversation')
           setRoleId(undefined)
           setDetailsAnchor(null)
           setProfile(null)

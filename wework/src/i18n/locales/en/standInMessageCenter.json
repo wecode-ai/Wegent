@@ -2,6 +2,8 @@
   "title": "My assistant",
   "center": "Message center",
   "settings": "Delegation settings",
+  "pauseDelegation": "Pause delegation",
+  "resumeDelegation": "Resume delegation",
   "scopeSettings": "Edit this source",
   "manageConnection": "Manage connection and model",
   "componentSettings": "View component status",

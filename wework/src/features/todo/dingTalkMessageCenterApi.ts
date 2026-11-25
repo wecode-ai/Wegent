@@ -49,6 +49,7 @@ type NativeWork = StandInInboxWork & {
   takenOverAt?: string
 }
 type NativeApi = Pick<StandInExecutorApi, 'personalGet' | 'inbox' | 'workMessages'> & {
+  personalSave?: StandInExecutorApi['personalSave']
   connectionReadiness?(
     deviceId: string,
     providerId: string,
@@ -111,6 +112,23 @@ function isScopedSource(
     !source.collectionKey &&
     sameAccount(source, account)
   )
+}
+
+function delegationAction(settings: PersonalStandInSettings, grant: Grant & AccountScope) {
+  const { primary, lifecycle } = settings
+  if (!grant.authorized || version(grant.version) === undefined || !primary?.enabled || lifecycle) {
+    return
+  }
+  if (grant.paused === false) return 'pause'
+  if (
+    grant.paused === true &&
+    primary.model?.runtime === 'codex' &&
+    primary.connections?.some(
+      source => isScopedSource(source, grant) && source.delegated && !source.paused
+    )
+  ) {
+    return 'resume'
+  }
 }
 
 function sourceKey(source: StandInSourceConnection) {
@@ -271,7 +289,7 @@ export function createDingTalkMessageCenterApi(
   const readContext = async (scope: MessageCenterScope) => {
     const settings = await api.personalGet(scope.userId, scope.deviceId)
     const grant = hostGrant(settings)
-    if (!ownedBy(settings, scope) || !grant || !api.connectionReadiness) {
+    if (!ownedBy(settings, scope) || !api.connectionReadiness) {
       return { snapshot: empty('unavailable') }
     }
     if (!hasAccount(grant)) return { snapshot: empty('disconnected') }
@@ -322,6 +340,8 @@ export function createDingTalkMessageCenterApi(
     if (!(await unchanged(scope, settings, grant))) return empty('unavailable')
     const policyVersion = version(grant.version) ?? null
     const capabilities: Array<MessageCenterSnapshot['capabilities'][number]> = ['refresh']
+    const action = api.personalSave && delegationAction(settings, grant)
+    if (action) capabilities.push(action)
     if (policyVersion !== null && api.takeOverWork) capabilities.push('takeOver')
     if (policyVersion !== null && api.verifyWorkDelivery) capabilities.push('verifyDelivery')
     const errors = inbox.sourceErrors.filter(row => isScopedSource(row.source, grant))
@@ -333,15 +353,16 @@ export function createDingTalkMessageCenterApi(
       const at = timestamp(item.updatedAt)
       return at && (!latest || Date.parse(at) > Date.parse(latest)) ? at : latest
     }, null)
-    const status = grant.paused
-      ? 'paused'
-      : !grant.authorized || !settings.primary?.enabled || settings.lifecycle
+    const status =
+      !grant.authorized || !settings.primary?.enabled || settings.lifecycle
         ? 'disabled'
-        : errors.some(row => row.error.code !== 'dingtalk_delegation_gap')
-          ? 'unavailable'
-          : settings.primary.model
-            ? 'active'
-            : 'model_unavailable'
+        : grant.paused
+          ? 'paused'
+          : errors.some(row => row.error.code !== 'dingtalk_delegation_gap')
+            ? 'unavailable'
+            : settings.primary.model
+              ? 'active'
+              : 'model_unavailable'
     return {
       identity,
       deviceName,
@@ -376,6 +397,34 @@ export function createDingTalkMessageCenterApi(
         throw new Error('DingTalk account or delegation changed')
       }
       const { settings, grant } = context
+      if (command.type === 'pause' || command.type === 'resume') {
+        const { primary } = settings
+        if (
+          !api.personalSave ||
+          !primary ||
+          delegationAction(settings, grant) !== command.type ||
+          !(await unchanged(scope, settings, grant))
+        ) {
+          throw new Error('DingTalk delegation is no longer available for this action')
+        }
+        const draft = {
+          ...settings,
+          primary: { ...primary, delegation: { ...grant, action: command.type } },
+        }
+        // The versioned save verifies the current account, sources and model before resuming.
+        const saved = await api.personalSave(scope.userId, draft, scope.deviceId)
+        const savedGrant = hostGrant(saved)
+        if (
+          !ownedBy(saved, scope) ||
+          !hasAccount(savedGrant) ||
+          !sameAccount(savedGrant, grant) ||
+          !savedGrant.authorized ||
+          savedGrant.paused !== (command.type === 'pause')
+        ) {
+          throw new Error('The DingTalk delegation change was not saved')
+        }
+        return read(scope)
+      }
       const inbox = await api.inbox(scope.userId, scope.deviceId)
       const work = currentWork(inbox.items, grant).find(
         row => workRecordId(row) === command.recordId
