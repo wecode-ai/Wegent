@@ -20,12 +20,17 @@ use wegent_runtime_work::Ownership;
 #[derive(Debug)]
 pub(super) struct AuthenticatedUser {
     identity: Identity,
+    credential_expires_at: Option<i64>,
 }
 
 impl AuthenticatedUser {
     /// The authenticated connection identity.
     pub(super) fn identity(&self) -> &Identity {
         &self.identity
+    }
+
+    pub(super) fn credential_expires_at(&self) -> Option<i64> {
+        self.credential_expires_at
     }
 }
 
@@ -40,7 +45,10 @@ async fn authorize_jwt(
         .await
         .map_err(|error| ClientError::new("UNAUTHENTICATED", error.message()))?;
     let _ = &credential;
-    Ok(AuthenticatedUser { identity })
+    Ok(AuthenticatedUser {
+        identity,
+        credential_expires_at: auth::token_expiry(token),
+    })
 }
 
 #[brz_socket_io::middleware]
@@ -62,7 +70,10 @@ async fn authorize_device(
     let identity = auth::verify(app, token(&credential)?)
         .await
         .map_err(|error| ClientError::new("UNAUTHENTICATED", error.message()))?;
-    Ok(AuthenticatedUser { identity })
+    Ok(AuthenticatedUser {
+        identity,
+        credential_expires_at: None,
+    })
 }
 
 fn token(credential: &Value) -> Result<&str, ClientError> {

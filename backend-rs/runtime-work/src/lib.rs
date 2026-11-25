@@ -71,6 +71,7 @@ pub trait RuntimeExecutionProxy: Send + Sync {
 
 /// Dependencies of the native Socket.IO Runtime dispatcher.
 pub struct RuntimeRequestServices<'a> {
+    pub auth: &'a wegent_identity::config::AuthConfig,
     pub mysql: &'a brz_mysql::MysqlService,
     pub transport: RuntimeRpcServices<'a>,
     pub proxy: &'a dyn RuntimeExecutionProxy,
