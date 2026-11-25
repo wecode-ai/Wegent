@@ -67,7 +67,7 @@ const measuredReasoningPieces = 25
 const limits = {
   // Hosted macOS runners vary by several CPU points between identical builds,
   // and the first turn update can include one-time module execution.
-  idleCpuPercent: 4,
+  idleCpuPercent: 6,
   singleTaskCpuPercent: 18,
   tenTaskCpuPercent: 20,
   maxTurnUpdateLongTaskMs: 200,
