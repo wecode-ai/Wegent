@@ -1059,7 +1059,7 @@ jobs:
       - name: Prepare Chat Shell tokenizers for Responses API gateway E2E
         if: contains(matrix.segments, 'plugin-account-auth-dws')
         working-directory: ./backend
-        run: uv run --no-sync bash ../.github/scripts/prepare-chat-shell-tokenizers.sh
+        run: uv run --locked bash ../.github/scripts/prepare-chat-shell-tokenizers.sh
 
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
