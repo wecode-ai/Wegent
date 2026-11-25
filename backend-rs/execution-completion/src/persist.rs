@@ -949,6 +949,14 @@ fn member_stage(members: &[Value], bot_name: &str, bot_namespace: &str) -> Optio
     })
 }
 
+/// `datetime.now()` in the `DATETIME(6)` form the source binds to its columns.
+fn local_datetime() -> String {
+    chrono::Local::now()
+        .naive_local()
+        .format("%Y-%m-%d %H:%M:%S%.6f")
+        .to_string()
+}
+
 /// `datetime.now().isoformat()`: microsecond precision, no offset.
 fn local_isoformat() -> String {
     chrono::Local::now()
