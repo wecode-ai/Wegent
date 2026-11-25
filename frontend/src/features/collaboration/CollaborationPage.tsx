@@ -605,7 +605,9 @@ export function CollaborationPage({
               onClose={() => setIssueCreationScope(undefined)}
               onOpenChildTask={issue => {
                 setIssueCreationScope(undefined)
-                router.push(`/collaboration/created?personalIssueId=${encodeURIComponent(issue.id)}`)
+                router.push(
+                  `/collaboration/created?personalIssueId=${encodeURIComponent(issue.id)}`
+                )
               }}
               onSaved={() => setPersonalIssueRevision(value => value + 1)}
               onOpenProjectIssue={(targetProject, targetIssue) =>

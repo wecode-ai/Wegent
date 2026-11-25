@@ -43,7 +43,7 @@ export function ExternalContentImportDialog({ onClose }: ExternalContentImportDi
         onClose={() => {
           if (!importing) onClose()
         }}
-        initialFocus={'[data-testid="external-content-import-confirm-button"]:not([disabled])'}
+        initialFocus={'[data-testid="external-content-import-close-button"]'}
         render={
           <div
             role="dialog"

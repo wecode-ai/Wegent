@@ -158,6 +158,12 @@ export class DownloadTargetPolicy {
     }
   }
 
+  downloadsFolder(): string {
+    const target = this.configuredTargetDirectory()
+    if (!target) throw new Error('Download folder is unavailable')
+    return target.directory
+  }
+
   current(): DownloadPreferences {
     return { ...this.preferences }
   }

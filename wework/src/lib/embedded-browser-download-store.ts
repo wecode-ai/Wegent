@@ -1,49 +1,30 @@
 import {
+  isLiveDownload,
   listenEmbeddedBrowserDownloads,
+  type EmbeddedBrowserDownloadChange,
   type EmbeddedBrowserDownloadEvent,
 } from './embedded-browser'
 
-const MAX_NATIVE_BROWSER_HISTORIES = 20
-const MAX_DOWNLOADS_PER_NATIVE_BROWSER = 20
 const SOURCE_LISTENER_RETRY_INITIAL_DELAY_MS = 250
 const SOURCE_LISTENER_RETRY_MAX_DELAY_MS = 2000
 
-type DownloadEventHandler = (event: EmbeddedBrowserDownloadEvent) => void
+type DownloadEventHandler = (event: EmbeddedBrowserDownloadChange) => void
 
 class EmbeddedBrowserDownloadStore {
-  private readonly histories = new Map<string, Map<string, EmbeddedBrowserDownloadEvent>>()
+  private readonly active = new Map<string, EmbeddedBrowserDownloadEvent>()
 
-  record(event: EmbeddedBrowserDownloadEvent): void {
-    const current = this.histories.get(event.nativeLabel) ?? new Map()
-    if (event.status === 'deleted') {
-      current.delete(event.id)
-      if (current.size === 0) this.histories.delete(event.nativeLabel)
-      return
-    }
-
-    current.delete(event.id)
-    current.set(event.id, event)
-    while (current.size > MAX_DOWNLOADS_PER_NATIVE_BROWSER) {
-      const oldestId = current.keys().next().value
-      if (!oldestId) break
-      current.delete(oldestId)
-    }
-
-    this.histories.delete(event.nativeLabel)
-    this.histories.set(event.nativeLabel, current)
-    while (this.histories.size > MAX_NATIVE_BROWSER_HISTORIES) {
-      const oldestNativeLabel = this.histories.keys().next().value
-      if (!oldestNativeLabel) break
-      this.histories.delete(oldestNativeLabel)
-    }
+  record(event: EmbeddedBrowserDownloadChange): void {
+    if ('cleared' in event || 'historyUnavailable' in event) return
+    if (isLiveDownload(event)) this.active.set(event.id, event)
+    else this.active.delete(event.id)
   }
 
   snapshot(nativeLabel: string): EmbeddedBrowserDownloadEvent[] {
-    return Array.from(this.histories.get(nativeLabel)?.values() ?? []).reverse()
+    return Array.from(this.active.values()).filter(event => event.nativeLabel === nativeLabel)
   }
 
   clear(): void {
-    this.histories.clear()
+    this.active.clear()
   }
 }
 
@@ -55,7 +36,7 @@ let sourceUnlisten: (() => void) | null = null
 let sourceRetryAttempts = 0
 let sourceRetryTimer: ReturnType<typeof setTimeout> | null = null
 
-function dispatchDownloadEvent(event: EmbeddedBrowserDownloadEvent): void {
+function dispatchDownloadEvent(event: EmbeddedBrowserDownloadChange): void {
   downloadStore.record(event)
   downloadEventHandlers.forEach(handler => handler(event))
 }

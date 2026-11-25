@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
 import { createHash } from 'node:crypto'
@@ -17,6 +18,36 @@ import { DownloadTargetPolicy } from './download-target-policy.js'
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('does not backfill a previous visit with a callback page title during navigation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-history-navigation-'))
+    try {
+      const manager = new EmbeddedBrowserManager(directory)
+      const contents = new FakeWebContents()
+      const label = 'workspace-browser'
+      const url = 'https://docs.test/'
+      const callbackUrl = 'https://app.test/login/oidc?access_token=synthetic'
+      manager.attach(label, contents as unknown as WebContents)
+      await manager.open({
+        label,
+        url,
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+      contents.commitUrl(url)
+      contents.emit('did-finish-load')
+      contents.emit('did-start-navigation', {}, callbackUrl, false, true)
+      contents.commitUrl(callbackUrl)
+      const query = { text: '', endTimeMs: null, offset: 0, maxResults: 10 }
+      await manager.searchHistory(query)
+      contents.emit('page-title-updated', {}, 'Private callback receipt')
+      contents.emit('did-finish-load')
+      await expect(manager.searchHistory(query)).resolves.toMatchObject([{ url, title: null }])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('bounds managed DSH cookies through the existing browser request hook', async () => {
@@ -913,6 +944,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     const downloadPolicy = {
       apply: vi.fn(),
       downloadUrlAs: vi.fn(),
+      downloadsFolder: vi.fn(),
     }
     const manager = new EmbeddedBrowserManager(directory, undefined, undefined, downloadPolicy)
     const contents = new FakeWebContents()
@@ -1456,7 +1488,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         cancel: vi.fn(),
         getFilename: () => 'video_123.mp4',
         getSavePath: () => savePath,
-        getURL: () => 'https://example.test/video_123.mp4',
+        getURL: () => 'https://example.test/video_123.mp4?sig=synthetic-download-secret',
         getURLChain: () => ['https://example.test/video_123.mp4'],
         getReceivedBytes: () => 0,
         getTotalBytes: () => 1024,
@@ -1481,7 +1513,11 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         path: expectedPath,
       })
 
+      await writeFile(expectedPath, 'downloaded file')
       for (const cb of doneListeners) cb({}, 'completed')
+      const downloadEvents = events.filter(event => event.type === 'download')
+      expect(downloadEvents.at(-1)?.payload).toMatchObject({ status: 'finished' })
+      expect(downloadEvents.every(event => !('url' in event.payload))).toBe(true)
 
       const preventedEventsStart = events.length
       const preventedItem = {
@@ -1506,6 +1542,52 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         false
       )
       expect(preventedItem.on).not.toHaveBeenCalled()
+      manager.stop()
+
+      const restored = new EmbeddedBrowserManager(directory)
+      try {
+        const { downloads } = await restored.downloads.list()
+        expect(downloads).toMatchObject([
+          {
+            fileName: 'video_123.mp4',
+            path: expectedPath,
+            status: 'finished',
+            fileExists: true,
+            updatedAtMs: expect.any(Number),
+            totalBytes: 1024,
+          },
+        ])
+        const id = downloads[0]!.id
+        await expect(restored.downloads.delete(id)).rejects.toThrow('no longer active')
+        await expect(restored.downloads.openFile(expectedPath, false)).rejects.toThrow(
+          'unavailable'
+        )
+        await restored.downloads.openFile(id, true)
+        expect(electronMocks.showItemInFolder).toHaveBeenCalledWith(expectedPath)
+        const moved = join(downloadsDir, 'moved.mp4')
+        await rename(expectedPath, moved)
+        expect((await restored.downloads.list()).downloads[0]?.fileExists).toBe(false)
+        await expect(restored.downloads.openFile(id, false)).rejects.toThrow('unavailable')
+        await restored.clearData(['cache'])
+        expect((await restored.downloads.list()).downloads).toHaveLength(1)
+        const storage = electronMocks.browserSession.clearStorageData
+        const cache = electronMocks.browserSession.clearCache
+        const priorCalls = [storage.mock.calls.length, cache.mock.calls.length]
+        const db = new DatabaseSync(join(directory, 'browser-download-history.sqlite'))
+        try {
+          db.exec('BEGIN EXCLUSIVE')
+          await expect(restored.clearData(null)).rejects.toMatchObject({ errcode: 5 })
+          expect([storage.mock.calls.length, cache.mock.calls.length]).toEqual(priorCalls)
+        } finally {
+          db.close()
+        }
+        expect((await restored.downloads.list()).downloads).toHaveLength(1)
+        await restored.clearData(null)
+        expect((await restored.downloads.list()).downloads).toEqual([])
+        expect(await readFile(moved, 'utf8')).toBe('downloaded file')
+      } finally {
+        restored.stop()
+      }
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
