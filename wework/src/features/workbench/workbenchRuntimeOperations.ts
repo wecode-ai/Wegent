@@ -184,9 +184,9 @@ export function createWorkbenchRuntimeOperations({
           if (expectedLifecycle?.turn.phase === 'streaming') return
 
           try {
-            if (delayMs === 0) {
-              // Capture the completion before yielding so transcript recovery sees the
-              // same lifecycle as the terminal event, even if cached state arrives first.
+            if (delayMs === 0 && expectedLifecycle?.task?.executionState) {
+              // Native lifecycle events already drive the current presentation.
+              // Schedule their reconciliation read after the delivery task.
               await new Promise(resolve => globalThis.setTimeout(resolve, 0))
               if (
                 !runtimeTaskSettleSyncActiveRef.current ||
