@@ -8,6 +8,7 @@ import { reloadMainWindow } from './workspace-flows.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
 import { selectWorkbenchTheme } from './appearance-theme.mjs'
 import { verifyNarrowImChannels } from './stand-in-im-channel-layout.mjs'
+import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 
 /** Reuse the real Backend/Redis/Executor; only the external IM input is synthetic. */
 export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot }) {
@@ -113,6 +114,10 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('clickWhenEnabled', refresh)
       await control.command('waitFor', `${panel} ${first}`)
       await waitForPrimaryConnections(1)
+      assert.equal(await control.command('getAttribute', first, { value: 'aria-pressed' }), 'true')
+      await verifyProjectFieldFocus(control, `stand-in-im-connect-${keys[0]}`, {
+        nextButtonPattern: /^stand-in-im-submit$/,
+      })
       await captureScreenshot(control, 'im-stand-in-00-single-conversation.png')
       await control.command('nativePress', '[data-testid="stand-in-im-mode-help"]', { key: 'Tab' })
       await control.command('waitFor', '[data-testid="stand-in-im-dialog-close"]:focus')

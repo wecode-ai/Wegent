@@ -58,6 +58,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             : t('workbench.app_update_restart_confirm_action', '更新并重启')
         }
         confirmTestId={retryUpdate ? 'app-update-retry-confirm' : 'app-update-restart-confirm'}
+        focusCancel={!retryUpdate}
         dialogTestId={retryUpdate ? 'app-update-retry-dialog' : undefined}
         cancelTestId={retryUpdate ? 'app-update-retry-cancel' : undefined}
         confirmDisabled={status === 'checking'}

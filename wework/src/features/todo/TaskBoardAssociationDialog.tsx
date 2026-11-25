@@ -126,7 +126,7 @@ export function TaskBoardAssociationDialog({
               </label>
               {!loading && <span className="tabular-nums">{candidates.length}</span>}
             </div>
-            <div className="flex h-11 items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 focus-within:border-focus md:h-10">
+            <div className="flex h-11 items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 md:h-10">
               <Search className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
               <ControlInput
                 appearance="plain"

@@ -142,8 +142,8 @@ def test_issue_creation_and_invitation_schedule_im_once(
     assert test_db.query(WeworkNotification).count() == 0
     deliveries = [call.args for call in no_external_delivery.call_args_list]
     assert [(payload["user_id"], payload["title"]) for _, payload, _ in deliveries] == [
-        (test_user.id, "Issue 已创建"),
-        (member.id, "你已加入 Issue"),
+        (test_user.id, "事项已创建"),
+        (member.id, "你已加入事项"),
     ]
     for deliver, payload, channels in deliveries:
         assert deliver is deliver_notification_payload

@@ -97,6 +97,7 @@ export function IssueDetailActivity({
 }
 
 export interface IssueDetailAttachment {
+  removable?: boolean
   id: string
   displayName: string
   contentType?: string | null
@@ -394,7 +395,7 @@ export function IssueDetailAttachments({
                     {icons?.download ?? '↓'}
                   </ControlButton>
                 ) : null}
-                {editable ? (
+                {editable && attachment.removable !== false ? (
                   <ControlButton
                     variant="unstyled"
                     type="button"

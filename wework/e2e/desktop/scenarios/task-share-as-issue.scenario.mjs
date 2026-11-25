@@ -271,7 +271,7 @@ export function createDesktopScenario({
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="false"]')
       await control.command('fill', title, { value: 'Private model error notes' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const privateIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Private model error notes'
       )
@@ -297,7 +297,7 @@ export function createDesktopScenario({
       await wait(control, selector('task-issue-share-excerpts'), { text: prompt })
       await control.command('fill', title, { value: 'Selected model error excerpt' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const selectionIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Selected model error excerpt'
       )
@@ -315,7 +315,7 @@ export function createDesktopScenario({
       await click(control, selector('task-issue-share-select-first'))
       await control.command('fill', title, { value: 'Whole message with context' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const wholeIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Whole message with context'
       )
@@ -464,7 +464,7 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, '03-task-share-selected-content.png')
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       await captureScreenshot(control, '04-task-share-independent-result.png')
       const mine = await request('/v1/personal-issues?scope=created')
       const issue = mine.items.find(item => item.title === 'Model error follow-up')
@@ -494,12 +494,39 @@ export function createDesktopScenario({
         [generatedFilename]
       )
       assert.ok(!Object.hasOwn(files[0], 'object_key'))
+      const card = selector(`independent-issue-attachment-${files[0].id}`)
+      const [tile] = JSON.parse(
+        await control.command('getElementMetrics', `.task-detail-rail-file:has(${card})`)
+      )
+      const [preview] = JSON.parse(
+        await control.command('getElementMetrics', `${card} .task-detail-rail-preview`)
+      )
+      assert.ok(
+        Math.abs(preview.width - (tile.width - 2)) <= 1,
+        'The shared attachment thumbnail must fill its card between the two borders'
+      )
       const attachment = `/v1/personal-issues/${issue.id}/attachments/${files[0].id}`
       await assertAttachment(attachment, colleagueToken, 200, generatedContent)
       await assertAttachment(attachment, outsiderToken, 404)
+      const issueAttachments = await request(`/v1/loop-items/${issue.id}/attachments`, {
+        token: colleagueToken,
+      })
+      assert.deepEqual(issueAttachments.map(file => file.id), [files[0].id])
+      const attachmentContent = `/v1/loop-item-attachments/${files[0].id}/content`
+      await assertAttachment(attachmentContent, colleagueToken, 200, generatedContent)
+      await assertAttachment(attachmentContent, outsiderToken, 404)
       const sourcePath = `/v1/personal-issues/${issue.id}/source`
       const source = await request(sourcePath)
       assert.ok(source.device_id && source.task_id)
+      await click(control, selector('issue-link-existing-task'))
+      await control.command('fill', selector('issue-existing-task-search'), {
+        value: source.task_id,
+      })
+      const knownTask = `${selector('issue-existing-task-picker')} button[data-testid$="-${source.task_id}"]`
+      await click(control, knownTask)
+      await wait(control, selector('cloud-todo-execution-task-count'), { text: '1' })
+      const [binding] = await request(`/v1/loop-items/${issue.id}/tasks`)
+      assert.equal(binding.task_id, source.task_id)
       const oldest = JSON.parse(
         await control.command('getLocalRuntimeTranscript', 'body', {
           value: JSON.stringify({
@@ -752,7 +779,7 @@ export function createDesktopScenario({
       })
       await control.command('fill', title, { value: 'Historical search excerpt' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const searchIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Historical search excerpt'
       )
@@ -948,7 +975,7 @@ export function createDesktopScenario({
       await click(control, selector('task-issue-share-select-last'))
       await control.command('fill', title, { value: 'Middle-message fragment with later context' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const storyIssue = (
         await request('/v1/personal-issues?scope=created', { token: colleagueToken })
       ).items.find(row => row.title === 'Middle-message fragment with later context')
@@ -983,7 +1010,7 @@ export function createDesktopScenario({
       await captureScreenshot(control, '15-selection-story-dark.png')
       await control.command('fill', title, { value: 'User fragment in dark mode' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const userIssue = (
         await request('/v1/personal-issues?scope=created', { token: colleagueToken })
       ).items.find(row => row.title === 'User fragment in dark mode')

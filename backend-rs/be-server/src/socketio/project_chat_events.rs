@@ -22,6 +22,7 @@ use brz_mysql::MysqlTransaction;
 use brz_socket_io::{ClientError, Reply};
 use serde_json::{Map, Value, json};
 
+use super::issue_discussion::publish_comment_on;
 use super::project_chat_mentions::{self, Mention};
 use super::project_chat_messages::{
     InsertMessage, existing_agent_response, existing_client_message, insert_message,
@@ -470,17 +471,6 @@ async fn send_message(
         runtime_activity_key: "",
         status: "completed",
     };
-    let preview = project_chat_mentions::preview(&request.content);
-    let title = match target["itemTitle"]
-        .as_str()
-        .filter(|title| !title.is_empty())
-    {
-        Some(title) => format!("{user_name} 在「{title}」提到了你"),
-        None => format!("{user_name} 在评论中提到了你"),
-    };
-    target["actorName"] = json!(user_name);
-    target["commentId"] = json!(message_id);
-    target["commentPreview"] = json!(preview);
     if let Some(reply_preview) = reply.preview.filter(|preview| !preview.is_empty()) {
         target["replyPreview"] = json!(reply_preview);
     }
@@ -508,54 +498,15 @@ async fn send_message(
                     });
                 }
             }
-            let row = tx
-                .execute(
-                    super::project_chat_messages::INSERT_MESSAGE_SQL,
-                    super::project_chat_messages::insert_message_args(&message),
-                )
-                .await?;
-            let mut pending = Vec::with_capacity(recipients.len());
-            for recipient in recipients
-                .iter()
-                .copied()
-                .filter(|recipient| *recipient != user_id)
-            {
-                pending.push(
-                    notifications::create_on(
-                        tx,
-                        recipient,
-                        user_id,
-                        "mention",
-                        &title,
-                        &preview,
-                        target.clone(),
-                    )
-                    .await?,
-                );
-            }
-            if let Some(item) = item
-                .as_ref()
-                .filter(|item| item.cloud_project_id == request.project_id)
-            {
-                let item_id = item.id.as_str();
-                let mut metadata = item.meta();
-                crate::background_jobs::project::issues::update_change_request_source(
-                    &mut metadata,
-                    &format!("activity:{message_id}"),
-                    &request.content,
-                );
-                super::project_chat_snapshot::advance_content_revision(
-                    metadata
-                        .as_object_mut()
-                        .expect("issue metadata is an object"),
-                    user_id,
-                );
-                tx.execute(
-                    "UPDATE loop_items SET metadata=?, version=version+1 WHERE id=?",
-                    (brz_mysql::Json(metadata), item_id),
-                )
-                .await?;
-            }
+            let (row_id, pending) = publish_comment_on(
+                tx,
+                &message,
+                user_id,
+                item.as_ref(),
+                &recipients,
+                target.clone(),
+            )
+            .await?;
             if let Some(item_id) = request.task_id.as_deref() {
                 let users = mentions
                     .iter()
@@ -578,7 +529,7 @@ async fn send_message(
                         "SELECT {} FROM project_chat_messages WHERE id = ? LIMIT 1",
                         super::project_chat_messages::MESSAGE_COLUMNS
                     ),
-                    (row.last_insert_id as i64,),
+                    (row_id,),
                 )
                 .await?
                 .ok_or_else(|| brz_mysql::MysqlError::InvalidQuery {

@@ -101,7 +101,7 @@ export function AutomaticProcessingTriggerFields({
             const localeIndex = locale === 'zh-CN' ? 0 : 1
             return (
               <label
-                className={`!flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-focus md:min-h-9 ${
+                className={`!flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors md:min-h-9 ${
                   selected ? 'automatic-processing-selected' : 'border-border hover:bg-muted/60'
                 }`}
                 key={option.kind}

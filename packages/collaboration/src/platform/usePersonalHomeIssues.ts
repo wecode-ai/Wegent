@@ -1,8 +1,8 @@
 import { useCallback, useState, useSyncExternalStore } from 'react'
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import {
   createPersonalHomeIssuesSource,
   type PersonalHomeIssueOrder,
+  type PersonalHomeIssueSource,
   type PersonalHomeCreationNotice,
   type SubscribePersonalIssueChanges,
 } from './personalHomeIssuesSource'
@@ -10,8 +10,8 @@ export type { PersonalHomeIssueOrder } from './personalHomeIssuesSource'
 const subscribeInactive = () => () => undefined
 
 /** Each store publishes one bounded page independently; cards never fetch their own context. */
-export function usePersonalHomeIssues(
-  sources: SharedWorkspaceApi[],
+export function usePersonalHomeIssues<Source extends PersonalHomeIssueSource>(
+  sources: Source[],
   active: boolean,
   assignedOnly: boolean,
   includeCompleted: boolean,
@@ -73,6 +73,7 @@ export function usePersonalHomeIssues(
     loading: current.some(row => row.loading),
     error: current.some(row => row.error),
     hasMore: current.some(row => row.nextCursor !== null),
+    canLoadMore: current.some(row => row.nextCursor !== null && !row.loading),
     reload: owner.source.reload,
     loadMore: owner.source.loadMore,
     replaceIssue: owner.source.replaceIssue,

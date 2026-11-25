@@ -136,3 +136,9 @@
     display: none;
   }
 }
+
+:global(html:not([data-input-modality="pointer"])) .step:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: 2px;
+  box-shadow: none;
+}

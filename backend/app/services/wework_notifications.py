@@ -19,6 +19,7 @@ from app.services.notification_copy import (
     WEWORK_LINK_LABEL,
     NotificationLink,
     NotificationTarget,
+    PersonalIssueInvitationTarget,
     push_copy,
 )
 from app.services.notification_target import (
@@ -130,7 +131,18 @@ def _notification_links(notification: dict) -> list[NotificationLink]:
         links.append(NotificationLink(label=WEWORK_LINK_LABEL, url=notification["url"]))
     project_id = payload.get("projectId")
     item_id = payload.get("itemId")
-    if project_id and item_id:
+    personal_issue_id = payload.get("personalIssueId")
+    if personal_issue_id:
+        scope = "assigned" if payload.get("assigned") else "participating"
+        base = settings.FRONTEND_URL.rstrip("/")
+        issue = quote(str(personal_issue_id), safe="")
+        links.append(
+            NotificationLink(
+                label=WEB_LINK_LABEL,
+                url=f"{base}/collaboration/{scope}?personalIssueId={issue}",
+            )
+        )
+    elif project_id and item_id:
         links.append(
             NotificationLink(
                 label=WEB_LINK_LABEL,
@@ -194,20 +206,51 @@ def notify_issue_participation(
     *,
     user_id: int,
     actor_user_id: int,
-    target: NotificationTarget,
+    target: NotificationTarget | PersonalIssueInvitationTarget,
     created: bool = False,
 ) -> None:
+    project = target if isinstance(target, NotificationTarget) else None
     create_notification(
         db,
         user_id=user_id,
         actor_user_id=actor_user_id,
         kind="issue_participation",
-        title="Issue 已创建" if created else "你已加入 Issue",
+        title="事项已创建" if created else "你已加入事项",
         body="打开 Wework 查看事项。",
-        project_id=target.project_id,
+        project_id=project.project_id if project else None,
         item_id=target.item_id,
+        url=(
+            f"wework://personal-issues/{quote(target.item_id, safe='')}"
+            if isinstance(target, PersonalIssueInvitationTarget)
+            else None
+        ),
         payload=target.payload(),
     )
+
+
+async def emit_issue_assignments_changed(user_id: int) -> None:
+    """Refresh the recipient's assignment count after an Issue write commits."""
+    from app.api.ws.wework_runtime_namespace import (
+        WEWORK_RUNTIME_EVENT,
+        WEWORK_RUNTIME_NAMESPACE,
+        wework_runtime_user_room,
+    )
+    from app.core.socketio import get_sio
+
+    try:
+        await get_sio().emit(
+            WEWORK_RUNTIME_EVENT,
+            {
+                "event": "wework.issue.assignments.changed",
+                "payload": {"userId": user_id},
+            },
+            room=wework_runtime_user_room(user_id),
+            namespace=WEWORK_RUNTIME_NAMESPACE,
+        )
+    except Exception:
+        logger.exception(
+            "Issue assignment count invalidation failed for user %s", user_id
+        )
 
 
 @event.listens_for(Session, "after_rollback")

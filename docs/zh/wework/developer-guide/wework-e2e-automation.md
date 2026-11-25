@@ -111,6 +111,12 @@ pnpm --filter wework e2e:desktop:plugins
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
+单独验证地址栏历史、下载列表和磁盘文件状态（macOS 或 Linux）：
+
+```bash
+WEWORK_E2E_DOWNLOAD_HISTORY_ONLY=true pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：
 
 ```bash

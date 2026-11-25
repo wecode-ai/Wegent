@@ -214,6 +214,13 @@ export interface StandInLearningReport {
   revision: StandInGhostRevision | null
 }
 
+export type StandInLearningRunStatus =
+  | 'started'
+  | 'busy'
+  | 'disabled'
+  | 'insufficient'
+  | 'already_evaluated'
+
 export type StandInMemoryScope =
   | { kind: 'personal' }
   | { kind: 'role'; roleId: string }
@@ -564,6 +571,11 @@ export interface StandInExecutorApi {
   ): Promise<{ taskId: string; address: WorkspaceRuntimeTaskAddress | null }>
   proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
   learningReport(userId: number, deviceId: string, roleId?: string): Promise<StandInLearningReport>
+  runLearning(
+    userId: number,
+    deviceId: string,
+    roleId?: string
+  ): Promise<{ status: StandInLearningRunStatus }>
   resolveProposal(
     userId: number,
     deviceId: string,
@@ -865,6 +877,8 @@ export function createStandInExecutorApi(
       ),
     proposal: (userId, deviceId, roleId) =>
       request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
+    runLearning: (userId, deviceId, roleId) =>
+      request('runtime.stand_in.learning.run', { userId, roleId }, deviceId),
     learningReport: async (userId, deviceId, roleId) => {
       const report = await request<StandInLearningReport | null>(
         'runtime.stand_in.proposal.get',

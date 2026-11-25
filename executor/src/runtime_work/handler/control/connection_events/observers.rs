@@ -15,6 +15,47 @@ fn lease_lost() -> AppIpcError {
     )
 }
 
+fn change_request_number(record: &Value) -> Option<u64> {
+    let object = &record["source"]["monitoredObjects"][0];
+    if object["entityKind"] == "change_request" {
+        return object["number"].as_u64();
+    }
+    let state = &record["resource_states"][0];
+    if state["kind"] == "change_request" {
+        return state["data"]["number"]
+            .as_u64()
+            .or_else(|| state["data"]["iid"].as_u64());
+    }
+    record["change_request_number"].as_u64()
+}
+
+fn mark_stopped(record: &mut Value, reason: &str) {
+    record["change_request_number"] = json!(change_request_number(record));
+    record["status"] = json!("stopped");
+    record["stop_reason"] = json!(reason);
+    record["cloud_stop_pending"] = json!(record["cloud_registration"].is_object());
+}
+
+fn log_lease_event(event: &str, id: &str, operation: &str, reason: &str, record: &Value) {
+    log_executor_event(
+        event,
+        &[
+            ("observer_id", id.to_owned()),
+            ("operation", operation.to_owned()),
+            ("reason", reason.to_owned()),
+            (
+                "observation_id",
+                record["observation_id"].as_str().unwrap_or("-").to_owned(),
+            ),
+            (
+                "change_request_number",
+                change_request_number(record)
+                    .map_or_else(|| "-".into(), |number| number.to_string()),
+            ),
+        ],
+    );
+}
+
 fn field<'a>(input: &'a Value, name: &str) -> Result<&'a str, AppIpcError> {
     input[name]
         .as_str()
@@ -76,30 +117,64 @@ impl RuntimeWorkRpcHandler {
         let _guard = gate.lock().await;
         let mut record = self.read_ui_observer(&id)?;
         if operation == "stop" {
+            let was_active = record.is_object() && record["status"] != "stopped";
             if record.is_null() {
                 record = json!({"id":id,"consumer_key":key,"generation":generation,"device_id":self.device_id});
             }
-            record["status"] = json!("stopped");
-            record["cloud_stop_pending"] = json!(record["cloud_registration"].is_object());
+            if record["status"] != "stopped" {
+                let reason = if record["expires_at"]
+                    .as_i64()
+                    .is_some_and(|at| at <= now_ms())
+                {
+                    "expired"
+                } else {
+                    "explicit_stop"
+                };
+                mark_stopped(&mut record, reason);
+            }
             self.save_ui_observer(&record)?;
+            if was_active {
+                log_lease_event(
+                    "UI observation lease stopped",
+                    &id,
+                    operation,
+                    record["stop_reason"].as_str().unwrap_or("stopped"),
+                    &record,
+                );
+            }
             self.stop_cloud_ui_observer(&mut record).await?;
             self.save_ui_observer(&record)?;
             return Ok(json!({"stopped":true}));
         }
         if record.is_null() {
             if operation != "start" {
+                log_lease_event(
+                    "UI observation lease lost",
+                    &id,
+                    operation,
+                    "missing",
+                    &record,
+                );
                 return Err(lease_lost());
             }
             record = self
                 .prepare_ui_observer(&id, key, generation, &input)
                 .await?;
         } else {
-            if record["device_id"] != self.device_id
+            let loss_reason = if record["device_id"] != self.device_id
                 || record["consumer_key"] != key
                 || record["generation"] != generation
-                || record["status"] == "stopped"
-                || record["expires_at"].as_i64().unwrap_or_default() <= now_ms()
             {
+                Some("identity_mismatch")
+            } else if record["status"] == "stopped" {
+                Some(record["stop_reason"].as_str().unwrap_or("stopped"))
+            } else if record["expires_at"].as_i64().unwrap_or_default() <= now_ms() {
+                Some("expired")
+            } else {
+                None
+            };
+            if let Some(reason) = loss_reason {
+                log_lease_event("UI observation lease lost", &id, operation, reason, &record);
                 return Err(lease_lost());
             }
             if operation == "start" && record["intent"] != observer_intent(&input) {
@@ -110,7 +185,18 @@ impl RuntimeWorkRpcHandler {
         }
         if record["cloud_registration"].is_object() {
             self.read_cloud_ui_observer(&mut record, operation == "refresh")
-                .await?;
+                .await
+                .inspect_err(|error| {
+                    if error.code == "observation_observer_lease_lost" {
+                        log_lease_event(
+                            "UI observation lease lost",
+                            &id,
+                            operation,
+                            "cloud_rejected",
+                            &record,
+                        );
+                    }
+                })?;
         } else {
             let cached = event_store::read(
                 &self.event_subscription_path(),
@@ -149,7 +235,17 @@ impl RuntimeWorkRpcHandler {
         }
         record["status"] = json!("observing");
         record["expires_at"] = json!(now_ms() + TTL_MS);
-        self.save_ui_observer(&record)?;
+        self.save_ui_observer(&record).inspect_err(|error| {
+            if error.code == "observation_observer_lease_lost" {
+                log_lease_event(
+                    "UI observation lease lost",
+                    &id,
+                    operation,
+                    "stopped_during_update",
+                    &record,
+                );
+            }
+        })?;
         Ok(projection(&record))
     }
 

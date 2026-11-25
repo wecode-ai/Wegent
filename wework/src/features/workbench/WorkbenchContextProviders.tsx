@@ -1,4 +1,9 @@
-import { WorkbenchOwnerLeaseContext, WorkbenchQueueActionsContext } from './workbenchContexts'
+import {
+  RuntimeTaskRemindersContext,
+  WorkbenchOwnerLeaseContext,
+  WorkbenchQueueActionsContext,
+} from './workbenchContexts'
+import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
@@ -19,6 +24,7 @@ export function WorkbenchContextProviders({
   lifecycleStore,
   refreshDevicesAfterRestart,
   retainOwner,
+  runtimeTaskReminders,
   children,
 }: {
   value: WorkbenchContextValue
@@ -27,6 +33,7 @@ export function WorkbenchContextProviders({
   lifecycleStore: RuntimeTaskLifecycleStore
   refreshDevicesAfterRestart: WorkbenchSessionOperations['refreshDevicesAfterRestart']
   retainOwner: () => () => void
+  runtimeTaskReminders: RuntimeTaskReminderState
   children: ReactNode
 }) {
   const { forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError } = value
@@ -51,7 +58,9 @@ export function WorkbenchContextProviders({
                     refreshDevices={refreshDevicesAfterRestart}
                   >
                     <WorkbenchQueueActionsContext.Provider value={queueActions}>
-                      <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                      <RuntimeTaskRemindersContext.Provider value={runtimeTaskReminders}>
+                        <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                      </RuntimeTaskRemindersContext.Provider>
                     </WorkbenchQueueActionsContext.Provider>
                   </WorkbenchCloudDeviceRestarts>
                 </DesktopGitAccountConfigurationProvider>
