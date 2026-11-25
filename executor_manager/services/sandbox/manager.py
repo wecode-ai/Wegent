@@ -788,7 +788,9 @@ class SandboxManager(metaclass=SingletonMeta):
                     f"[SandboxManager] Pod not found by name '{sandbox.container_name}', "
                     f"trying to delete by task_id: {sandbox_id}"
                 )
-                result = executor.delete_executor_by_task_id(sandbox_id)
+                result = executor.delete_executor_by_task_id(
+                    sandbox_id, sandbox_only=True
+                )
 
             if result.get("status") not in ("success", "not_found"):
                 logger.warning(
@@ -937,7 +939,9 @@ class SandboxManager(metaclass=SingletonMeta):
                 not direct_delete_status
                 or direct_delete_status.get("status") != "success"
             ):
-                fallback_delete_status = executor.delete_executor_by_task_id(sandbox_id)
+                fallback_delete_status = executor.delete_executor_by_task_id(
+                    sandbox_id, sandbox_only=True
+                )
                 result["delete_attempts"].append(
                     {
                         "mode": "task_id",
@@ -1722,7 +1726,7 @@ class SandboxManager(metaclass=SingletonMeta):
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
             result = await asyncio.to_thread(
-                executor.delete_executor_by_task_id, task_id
+                executor.delete_executor_by_task_id, task_id, sandbox_only=True
             )
         except Exception as exc:
             logger.warning(

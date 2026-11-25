@@ -145,7 +145,9 @@ class Executor(abc.ABC):
         """
         return None
 
-    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+    def delete_executor_by_task_id(
+        self, task_id: str, *, sandbox_only: bool = False
+    ) -> Dict[str, Any]:
         """Delete executor by task_id label (fallback method).
 
         This is used when the executor name is not known or the executor
@@ -156,6 +158,7 @@ class Executor(abc.ABC):
 
         Args:
             task_id: Task ID to search for
+            sandbox_only: Restrict cleanup to sandbox runtimes.
 
         Returns:
             Dict with status and error_msg if failed

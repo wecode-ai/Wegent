@@ -564,6 +564,31 @@ class TestDockerExecutor:
         assert mock_create.call_count == 1
         assert mock_dispatch.call_count == (0 if task_type == "sandbox" else 1)
 
+    def test_sandbox_task_cleanup_preserves_the_regular_executor(
+        self, executor, mocker
+    ):
+        mocker.patch.object(
+            docker_executor_module,
+            "get_running_task_details",
+            return_value={
+                "status": "success",
+                "containers": [
+                    {"container_name": "regular", "task_type": "online"},
+                    {"container_name": "sandbox", "task_type": "sandbox"},
+                ],
+            },
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": "success"},
+        )
+
+        result = executor.delete_executor_by_task_id("123", sandbox_only=True)
+
+        assert result == {"status": "success", "deleted_containers": ["sandbox"]}
+        delete.assert_called_once_with("sandbox")
+
     def test_create_new_container_first_command_includes_callback_token(
         self, executor, sample_task, mock_subprocess
     ):

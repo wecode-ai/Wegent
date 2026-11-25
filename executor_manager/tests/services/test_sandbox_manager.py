@@ -1305,7 +1305,9 @@ class TestSandboxManager:
         mock_executor.delete_executor.assert_called_once_with(
             "wegent-task-testuser-12345"
         )
-        mock_executor.delete_executor_by_task_id.assert_called_once_with("12345")
+        mock_executor.delete_executor_by_task_id.assert_called_once_with(
+            "12345", sandbox_only=True
+        )
         mock_redis_client.zrem.assert_called()
         mock_redis_client.delete.assert_called()
 
@@ -2154,7 +2156,9 @@ class TestSandboxManager:
 
         await manager._collect_expired_sandboxes()
 
-        mock_executor.delete_executor_by_task_id.assert_called_once_with("orphaned-id")
+        mock_executor.delete_executor_by_task_id.assert_called_once_with(
+            "orphaned-id", sandbox_only=True
+        )
         mock_redis_client.zrem.assert_called_with(
             "wegent-sandbox:active", "orphaned-id"
         )
@@ -2179,7 +2183,9 @@ class TestSandboxManager:
 
         await manager._collect_expired_sandboxes()
 
-        mock_executor.delete_executor_by_task_id.assert_called_once_with("orphaned-id")
+        mock_executor.delete_executor_by_task_id.assert_called_once_with(
+            "orphaned-id", sandbox_only=True
+        )
         mock_redis_client.zrem.assert_not_called()
 
     @pytest.mark.asyncio

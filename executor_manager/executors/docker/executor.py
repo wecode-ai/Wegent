@@ -207,7 +207,9 @@ class DockerExecutor(Executor):
                     execution_status["executor_name"] = executor_name
                     self._create_new_container(task_dict, task_info, execution_status)
                 elif prepare_only:
-                    require_callback_token(int(task_id), executor_name)
+                    require_callback_token(
+                        int(task_id), executor_name, sandbox=is_sandbox_task
+                    )
                     self.wait_instance_ready(executor_name)
                 else:
                     self._execute_in_existing_container(task_dict, execution_status)
@@ -1628,7 +1630,9 @@ class DockerExecutor(Executor):
 
         return get_container_task_id(executor_name)
 
-    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+    def delete_executor_by_task_id(
+        self, task_id: str, *, sandbox_only: bool = False
+    ) -> Dict[str, Any]:
         """Delete a Docker container by task_id label (fallback method).
 
         This is used when the container name is not known or the container
@@ -1637,6 +1641,7 @@ class DockerExecutor(Executor):
 
         Args:
             task_id: Task ID to search for
+            sandbox_only: Restrict cleanup to sandbox runtimes.
 
         Returns:
             Dict with status and error_msg if failed
@@ -1651,6 +1656,8 @@ class DockerExecutor(Executor):
                 }
 
             containers = result.get("containers", [])
+            if sandbox_only:
+                containers = [c for c in containers if c.get("task_type") == "sandbox"]
             if not containers:
                 logger.warning(f"No container found with task_id label '{task_id}'")
                 return {
