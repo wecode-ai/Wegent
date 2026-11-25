@@ -23,7 +23,7 @@ export function CollaborationContextSidebar({
 
   return (
     <aside
-      className={`flex h-full min-h-0 flex-col bg-base text-text-primary ${mobile ? 'w-64 max-w-[85vw]' : 'w-full'}`}
+      className={`collaboration-platform-sidebar-surface flex h-full min-h-0 flex-col text-text-primary ${mobile ? 'w-64 max-w-[85vw]' : 'w-full'}`}
       data-testid="collaboration-context-sidebar"
     >
       <Button

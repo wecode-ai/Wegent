@@ -468,7 +468,7 @@ async function trainingHistory(ctx, source, state, ownId, readCursors) {
   }
 }
 
-async function readDelegatedPage(ctx, source, window) {
+async function delegatedMessagePageRequest(ctx, source, window) {
   const conversationId = await exactConversation(
     ctx,
     source,
@@ -478,26 +478,25 @@ async function readDelegatedPage(ctx, source, window) {
   )
   if (!conversationId) return undefined
   const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
-  const response =
-    source.kind === 'group'
-      ? await readTool(ctx, 'listMentions', { ...args, group: conversationId })
-      : await readTool(ctx, 'searchMessages', {
-          ...args,
-          conversationIds: conversationId,
-          senderIds: source.id,
-        })
-  return { response, conversationId }
+  if (source.kind === 'group') {
+    return { tool: 'listMentions', args: { ...args, group: conversationId }, conversationId }
+  }
+  return {
+    tool: 'searchMessages',
+    args: { ...args, conversationIds: conversationId, senderIds: source.id },
+    conversationId,
+  }
 }
 
 async function readMessagePage(ctx, source, window, ownId) {
   if (source.delegated === true) {
     if (source.kind === 'direct' && source.id === ownId)
       return { events: [], hasMore: false, nextCursor: '0' }
-    const page = await readDelegatedPage(ctx, source, window)
-    if (!page) return { events: [], hasMore: false, nextCursor: '0' }
-    return messagePage(source, page.response, ownId, window.cursor, undefined, {
+    const request = await delegatedMessagePageRequest(ctx, source, window)
+    if (!request) return { events: [], hasMore: false, nextCursor: '0' }
+    return readCollectedMessagePage(ctx, source, window, ownId, request, {
       delegated: true,
-      conversationId: page.conversationId,
+      conversationId: request.conversationId,
     })
   }
   let selfConversationId
@@ -523,9 +522,20 @@ async function readMessagePage(ctx, source, window, ownId) {
     else args.senderIds = required(source, 'id')
   }
   const tool = source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages'
+  return readCollectedMessagePage(
+    ctx,
+    source,
+    window,
+    ownId,
+    { tool, args },
+    { selfConversationId }
+  )
+}
+
+async function readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options) {
   if (source.kind !== 'group') {
     const response = await readTool(ctx, tool, args)
-    return messagePage(source, response, ownId, window.cursor, selfConversationId)
+    return messagePage(source, response, ownId, window.cursor, options)
   }
 
   const poll = {
@@ -550,7 +560,8 @@ async function readMessagePage(ctx, source, window, ownId) {
             : null,
         }))
       : null
-    page = messagePage(source, response, ownId, window.cursor, selfConversationId, {
+    page = messagePage(source, response, ownId, window.cursor, {
+      ...options,
       reportFilter: entry => filtered.push(entry),
     })
     return page
@@ -598,8 +609,8 @@ function validateNativePage(page, limit) {
     throw invalid('Incomplete native conversation response')
 }
 
-function messagePage(source, response, ownId, cursor, selfConversationId, options) {
-  const events = normalizeMessages(source, response, ownId, selfConversationId, options)
+function messagePage(source, response, ownId, cursor, options) {
+  const events = normalizeMessages(source, response, ownId, options.selfConversationId, options)
   if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
   const hasMore = response.result.hasMore
   const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
@@ -640,7 +651,13 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
       reportFilter?.({ conversationId, reason: 'group_mismatch' })
       continue
     }
-    if (options.conversationId && conversationId !== options.conversationId) continue
+    if (options.conversationId && conversationId !== options.conversationId) {
+      reportFilter?.({
+        conversationId,
+        reason: direct ? 'conversation_mismatch' : 'group_mismatch',
+      })
+      continue
+    }
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       // Bot notifications can come from another account and feed our own task output back in.
@@ -668,7 +685,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
           reportFilter?.({
             conversationId,
             messageId: diagnosticId(message.openMessageId),
-            reason: 'non_manual_own_message',
+            reason: options.delegated ? 'own_delegated_message' : 'non_manual_own_message',
           })
         continue
       }
@@ -815,7 +832,10 @@ async function verifyMessageRead(ctx, identity, sources) {
   for (const item of sources) {
     const source = { ...item, ...accountDisplay(identity), delegated: true }
     validateDelegatedSource(source)
-    const { response, conversationId } = await readDelegatedPage(ctx, source, window)
+    const request = await delegatedMessagePageRequest(ctx, source, window)
+    if (!request) throw invalid('Message read permission could not be verified')
+    const { tool, args, conversationId } = request
+    const response = await readTool(ctx, tool, args)
     const { hasMore, conversationMessagesList, nextCursor } = response.result ?? {}
     const scoped = verifyScopedMessagePage(response, conversationId)
     if (

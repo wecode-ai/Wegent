@@ -586,7 +586,8 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
         .unwrap_or_else(|| json!({"automatic":role["enabled"] == true,"askBeforeAct":false}))
 }
 
-pub(super) struct PersonalStandInSaveOptions<'a> {
+#[derive(Clone, Copy)]
+pub(super) struct StandInSaveOptions<'a> {
     pub(super) direct_save: bool,
     pub(super) verified_account: Option<&'a Value>,
     pub(super) backend: Option<&'a str>,
@@ -681,7 +682,7 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_for_backend(user, device, None, value)
+        self.save_personal_stand_in_with_verified_dingtalk_account(user, device, value, None)
     }
 
     /// Save after Executor preflight, keeping connector-verified identity out of client input.
@@ -692,12 +693,31 @@ impl LocalTaskStore {
         value: Value,
         verified_account: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_for_backend_with_verified_dingtalk_account(
+        self.save_personal_stand_in_with_verified_dingtalk_account_for_backend(
             user,
             device,
             None,
             value,
             verified_account,
+        )
+    }
+
+    /// Save an Executor preflight result while syncing any changed shared definition.
+    pub fn save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+        &self,
+        user: i64,
+        device: &str,
+        backend: Option<&str>,
+        value: Value,
+        verified_account: Option<&Value>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.save_personal_stand_in_with_context(
+            user,
+            device,
+            value,
+            true,
+            verified_account,
+            backend,
         )
     }
 
@@ -708,19 +728,17 @@ impl LocalTaskStore {
         backend: Option<&str>,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_for_backend_with_verified_dingtalk_account(
-            user, device, backend, value, None,
-        )
+        self.save_personal_stand_in_with_context(user, device, value, false, None, backend)
     }
 
-    /// Save preflight-verified delegation together with the share sync target.
-    pub fn save_personal_stand_in_for_backend_with_verified_dingtalk_account(
+    fn save_personal_stand_in_with_context(
         &self,
         user: i64,
         device: &str,
-        backend: Option<&str>,
         value: Value,
+        direct_save: bool,
         verified_account: Option<&Value>,
+        backend: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -729,8 +747,8 @@ impl LocalTaskStore {
             user,
             device,
             value,
-            PersonalStandInSaveOptions {
-                direct_save: true,
+            StandInSaveOptions {
+                direct_save,
                 verified_account,
                 backend,
             },
@@ -836,7 +854,7 @@ impl LocalTaskStore {
             user,
             device,
             value,
-            PersonalStandInSaveOptions {
+            StandInSaveOptions {
                 direct_save: true,
                 verified_account: None,
                 backend: None,
@@ -853,7 +871,7 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         mut value: Value,
-        options: PersonalStandInSaveOptions<'_>,
+        options: StandInSaveOptions<'_>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {

@@ -603,7 +603,7 @@ impl RuntimeWorkRpcHandler {
                 .await?;
             let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .save_personal_stand_in_for_backend_with_verified_dingtalk_account(
+                .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
                     user,
                     &self.device_id,
                     connection.as_ref().map(|entry| entry.backend_url.as_str()),

@@ -19,7 +19,6 @@ const selectedSources = primary =>
   primary.connections?.filter(row => row.providerId === provider) ?? []
 
 async function openDingTalk(control) {
-  await openStandInSettings(control)
   await control.command('clickWhenEnabled', id('stand-in-primary-connections-open'))
   await openConnectionTypePicker(control)
   await control.command('clickWhenEnabled', id('stand-in-add-dingtalk-connection'))
@@ -41,6 +40,12 @@ export async function verifyStandInDingTalkDelegation(control, userId, fixture, 
   await fixture.setAuthState('scoped-ready')
   const initial = (await load()).primary
   await control.command('clickWhenEnabled', id('stand-in-primary-open'))
+  await openStandInSettings(control)
+  const preferences = id('stand-in-preferences')
+  await control.command('waitFor', preferences, { visible: true })
+  const initialPreferences = await control.command('getValue', preferences)
+  const preferencesDraft = 'Keep this assistant instruction as an unsaved draft.'
+  await control.command('fill', preferences, { value: preferencesDraft })
   await openDingTalk(control)
   await control.command('waitFor', `${delegation('enable')}:disabled`)
   assert.equal(await control.command('getElementCount', dingtalk('authorize')), '0')
@@ -76,10 +81,20 @@ export async function verifyStandInDingTalkDelegation(control, userId, fixture, 
     ]
   )
   assert.deepEqual(saved.delegation.templates, { document: false, schedule: true, process: true })
+  assert.equal(saved.preferences, initial?.preferences ?? '')
   assert.deepEqual(await fixture.operations(), [], 'Saving does not read messages, send or log in')
 
+  await control.command('clickWhenEnabled', id('stand-in-path-settings'))
+  await control.command('waitFor', preferences, { visible: true })
+  assert.equal(await control.command('getValue', preferences), preferencesDraft)
+  await control.command('clickWhenEnabled', id('stand-in-primary-profile-close'))
+  await control.command('waitFor', id('stand-in-primary-discard'), { visible: true })
+  await control.command('clickWhenEnabled', id('stand-in-primary-keep-editing'))
+  await control.command('waitFor', id('stand-in-primary-discard'), { visible: false })
+  await control.command('fill', preferences, { value: initialPreferences })
   await control.command('clickWhenEnabled', id('stand-in-primary-profile-close'))
   await control.command('waitFor', id('stand-in-profile-panel'), { visible: false })
+  await openStandInSettings(control)
   await openDingTalk(control)
   await control.command('waitFor', id('stand-in-profile-panel'), { text: 'Scoped Group' })
   await control.command('waitFor', id('stand-in-profile-panel'), { text: 'Scoped Contact' })

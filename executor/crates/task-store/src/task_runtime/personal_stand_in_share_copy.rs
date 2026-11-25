@@ -23,8 +23,8 @@ impl LocalTaskStore {
                 user,
                 device,
                 settings,
-                super::personal_stand_in::PersonalStandInSaveOptions {
-                    direct_save: true,
+                super::personal_stand_in::StandInSaveOptions {
+                    direct_save: false,
                     verified_account: None,
                     backend: Some(backend),
                 },

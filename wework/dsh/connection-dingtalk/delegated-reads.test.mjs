@@ -562,11 +562,48 @@ test('delegated private history detects the owner taking over even on a later se
           conversationIds: args.conversationIds,
           senderIds: args.senderIds,
         })),
-      ['0', 'page-two'].map(cursor => ({
+      ['0', 'page-two', '0', 'page-two'].map(cursor => ({
         cursor,
         conversationIds: 'direct',
         senderIds: 'peer,self',
       }))
+    )
+  } finally {
+    dispose()
+  }
+})
+
+test('bounded older group history does not block a verified automatic message', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const questionStart = new Date(at).toISOString()
+    state.search = ({ cursor, start }) => {
+      if (start === questionStart) return searchResult(conversation('group', [message('ask')]))
+      const history = {
+        0: ['history-1', '2026-11-24T00:01:00Z', 'history-2'],
+        'history-2': ['history-2', '2026-11-24T00:02:00Z', 'history-3'],
+        'history-3': ['history-3', '2026-11-24T00:03:00Z', 'history-more'],
+      }[cursor]
+      assert.ok(history, `Unexpected history cursor ${cursor}`)
+      return searchPage(history[2], conversation('group', [message(history[0], history[1])]))
+    }
+
+    const snapshot = await registry.call(providerId, 'readSource', {
+      source,
+      query: { delegatedMessage: { id: 'ask', at, conversationId: 'group' } },
+    })
+
+    assert.equal(snapshot.target.id, 'ask')
+    assert.equal(snapshot.ownerIntervened, false)
+    assert.deepEqual(
+      snapshot.messages.map(row => row.id),
+      ['history-1', 'history-2', 'history-3']
+    )
+    assert.deepEqual(
+      calls.filter(row => row.tool === 'searchMessages').map(row => row.arguments.cursor),
+      ['0', 'history-2', 'history-3', '0']
     )
   } finally {
     dispose()

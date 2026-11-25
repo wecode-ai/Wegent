@@ -12,18 +12,10 @@ import type {
   WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import {
-  CompositedSpinner,
   IssueDetailDraftProvider,
   issueNeedsUser,
   pendingIssueHumanRequests,
 } from '@wegent/collaboration'
-import {
-  SelectContent,
-  SelectItem,
-  SelectRoot,
-  SelectTrigger,
-} from '@wegent/collaboration/controls/SelectParts'
-import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
 import { TabsList, TabsRoot } from '@wegent/collaboration/controls/Tabs'
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
@@ -37,9 +29,8 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { PersonalIssueErrors } from './PersonalIssueErrors'
-import { PersonalIssueList } from './PersonalIssueList'
-import { usePersonalIssueSources } from '@wegent/collaboration/platform'
+import { PersonalHomeIssueActivity } from './PersonalHomeIssueActivity'
+import { PersonalHome, usePersonalIssueSources } from '@wegent/collaboration/platform'
 import { useIndependentIssues } from './independentIssuesContext'
 import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
 
@@ -104,7 +95,7 @@ export function WeworkPersonalHome({
   onOpenProjectIssue?(projectId: string, issueId: string): void
   conversation(active: boolean, work: PersonalHomeCollaborationWork): ReactNode
 }) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
   const isDesktop = useIsDesktop(1024)
   const panelId = useId()
   const composerRegion = useRef<HTMLDivElement>(null)
@@ -180,7 +171,7 @@ export function WeworkPersonalHome({
         ?.focus({ preventScroll: true })
     } else {
       root.scrollTop = listPosition.current
-      const list = composerRegion.current?.closest('main')
+      const list = composerRegion.current?.closest('section')
       const target = returnFocus.current?.isConnected ? returnFocus.current : list
       target?.focus({ preventScroll: true })
     }
@@ -303,197 +294,67 @@ export function WeworkPersonalHome({
         className="isolate flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
         data-testid="personal-home"
       >
-        <main
-          tabIndex={-1}
-          aria-busy={state.loading}
-          data-testid="personal-home-items-region"
-          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:[scrollbar-gutter:stable]"
-        >
-          <div className="w-full max-w-6xl">
-            <header className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-heading-md font-medium">{t('personalHome.title')}</h1>
-                <p className="mt-2 text-base text-text-secondary">{t('personalHome.subtitle')}</p>
-              </div>
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="personal-home-toggle-sidebar"
-                aria-expanded={!sidebarCollapsed}
-                aria-controls={`${panelId}-sidebar`}
-                onClick={() => setSidebarCollapsed(value => !value)}
-                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] lg:inline-flex"
-              >
-                {sidebarCollapsed ? (
-                  <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
-                ) : (
-                  <PanelRightClose aria-hidden="true" className="h-4 w-4" />
-                )}
-                {t(sidebarCollapsed ? 'personalHome.showSidebar' : 'personalHome.hideSidebar')}
-              </ControlButton>
-            </header>
-            <div ref={composerRegion} className="mb-5" data-testid="personal-home-create">
-              {createIssue}
-            </div>
-            <div
-              hidden={firstUse}
-              className={
-                firstUse ? 'hidden' : 'mb-3 flex flex-wrap items-center justify-between gap-3'
-              }
+        <PersonalHome
+          composerRegion={composerRegion}
+          focusComposer={focusComposer}
+          createIssue={createIssue}
+          firstUse={firstUse}
+          setAssignedOnly={setAssignedOnly}
+          setShowCompleted={setShowCompleted}
+          setOrder={setOrder}
+          headerAction={
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="personal-home-toggle-sidebar"
+              aria-expanded={!sidebarCollapsed}
+              aria-controls={`${panelId}-sidebar`}
+              onClick={() => setSidebarCollapsed(value => !value)}
+              className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] lg:inline-flex"
             >
-              <div
-                role="group"
-                aria-label={t('personalHome.issueScope')}
-                className="flex min-w-0 flex-wrap items-center gap-1"
-              >
-                {[
-                  { value: true, label: 'assigned' },
-                  { value: false, label: 'participating' },
-                ].map(option => (
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
-                    key={option.label}
-                    data-testid={`personal-home-scope-${option.label}`}
-                    aria-pressed={assignedOnly === option.value}
-                    onClick={() => setAssignedOnly(option.value)}
-                    className={`min-h-11 rounded-md px-3 text-base md:min-h-8 ${assignedOnly === option.value ? 'bg-muted font-medium text-text-primary' : 'text-text-secondary hover:bg-muted'}`}
-                  >
-                    {t(`personalHome.${option.label}`)}
-                  </ControlButton>
-                ))}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <CompositedSpinner
-                  role="img"
-                  aria-label={t('personalHome.loading')}
-                  aria-hidden={!state.loading}
-                  className={`size-3 text-text-secondary ${state.loading ? '' : 'invisible'}`}
-                />
-                <SelectRoot
-                  value={normalizeSelectValue(order)}
-                  onValueChange={selectedValue => {
-                    if (selectedValue !== null)
-                      return setOrder(selectedValue as PersonalHomeIssueOrder)
-                  }}
-                >
-                  <SelectTrigger
-                    density="compact"
-                    appearance="plain"
-                    aria-label={t('personalHome.sort')}
-                    data-testid="personal-home-sort"
-                    className="wework-native-select"
-                  />
-                  <SelectContent>
-                    {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
-                      <SelectItem key={value} value={String(value)}>
-                        {t(`personalHome.sort_${value}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </SelectRoot>
-                <SelectRoot
-                  value={normalizeSelectValue(showCompleted ? 'all' : 'open')}
-                  onValueChange={selectedValue => {
-                    if (selectedValue !== null) return setShowCompleted(selectedValue === 'all')
-                  }}
-                >
-                  <SelectTrigger
-                    density="compact"
-                    appearance="plain"
-                    aria-label={t('personalHome.filter')}
-                    data-testid="personal-home-filter"
-                    className="wework-native-select"
-                  />
-                  <SelectContent>
-                    <SelectItem value="open">{t('personalHome.open')}</SelectItem>
-                    <SelectItem value="all">{t('personalHome.all')}</SelectItem>
-                  </SelectContent>
-                </SelectRoot>
-              </div>
-            </div>
-            <PersonalIssueErrors state={state} />
-            <PersonalIssueList
-              hideEmpty={firstUse}
-              unassignedUserId={independent?.userId}
-              emptyState={
-                <div data-testid="personal-home-empty" className="py-6">
-                  <p className="text-base text-text-secondary">
-                    {t(
-                      assignedOnly
-                        ? 'personalHome.emptyAssigned'
-                        : showCompleted
-                          ? 'personalHome.emptyParticipation'
-                          : 'personalHome.emptyUnfinished'
-                    )}
-                  </p>
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
-                    data-testid="personal-home-empty-action"
-                    className="mt-2 min-h-11 rounded-md px-2 text-sm text-text-primary hover:bg-muted md:min-h-8"
-                    onClick={() => {
-                      if (assignedOnly || !showCompleted) {
-                        setAssignedOnly(false)
-                        setShowCompleted(true)
-                      } else {
-                        focusComposer()
-                      }
-                    }}
-                  >
-                    {t(
-                      assignedOnly || !showCompleted
-                        ? 'personalHome.viewAllParticipation'
-                        : 'personalHome.startWriting'
-                    )}
-                  </ControlButton>
-                </div>
-              }
-              recentIssue={
-                recentCreation &&
-                recentCreation.assignedOnly === assignedOnly &&
-                recentCreation.order === order
-                  ? issueTabs.find(
-                      (
-                        tab
-                      ): tab is Extract<
-                        (typeof issueTabs)[number],
-                        { project: CollaborationProject }
-                      > =>
-                        tab.project !== null &&
-                        tab.issue.id === recentCreation.issueId &&
-                        tab.issue.cloud_project_id === recentCreation.projectId
-                    )?.issue
-                  : undefined
-              }
-              order={order}
-              userId={userId}
-              localUserIds={localUserIds}
-              state={state}
-              projects={projects}
-              showCompleted={showCompleted}
-              assignedOnly={assignedOnly}
-              onOpenIssue={issue => openIssue(issue, undefined, true)}
-              selectedIssue={activeIssueTab?.issue}
-              active={active}
-              onOpenTask={(issue, binding) =>
-                openIssue(issue, { key: crypto.randomUUID(), binding }, true)
-              }
-            />
-            {state.hasMore && (
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="personal-home-load-more"
-                disabled={!state.canLoadMore}
-                onClick={() => void state.loadMore()}
-                className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
-              >
-                {t('personalHome.loadMore')}
-              </ControlButton>
-            )}
-          </div>
-        </main>
+              {sidebarCollapsed ? (
+                <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
+              ) : (
+                <PanelRightClose aria-hidden="true" className="h-4 w-4" />
+              )}
+              {t(sidebarCollapsed ? 'personalHome.showSidebar' : 'personalHome.hideSidebar')}
+            </ControlButton>
+          }
+          list={{
+            userId,
+            localUserIds,
+            projects,
+            state,
+            showCompleted,
+            assignedOnly,
+            order,
+            active,
+            unassignedUserId: independent?.userId,
+            selectedIssue: activeIssueTab?.issue,
+            onOpenIssue: issue => openIssue(issue, undefined, true),
+            onOpenTask: (issue, binding) =>
+              openIssue(issue, { key: crypto.randomUUID(), binding }, true),
+            renderActivity: props => <PersonalHomeIssueActivity {...props} />,
+            translate: t,
+            language: i18n.language,
+            recentIssue:
+              recentCreation &&
+              recentCreation.assignedOnly === assignedOnly &&
+              recentCreation.order === order
+                ? issueTabs.find(
+                    (
+                      tab
+                    ): tab is Extract<
+                      (typeof issueTabs)[number],
+                      { project: CollaborationProject }
+                    > =>
+                      tab.project !== null &&
+                      tab.issue.id === recentCreation.issueId &&
+                      tab.issue.cloud_project_id === recentCreation.projectId
+                  )?.issue
+                : undefined,
+          }}
+        />
         <aside
           ref={sidebar}
           id={`${panelId}-sidebar`}

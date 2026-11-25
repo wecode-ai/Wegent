@@ -137,7 +137,7 @@ impl LocalTaskStore {
             user,
             device,
             settings.clone(),
-            super::personal_stand_in::PersonalStandInSaveOptions {
+            super::personal_stand_in::StandInSaveOptions {
                 direct_save: false,
                 verified_account: None,
                 backend: None,
@@ -202,7 +202,7 @@ impl LocalTaskStore {
                 user,
                 device,
                 next,
-                super::personal_stand_in::PersonalStandInSaveOptions {
+                super::personal_stand_in::StandInSaveOptions {
                     direct_save: false,
                     verified_account: None,
                     backend,

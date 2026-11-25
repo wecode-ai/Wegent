@@ -311,14 +311,20 @@ test('theme changes retain real content and auxiliary window regressions', () =>
   }
 })
 
-test('extracted routing and test modules retain their parent CI gates', () => {
+test('routing and classifier test changes select the desktop smoke checkpoints', () => {
   for (const path of [
     '.github/scripts/desktop-ci/workbench-paths.sh',
     '.github/scripts/ci-classification-tests/new-feature.sh',
   ]) {
     const desktop = classified(path)
-    assert.equal(JSON.parse(desktop.wework_desktop_core_e2e_matrix).include.length, 10)
-    assert.equal(JSON.parse(desktop.wework_desktop_cloud_e2e_matrix).include.length, 8)
+    assert.deepEqual(
+      JSON.parse(desktop.wework_desktop_core_e2e_matrix).include.map(shard => shard.segments),
+      ['release-package-startup,native-lifecycle']
+    )
+    assert.deepEqual(
+      JSON.parse(desktop.wework_desktop_cloud_e2e_matrix).include.map(shard => shard.segments),
+      ['plugin-runtime-route-refresh']
+    )
     const modules = classified(path, '.github/scripts/classify-ci-changes.sh')
     assert.equal(modules.wework_e2e, 'true')
   }

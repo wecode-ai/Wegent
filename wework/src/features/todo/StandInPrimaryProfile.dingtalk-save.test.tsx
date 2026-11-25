@@ -13,6 +13,7 @@ vi.mock('./StandInConnectionSettings', () => ({
     dingTalk,
   }: {
     dingTalk: {
+      saved: NonNullable<PersonalStandInSettings['primary']>
       onSave(primary: NonNullable<PersonalStandInSettings['primary']>): Promise<boolean>
     }
   }) => {
@@ -24,9 +25,7 @@ vi.mock('./StandInConnectionSettings', () => ({
           onClick={() => {
             void dingTalk
               .onSave({
-                enabled: false,
-                prompt: '',
-                preferences: '',
+                ...dingTalk.saved,
                 model: { runtime: 'codex', provider: 'fixture', model_id: 'model' },
                 connections: [
                   {
@@ -60,12 +59,13 @@ vi.mock('./StandInConnectionSettings', () => ({
   },
 }))
 
-test('closing after the DingTalk scope is accepted does not report unsaved changes', async () => {
+function renderProfile() {
   const { settings, services } = personalStandInFixture()
   settings.primary = {
     enabled: false,
-    prompt: '',
-    preferences: '',
+    selfLearningEnabled: false,
+    prompt: 'Saved instructions',
+    preferences: 'Saved preferences',
   }
   const onSave = vi.fn(async (next: PersonalStandInSettings) => ({
     ...next,
@@ -74,7 +74,7 @@ test('closing after the DingTalk scope is accepted does not report unsaved chang
   const onClose = vi.fn()
   const ref = createRef<StandInSettingsHandle>()
 
-  render(
+  const profile = (settings: PersonalStandInSettings) => (
     <AppPreferencesContext.Provider value={{ preferences: defaultAppPreferences, loaded: true }}>
       <StandInPrimaryProfile
         ref={ref}
@@ -91,12 +91,63 @@ test('closing after the DingTalk scope is accepted does not report unsaved chang
       />
     </AppPreferencesContext.Provider>
   )
+  const view = render(profile(settings))
+  return {
+    settings,
+    onSave,
+    onClose,
+    updateSettings: (saved: PersonalStandInSettings) => view.rerender(profile(saved)),
+  }
+}
 
+async function saveScopeAndReturn() {
   fireEvent.click(screen.getByTestId('stand-in-primary-connections-open'))
   fireEvent.click(await screen.findByTestId('test-save-dingtalk'))
   await screen.findByTestId('test-dingtalk-saved')
+  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+}
 
+test('closing after the DingTalk scope is accepted does not report unsaved changes', async () => {
+  const { onClose } = renderProfile()
+  await saveScopeAndReturn()
   fireEvent.click(screen.getByTestId('stand-in-primary-profile-close'))
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+})
+
+test('saving DingTalk scope preserves unsaved primary instructions and preferences', async () => {
+  const { settings, onSave, onClose, updateSettings } = renderProfile()
+  fireEvent.change(screen.getByTestId('stand-in-primary-ghost-prompt'), {
+    target: { value: 'Draft instructions' },
+  })
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'Draft preferences' },
+  })
+
+  await saveScopeAndReturn()
+  expect(onSave.mock.calls[0]?.[0].primary).toMatchObject({
+    prompt: settings.primary?.prompt,
+    preferences: settings.primary?.preferences,
+  })
+  expect(screen.getByTestId('stand-in-primary-ghost-prompt')).toHaveValue('Draft instructions')
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('Draft preferences')
+
+  const saved = await onSave.mock.results[0].value
+  updateSettings(saved)
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('Draft preferences')
+  fireEvent.click(screen.getByTestId('stand-in-primary-profile-close'))
+  expect(await screen.findByTestId('stand-in-primary-discard')).toBeInTheDocument()
+  expect(onClose).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByTestId('stand-in-primary-keep-editing'))
+  fireEvent.click(screen.getByTestId('stand-in-primary-save'))
+  expect(onSave.mock.calls[1]?.[0]).toMatchObject({
+    version: saved.version,
+    primary: {
+      prompt: 'Draft instructions',
+      preferences: 'Draft preferences',
+      delegation: saved.primary?.delegation,
+      connections: saved.primary?.connections,
+    },
+  })
 })
