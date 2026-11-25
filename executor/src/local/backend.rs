@@ -220,6 +220,7 @@ where
             config,
             transport,
             SessionGatewayProfile::Standalone,
+            None,
         )
     }
 
@@ -228,6 +229,7 @@ where
             config,
             transport,
             SessionGatewayProfile::AppSidecar,
+            None,
         )
     }
 
@@ -235,12 +237,14 @@ where
         config: LocalBackendConfig,
         transport: T,
         session_gateway_profile: SessionGatewayProfile,
+        connection_snapshot: Option<crate::agents::model_gateway::ConnectionSnapshot>,
     ) -> Self {
         let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
         event_hub.ensure_started();
         let device_route_id = Arc::new(Mutex::new(None));
-        let connection_snapshot = Arc::new(Mutex::new(connection_snapshot_from_config(&config)));
+        let connection_snapshot = connection_snapshot
+            .unwrap_or_else(|| Arc::new(Mutex::new(connection_snapshot_from_config(&config))));
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
             RuntimeWorkRpcHandler::with_event_sender_and_backend_connection(
                 config.device_id.clone(),
@@ -273,6 +277,7 @@ where
             transport,
             runtime_work_handler,
             ExecutorEventHub::from_receiver(runtime_event_rx),
+            None,
         )
     }
 
@@ -281,6 +286,7 @@ where
         transport: T,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         event_hub: ExecutorEventHub,
+        connection_snapshot: Option<crate::agents::model_gateway::ConnectionSnapshot>,
     ) -> Self {
         Self::new_with_runtime_work_handler(
             config,
@@ -288,7 +294,7 @@ where
             runtime_work_handler,
             event_hub,
             SessionGatewayProfile::AppSidecar,
-            None,
+            connection_snapshot,
         )
     }
 
@@ -395,11 +401,6 @@ where
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
         self.connection_status = connection_status;
-        self
-    }
-
-    fn with_connection_snapshot(mut self, snapshot: Arc<Mutex<Option<ConnectionConfig>>>) -> Self {
-        self.connection_snapshot = snapshot;
         self
     }
 

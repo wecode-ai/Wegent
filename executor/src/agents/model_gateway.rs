@@ -6,7 +6,7 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    config::device::ConnectionConfig, protocol::ExecutionRequest,
+    config::device::ConnectionConfig, logging::log_executor_event, protocol::ExecutionRequest,
     server::local_model_proxy::GatewayCredentials,
 };
 
@@ -34,10 +34,26 @@ pub(crate) async fn credentials(
         return None;
     }
     let initial = request.model_config["api_key"].as_str()?;
-    if initial != connection.auth_token
-        && gateway_token_owner(&connection.backend_url, initial).await != Some(owner)
-    {
-        return None;
+    if initial != connection.auth_token {
+        let launch_owner = gateway_token_owner(&connection.backend_url, initial).await;
+        if launch_owner != Some(owner) {
+            log_executor_event(
+                "cloud model gateway device credential not bound",
+                &[
+                    ("task_id", request.task_id.clone()),
+                    (
+                        "reason",
+                        if launch_owner.is_some() {
+                            "different_account"
+                        } else {
+                            "owner_lookup_unavailable"
+                        }
+                        .to_owned(),
+                    ),
+                ],
+            );
+            return None;
+        }
     }
     Some(GatewayCredentials::new(
         Arc::clone(snapshot),
