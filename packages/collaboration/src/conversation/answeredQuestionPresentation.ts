@@ -61,12 +61,12 @@ export function hideAnsweredQuestionSummaries(messages: WorkbenchMessage[]): Wor
         ? turnsWithResult.has(message.turnId)
         : resultBeforeNextUser
       const hiddenIds = new Set<string>()
-      for (const segment of getAssistantRenderProjection(message).segments.toReversed()) {
+      for (const segment of [...getAssistantRenderProjection(message).segments].reverse()) {
         if (segment.kind === 'content') {
           resultFollows ||= hasTextResult && Boolean(segment.content.trim())
           continue
         }
-        for (const block of segment.blocks.toReversed()) {
+        for (const block of [...segment.blocks].reverse()) {
           if (imageResults.has(block.id)) resultFollows = true
           if (
             isAnsweredQuestion(block) &&
