@@ -54,7 +54,7 @@ test('attributes a main-thread long task to the matching native turn update', as
   expect(await settled).toBe(true)
 
   expect(probe.stop('measured')).toEqual([
-    { status: 'started', observedAt: 25, longTaskMs: 180 },
+    { status: 'started', observedAt: 25, longTaskMs: 180, longTaskStartMs: 20 },
     { status: 'settled', observedAt: 500, longTaskMs: 0 },
   ])
   expect(listeners.size).toBe(0)

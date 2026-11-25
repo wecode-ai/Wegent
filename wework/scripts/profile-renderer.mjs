@@ -132,13 +132,15 @@ export function installTurnUpdateProbe() {
             index++
           }
           const task = longTasks[index]
+          const matchingTask = task && task.startTime <= observedAt ? task : null
           const frame = longFrames.find(
             entry => entry.startTime <= observedAt && observedAt < entry.startTime + entry.duration
           )
           return {
             status,
             observedAt,
-            longTaskMs: task && task.startTime <= observedAt ? task.duration : 0,
+            longTaskMs: matchingTask?.duration ?? 0,
+            ...(matchingTask && { longTaskStartMs: matchingTask.startTime }),
             ...(frame && {
               frame: {
                 durationMs: frame.duration,
@@ -513,6 +515,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
+  const enforceBudgets = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
   const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
@@ -774,6 +777,8 @@ export function createDesktopScenario({
         })
       }
       let recording = false
+      let recordingTurnCpu = false
+      const command = (method, params) => client({ action: 'command', target, method, params })
       let probingTurnUpdates = false
       try {
         if (measureHistory) {
@@ -834,6 +839,21 @@ export function createDesktopScenario({
         )
         await evaluate(`(${installTurnUpdateProbe.toString()})()`)
         probingTurnUpdates = true
+        let navigationStartUs
+        if (enforceBudgets) {
+          await command('Performance.enable', { timeDomain: 'timeTicks' })
+          const { metrics } = await command('Performance.getMetrics')
+          const navigationStart = metrics.find(metric => metric.name === 'NavigationStart')?.value
+          assert.ok(
+            Number.isFinite(navigationStart),
+            'The renderer did not report its navigation clock'
+          )
+          navigationStartUs = navigationStart * 1_000_000
+          await command('Profiler.enable')
+          await command('Profiler.setSamplingInterval', { interval: 2_000 })
+          await command('Profiler.start')
+          recordingTurnCpu = true
+        }
 
         const controller = new AbortController()
         const collect = async () => {
@@ -894,6 +914,20 @@ export function createDesktopScenario({
           `window.__weworkProfileTurnUpdates.stop(${JSON.stringify(taskId)})`
         )
         probingTurnUpdates = false
+        if (recordingTurnCpu) {
+          recordingTurnCpu = false
+          const { profile } = await command('Profiler.stop')
+          const slowUpdates = turnUpdates.filter(
+            update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
+          )
+          if (slowUpdates.length > 0) {
+            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
+              navigationStartUs,
+              slowUpdates,
+              profile,
+            })
+          }
+        }
         assert.ok(
           turnUpdates.some(update => update.status === 'started'),
           'The profiled task did not receive a started runtime.turn.updated snapshot'
@@ -972,7 +1006,7 @@ export function createDesktopScenario({
           recording = false
           await stopPerformanceRecording(client, resultDir, target, reportPath)
         }
-        if (process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true') {
+        if (enforceBudgets) {
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
@@ -983,6 +1017,7 @@ export function createDesktopScenario({
           if (probingTurnUpdates) await evaluate('window.__weworkProfileTurnUpdates?.stop()')
         } finally {
           try {
+            if (recordingTurnCpu) await command('Profiler.stop').catch(() => {})
             if (recording) await stopPerformanceRecording(client, resultDir, target, reportPath)
           } finally {
             await client({ action: 'detach', target })
