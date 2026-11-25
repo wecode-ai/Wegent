@@ -854,14 +854,10 @@ async function verifyAttachmentOnlyGuidance({ composerSelector, control }) {
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('message-text-attachment') &&
-      (snapshot.text.includes(filename) || snapshot.text.includes(fileContent)),
-    'The running conversation did not show the submitted file',
-    DEFAULT_STEP_TIMEOUT_MS,
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-text-attachment"]`,
+    { text: fileContent, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
 }
 
