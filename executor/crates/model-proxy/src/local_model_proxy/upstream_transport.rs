@@ -88,12 +88,14 @@ pub(super) async fn send_upstream_request_with_rate_limit_retry(
                 ))
                 .build()
                 .map_err(upstream_transport_error)?;
-            let mut authorization =
-                HeaderValue::from_str(&format!("Bearer {}", credentials.current_token()?))
-                    .map_err(|_| HttpError {
-                        status: StatusCode::UNAUTHORIZED,
-                        detail: "Invalid model gateway credential".to_owned(),
-                    })?;
+            let mut authorization = HeaderValue::from_str(&format!(
+                "Bearer {}",
+                credentials.current_token(client).await?
+            ))
+            .map_err(|_| HttpError {
+                status: StatusCode::UNAUTHORIZED,
+                detail: "Invalid model gateway credential".to_owned(),
+            })?;
             authorization.set_sensitive(true);
             request
                 .headers_mut()

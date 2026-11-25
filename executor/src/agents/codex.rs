@@ -4824,6 +4824,7 @@ struct CodexLocalImage {
     source_path: String,
 }
 
+#[cfg(test)]
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
     build_codex_launch_config_with_route_scope(request, &request.task_id, None)
 }

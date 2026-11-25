@@ -234,7 +234,7 @@ struct ResponsesToolCapabilities {
 }
 
 impl LocalModelProxyUpstream {
-    fn resolved_request_url(&self) -> String {
+    pub fn resolved_request_url(&self) -> String {
         self.request_url.clone().unwrap_or_else(|| {
             let path = match self.api_format.as_str() {
                 "anthropic-messages" => "/messages",

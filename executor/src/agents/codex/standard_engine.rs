@@ -331,14 +331,20 @@ impl CodexAppServerEngine {
             defer_interactive_forms: true,
             ..CodexAppServerTurnOptions::default()
         };
-        let request = request.clone();
+        let mut request = request.clone();
         let binary = self.binary.clone();
         let gateway_connection = self.gateway_connection.clone();
         Ok(LiveTurn {
             future: Box::pin(async move {
                 if let Some(connection) = gateway_connection {
-                    options.gateway_credentials =
-                        crate::agents::model_gateway::credentials(&connection, &request).await;
+                    options.gateway_credentials = crate::agents::model_gateway::credentials(
+                        &connection,
+                        &mut request,
+                        None,
+                        false,
+                    )
+                    .await?
+                    .map(|(credentials, _)| credentials);
                 }
                 run_codex_app_server_turn_with_cancel(&binary, request, options).await
             }),
