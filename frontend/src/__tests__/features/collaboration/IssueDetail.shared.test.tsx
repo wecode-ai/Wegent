@@ -666,12 +666,12 @@ describe('shared IssueDetail', () => {
       .fn()
       .mockResolvedValueOnce({ ...issue, priority: 'high', version: 2 })
       .mockResolvedValueOnce(updated)
-    const assign = jest.fn().mockResolvedValue({ ...updated, assignee_user_id: 5, version: 4 })
+      .mockResolvedValueOnce({ ...updated, assignee_user_id: 5, version: 4 })
     const onChange = jest.fn()
     const onAssignmentsChange = jest.fn()
     const onCommentsChange = jest.fn()
     const api = createApi({
-      issues: { update, assign },
+      issues: { update },
     })
     renderDetail(api, {
       agents: [{ id: 'bot-1', name: '代码机器人' }],
@@ -721,10 +721,9 @@ describe('shared IssueDetail', () => {
     expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
     await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+      expect(update).toHaveBeenNthCalledWith(3, issue.id, {
         version: 3,
-        assigneeType: 'user',
-        assigneeId: '5',
+        assigneeUserId: 5,
         notifyAssignee: true,
       })
     )
@@ -736,9 +735,8 @@ describe('shared IssueDetail', () => {
   it.each([true, false])(
     'allows assignment with notifyAssignee=%s without granting permission to edit Issue content',
     async notifyAssignee => {
-      const assign = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
-      const update = jest.fn()
-      const api = createApi({ issues: { assign, update } })
+      const update = jest.fn().mockResolvedValue({ ...issue, assignee_user_id: 5, version: 2 })
+      const api = createApi({ issues: { update } })
       renderDetail(api, { issue: { ...issue, can_edit: false }, members: [member] })
       await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
       const notify = screen.getByTestId('cloud-todo-assignee-notify')
@@ -748,14 +746,13 @@ describe('shared IssueDetail', () => {
       expect(screen.queryByTestId('wework-assignment-notify-confirm')).not.toBeInTheDocument()
       expect(screen.queryByTestId('cloud-todo-save')).not.toBeInTheDocument()
       await waitFor(() =>
-        expect(assign).toHaveBeenCalledWith(project.id, issue.id, {
+        expect(update).toHaveBeenCalledWith(issue.id, {
           version: 1,
-          assigneeType: 'user',
-          assigneeId: '5',
+          assigneeUserId: 5,
           notifyAssignee,
         })
       )
-      expect(update).not.toHaveBeenCalled()
+      expect(update).toHaveBeenCalledTimes(1)
     }
   )
 

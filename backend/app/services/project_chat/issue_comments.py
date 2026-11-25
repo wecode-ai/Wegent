@@ -93,6 +93,8 @@ def list_issue_comments(
                 after_sequence=after_sequence,
                 limit=limit,
             ),
+            # Comment reads may run alongside agent publication.
+            reconcile_ai_state=False,
         )
     activity_ids = {
         message.message_id

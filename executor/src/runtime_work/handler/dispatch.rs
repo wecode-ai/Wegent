@@ -116,6 +116,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.proposal.get" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }
+            "runtime.stand_in.learning.run" => {
+                boxed_rpc(move || async move { self.run_stand_in_learning(payload) })
+            }
             "runtime.stand_in.proposal.resolve" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
             }

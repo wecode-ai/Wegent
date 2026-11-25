@@ -34,6 +34,7 @@ import {
   memberNameById,
   propChipClass,
   overlayControlClass,
+  issuePriorityLabels,
 } from './issueEditorSupport'
 import { ScheduleRangeControl, AvatarMark } from './IssueEditorControls'
 import type { IssueDetailModel } from './useSharedIssueDetailModel'
@@ -137,12 +138,24 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
       value: '',
       label: t('todo.unassigned', '未指派'),
     },
+    ...(!project
+      ? (item?.resource_participants ?? []).map(resource => ({
+          value: `${resource.kind}:${resource.id}` as IssueAssigneeTarget,
+          label: resource.name,
+          group: t(resource.kind === 'group' ? 'issue_creation.group' : 'todo.agents'),
+        }))
+      : []),
     ...projectGroups.map(group => ({
       value: `group:${group.id}` as IssueAssigneeTarget,
       label: group.name,
       group: t('issue_creation.group', '协作小组'),
     })),
-    ...(item?.assignee_group_id && !projectGroups.some(group => group.id === item.assignee_group_id)
+    ...(item?.assignee_group_id &&
+    !projectGroups.some(group => group.id === item.assignee_group_id) &&
+    (project ||
+      !item.resource_participants?.some(
+        resource => resource.kind === 'group' && String(resource.id) === item.assignee_group_id
+      ))
       ? [
           {
             value: `group:${item.assignee_group_id}` as IssueAssigneeTarget,
@@ -203,7 +216,8 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
             canAssign || editable
               ? {
                   canAssignCurrent: canAssign,
-                  ...(editable && editProps.project
+                  currentAssignee: assigneeChanged ? undefined : (assigneeName ?? undefined),
+                  ...(editable && (editProps.project || !item.cloud_project_id)
                     ? {
                         createChild: async (
                           input: import('./useCommentAssignment').CommentChildInput
@@ -255,147 +269,158 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         })
       : null
   const twoColumn =
-    item !== null && (editProps?.project !== undefined || item.invited_only === true)
+    item !== null &&
+    (workspacePanel || editProps?.project !== undefined || item.invited_only === true)
 
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
   // every cell editable in place regardless of where it is rendered.
+  const destinationStatus = createProps?.draftForm?.destinationStatus
+  const propertyTestIds = createProps?.draftForm?.propertyTestIds
+  const selectedStatus = destinationStatus?.value ?? status
   const statusSelect = (
     <IssueDetailStatusSelect
-      testId={isCreate ? 'cloud-todo-create-status' : 'cloud-todo-detail-status'}
+      testId={
+        (destinationStatus ? propertyTestIds?.destinationStatus : propertyTestIds?.status) ??
+        (isCreate ? 'cloud-todo-create-status' : 'cloud-todo-detail-status')
+      }
       accessibleLabel={t('todo.issue_status', '状态')}
-      value={status}
-      onChange={setStatus}
+      value={selectedStatus}
+      onChange={destinationStatus?.onChange ?? setStatus}
       disabled={!editable}
       className={overlayControlClass}
-      statuses={statusOptions}
-      includeUnset={status === ''}
+      statuses={destinationStatus?.options ?? statusOptions}
+      includeUnset={selectedStatus === ''}
     />
   )
   const prioritySelect = (
     <IssueDetailPrioritySelect
-      testId={isCreate ? 'cloud-todo-create-priority' : 'cloud-todo-detail-priority'}
+      testId={
+        propertyTestIds?.priority ??
+        (isCreate ? 'cloud-todo-create-priority' : 'cloud-todo-detail-priority')
+      }
       accessibleLabel={t('todo.issue_priority', '优先级')}
       value={priority}
+      includeNone={
+        createProps?.draftForm ? Boolean(project) : !item || Boolean(item.cloud_project_id)
+      }
       onChange={setPriority}
       disabled={!editable}
       className={overlayControlClass}
-      labels={{
-        none: t('todo.priority_none', '无'),
-        low: t('todo.priority_low', '低'),
-        medium: t('todo.priority_medium', '普通'),
-        high: t('todo.priority_high', '高'),
-        urgent: t('todo.priority_urgent', '紧急'),
-      }}
+      labels={issuePriorityLabels(t)}
     />
   )
-  const assigneeSelect = (
+  const assigneeValue = (
     <>
-      <SearchableSelect<IssueAssigneeTarget>
-        testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
-        accessibleLabel={t('todo.assignee', '负责人')}
-        appearance={isCreate ? 'outline' : 'property'}
-        density={isCreate ? 'default' : 'dense'}
-        value={assigneeTarget}
-        onSearchChange={setAssigneeQuery}
-        searchStatus={
-          assigneeSearch.error ? (
-            <p role="alert">
-              {assigneeSearch.error}
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="cloud-todo-assignee-search-retry"
-                className="min-h-11 px-2 text-sm underline md:min-h-8"
-                onClick={assigneeSearch.retry}
-              >
-                {t('common.retry', '重试')}
-              </ControlButton>
-            </p>
-          ) : assigneeSearch.loading ? (
-            <p role="status">…</p>
-          ) : null
-        }
-        onChange={value => {
-          if (!outsideTargetUser(value)) {
-            changeProperty('assigneeTarget', value)
-            return
-          }
-          void confirmOutsideTarget(value).then(approved => {
-            if (approved) changeProperty('assigneeTarget', value)
-          })
-        }}
-        disabled={!canAssign}
-        className={cn(
-          'relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default',
-          workspacePanel && 'min-w-0 max-w-full'
-        )}
-        triggerContent={
-          <>
-            {assigneeTarget.startsWith('group:') ? (
-              <UsersRound aria-hidden="true" size={16} />
-            ) : assigneeTarget.startsWith('agent:') || assigneeTarget.startsWith('team:') ? (
-              <Bot aria-hidden="true" size={16} />
-            ) : (
-              <CircleUserRound aria-hidden="true" size={16} />
-            )}
-            <strong className={cn(workspacePanel ? 'min-w-0 truncate font-medium' : 'font-normal')}>
-              {assigneeName ?? t('todo.unassigned', '未指派')}
-            </strong>
-            {item && !assigneeChanged && !workspacePanel
-              ? extensions?.renderAssignmentReceipts?.(item)
-              : null}
-            {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
-          </>
-        }
-        searchPlaceholder={t('todo.search_assignee', '搜索负责人')}
-        emptyLabel={t('todo.no_matching_assignee', '没有匹配的负责人')}
-        actions={
-          isCreate && canAssign
-            ? [
-                ...(props.onAddAssigneeMember
-                  ? [
-                      {
-                        label: t('todo.assignee_add_member', '添加人员'),
-                        icon: <UserPlus className="h-4 w-4" />,
-                        testId: 'cloud-todo-create-assignee-add-member',
-                        onSelect: props.onAddAssigneeMember,
-                      },
-                    ]
-                  : []),
-                ...(props.onAddAssigneeAgent
-                  ? [
-                      {
-                        label: t('todo.assignee_add_agent', '添加智能体'),
-                        icon: <Bot className="h-4 w-4" />,
-                        testId: 'cloud-todo-create-assignee-add-agent',
-                        onSelect: props.onAddAssigneeAgent,
-                      },
-                    ]
-                  : []),
-              ]
-            : undefined
-        }
-        groupLimit={5}
-        showAllLabel={(_group, count) =>
-          t('todo.view_all_count', '查看全部 {{count}} 个', { count })
-        }
-        footer={
-          !isCreate && canAssign ? (
-            <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
-              <Checkbox
-                data-testid="cloud-todo-assignee-notify"
-                checked={notifyAssignee}
-                onCheckedChange={checked => setNotifyAssignee(checked === true)}
-              />
-              {t('todo.notify_assignee')}
-            </label>
-          ) : undefined
-        }
-        options={assigneeOptions}
-      />
+      {assigneeTarget.startsWith('group:') ? (
+        <UsersRound aria-hidden="true" size={16} />
+      ) : assigneeTarget.startsWith('agent:') || assigneeTarget.startsWith('team:') ? (
+        <Bot aria-hidden="true" size={16} />
+      ) : (
+        <CircleUserRound aria-hidden="true" size={16} />
+      )}
+      <strong className={cn(workspacePanel ? 'min-w-0 truncate font-medium' : 'font-normal')}>
+        {assigneeName ?? t('todo.unassigned', '未指派')}
+      </strong>
+      {item && !assigneeChanged && !workspacePanel
+        ? extensions?.renderAssignmentReceipts?.(item)
+        : null}
+      {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
     </>
   )
+  const assigneeSelect =
+    !canAssign && workspacePanel ? (
+      <span className="inline-flex min-w-0 items-center gap-1.5">{assigneeValue}</span>
+    ) : (
+      <>
+        <SearchableSelect<IssueAssigneeTarget>
+          testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
+          accessibleLabel={t('todo.assignee', '负责人')}
+          appearance={isCreate ? 'outline' : 'property'}
+          density={isCreate ? 'default' : 'dense'}
+          value={assigneeTarget}
+          onSearchChange={setAssigneeQuery}
+          searchStatus={
+            assigneeSearch.error ? (
+              <p role="alert">
+                {assigneeSearch.error}
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="cloud-todo-assignee-search-retry"
+                  className="min-h-11 px-2 text-sm underline md:min-h-8"
+                  onClick={assigneeSearch.retry}
+                >
+                  {t('common.retry', '重试')}
+                </ControlButton>
+              </p>
+            ) : assigneeSearch.loading ? (
+              <p role="status">…</p>
+            ) : null
+          }
+          onChange={value => {
+            if (!outsideTargetUser(value)) {
+              changeProperty('assigneeTarget', value)
+              return
+            }
+            void confirmOutsideTarget(value).then(approved => {
+              if (approved) changeProperty('assigneeTarget', value)
+            })
+          }}
+          disabled={!canAssign}
+          className={cn(
+            'relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default',
+            workspacePanel && 'min-w-0 max-w-full'
+          )}
+          triggerContent={assigneeValue}
+          searchPlaceholder={t('todo.search_assignee', '搜索负责人')}
+          emptyLabel={t('todo.no_matching_assignee', '没有匹配的负责人')}
+          actions={
+            isCreate && canAssign
+              ? [
+                  ...(props.onAddAssigneeMember
+                    ? [
+                        {
+                          label: t('todo.assignee_add_member', '添加人员'),
+                          icon: <UserPlus className="h-4 w-4" />,
+                          testId: 'cloud-todo-create-assignee-add-member',
+                          onSelect: props.onAddAssigneeMember,
+                        },
+                      ]
+                    : []),
+                  ...(props.onAddAssigneeAgent
+                    ? [
+                        {
+                          label: t('todo.assignee_add_agent', '添加智能体'),
+                          icon: <Bot className="h-4 w-4" />,
+                          testId: 'cloud-todo-create-assignee-add-agent',
+                          onSelect: props.onAddAssigneeAgent,
+                        },
+                      ]
+                    : []),
+                ]
+              : undefined
+          }
+          groupLimit={5}
+          showAllLabel={(_group, count) =>
+            t('todo.view_all_count', '查看全部 {{count}} 个', { count })
+          }
+          footer={
+            !isCreate && canAssign ? (
+              <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
+                <Checkbox
+                  data-testid="cloud-todo-assignee-notify"
+                  checked={notifyAssignee}
+                  onCheckedChange={checked => setNotifyAssignee(checked === true)}
+                />
+                {t('todo.notify_assignee')}
+              </label>
+            ) : undefined
+          }
+          options={assigneeOptions}
+        />
+      </>
+    )
   const outsideAssigneeDialog = outsideAssignee && (
     <ConfirmationDialog
       title={confirmPersonLabel}
@@ -456,9 +481,19 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
       invalid={scheduleRangeInvalid}
       triggerClassName={triggerClassName}
       showLabel={showLabel}
-      startTestId={isCreate ? 'cloud-todo-create-start-date' : 'cloud-todo-detail-start-date'}
-      dueTestId={isCreate ? 'cloud-todo-create-due-date' : 'cloud-todo-detail-due-date'}
-      onStartDateChange={setStartDate}
+      startTestId={
+        propertyTestIds?.schedule ??
+        (isCreate ? 'cloud-todo-create-start-date' : 'cloud-todo-detail-start-date')
+      }
+      dueTestId={
+        propertyTestIds?.due ??
+        (isCreate ? 'cloud-todo-create-due-date' : 'cloud-todo-detail-due-date')
+      }
+      onStartDateChange={
+        (createProps?.draftForm ? project : !item || item.cloud_project_id)
+          ? setStartDate
+          : undefined
+      }
       onDueDateChange={setDueDate}
       translate={t}
     />
@@ -466,9 +501,12 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
   const statusValue = (
     <>
       <span
-        className={cn('h-2 w-2 shrink-0 rounded-full', columnDotClasses[status] ?? 'bg-zinc-400')}
+        className={cn(
+          'h-2 w-2 shrink-0 rounded-full',
+          columnDotClasses[selectedStatus] ?? 'bg-zinc-400'
+        )}
       />
-      {statusLabel}
+      {destinationStatus?.options.find(option => option.id === selectedStatus)?.name ?? statusLabel}
     </>
   )
   const issueSecurityLabel =
@@ -574,7 +612,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
           </span>
         </span>
       )}
-      {!twoColumn ? parentChip : null}
+      {!twoColumn && (!createProps?.draftForm || project) ? parentChip : null}
       {scheduleRangeControl(cn(propChipClass, !startDate && !dueDate && 'text-text-secondary'))}
     </>
   )
@@ -595,10 +633,13 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
   const collaboratorPickerProps = {
     members: availableCollaborators,
     projectMemberIds: new Set(projectMembers.map(member => member.user_id)),
-    excludedUserIds: new Set(collaborators.map(member => member.user_id)),
+    excludedUserIds: new Set([
+      ...collaborators.map(member => member.user_id),
+      ...(item && !item.cloud_project_id ? [item.created_by_user_id] : []),
+    ]),
     onAdd: addCollaborator,
-    searchUsers: searchIssueUsers,
-    outsideLabel,
+    searchUsers: editorPort.collaborators.searchUsers ?? searchIssueUsers,
+    outsideLabel: item?.cloud_project_id ? outsideLabel : t('taskIssueShare.independentVisibility'),
     retryLabel: t('common.retry', '重试'),
     confirmLabel: confirmPersonLabel,
     cancelLabel: t('common.cancel', '取消'),
@@ -637,26 +678,28 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
           {collaborators.length > collaboratorPreview.length ? (
             <span className="ml-2">+{collaborators.length - collaboratorPreview.length}</span>
           ) : null}
-          <ControlButton
-            variant="unstyled"
-            type="button"
-            data-testid="cloud-todo-add-collaborator"
-            aria-label={t('todo.add_collaborator', '添加参与者')}
-            aria-describedby={
-              !collaboratorEditingSupported ? collaboratorAvailabilityId : undefined
-            }
-            disabled={!canEditCollaborators}
-            onClick={() => {
-              setAddingCollaborator(current => !current)
-              setCollaboratorError(null)
-            }}
-            className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
-              collaboratorPreview.length > 0 && '-ml-2'
-            )}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </ControlButton>
+          {item && (item.cloud_project_id || canEditCollaborators) ? (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="cloud-todo-add-collaborator"
+              aria-label={t('todo.add_collaborator', '添加参与者')}
+              aria-describedby={
+                !collaboratorEditingSupported ? collaboratorAvailabilityId : undefined
+              }
+              disabled={!canEditCollaborators}
+              onClick={() => {
+                setAddingCollaborator(current => !current)
+                setCollaboratorError(null)
+              }}
+              className={cn(
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
+                collaboratorPreview.length > 0 && '-ml-2'
+              )}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </ControlButton>
+          ) : null}
           {collaboratorAvailabilityNote}
           {collaboratorEditingSupported &&
           collaborators.length === 0 &&
@@ -686,10 +729,16 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         data-testid="cloud-todo-current-assignment"
       >
         <div className="task-detail-workspace-properties-grid">
-          <RailProp label={t('todo.parent_issue', '父任务')} control={parentSelect}>
-            <span className="task-detail-workspace-tag">{parentLabel}</span>
-          </RailProp>
-          {commentActions ? (
+          {item.cloud_project_id ? (
+            <RailProp label={t('todo.parent_issue', '父任务')} control={parentSelect}>
+              <span className="task-detail-workspace-tag">{parentLabel}</span>
+            </RailProp>
+          ) : (
+            <RailProp label={t('todo.creator', '创建人')} clickable={false}>
+              {creator ?? `#${item.created_by_user_id}`}
+            </RailProp>
+          )}
+          {commentActions?.boardName ? (
             <RailProp label={t('todo.comment_board_position')} clickable={false} wrapValue>
               <span
                 data-testid="issue-current-board-position"
@@ -705,10 +754,10 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
           <RailProp label={t('todo.issue_priority', '优先级')} control={prioritySelect}>
             <span className="task-detail-workspace-tag">
               {t(`todo.priority_${priority}`, priority)}
-              <ChevronDown className="h-3 w-3" />
+              {editable ? <ChevronDown className="h-3 w-3" /> : null}
             </span>
           </RailProp>
-          {showAssignee ? (
+          {showAssignee && item.cloud_project_id ? (
             item.assignment_history?.length ? (
               <IssueAssignmentHistoryDisclosure
                 key={item.id}
@@ -748,7 +797,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         api={editorPort.milestones}
         compact={!isCreate}
         appearance="property"
-        projectId={createProps?.project.id ?? item?.cloud_project_id ?? ''}
+        projectId={project?.id ?? item?.cloud_project_id ?? ''}
         value={isCreate ? createMilestoneId : (item?.milestone_id ?? null)}
         onMissingValue={isCreate ? () => setCreateMilestoneId(null) : undefined}
         disabled={!editable || saving}

@@ -339,6 +339,9 @@ export function TaskIssueShare({
           userId={Number(cloud.user.id)}
           issueId={null}
           shareDraft={draft}
+          onOpenChildTask={issue => {
+            if (openWeworkScheme(weworkPersonalIssueScheme(issue.id))) close()
+          }}
           onSaved={() => void refreshLinks()}
           onOpenProjectIssue={(projectId, issueId, restricted) => {
             setProjectIssue({

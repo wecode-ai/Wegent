@@ -2,6 +2,7 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
@@ -75,6 +76,7 @@ export function StandInPrimaryProfile({
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
+  const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
   const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
@@ -103,6 +105,7 @@ export function StandInPrimaryProfile({
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
   >(initialCalendar || initialConnectionProvider ? 'connections' : 'main')
+  if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
@@ -267,7 +270,11 @@ export function StandInPrimaryProfile({
                 value={draft.preferences}
                 disabled={blocked}
                 onChange={event => setDraft({ ...draft, preferences: event.target.value })}
-                placeholder={t('standIn.workspace.profile_instructions_placeholder')}
+                placeholder={t(
+                  separatePrompt
+                    ? 'standIn.workspace.ghost_private_preferences_placeholder'
+                    : 'standIn.workspace.profile_instructions_placeholder'
+                )}
                 rows={5}
                 className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none placeholder:text-text-secondary"
               />
@@ -280,14 +287,6 @@ export function StandInPrimaryProfile({
               )}
             </span>
           </label>
-          <StandInSelfLearningSetting
-            enabled={draft.selfLearningEnabled}
-            savedEnabled={saved.selfLearningEnabled}
-            disabled={blocked}
-            onChange={selfLearningEnabled =>
-              setDraft(current => ({ ...current, selfLearningEnabled }))
-            }
-          />
           <div className="mt-6">
             <StandInSettingsEntry
               label={t('standIn.workspace.connections')}
@@ -418,6 +417,17 @@ export function StandInPrimaryProfile({
       />
       {view === 'main' && (
         <StandInSettingsShortcuts shortcuts={shortcuts} disabled={blocked} onOpen={setView} />
+      )}
+      {view === 'main' && experimental && (
+        <StandInSelfLearningSetting
+          enabled={draft.selfLearningEnabled}
+          disabled={blocked}
+          onChange={selfLearningEnabled =>
+            setDraft(current => ({ ...current, selfLearningEnabled }))
+          }
+          report={shortcuts?.find(shortcut => shortcut.id === 'revision')}
+          onOpenReport={() => setView('revision')}
+        />
       )}
       {!scheduleDirty && !shortcutPage && (
         <StandInSettingsActions

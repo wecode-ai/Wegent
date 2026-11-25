@@ -77,7 +77,9 @@ projectTest(
         recipientPage.getByTestId('personal-issues-assigned').getByRole('heading', { level: 1 })
       ).toHaveText(/^(Needs my action|待我处理)$/)
       await expect(recipientPage.getByTestId(`independent-issue-${issue.id}`)).toBeVisible()
-      await expect(dialog.getByRole('heading', { name: title })).toBeVisible()
+      const issueTitle = dialog.getByTestId('cloud-todo-detail-title')
+      await expect(issueTitle).toBeVisible()
+      await expect(issueTitle).toHaveValue(title)
       await expect(dialog).toContainText('Confirm the reproduction')
       const comment = 'Reproduced. I will follow up here.'
       await dialog.getByTestId('independent-issue-comment').fill(comment)
@@ -131,7 +133,7 @@ projectTest(
       await expect(recipientPage).toHaveURL(
         new RegExp(`${scheduledProject.path}/issues/${issue.id}$`)
       )
-      await expect(recipientPage.getByTestId('cloud-todo-detail-title')).toContainText(title)
+      await expect(recipientPage.getByTestId('cloud-todo-detail-title')).toHaveValue(title)
     } finally {
       await context.close()
       if (!moved) {
