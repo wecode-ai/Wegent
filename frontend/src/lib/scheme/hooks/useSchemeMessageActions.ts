@@ -119,7 +119,7 @@ export function useSchemeMessageActions(config: SchemeMessageActionsConfig): voi
       const text = detail?.text?.trim()
       if (!text) return
 
-      const teamId = detail?.team ? Number(detail.team) : undefined
+      const teamId = detail?.team === undefined ? undefined : Number(detail.team)
       dispatchAction({ type: 'send', text, teamId })
     }
 

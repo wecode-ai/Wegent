@@ -56,6 +56,7 @@ afterEach(() => {
 })
 
 it('prefills immediately and sends through the latest callback after selection is ready', () => {
+  setQuery('q=hello&autoSend=true&teamId=20&recommend=1&projectId=3')
   const initial = props({ isTeamSelectionReady: false })
   const { rerender } = render(<QueryParamAutoSend {...initial} />)
 
@@ -113,6 +114,49 @@ it('cleans the query when sending rejects without task navigation', async () => 
   expect(mockReplace).toHaveBeenCalledWith('/chat?projectId=3')
   advance(1000)
   expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
+})
+
+it('handles a second URL prompt without resending the original on back navigation', () => {
+  const initial = props()
+  const { rerender } = render(<QueryParamAutoSend {...initial} />)
+  expect(initial.onSendMessage).toHaveBeenCalledWith('hello')
+
+  setQuery('q=hello&autoSend=true&projectId=3&taskId=42')
+  rerender(<QueryParamAutoSend {...initial} hasTaskId />)
+  expect(mockReplace).toHaveBeenLastCalledWith('/chat?projectId=3&taskId=42')
+
+  setQuery('q=second&autoSend=true&teamId=20')
+  rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} />)
+  expect(initial.onPrefillMessage).toHaveBeenLastCalledWith('second')
+  expect(initial.onSendMessage).toHaveBeenLastCalledWith('second')
+
+  setQuery('q=hello&autoSend=true&projectId=3')
+  rerender(<QueryParamAutoSend {...initial} />)
+  advance()
+  expect(initial.onSendMessage).toHaveBeenCalledTimes(2)
+})
+
+it('leaves a replacement link intact when the earlier send rejects', async () => {
+  let rejectFirst!: (error: Error) => void
+  const onSendMessage = jest
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectFirst = reject
+        })
+    )
+    .mockResolvedValue(undefined)
+  const initial = props({ onSendMessage })
+  const { rerender } = render(<QueryParamAutoSend {...initial} />)
+
+  setQuery('q=new+draft&teamId=20')
+  await act(async () => rejectFirst(new Error('Send failed')))
+  expect(mockReplace).not.toHaveBeenCalled()
+
+  rerender(<QueryParamAutoSend {...initial} selectedTeam={recentTeam} />)
+  expect(initial.onPrefillMessage).toHaveBeenLastCalledWith('new draft')
+  expect(onSendMessage).toHaveBeenCalledTimes(1)
 })
 
 it('waits for the requested team name to commit', () => {
@@ -221,10 +265,12 @@ it('only prefills when automatic sending is not requested', () => {
   expect(jest.getTimerCount()).toBe(0)
 })
 
-it('ignores query text while viewing an existing task', () => {
+it('ignores the same query action when it was opened with an existing task', () => {
   const initial = props({ hasTaskId: true })
-  render(<QueryParamAutoSend {...initial} />)
+  const { rerender } = render(<QueryParamAutoSend {...initial} />)
 
+  advance(400)
+  rerender(<QueryParamAutoSend {...initial} hasTaskId={false} />)
   advance(400)
   expect(initial.onPrefillMessage).not.toHaveBeenCalled()
   expect(initial.onSendMessage).not.toHaveBeenCalled()

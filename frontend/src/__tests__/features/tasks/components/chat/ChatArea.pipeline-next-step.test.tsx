@@ -1100,6 +1100,7 @@ describe('ChatArea selection while the catalog loads', () => {
     mockUrlTeam = { ...defaultTeam, id: 65 }
     view.rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
     send('99')
+    send('')
     expect(mockHandleSendMessage).not.toHaveBeenCalled()
     send()
     expect(mockAutoSentTeamIds).toEqual([65])
