@@ -106,7 +106,7 @@ optional = true
 [dependencies.url]
 version = "2.5.4"
 
-[dev-dependencies.cargo-tarpaulin]
+[target.'cfg(unix)'.dev-dependencies.cargo-tarpaulin]
 version = "0.18.5"
 
 [dev-dependencies.serial_test]
@@ -117,7 +117,13 @@ version = "1.40.0"
 features = [
     "macros",
     "rt-multi-thread",
+    "net",
+    "sync",
+    "time",
 ]
+
+[dev-dependencies.tokio-tungstenite]
+version = "0.21"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

@@ -12,7 +12,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 use tf_rust_engineio::{
@@ -21,7 +21,7 @@ use tf_rust_engineio::{
 
 #[derive(Clone)]
 pub(crate) struct Socket {
-    engine_client: Arc<EngineClient>,
+    engine_client: Arc<Mutex<Option<EngineClient>>>,
     connected: Arc<AtomicBool>,
     generator: StreamGenerator<Packet>,
 }
@@ -32,7 +32,7 @@ impl Socket {
         let connected = Arc::new(AtomicBool::default());
 
         Ok(Socket {
-            engine_client: Arc::new(engine_client.clone()),
+            engine_client: Arc::new(Mutex::new(Some(engine_client.clone()))),
             connected: connected.clone(),
             generator: StreamGenerator::new(Self::stream(engine_client, connected)),
         })
@@ -41,7 +41,7 @@ impl Socket {
     /// Connects to the server. This includes a connection of the underlying
     /// engine.io client and afterwards an opening socket.io request.
     pub async fn connect(&self) -> Result<()> {
-        self.engine_client.connect().await?;
+        self.engine_client()?.connect().await?;
 
         // store the connected value as true, if the connection process fails
         // later, the value will be updated
@@ -50,32 +50,47 @@ impl Socket {
         Ok(())
     }
 
-    /// Disconnects from the server by sending a socket.io `Disconnect` packet. This results
-    /// in the underlying engine.io transport to get closed as well.
+    /// Detach transport references before awaiting network shutdown.
+    async fn detach_transport(&self) -> Option<EngineClient> {
+        self.connected.store(false, Ordering::Release);
+        let engine_client = self.engine_client.lock().unwrap().take();
+        // Engine.IO 0.9.2 only sends Close; it does not release its transport.
+        // Remove both references before sending, so failure/cancellation also
+        // drops the WebSocket instead of leaving it in this socket's stream.
+        self.generator.clear().await;
+        engine_client
+    }
+
+    /// Release local transport references without waiting for a remote Close.
+    pub(crate) async fn release_transport(&self) {
+        drop(self.detach_transport().await);
+    }
+
+    /// Send Engine.IO Close after releasing this socket's transport references.
     pub async fn disconnect(&self) -> Result<()> {
-        if self.is_engineio_connected() {
-            self.engine_client.disconnect().await?;
-        }
-        if self.connected.load(Ordering::Acquire) {
-            self.connected.store(false, Ordering::Release);
+        if let Some(client) = self.detach_transport().await {
+            if client.is_connected() {
+                client.disconnect().await?;
+            }
         }
         Ok(())
     }
 
     /// Sends a `socket.io` packet to the server using the `engine.io` client.
     pub async fn send(&self, packet: Packet) -> Result<()> {
-        if !self.is_engineio_connected() || !self.connected.load(Ordering::Acquire) {
+        let engine_client = self.engine_client()?;
+        if !engine_client.is_connected() || !self.connected.load(Ordering::Acquire) {
             return Err(Error::IllegalActionBeforeOpen());
         }
 
         // the packet, encoded as an engine.io message packet
         let engine_packet = EnginePacket::new(EnginePacketId::Message, Bytes::from(&packet));
-        self.engine_client.emit(engine_packet).await?;
+        engine_client.emit(engine_packet).await?;
 
         if let Some(attachments) = packet.attachments {
             for attachment in attachments {
                 let engine_packet = EnginePacket::new(EnginePacketId::MessageBinary, attachment);
-                self.engine_client.emit(engine_packet).await?;
+                engine_client.emit(engine_packet).await?;
             }
         }
 
@@ -168,8 +183,19 @@ impl Socket {
         Ok(socket_packet)
     }
 
-    fn is_engineio_connected(&self) -> bool {
-        self.engine_client.is_connected()
+    fn engine_client(&self) -> Result<EngineClient> {
+        self.engine_client
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(Error::IllegalActionBeforeOpen())
+    }
+
+    pub(crate) fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Acquire)
+            && self
+                .engine_client()
+                .is_ok_and(|client| client.is_connected())
     }
 }
 

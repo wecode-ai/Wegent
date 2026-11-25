@@ -156,6 +156,7 @@ mod loop_tasks;
 mod mcp;
 mod milestones;
 mod personal_issues;
+pub use wegent_project_notifications::{IssueImRecipient, IssueImRecipientResolver};
 mod project_coordination;
 mod project_group_roles;
 #[cfg(test)]

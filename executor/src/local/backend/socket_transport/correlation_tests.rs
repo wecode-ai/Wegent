@@ -263,3 +263,138 @@ async fn failed_capability_ack_requests_reconnect_but_cannot_close_a_new_generat
     }
     server.await.unwrap();
 }
+
+struct LiveConnection(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for LiveConnection {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+async fn server(
+    response: Option<&'static str>,
+) -> (
+    LocalBackendConfig,
+    Arc<std::sync::atomic::AtomicUsize>,
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server_live = live.clone();
+    let (namespace_sender, namespace_requests) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        let mut sessions = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (stream, _) = accepted.unwrap();
+                    let live = server_live.clone();
+                    let namespace_sender = namespace_sender.clone();
+                    live.fetch_add(1, Ordering::SeqCst);
+                    sessions.spawn(async move {
+                        let _live = LiveConnection(live);
+                        let mut socket = accept_async(stream).await.unwrap();
+                        socket.send(Message::Text(
+                            r#"0{"sid":"auth-test","upgrades":[],"pingInterval":100,"pingTimeout":1000,"maxPayload":1000000}"#.into(),
+                        )).await.unwrap();
+                        let mut ping = tokio::time::interval(Duration::from_millis(100));
+                        loop {
+                            tokio::select! {
+                                message = socket.next() => {
+                                    match message {
+                                        Some(Ok(Message::Text(packet))) if packet.starts_with("40/local-executor,") => {
+                                            let _ = namespace_sender.send(());
+                                            if let Some(response) = response {
+                                                if socket.send(Message::Text(response.into())).await.is_err() {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                                        _ => {}
+                                    }
+                                }
+                                _ = ping.tick() => {
+                                    if socket.send(Message::Text("2".into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                _ = sessions.join_next(), if !sessions.is_empty() => {}
+            }
+        }
+    });
+    let mut config =
+        LocalBackendConfig::from_device_config(crate::config::device::DeviceConfig::default());
+    config.backend_url = format!("http://{address}");
+    config.socket_url = config.backend_url.clone();
+    config.auth_token = "invalid-test-token".into();
+    config.update = crate::config::device::UpdateConfig::default();
+    (config, live, namespace_requests, task)
+}
+
+async fn assert_released(live: &std::sync::atomic::AtomicUsize) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while live.load(Ordering::SeqCst) != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("failed connection must release its WebSocket, including a peer still sending pings");
+}
+
+#[tokio::test]
+async fn rejected_namespace_fails_immediately_and_retries_do_not_accumulate_connections() {
+    let (config, live, _namespace_requests, server) = server(Some(
+        r#"44/local-executor,{"message":"Invalid or expired API key"}"#,
+    ))
+    .await;
+    let transport = SocketIoTransport::default();
+    for _ in 0..8 {
+        let result = tokio::time::timeout(Duration::from_secs(2), transport.connect(&config))
+            .await
+            .expect("CONNECT_ERROR must wake setup without waiting for the namespace timeout");
+        let error = result.unwrap_err();
+        assert!(error.contains("token"), "{error}");
+        assert!(transport.client.lock().await.is_none());
+        assert_released(&live).await;
+    }
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn namespace_timeout_releases_a_peer_that_keeps_responding_to_engineio() {
+    let (config, live, _namespace_requests, server) = server(None).await;
+    let transport = SocketIoTransport::default();
+    assert!(transport
+        .connect(&config)
+        .await
+        .unwrap_err()
+        .contains("timed out"));
+    assert_released(&live).await;
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn cancelled_namespace_setup_releases_the_engineio_connection() {
+    let (config, live, mut namespace_requests, server) = server(None).await;
+    let transport = SocketIoTransport::default();
+    let connection = tokio::spawn(async move { transport.connect(&config).await });
+    tokio::time::timeout(Duration::from_secs(2), namespace_requests.recv())
+        .await
+        .expect("namespace setup must reach the server before cancellation")
+        .expect("protocol server stopped before receiving the namespace request");
+    connection.abort();
+    let _ = connection.await;
+    assert_released(&live).await;
+    server.abort();
+    let _ = server.await;
+}
