@@ -4,4 +4,3 @@
       inject:
         - webServer
         - profileContext
-        - weworkDesktop

@@ -18,7 +18,7 @@ import { ConnectionDependencies } from '@wegent/dsh-plugin-runtime/connection-de
 import { createWebAuthoring } from './web-authoring.js'
 
 export const name = 'wework-connection-host'
-export const inject = ['webServer', 'profileContext', 'weworkDesktop']
+export const inject = ['webServer', 'profileContext']
 export const BASE_PATH = '/wework/connections/v1/rpc'
 
 export async function apply(ctx) {
@@ -44,7 +44,8 @@ export async function apply(ctx) {
     beforeRequest: () => publishHost(),
   })
   const { registry } = runtime
-  const webAuthoring = createWebAuthoring(registry, () => ctx.weworkDesktop)
+  // Only website authoring needs the desktop bridge. The catalog also serves headless devices.
+  const webAuthoring = createWebAuthoring(registry, () => ctx.reflect.get('weworkDesktop'))
   const publishHost = async (poll = false, signal) => {
     const port = ctx.webServer.port
     if (port)

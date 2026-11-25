@@ -2,6 +2,17 @@
   "order": 206000,
   "scenario": "./scenarios/website-connection.scenario.mjs",
   "scenarioOnly": true,
+  "paths": [
+    "wework/dsh/connection-host/cordis.patch.yml",
+    "wework/dsh/connection-host/index.js",
+    "wework/dsh/connection-host/web-authoring.js",
+    "wework/dsh/plugin-runtime/connection-http.js",
+    "wework/dsh/plugin-runtime/web-connection-*.js",
+    "wework/electron/src/host/web-connection-*.ts",
+    "wework/src/api/webConnections.ts",
+    "wework/src/components/layout/workspace-panels/WebsiteConnectionPanel.tsx",
+    "wework/src/features/todo/generateWebsiteConnection.ts"
+  ],
   "ci": {
     "core": {
       "order": 152000,
