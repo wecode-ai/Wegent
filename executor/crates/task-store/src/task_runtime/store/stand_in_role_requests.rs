@@ -400,7 +400,8 @@ impl LocalTaskStore {
                       AND json_extract(metadata,'$.taskAddress') IS NULL
                       AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0)
                   OR (?4 AND json_extract(metadata,'$.attempt')>0
-                      AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0))
+                      AND (coalesce(json_extract(metadata,'$.cancelRequested'),0)=0
+                           OR json_extract(metadata,'$.resultReceipt') IS NULL)))
              ORDER BY created_at,id",
         )?;
         let rows = statement.query_map(

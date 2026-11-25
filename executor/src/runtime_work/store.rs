@@ -88,6 +88,7 @@ struct RuntimeWorkIndex {
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
     issue_conversations: HashMap<String, String>,
     deleted_issue_wakeups: HashMap<String, Vec<String>>,
+    deleted_role_attempts: HashMap<String, DeletedRoleAttempt>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -102,8 +103,19 @@ fn workspace_task_key(path: &str) -> String {
 }
 
 impl RuntimeWorkIndex {
+    fn advance_task_revision(&self, link: &mut RuntimeTaskLink) {
+        if let Some(previous) = self.tasks.get(&link.local_task_id) {
+            MetadataSnapshot::capture(previous).advance(link);
+        } else if link.snapshot_revision.is_none() {
+            link.snapshot_revision = Some(next_snapshot_revision(None));
+        }
+    }
+
     fn insert_task(&mut self, task: RuntimeTaskLink) {
         let id = task.local_task_id.clone();
+        if task.status != "archived" {
+            self.remove_deleted_role_attempt(&task);
+        }
         let workspace = workspace_task_key(&task.workspace_path);
         let role_child = RoleChildKey::from_task(&task);
         let previous = self.tasks.insert(id.clone(), task);
@@ -169,6 +181,7 @@ struct PersistedRuntimeWorkIndex {
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
     issue_conversations: HashMap<String, String>,
     deleted_issue_wakeups: HashMap<String, Vec<String>>,
+    deleted_role_attempts: HashMap<String, DeletedRoleAttempt>,
     #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
     deleted_archived_task_ids: HashMap<String, i64>,
 }
@@ -657,33 +670,48 @@ impl RuntimeWorkStore {
         deleted
     }
 
+    #[cfg(test)]
     pub fn mark_deleted_archived_task_ids(
         &self,
         task_ids: impl IntoIterator<Item = String>,
     ) -> io::Result<()> {
+        self.mark_deleted_archived_tasks(task_ids, None)
+    }
+
+    pub fn mark_deleted_archived_link(&self, link: &RuntimeTaskLink) -> io::Result<()> {
+        let ids = std::iter::once(link.local_task_id.clone()).chain(link.thread_id.iter().cloned());
+        self.mark_deleted_archived_tasks(ids, Some(link))
+    }
+
+    fn mark_deleted_archived_tasks(
+        &self,
+        task_ids: impl IntoIterator<Item = String>,
+        link: Option<&RuntimeTaskLink>,
+    ) -> io::Result<()> {
         let now_ms = current_time_ms();
-        self.change_issue_index(|index| {
+        self.change_index(|index| {
             for task_id in task_ids {
                 if !task_id.trim().is_empty() {
                     snapshot_deleted_issue_wakeups(index, &task_id);
                     index.deleted_archived_task_ids.insert(task_id, now_ms);
                 }
             }
+            if let Some(link) = link {
+                index.snapshot_deleted_role_attempt(link);
+            }
             prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
             Ok(true)
         })
     }
 
-    pub fn unmark_deleted_archived_task_ids(&self, task_ids: &[String]) {
-        self.refresh_index_from_disk_if_changed();
-        let Some(mut index) = self.index.lock().ok() else {
-            return;
-        };
-        for task_id in task_ids {
-            index.deleted_archived_task_ids.remove(task_id);
-        }
-        drop(index);
-        self.persist_current_index();
+    pub fn unmark_deleted_archived_link(&self, link: &RuntimeTaskLink) -> io::Result<()> {
+        self.change_index(|index| {
+            let mut changed = index.remove_deleted_role_attempt(link);
+            for task_id in std::iter::once(&link.local_task_id).chain(link.thread_id.iter()) {
+                changed |= index.deleted_archived_task_ids.remove(task_id).is_some();
+            }
+            Ok(changed)
+        })
     }
 
     pub fn upsert_task(&self, mut link: RuntimeTaskLink) {
@@ -691,16 +719,24 @@ impl RuntimeWorkStore {
         let Some(mut index) = self.index.lock().ok() else {
             return;
         };
-        if let Some(previous) = index.tasks.get(&link.local_task_id) {
-            MetadataSnapshot::capture(previous).advance(&mut link);
-        } else if link.snapshot_revision.is_none() {
-            link.snapshot_revision = Some(next_snapshot_revision(None));
-        }
+        index.advance_task_revision(&mut link);
         self.enqueue_stand_in(super::stand_in_telemetry::snapshot(&link));
         index.insert_task(link);
         drop(index);
         self.persist_current_index();
         self.flush_stand_in();
+    }
+
+    /// A delegated task cannot be acknowledged until its link is durable.
+    pub fn try_upsert_task(&self, mut link: RuntimeTaskLink) -> io::Result<RuntimeTaskLink> {
+        self.change_index(|index| {
+            index.advance_task_revision(&mut link);
+            index.insert_task(link.clone());
+            Ok(true)
+        })?;
+        self.enqueue_stand_in(super::stand_in_telemetry::snapshot(&link));
+        self.flush_stand_in();
+        Ok(link)
     }
 
     pub fn update_task(
@@ -975,6 +1011,7 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
         workspaces: persisted.workspaces,
         issue_conversations: persisted.issue_conversations,
         deleted_issue_wakeups: persisted.deleted_issue_wakeups,
+        deleted_role_attempts: persisted.deleted_role_attempts,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     };
     index.rebuild_task_indexes();
@@ -996,6 +1033,7 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     current.workspaces = persisted.workspaces;
     current.issue_conversations = persisted.issue_conversations;
     current.deleted_issue_wakeups = persisted.deleted_issue_wakeups;
+    current.deleted_role_attempts = persisted.deleted_role_attempts;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
     current.rebuild_task_indexes();
 }
@@ -1013,6 +1051,7 @@ fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Erro
         workspaces: index.workspaces.clone(),
         issue_conversations: index.issue_conversations.clone(),
         deleted_issue_wakeups: index.deleted_issue_wakeups.clone(),
+        deleted_role_attempts: index.deleted_role_attempts.clone(),
         deleted_archived_task_ids,
     })
 }
@@ -1098,7 +1137,7 @@ mod issue_conversations;
 mod role_children;
 mod task_materialization;
 use issue_conversations::snapshot_deleted_issue_wakeups;
-use role_children::RoleChildKey;
+use role_children::{DeletedRoleAttempt, RoleChildKey};
 
 mod telemetry;
 

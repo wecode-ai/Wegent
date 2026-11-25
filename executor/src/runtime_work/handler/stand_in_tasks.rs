@@ -418,6 +418,23 @@ mod operation_tests {
     #[tokio::test]
     async fn task_creation_rejects_superseded_or_cancelled_owner_requests() {
         let root = tempfile::tempdir().unwrap();
+        let _guard = crate::test_env::lock();
+        let _home = super::super::tests::ScalarEnv::set(
+            "WEGENT_EXECUTOR_HOME",
+            root.path().to_str().unwrap(),
+        );
+        let _workspace = super::super::tests::ScalarEnv::set(
+            "WEGENT_STANDALONE_WORKSPACE_ROOT",
+            root.path().join("workspaces").to_str().unwrap(),
+        );
+        let _codex_home = super::super::tests::ScalarEnv::set(
+            "WEGENT_CODEX_HOME",
+            root.path().join("codex").to_str().unwrap(),
+        );
+        let _workbench_home = super::super::tests::ScalarEnv::set(
+            "WEGENT_WORKBENCH_HOME",
+            root.path().join("workbench").to_str().unwrap(),
+        );
         let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -487,6 +504,34 @@ mod operation_tests {
             assert_eq!(error.code, "permission_denied");
             assert_eq!(handler.local_task_links(true).len(), 1);
         }
+
+        let unavailable_index = root.path().join("unavailable-index");
+        fs::create_dir(&unavailable_index).unwrap();
+        fs::write(unavailable_index.join("sentinel"), b"existing index").unwrap();
+        handler.store = RuntimeWorkStore::new(unavailable_index);
+        let mut specialist = crate::task_runtime::personal_stand_in::stand_in_identities(
+            &store.personal_stand_in(7, "mac").unwrap(),
+        )
+        .into_iter()
+        .find(|role| role["id"] == "review")
+        .unwrap();
+        specialist["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
+        let error = handler
+            .start_delegated_task(
+                &json!({"title":"Work","message":"Start work"}),
+                "unacknowledged-specialist",
+                &specialist,
+                json!({"userId":7,"sourceTaskId":"primary","askBeforeAct":true,
+                "roleDelegation":{"root":"release","ancestors":["primary"]},"attempt":1}),
+                Some(StandInTaskPermissions::from_role(&specialist)),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "runtime_task_save_failed", "{}", error.message);
+        assert!(handler
+            .local_task_link("unacknowledged-specialist")
+            .is_none());
     }
 
     #[tokio::test]

@@ -1,11 +1,33 @@
 use super::*;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub(super) struct RoleChildKey {
     user: i64,
     device: String,
     root: String,
     parent: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub(super) struct DeletedRoleAttempt {
+    key: RoleChildKey,
+    attempt: u64,
+}
+
+impl DeletedRoleAttempt {
+    fn from_task(task: &RuntimeTaskLink) -> Option<Self> {
+        let key = RoleChildKey::from_task(task)?;
+        if task.ephemeral
+            || task.runtime_handle["origin"]["type"] != "stand_in_task"
+            || task.runtime_handle["executionRequest"]["user_id"] != key.user
+        {
+            return None;
+        }
+        let attempt = task.runtime_handle["executionRequest"]["standInDelegation"]["attempt"]
+            .as_u64()
+            .unwrap_or(0);
+        Some(Self { key, attempt })
+    }
 }
 
 impl RoleChildKey {
@@ -30,6 +52,42 @@ impl RoleChildKey {
 }
 
 impl RuntimeWorkIndex {
+    pub(super) fn snapshot_deleted_role_attempt(&mut self, task: &RuntimeTaskLink) {
+        let Some(deleted) = DeletedRoleAttempt::from_task(task) else {
+            return;
+        };
+        if self
+            .deleted_role_attempts
+            .get(&task.local_task_id)
+            .is_some_and(|previous| {
+                previous.key == deleted.key && previous.attempt > deleted.attempt
+            })
+        {
+            return;
+        }
+        self.deleted_role_attempts
+            .insert(task.local_task_id.clone(), deleted);
+    }
+
+    pub(super) fn remove_deleted_role_attempt(&mut self, task: &RuntimeTaskLink) -> bool {
+        let Some(deleted) = DeletedRoleAttempt::from_task(task) else {
+            return false;
+        };
+        if self
+            .deleted_role_attempts
+            .get(&task.local_task_id)
+            .is_some_and(|previous| {
+                previous.key == deleted.key && previous.attempt == deleted.attempt
+            })
+        {
+            return self
+                .deleted_role_attempts
+                .remove(&task.local_task_id)
+                .is_some();
+        }
+        false
+    }
+
     pub(super) fn update_role_child_task(
         &mut self,
         id: &str,
@@ -57,6 +115,25 @@ impl RuntimeWorkIndex {
 }
 
 impl RuntimeWorkStore {
+    /// Role deletion evidence retains its execution identity beyond the UI tombstone TTL.
+    pub(in crate::runtime_work) fn deleted_role_attempt(
+        &self,
+        id: &str,
+        user: i64,
+        device: &str,
+        root: &str,
+        parent: &str,
+        attempt: u64,
+    ) -> bool {
+        self.refresh_index_from_disk_if_changed();
+        self.index.lock().is_ok_and(|index| {
+            index.deleted_role_attempts.get(id).is_some_and(|deleted| {
+                deleted.attempt == attempt
+                    && deleted.key == RoleChildKey::new(user, device, root, parent)
+            })
+        })
+    }
+
     /// Project only the unarchived children of the requested role parent.
     pub(in crate::runtime_work) fn role_child_task_values<T>(
         &self,
@@ -94,6 +171,45 @@ mod tests {
                 "executionRequest":{"user_id":user}}),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn deleted_role_attempt_outlives_tombstone_and_cannot_settle_another_attempt() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.json");
+        let store = RuntimeWorkStore::new(path.clone());
+        let mut role = child("child", 7, "desktop", "root", "parent");
+        role.status = "archived".into();
+        role.runtime_handle["origin"]["type"] = serde_json::json!("stand_in_task");
+        role.runtime_handle["executionRequest"]["standInDelegation"] =
+            serde_json::json!({"attempt":1});
+        store.try_upsert_task(role.clone()).unwrap();
+        store.mark_deleted_archived_link(&role).unwrap();
+        store.delete_task("child").unwrap();
+        let mut persisted: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        persisted["deleted_archived_task_ids"]["child"] =
+            Value::from(current_time_ms() - DELETED_ARCHIVED_TASK_ID_TTL_MS - 1);
+        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let reopened = RuntimeWorkStore::new(path.clone());
+        let was_deleted = |store: &RuntimeWorkStore, user, device, root, parent, attempt| {
+            store.deleted_role_attempt("child", user, device, root, parent, attempt)
+        };
+        assert!(!reopened.is_deleted_archived_task_id("child"));
+        assert!(was_deleted(&reopened, 7, "desktop", "root", "parent", 1));
+        assert!(!was_deleted(&reopened, 7, "desktop", "root", "parent", 2));
+        assert!(!was_deleted(&reopened, 8, "desktop", "root", "parent", 1));
+        assert!(!was_deleted(&reopened, 7, "remote", "root", "parent", 1));
+        assert!(!was_deleted(&reopened, 7, "desktop", "other", "parent", 1));
+        assert!(!was_deleted(&reopened, 7, "desktop", "root", "other", 1));
+
+        role.status = "active".into();
+        reopened.try_upsert_task(role.clone()).unwrap();
+        assert!(!was_deleted(&reopened, 7, "desktop", "root", "parent", 1));
+        role.status = "archived".into();
+        reopened.mark_deleted_archived_link(&role).unwrap();
+        reopened.unmark_deleted_archived_link(&role).unwrap();
+        let reopened = RuntimeWorkStore::new(path);
+        assert!(!was_deleted(&reopened, 7, "desktop", "root", "parent", 1));
     }
 
     #[test]
