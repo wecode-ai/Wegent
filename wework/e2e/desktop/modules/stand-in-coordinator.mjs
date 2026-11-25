@@ -17,6 +17,7 @@ import { accountCommandResult } from './account-auth-command.mjs'
 import {
   assistantMessage,
   createSse,
+  modelMessageText,
   readRequestBody,
   requestContainsToolOutput,
   responseCompleted,
@@ -29,6 +30,7 @@ const PROJECT = `负责人上下文验证-${process.pid}`
 const SCHEDULE = `已安排验证-${process.pid}`
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const CALENDAR_RISK_CALL = 'calendar-risk-delete'
+const CALENDAR_PROMPT = 'STAND_IN_SCHEDULE_VERIFY'
 const CALENDAR_RISK_FILE = 'calendar-ai-review-proof.txt'
 const CALENDAR_CONFIRM = '[data-testid="stand-in-calendar-policy-ask-before-act"]'
 
@@ -40,10 +42,12 @@ export function createStandInCoordinatorVerification({
   modelResponseTimeoutMs,
 }) {
   const proofFile = join(resultDir, CALENDAR_RISK_FILE)
+  let calendarRunActive = false
   let calendarReviews = 0
   return {
     reviewApproval(body) {
-      const calendarRisk = JSON.stringify(body.input ?? []).includes(CALENDAR_RISK_FILE)
+      const calendarRisk =
+        calendarRunActive && JSON.stringify(body.input ?? []).includes(CALENDAR_RISK_FILE)
       if (calendarRisk) calendarReviews++
       return {
         risk_level: calendarRisk ? 'high' : 'low',
@@ -59,12 +63,10 @@ export function createStandInCoordinatorVerification({
         return false
       const body = await readRequestBody(req)
       const input = JSON.stringify(body.input ?? [])
-      if (
-        !input.includes('PROJECT_COORDINATOR_VERIFY') &&
-        !input.includes('STAND_IN_SCHEDULE_VERIFY')
-      )
-        return false
       const project = input.includes('PROJECT_COORDINATOR_VERIFY')
+      const latestUser = (body.input ?? []).findLast(item => item.role === 'user')
+      const calendar = calendarRunActive && modelMessageText(latestUser) === CALENDAR_PROMPT
+      if (!project && !calendar) return false
       if (!project && !requestContainsToolOutput(body, CALENDAR_RISK_CALL)) {
         const command =
           process.platform === 'win32'
@@ -158,7 +160,7 @@ export function createStandInCoordinatorVerification({
       await captureScreenshot(control, '22b-calendar-invalid-draft-preserved.png')
       await control.command('fill', '[data-testid="automation-name-input"]', { value: SCHEDULE })
       await control.command('fill', '[data-testid="automation-prompt-input"]', {
-        value: 'STAND_IN_SCHEDULE_VERIFY',
+        value: CALENDAR_PROMPT,
       })
       assert.equal(
         await control.command('getElementCount', '[data-testid="automation-model-select"]'),
@@ -175,7 +177,7 @@ export function createStandInCoordinatorVerification({
       await control.command('click', '[data-testid="automation-keep-editing"]')
       assert.equal(
         await control.command('getValue', '[data-testid="automation-prompt-input"]'),
-        'STAND_IN_SCHEDULE_VERIFY'
+        CALENDAR_PROMPT
       )
       await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
       await control.command('waitFor', '[data-testid="automation-save-button"]', { visible: false })
@@ -213,12 +215,17 @@ export function createStandInCoordinatorVerification({
       const beforeRun = await rpc('runtime.stand_in.personal.get', { userId: USER })
       assert.equal(beforeRun.primary.calendar.policy.askBeforeAct, false)
       await writeFile(proofFile, 'Calendar AI review must preserve this file')
-      await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
-      await control.command('click', '[data-testid="automation-run-now-button"]')
-      await control.command('waitFor', '[data-testid="automation-run-history"]', {
-        text: '已完成',
-        timeoutMs: modelResponseTimeoutMs,
-      })
+      calendarRunActive = true
+      try {
+        await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
+        await control.command('click', '[data-testid="automation-run-now-button"]')
+        await control.command('waitFor', '[data-testid="automation-run-history"]', {
+          text: '已完成',
+          timeoutMs: modelResponseTimeoutMs,
+        })
+      } finally {
+        calendarRunActive = false
+      }
       const runs = await rpc('runtime.automation_runs.list', { automationId: schedule.id })
       assert.ok(runs.items.some(row => row.status === 'succeeded'))
       assert.equal(calendarReviews, 1, 'The high-risk command must reach the native AI reviewer')
