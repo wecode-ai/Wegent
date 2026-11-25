@@ -36,6 +36,8 @@ const run = promisify(execFile)
 const prompt = 'WEWORK_CPU_BENCHMARK_SINGLE_TASK'
 const prefix = 'RENDERER_CPU_BENCHMARK_STREAM_STARTED'
 const suffix = 'RENDERER_CPU_BENCHMARK_STREAM_FINISHED'
+const warmupPrompt = 'WEWORK_CPU_BENCHMARK_WARMUP'
+const warmupText = 'RENDERER_CPU_BENCHMARK_WARMUP_COMPLETE'
 const idleSamples = 7
 const sampleIntervalMs = 1000
 const streamPieces = 120
@@ -569,10 +571,18 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
         return false
-      if (!ready && !historyIndex) return false
       const body = await readRawRequestBody(request)
+      if (!ready && !historyIndex && !body.includes(warmupPrompt)) return false
       const modelRequest = JSON.parse(body)
       if (handleModelMaintenanceRequest(modelRequest, response)) return true
+      if (body.includes(warmupPrompt)) {
+        const id = 'wework-profile-warmup'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([responseCreated(id), assistantMessage(warmupText), responseCompleted(id)])
+        )
+        return true
+      }
       const index =
         body.match(new RegExp(`${concurrentPrompt}(\\d{2})`))?.[1] ??
         body.match(/renderer-profile-command-(\d{2})-/)?.[1]
@@ -799,6 +809,21 @@ export function createDesktopScenario({
             await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
           }
         }
+        await control.command('fill', composer, { value: warmupPrompt })
+        await control.command('press', composer, { key: 'Enter' })
+        await observeText(client, target, warmupText, textTimeoutMs)
+        await waitForWorkbenchDebugState(
+          control,
+          ({ isBusy }) => isBusy === false,
+          'The renderer warmup turn did not settle',
+          textTimeoutMs,
+          'pane-activity'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
         const before = await windowState()
         assert.equal(before.activity, 'foreground', 'Measure the foreground presentation path')
         const running = await requestExecutor(
