@@ -1173,7 +1173,7 @@ describe('ChatArea selection while the catalog loads', () => {
       })
       expect(mockAutoSentTeamIds).toEqual([requested.id])
       expect(mockHandleSendMessage).toHaveBeenCalledWith('hello', {
-        onFailure: expect.any(Function),
+        urlAutoSend: { onFailure: expect.any(Function) },
       })
       await act(async () => {
         jest.advanceTimersByTime(1000)
@@ -1257,7 +1257,7 @@ describe('ChatArea selection while the catalog loads', () => {
 
         expect(mockAutoSentTeamIds).toEqual([recentTeam.id])
         expect(mockHandleSendMessage).toHaveBeenCalledWith('hello', {
-          onFailure: expect.any(Function),
+          urlAutoSend: { onFailure: expect.any(Function) },
         })
         await act(async () => {
           jest.advanceTimersByTime(1000)

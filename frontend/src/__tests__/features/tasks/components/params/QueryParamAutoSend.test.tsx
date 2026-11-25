@@ -140,6 +140,49 @@ it('handles a second URL prompt without resending the original on back navigatio
   expect(initial.onSendMessage).toHaveBeenCalledTimes(2)
 })
 
+it.each(['projectId', 'conversationGroupId'])(
+  'sends identical prompts to distinct targets selected by %s',
+  targetParam => {
+    const first = new URLSearchParams({ q: 'hello', autoSend: 'true', [targetParam]: '3' })
+    const second = new URLSearchParams({ q: 'hello', autoSend: 'true', [targetParam]: '4' })
+    setQuery(first.toString())
+    const initial = props()
+    const { rerender } = render(<QueryParamAutoSend {...initial} />)
+    expect(initial.onSendMessage).toHaveBeenCalledTimes(1)
+
+    setQuery(second.toString())
+    rerender(<QueryParamAutoSend {...initial} />)
+    expect(initial.onSendMessage).toHaveBeenCalledTimes(2)
+
+    const accepted = new URLSearchParams(second)
+    accepted.set('taskId', '42')
+    setQuery(accepted.toString())
+    rerender(<QueryParamAutoSend {...initial} hasTaskId />)
+    expect(mockReplace).toHaveBeenLastCalledWith(
+      targetParam === 'projectId' ? '/chat?projectId=4&taskId=42' : '/chat?taskId=42'
+    )
+
+    setQuery(first.toString())
+    rerender(<QueryParamAutoSend {...initial} />)
+    expect(initial.onSendMessage).toHaveBeenCalledTimes(2)
+  }
+)
+
+it('keeps a new project link when the previous project send fails', async () => {
+  const onSendMessage = jest
+    .fn<ReturnType<AutoSendProps['onSendMessage']>, Parameters<AutoSendProps['onSendMessage']>>()
+    .mockResolvedValue(undefined)
+  const initial = props({ onSendMessage })
+  const view = render(<QueryParamAutoSend {...initial} />)
+  const onFailure = onSendMessage.mock.calls[0][1]
+
+  setQuery('q=hello&autoSend=true&projectId=4')
+  await act(async () => onFailure())
+  expect(mockReplace).not.toHaveBeenCalled()
+  view.rerender(<QueryParamAutoSend {...initial} />)
+  expect(onSendMessage).toHaveBeenCalledTimes(2)
+})
+
 it('leaves a replacement link intact when the earlier send rejects', async () => {
   let rejectFirst!: (error: Error) => void
   const onSendMessage = jest

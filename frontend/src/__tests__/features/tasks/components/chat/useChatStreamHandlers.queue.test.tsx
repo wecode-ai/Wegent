@@ -206,17 +206,31 @@ describe('useChatStreamHandlers queue integration', () => {
     }
   )
 
-  it('notifies a linked send when the transport error is handled locally', async () => {
+  it('notifies the failed URL action and treats a manual retry as a normal send', async () => {
     isMachineStreamingMock = false
     currentTaskIdMock = null
     selectedTaskDetailMock = null
     mockContextSendMessage.mockRejectedValueOnce(new Error('Send failed'))
     const onFailure = jest.fn()
-    const { result } = renderQueueableHook()
+    const view = renderQueueableHook()
 
-    await act(() => result.current.handleSendMessage('Linked prompt', { onFailure }))
+    await act(() =>
+      view.result.current.handleSendMessage('Linked prompt', { urlAutoSend: { onFailure } })
+    )
 
     expect(mockContextSendMessage).toHaveBeenCalledTimes(1)
+    expect(onFailure).toHaveBeenCalledTimes(1)
+
+    searchParamsMock = new URLSearchParams('conversationGroupId=31')
+    view.rerender()
+    mockContextSendMessage.mockImplementationOnce(async (_request, options) => {
+      options.onMessageSent('local-user-1', 501)
+      return 501
+    })
+    const retry = mockToast.mock.calls[0][0].action as React.ReactElement<{ onClick: () => void }>
+    await act(async () => retry.props.onClick())
+
+    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=501')
     expect(onFailure).toHaveBeenCalledTimes(1)
   })
 
@@ -244,36 +258,50 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockRouterPush).toHaveBeenCalledWith('?taskId=42')
   })
 
-  it('associates a new chat with its conversation group without entering device mode', async () => {
-    isMachineStreamingMock = false
-    activeStreamSubtaskIdMock = undefined
-    currentTaskIdMock = null
-    selectedTaskDetailMock = null
-    searchParamsMock = new URLSearchParams({ conversationGroupId: '31' })
-    mockContextSendMessage.mockResolvedValueOnce(-1)
+  it.each([false, true])(
+    'associates a new chat with its conversation group (URL auto-send: %s)',
+    async autoSend => {
+      isMachineStreamingMock = false
+      activeStreamSubtaskIdMock = undefined
+      currentTaskIdMock = null
+      selectedTaskDetailMock = null
+      searchParamsMock = new URLSearchParams({ conversationGroupId: '31' })
+      if (autoSend) {
+        searchParamsMock.set('q', 'Linked prompt')
+        searchParamsMock.set('autoSend', 'true')
+      }
+      mockContextSendMessage.mockResolvedValueOnce(-1)
 
-    const { result } = renderQueueableHook()
+      const { result } = renderQueueableHook()
 
-    await act(async () => {
-      await result.current.handleSendMessage()
-    })
+      await act(async () => {
+        await result.current.handleSendMessage(
+          autoSend ? 'Linked prompt' : undefined,
+          autoSend ? { urlAutoSend: { onFailure: jest.fn() } } : undefined
+        )
+      })
 
-    expect(mockContextSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: 31,
-        device_id: undefined,
-      }),
-      expect.any(Object)
-    )
+      expect(mockContextSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: 31,
+          device_id: undefined,
+        }),
+        expect.any(Object)
+      )
 
-    const sendOptions = mockContextSendMessage.mock.calls[0][1]
-    act(() => {
-      sendOptions.onMessageSent('local-user-1', 501)
-    })
+      const sendOptions = mockContextSendMessage.mock.calls[0][1]
+      act(() => {
+        sendOptions.onMessageSent('local-user-1', 501)
+      })
 
-    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=501')
-    expect(mockRefreshProjects).toHaveBeenCalledTimes(1)
-  })
+      expect(mockRouterPush).toHaveBeenCalledWith(
+        autoSend
+          ? '?conversationGroupId=31&q=Linked+prompt&autoSend=true&taskId=501'
+          : '?taskId=501'
+      )
+      expect(mockRefreshProjects).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {
     const { result } = renderQueueableHook()

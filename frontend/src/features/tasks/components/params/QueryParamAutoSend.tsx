@@ -35,6 +35,10 @@ function getQueryActionKey(params: Pick<URLSearchParams, 'get'>) {
     params.get('teamId'),
     params.get('teamName'),
     params.get('teamNamespace') || 'default',
+    params.get('projectId') || params.get('conversationGroupId'),
+    params.get('deviceId') || params.get('device_id'),
+    params.get('agent'),
+    params.get('mode'),
     autoSendRequested(params),
   ])
 }
@@ -148,12 +152,13 @@ export default function QueryParamAutoSend({
       if (!keepTeamId) {
         url.searchParams.delete('teamId')
         url.searchParams.delete('recommend')
+        url.searchParams.delete('conversationGroupId')
       }
       url.searchParams.delete('teamName')
       url.searchParams.delete('teamNamespace')
       url.searchParams.delete('autoSend')
       url.searchParams.delete('autosend')
-      router.replace(url.pathname + url.search)
+      router.replace(url.pathname + url.search + url.hash)
     },
     [router]
   )

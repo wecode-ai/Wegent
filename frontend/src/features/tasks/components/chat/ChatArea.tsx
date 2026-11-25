@@ -2749,7 +2749,7 @@ function ChatAreaContent({
         selectedTeam={chatState.selectedTeam}
         onTeamChange={handleUserTeamChange}
         onSendMessage={(message, onFailure) =>
-          streamHandlers.handleSendMessage(message, { onFailure })
+          streamHandlers.handleSendMessage(message, { urlAutoSend: { onFailure } })
         }
         hasTaskId={!!taskIdFromUrl}
         onPrefillMessage={chatState.setTaskInputMessage}
