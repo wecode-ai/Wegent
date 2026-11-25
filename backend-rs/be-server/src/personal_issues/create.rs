@@ -61,8 +61,11 @@ async fn create_board_issue(
 ) -> Result<Response, FastApiError> {
     static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
     let client = CLIENT.get_or_init(|| {
+        const PROJECT_ISSUE_TIMEOUT: Duration = Duration::from_secs(60);
         brz_http::Client::builder()
-            .timeout(Duration::from_secs(60))
+            .timeout(PROJECT_ISSUE_TIMEOUT)
+            // The provider can commit before sending its first response byte.
+            .read_timeout(PROJECT_ISSUE_TIMEOUT)
             .configure(|builder| {
                 builder
                     .no_proxy()
