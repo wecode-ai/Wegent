@@ -554,6 +554,25 @@ const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
   '[Wework] Local workspace catalog '
 )
 app.on('web-contents-created', (_event, contents) => {
+  if (process.platform === 'linux' && process.env.VITE_WEWORK_E2E === 'true') {
+    contents.on('before-mouse-event', (_event, mouse) => {
+      if (mouse.type !== 'mouseMove' && mouse.type !== 'mouseDown' && mouse.type !== 'mouseUp')
+        return
+      console.info(
+        '[desktop-e2e-native-pointer] ' +
+          JSON.stringify({
+            webContentsId: contents.id,
+            target: contents.getType(),
+            type: mouse.type,
+            x: mouse.x,
+            y: mouse.y,
+            globalX: mouse.globalX,
+            globalY: mouse.globalY,
+            timestamp: Date.now(),
+          })
+      )
+    })
+  }
   const logLoadEvent = (event: string) => () => {
     const address = contents.getURL()
     const route =

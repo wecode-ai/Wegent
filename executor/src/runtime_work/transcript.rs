@@ -58,7 +58,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::truncated())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
 }

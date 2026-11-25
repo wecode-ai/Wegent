@@ -398,6 +398,7 @@ struct WireDevice {
     client: LocalBackendClient<SocketIoTransport>,
     frames: mpsc::UnboundedReceiver<String>,
     server: tokio::task::JoinHandle<()>,
+    closing: Arc<AtomicBool>,
 }
 
 impl Drop for WireDevice {
@@ -415,11 +416,30 @@ impl WireDevice {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (sender, frames) = mpsc::unbounded_channel();
+        let closing = Arc::new(AtomicBool::new(false));
+        let server_closing = Arc::clone(&closing);
         let server = tokio::spawn(async move {
             let mut socket = accept_connection(listener).await;
             while let Some(message) = socket.next().await {
-                let Message::Text(packet) = message.unwrap() else {
-                    panic!("expected a text packet");
+                let packet = match message {
+                    Ok(Message::Text(packet)) => packet,
+                    Ok(Message::Close(_)) if server_closing.load(Ordering::Acquire) => return,
+                    Err(error) if server_closing.load(Ordering::Acquire) => {
+                        use tokio_tungstenite::tungstenite::{error::ProtocolError, Error};
+                        assert!(
+                            matches!(&error, Error::Io(io) if matches!(io.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::ConnectionAborted
+                                    | std::io::ErrorKind::UnexpectedEof))
+                                || matches!(
+                                    &error,
+                                    Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)
+                                ),
+                            "unexpected teardown error: {error}"
+                        );
+                        return;
+                    }
+                    message => panic!("expected a text packet: {message:?}"),
                 };
                 if packet == "3" {
                     continue;
@@ -459,6 +479,7 @@ impl WireDevice {
             client,
             frames,
             server,
+            closing,
         };
         device.client.connect().await.unwrap();
         device
@@ -472,6 +493,7 @@ impl WireDevice {
     }
 
     async fn close(mut self) {
+        self.closing.store(true, Ordering::Release);
         self.client.disconnect().await.unwrap();
         timeout(Duration::from_secs(5), &mut self.server)
             .await
