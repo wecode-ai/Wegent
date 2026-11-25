@@ -1,3 +1,4 @@
+import { dequal } from 'dequal'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { issueHumanInteraction } from './issueHumanInteractions'
@@ -27,7 +28,14 @@ export function createIssueHumanInteractionSource(
   let sequence = 0
   const listeners = new Set<() => void>()
   const publish = (patch: Partial<Snapshot>) => {
-    snapshot = { ...snapshot, ...patch }
+    const next = { ...snapshot, ...patch }
+    if (
+      next.error === snapshot.error &&
+      dequal(next.items, snapshot.items) &&
+      next.resolved === snapshot.resolved
+    )
+      return
+    snapshot = next
     listeners.forEach(listener => listener())
   }
   const refresh = async () => {
@@ -45,7 +53,8 @@ export function createIssueHumanInteractionSource(
         item => item.sharedRequest && !ids.has(item.sharedRequest.id)
       )
       const incoming = response.items.map(request => issueHumanInteraction(request, store))
-      publish({ items: [...incoming, ...removed.map(item => ({ ...item, cached: true }))] })
+      if (removed.length)
+        publish({ items: [...incoming, ...removed.map(item => ({ ...item, cached: true }))] })
       const retained: RuntimeInteraction[] = []
       const failures: string[] = []
       for (const previous of removed) {

@@ -5,6 +5,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { startModelRequestCapture } from '../modules/model-request-capture.mjs'
@@ -20,6 +21,39 @@ const MODEL_ID = 'gpt-5.5'
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
 const ROW = `[data-testid="codex-official-model-row-openai-${MODEL_ID}"]`
 const RESTORE = `[data-testid="codex-catalog-restore-openai-${MODEL_ID}"]`
+
+export async function verifyLocalCodexSubscriptionRestartFocus(control) {
+  const toggle = '[data-testid="local-codex-subscription-toggle"]'
+  const confirm = 'local-codex-subscription-restart-confirm'
+  const cancel = `${confirm}-cancel-button`
+  const readyCount = control.readyCount
+  await control.command('navigate', 'body', { value: '/settings/personal/models' })
+  await control.command('waitFor', toggle, { enabled: true, timeoutMs: 5_000 })
+  const initial = await control.command('getAttribute', toggle, { value: 'aria-checked' })
+  assert.ok(['true', 'false'].includes(initial))
+  await control.command('click', toggle)
+  await control.command('waitFor', `${toggle}[aria-checked="${initial === 'false'}"]`, {
+    timeoutMs: 5_000,
+  })
+  const focused = await waitForValue(
+    () => control.command('getActiveElementTestId', 'body'),
+    id => id === confirm || id === cancel,
+    'The local subscription restart dialog did not focus an action',
+    5_000
+  )
+  await control.command('nativePress', `[data-testid="${focused}"]`, { key: 'Escape' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(confirm),
+    'Escape did not dismiss the subscription restart dialog',
+    5_000
+  )
+  await control.command('waitFor', `${toggle}[aria-checked="${initial}"]`, { timeoutMs: 5_000 })
+  const preferences = JSON.parse(await control.command('getAppPreferences', 'body'))
+  assert.equal(preferences.localCodexSubscriptionEnabled, initial === 'true')
+  assert.equal(control.readyCount, readyCount, 'Cancelling restarted the desktop renderer')
+  assert.equal(focused, cancel, 'The subscription restart dialog must initially focus Cancel')
+}
 
 export function createDesktopScenario(options) {
   const context = createCatalogContextVerification({ ...options, modelId: MODEL_ID })
@@ -207,6 +241,7 @@ export function createDesktopScenario(options) {
         [baseline, entries.find(entry => entry.slug !== MODEL_ID).baseline],
         options.uiTimeoutMs
       )
+      await verifyLocalCodexSubscriptionRestartFocus(control)
     },
   }
 }

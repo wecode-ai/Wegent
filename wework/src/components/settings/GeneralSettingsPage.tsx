@@ -921,6 +921,7 @@ export function GeneralSettingsPage() {
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.general_settings_mode_confirm_action')}
         confirmTestId="general-workbench-mode-confirm-button"
+        focusCancel
         pending={saving}
         onClose={() => setPendingWorkbenchMode(null)}
         onConfirm={() => void confirmWorkbenchModeChange()}

@@ -730,6 +730,7 @@ export function DesktopWorkbenchLayoutView({
       />
       <WorkbenchSearchDialog
         open={searchOpen}
+        suspended={!routeActive}
         onClose={() => setSearchOpen(false)}
         onSearchRuntimeWork={onSearchRuntimeWork}
         onOpenRuntimeTask={async address => {
