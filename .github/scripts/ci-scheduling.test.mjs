@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 
@@ -42,15 +45,18 @@ test('unrelated labels execute neither desktop builds nor a replacement success 
   }
 })
 
-test('renderer performance runs for affected inputs and explicit full regressions', () => {
+test('renderer performance runs for affected inputs and explicit full regressions', t => {
   const classify = desktop.jobs.changes.steps.find(step => step.id === 'classify').run
+  const directory = mkdtempSync(join(tmpdir(), 'ci-scheduling-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
   for (const [path, forceAll, expected] of [
     ['.github/workflows/wework-e2e.yml', false, false],
     ['wework/src/components/chat/ChatMessage.tsx', false, true],
     ['wework/scripts/profile-renderer.mjs', false, true],
     ['.github/workflows/wework-e2e.yml', true, true],
   ]) {
-    const output = execFileSync('bash', ['-e', '-c',
+    const output = join(directory, path.replaceAll('/', '-') + '-' + forceAll)
+    execFileSync('bash', ['-e', '-c',
       'git() { printf "%s\\n" "$CHANGED_PATH"; }\n' + classify,
     ], {
       cwd: new URL('../../', import.meta.url),
@@ -62,10 +68,10 @@ test('renderer performance runs for affected inputs and explicit full regression
         CHANGED_PATH: path,
         FORCE_ALL: String(forceAll),
         GITHUB_EVENT_NAME: 'pull_request',
-        GITHUB_OUTPUT: '/dev/stdout',
+        GITHUB_OUTPUT: output,
       },
     })
-    assert.equal(output.split('\n').includes('renderer_profile=true'), expected, path)
+    assert.equal(readFileSync(output, 'utf8').split('\n').includes('renderer_profile=true'), expected, path)
   }
 })
 
