@@ -25,6 +25,7 @@ const NOTIFICATION_REQUEST = 'STAND_IN_NATIVE_NOTIFICATION_REQUEST'
 const NOTIFICATION_RESULT = '助理已完成后台核对。'
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
+const WAITING = `${CHAT} [data-testid="message-assistant-waiting"]`
 
 /** Extend the CI-owned session checkpoint without another app or Backend lifecycle. */
 export function createDesktopScenario(options) {
@@ -173,6 +174,13 @@ export function createDesktopScenario(options) {
           true,
           'The parent remains active while waiting on its native child'
         )
+        await control.command('waitFor', WAITING, { visible: false })
+        await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]`, {
+          visible: true,
+        })
+        await control.command('waitFor', `${CHAT} [data-testid="pause-response-button"]`, {
+          visible: false,
+        })
         // The explicit guide action remains available during the active parent turn.
         await control.command(
           'fill',
@@ -252,6 +260,11 @@ export function createDesktopScenario(options) {
           Boolean,
           options.modelResponseTimeoutMs,
           'The background notification request must reach the model'
+        )
+        await control.command(
+          'waitFor',
+          `${WAITING} [data-testid="thinking-indicator"]:has(> [aria-hidden="true"] + [aria-hidden="true"] + [aria-hidden="true"]:last-child)`,
+          { visible: true }
         )
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('closeMainWindowToTray', 'body')

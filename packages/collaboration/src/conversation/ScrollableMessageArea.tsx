@@ -34,6 +34,7 @@ function ScrollableMessagePaneContent({
   loading = false,
   historyError,
   isWaitingForAssistant = false,
+  waitingIndicatorStyle,
   hasMoreBefore = false,
   beforeCursor,
   loadingMoreBefore = false,
@@ -239,7 +240,7 @@ function ScrollableMessagePaneContent({
             contentClassName
           )}
         >
-          {messages.length === 0 ? (
+          {messages.length === 0 && !(isWaitingForAssistant && waitingIndicatorStyle === 'dots') ? (
             loading ? (
               <div
                 data-testid="chat-loading-state"
@@ -305,6 +306,7 @@ function ScrollableMessagePaneContent({
                 }
                 searchMessageId={searchTarget?.messageId}
                 isWaitingForAssistant={isWaitingForAssistant}
+                waitingIndicatorStyle={waitingIndicatorStyle}
                 disableContentVisibility={turnNavigationLoading}
                 devices={devices}
                 onRetryFailedMessage={onRetryFailedMessage}
