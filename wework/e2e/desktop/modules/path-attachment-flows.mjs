@@ -134,11 +134,30 @@ async function verifyComposerEditorScroll({ composerSelector, control }) {
   await control.command('fill', composerSelector, { value: '@' })
   await control.command('press', composerSelector, { key: 'ArrowDown' })
   await control.command('waitFor', '[data-testid="local-skill-autocomplete"]')
-  const menu = await metrics('[data-testid="local-skill-autocomplete"]')
   const viewport = await metrics(scrollSelector)
+  const popupSelector = '[data-testid="composer-autocomplete-popup"]'
+  await waitForElementWidth(
+    control,
+    popupSelector,
+    width => Math.abs(width - viewport.width) <= 1,
+    `The autocomplete popup matching the editor width (${viewport.width}px)`
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', popupSelector, { value: 'overflow-y' }),
+    'auto',
+    'The autocomplete popup must remain scrollable'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', '[data-testid="local-skill-autocomplete"]', {
+      value: 'overflow-y',
+    }),
+    'visible',
+    'The mention list must not provide a second scrollbar'
+  )
+  const popup = await metrics(popupSelector)
   assert.ok(
-    menu.bottom <= viewport.top,
-    'The autocomplete menu must open outside the clipped content'
+    popup.bottom <= viewport.top,
+    `The autocomplete menu must open outside the clipped content: ${popup.bottom} vs ${viewport.top}`
   )
   await control.command('press', composerSelector, { key: 'Escape' })
   await control.command('fill', composerSelector, { value: '' })

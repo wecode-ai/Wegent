@@ -17,6 +17,22 @@ export function isStandInMemoryReviewTask(
   return identity.type === 'stand_in_schedule' && identity.memoryReview === true
 }
 
+export function isStandInCoordinatorTask(task: Pick<RuntimeTaskAddress, 'runtimeHandle'>): boolean {
+  const origin = task.runtimeHandle?.origin
+  return Boolean(
+    origin &&
+    typeof origin === 'object' &&
+    'type' in origin &&
+    origin.type === 'stand_in_coordinator'
+  )
+}
+
+export function suppressesRuntimeTaskCompletionReminder(
+  task: Pick<RuntimeTaskAddress, 'runtimeHandle'>
+): boolean {
+  return isStandInCoordinatorTask(task) || isStandInMemoryReviewTask(task)
+}
+
 export function isPrimaryStandInConversation(
   task: Pick<RuntimeTaskAddress, 'taskId' | 'runtimeHandle'>
 ): boolean {

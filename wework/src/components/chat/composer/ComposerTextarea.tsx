@@ -78,6 +78,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
         {drawingDialog}
         <ComposerAutocompleteInput
           {...props}
+          skillMenuClassName={props.skillMenuClassName ?? 'w-[var(--anchor-width)]'}
           slashMenuClassName="w-80"
           onDraw={props.onDraw ?? openDrawing}
           ref={ref}

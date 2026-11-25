@@ -3,7 +3,7 @@ import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPrefere
 import type { RuntimeTaskAddress } from '@/types/api'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { standInOrigin } from '@/features/notifications/standInNotifications'
-import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
+import { suppressesRuntimeTaskCompletionReminder } from '@/lib/runtime-task-visibility'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { RuntimeTaskReminderItem, RuntimeTaskReminderState } from './runtimeTaskReminders'
 import { isStandInIdentity } from './useStandInMessageReminders'
@@ -77,11 +77,11 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
   let observation = 0
   let reconciling = false
   let pending = false
-  function isMemoryReview(item: RuntimeTaskReminderItem): boolean {
+  function suppressesCompletionReminder(item: RuntimeTaskReminderItem): boolean {
     const latestTask = store.getTask(item.address)?.task
     return (
-      isStandInMemoryReviewTask(item.task) ||
-      (latestTask != null && isStandInMemoryReviewTask(latestTask))
+      suppressesRuntimeTaskCompletionReminder(item.task) ||
+      (latestTask != null && suppressesRuntimeTaskCompletionReminder(latestTask))
     )
   }
   function hasStandInReport(item: RuntimeTaskReminderItem): boolean {
@@ -101,7 +101,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         if (
           epoch !== generation ||
           !listeners.size ||
-          isMemoryReview(item) ||
+          suppressesCompletionReminder(item) ||
           hasStandInReport(item) ||
           !input?.notificationPreferences[runtimeTaskNotificationCategory(item)].system
         )
@@ -177,7 +177,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
               (originalPreferences &&
                 !originalPreferences[runtimeTaskNotificationCategory(item)].system) ||
               isStandInIdentity(item) ||
-              isMemoryReview(item) ||
+              suppressesCompletionReminder(item) ||
               hasStandInReport(item) ||
               standInOrigin(item) ||
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
@@ -205,7 +205,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
             if (
               unreadKeys.has(item.key) &&
               !isStandInIdentity(item) &&
-              !isMemoryReview(item) &&
+              !suppressesCompletionReminder(item) &&
               (current.notificationPreferences[runtimeTaskNotificationCategory(item)].in_app ||
                 standInOrigin(item))
             ) {

@@ -5,9 +5,8 @@ import {
   PROJECT_CHAT_WORK_BAR_CLASS,
   type ComposerInputHandle,
 } from '@wegent/collaboration/composer'
-import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
+import { IssueHomeModeTabs, type IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 import { AtSign, Cloud, Hash, Laptop } from 'lucide-react'
 import { useId, useImperativeHandle, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
@@ -94,35 +93,19 @@ export function WeworkIssueHomeComposer({
       className="flex min-h-0 min-w-0 w-full max-w-full flex-col gap-3"
     >
       <div className="flex w-full min-w-0 flex-col gap-3">
-        <TabsRoot
-          value={String(taskMode)}
-          onValueChange={next => {
-            if (next === null) return
-            const mode = next === 'true'
+        <IssueHomeModeTabs
+          id={composerId}
+          taskMode={taskMode}
+          taskAvailable={Boolean(renderTaskComposer)}
+          disabled={disabled}
+          translate={t}
+          onChange={mode => {
             if (taskMode === mode) return
             props.onChange(getActiveInput()?.getValue() ?? props.value)
             if (mode) setTaskOpened(true)
             setTaskMode(mode)
           }}
-          render={<div className="contents" />}
-        >
-          <TabsList aria-label={t('issue_creation.entry_mode')} className="flex items-center gap-5">
-            {[false, ...(renderTaskComposer ? [true] : [])].map(mode => (
-              <TabsTab
-                value={String(mode)}
-                key={String(mode)}
-                type="button"
-                id={`${composerId}-${mode ? 'task' : 'record'}-tab`}
-                aria-controls={`${composerId}-${mode ? 'task' : 'record'}-panel`}
-                data-testid={mode ? 'personal-home-new-issue' : 'personal-home-record-mode'}
-                disabled={disabled}
-                className={`min-h-11 border-b-2 pb-1 text-base transition-colors keyboard:focus-visible:rounded-sm keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-8 ${taskMode === mode ? 'border-text-primary font-medium text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
-              >
-                {t(mode ? 'issue_creation.create_task' : 'issue_creation.record_mode')}
-              </TabsTab>
-            ))}
-          </TabsList>
-        </TabsRoot>
+        />
         {props.environmentNotice}
         <div
           id={`${composerId}-record-panel`}

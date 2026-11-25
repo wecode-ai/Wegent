@@ -414,7 +414,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectExternalMention={onSelectExternalMention}
               onSelectCloudProject={onSelectCloudProject}
-              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}
               models={models}

@@ -327,6 +327,18 @@ events; without `ci:all`, test selection still follows the changed paths.
 The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
+Platform E2E selects tests by changed paths on PRs and merge queue commits.
+Platform E2E and Rust tests cover source-only changes in the task execution
+crates. Delivery-image verification still runs for packaging, startup and other
+Backend inputs, and during full regression runs.
+Scheduled and manual runs retain full coverage. Executor device and sandbox
+projects run in parallel on separate runners with their own services and
+databases. Device tests keep one worker and sandbox tests keep two. Rust Backend
+Clippy runs alongside the tests, and `Test Summary` requires both to pass.
+The macOS renderer budget gate runs when renderer inputs change and during full
+regressions. It uploads the original measurements on failure.
+For a trace, run `pnpm --filter wework profile:renderer --capture` on macOS.
+
 Linux desktop E2E shards get their native test tools from the shared image.
 Platform E2E prepares its dependencies and services while the Rust backend builds,
 then waits for the backend artifact from the same CI run before using it. PRs
@@ -338,10 +350,32 @@ from a PR.
 
 Rust backend E2E first looks up the exact runtime. On a miss, the build can
 reuse a prebuilt dependency image and GHCR BuildKit layers written by main.
+The dependency resolver is part of the runtime cache key so changes to it
+exercise a real build.
+If the current dependency image is missing, the resolver searches the eight
+most recent first-parent revisions from the base for a matching toolchain and
+dependency build recipe. Cargo validates dependencies against the current lockfile
+and recompiles affected targets. The build synchronizes workspace sources by content, removes deleted
+files, and preserves unchanged timestamps so Cargo can rebuild affected crates.
 Without a prebuilt dependency image, it compiles the real targets directly.
-Only dependency prewarming compiles placeholder targets. The two Linux Core
-latency benchmarks keep their dedicated shards, while the scheduler distributes
-the remaining checkpoints across the existing shards.
+Only dependency prewarming compiles placeholder targets. Functional E2E builds
+the gateway package at optimization level 0 and reuses the compiled dependencies.
+The two Linux Core latency benchmarks and running-conversation history keep
+dedicated shards. The scheduler distributes the remaining checkpoints across
+the existing shards, spreading long checkpoints to reduce CPU contention
+between Electron sessions.
+Changes to CI scheduling, path classification, or Rust E2E build orchestration
+run desktop smoke checks for packaged startup, native lifecycle, and plugin
+routing. Product paths retain their scenario selection. Scheduled, manual, and
+`ci:all` runs execute the full desktop suites.
+PR changes to the shared desktop test helper run native lifecycle, device
+artifact delivery, embedded browser, and plugin routing checks. These cover
+project creation, file operations, and window interactions. The full suites
+exercise the helper's other callers.
+
+The Backend Rust module check reuses workspace test binaries for package-specific
+MySQL and Redis regressions, retaining each step's service configuration and logs.
+A filter that matches no tests fails the check.
 
 Windows desktop builds share the `build-wework-windows-e2e` action between PRs
 and main-branch cache warmup. Only `main` writes shared caches. Complete packages
@@ -467,6 +501,10 @@ warmups from non-`main` refs. It downloads dependencies or compiles cache
 entries without repeating tests already validated by the merge queue. Do not add large automatically saved PR or
 merge-group caches. Use `actions/cache/restore` plus a `main`-only
 `actions/cache/save`, or reuse the existing shared action.
+
+A new push cancels the previous warmup. The replacement compares against the
+last successful main-branch push run so it includes inputs from cancelled runs.
+It warms all inputs when that run has no usable ancestor.
 
 ### Writing GitHub Actions Outputs
 
