@@ -379,6 +379,7 @@ function StandInEmailConnectionsContent({
         confirmLabel={t('standIn.email.discard')}
         cancelLabel={t('standIn.email.cancel')}
         confirmTestId="stand-in-email-discard"
+        destructive
         onClose={() => setPendingNavigation(null)}
         onConfirm={() => {
           const action = pendingNavigation

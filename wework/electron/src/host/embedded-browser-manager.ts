@@ -2,22 +2,16 @@ import {
   copyDshBrowserAuthentication,
   dshBrowserRequestHeaders,
 } from '../runtime/dsh-browser-auth.js'
-import {
-  BrowserWindow,
-  WebContentsView,
-  session,
-  shell,
-  type DownloadItem,
-  type WebContents,
-} from 'electron'
+import { BrowserWindow, WebContentsView, session, shell, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   BrowserHistoryStore,
   type BrowserHistoryEntry,
   type BrowserHistorySearch,
 } from './browser-history-store.js'
+import { BrowserDownloads } from './browser-downloads.js'
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import type { DownloadTargetPolicy } from './download-target-policy.js'
 import { createNativeContextMenuActions, installContextMenu } from './image-context-actions.js'
@@ -67,7 +61,7 @@ interface BrowserEntry {
   previewSourceUrl: string | null
   deviceMetrics: BrowserDeviceMetricsController
   navigationError: BrowserPageState['navigationError']
-  historyId: string | null
+  historyVisit: { id: string | null } | null
   historyGeneration: number
   initialNavigation: boolean
   navigationCompletion: Promise<void>
@@ -108,14 +102,6 @@ interface BrowserAgentCursorArrivalWaiter {
   moveSequence: number
   resolve: (arrived: boolean) => void
   timeout: NodeJS.Timeout
-}
-
-interface BrowserDownload {
-  id: string
-  item: DownloadItem
-  label: string
-  nativeLabel: string
-  path: string | null
 }
 
 export interface BrowserRequestHeaderRule {
@@ -163,7 +149,7 @@ export class EmbeddedBrowserManager {
     }>
   >()
   private readonly activeTabs = new Map<string, string>()
-  private readonly downloads = new Map<string, BrowserDownload>()
+  readonly downloads: BrowserDownloads
   private readonly agentControlPaused = new Set<string>()
   private readonly agentActive = new Set<string>()
   private readonly agentApprovals = new BrowserAgentApprovals(label =>
@@ -197,8 +183,14 @@ export class EmbeddedBrowserManager {
     private readonly openWeworkScheme: (url: string) => void = url => {
       void shell.openExternal(url)
     },
-    private readonly downloadPolicy?: Pick<DownloadTargetPolicy, 'apply' | 'downloadUrlAs'>
+    private readonly downloadPolicy?: Pick<
+      DownloadTargetPolicy,
+      'apply' | 'downloadUrlAs' | 'downloadsFolder'
+    >
   ) {
+    this.downloads = new BrowserDownloads(dataDirectory, event =>
+      this.emit('download', { ...event })
+    )
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
     browserSession.on('will-download', (event, item, webContents) => {
@@ -207,7 +199,7 @@ export class EmbeddedBrowserManager {
       const entry = [...this.entries.values()].find(
         candidate => candidate.contents.id === webContents.id
       )
-      if (entry) this.trackDownload(entry, item)
+      if (entry) this.downloads.track(entry, item)
     })
     browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({ requestHeaders: this.requestHeaders(details.url, details.requestHeaders) })
@@ -480,7 +472,7 @@ export class EmbeddedBrowserManager {
       previewSourceUrl: null,
       deviceMetrics: new BrowserDeviceMetricsController(contents),
       navigationError: null,
-      historyId: null,
+      historyVisit: null,
       historyGeneration: this.historyGeneration,
       initialNavigation: true,
       navigationCompletion: Promise.resolve(),
@@ -546,7 +538,7 @@ export class EmbeddedBrowserManager {
     contents.on('did-stop-loading', emitPageState)
     contents.on('page-title-updated', emitPageState)
     contents.on('page-title-updated', (_event, title) => {
-      if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
+      if (entry.historyVisit?.id) void this.history.backfillTitle(entry.historyVisit.id, title)
     })
     const commitNavigation = (url: string) => {
       // The host's bootstrap commit can arrive after the requested navigation
@@ -585,7 +577,7 @@ export class EmbeddedBrowserManager {
       if (isMainFrame) {
         this.agentApprovals.cancelLabel(entry.label)
         entry.navigationError = null
-        entry.historyId = null
+        entry.historyVisit = null
         entry.historyGeneration = this.historyGeneration
       }
     })
@@ -783,9 +775,7 @@ export class EmbeddedBrowserManager {
     }
     if (this.agentControlPaused.delete(entry.label)) this.agentControlPaused.add(target)
     this.agentApprovals.cancelLabel(entry.label)
-    for (const download of this.downloads.values()) {
-      if (download.label === entry.label) download.label = target
-    }
+    this.downloads.relabel(entry.label, target)
     this.entries.delete(entry.label)
     entry.label = target
     this.entries.set(target, entry)
@@ -1086,6 +1076,7 @@ export class EmbeddedBrowserManager {
 
   async clearData(kinds: string[] | null): Promise<number> {
     const clearAll = !kinds || kinds.length === 0
+    if (clearAll) this.downloads.clearHistory()
     if (clearAll || kinds.includes('history')) {
       this.historyGeneration += 1
       await this.history.clear()
@@ -1211,29 +1202,13 @@ export class EmbeddedBrowserManager {
     return BrowserWindow.getAllWindows().length + detachedInspectors
   }
 
-  pauseDownload(id: string): void {
-    const download = this.requiredDownload(id)
-    if (download.item.getState() === 'progressing') {
-      download.item.pause()
-      this.emitDownload(download, 'paused')
-    }
-  }
-
-  resumeDownload(id: string): void {
-    const download = this.requiredDownload(id)
-    if (!download.item.canResume()) {
-      throw new Error(`Embedded browser download cannot resume: ${id}`)
-    }
-    download.item.resume()
-    this.emitDownload(download, 'progress')
-  }
-
-  async deleteDownload(id: string): Promise<void> {
-    const download = this.requiredDownload(id)
-    if (download.item.getState() === 'progressing') download.item.cancel()
-    if (download.path) await rm(download.path, { force: true })
-    this.emitDownload(download, 'deleted')
-    this.downloads.delete(id)
+  async openDownloadsFolder(): Promise<void> {
+    if (!this.downloadPolicy) throw new Error('Download folder is unavailable')
+    const path = this.downloadPolicy.downloadsFolder()
+    const info = await stat(path)
+    if (!info.isDirectory()) throw new Error('Download folder is unavailable')
+    const error = await shell.openPath(path)
+    if (error) throw new Error(error)
   }
 
   saveUrlAs(label: string, url: string): void {
@@ -1250,10 +1225,7 @@ export class EmbeddedBrowserManager {
   }
 
   stop(): void {
-    for (const download of this.downloads.values()) {
-      if (download.item.getState() === 'progressing') download.item.cancel()
-    }
-    this.downloads.clear()
+    this.downloads.stop()
     for (const id of [...this.backgroundPages.keys()]) this.closeBackgroundPage(id)
     this.requestHeaderRules.clear()
     this.closeMany([...this.entries.keys()])
@@ -1271,50 +1243,6 @@ export class EmbeddedBrowserManager {
     const entry = this.entries.get(normalized)
     if (!entry) throw new Error(`Embedded browser is unavailable: ${normalized}`)
     return entry
-  }
-
-  private trackDownload(entry: BrowserEntry, item: DownloadItem): void {
-    const download: BrowserDownload = {
-      id: randomUUID(),
-      item,
-      label: entry.label,
-      nativeLabel: entry.nativeLabel,
-      path: item.getSavePath() || null,
-    }
-    this.downloads.set(download.id, download)
-    this.emitDownload(download, 'started')
-    item.on('updated', (_event, state) => {
-      download.path = item.getSavePath() || download.path
-      this.emitDownload(download, state === 'interrupted' ? 'failed' : 'progress')
-    })
-    item.once('done', (_event, state) => {
-      download.path = item.getSavePath() || download.path
-      this.emitDownload(download, state === 'completed' ? 'finished' : 'failed')
-    })
-  }
-
-  private requiredDownload(id: string): BrowserDownload {
-    const download = this.downloads.get(id)
-    if (!download) {
-      throw new Error(`Embedded browser download is unavailable: ${id}`)
-    }
-    return download
-  }
-
-  private emitDownload(
-    download: BrowserDownload,
-    status: 'started' | 'progress' | 'paused' | 'finished' | 'failed' | 'deleted'
-  ): void {
-    this.emit('download', {
-      id: download.id,
-      label: download.label,
-      nativeLabel: download.nativeLabel,
-      url: download.item.getURL(),
-      path: download.path,
-      status,
-      receivedBytes: download.item.getReceivedBytes(),
-      totalBytes: download.item.getTotalBytes(),
-    })
   }
 
   private emitPageState(entry: BrowserEntry): void {
@@ -1392,15 +1320,11 @@ export class EmbeddedBrowserManager {
 
   private async recordHistoryVisit(entry: BrowserEntry): Promise<void> {
     const url = this.currentVisibleUrl(entry)
-    if (
-      !url ||
-      !isHistoryRecordableUrl(url) ||
-      entry.historyGeneration !== this.historyGeneration
-    ) {
-      return
-    }
-    const historyId = await this.history.recordVisit(url, Date.now(), entry.contents.getTitle())
-    if (entry.historyGeneration === this.historyGeneration) entry.historyId = historyId
+    if (!url || entry.historyGeneration !== this.historyGeneration) return
+    // A completed write belongs to this visit even if another page has since loaded.
+    const visit: { id: string | null } = { id: null }
+    entry.historyVisit = visit
+    visit.id = await this.history.recordVisit(url, Date.now(), entry.contents.getTitle())
   }
 
   private recordNavigationFailure(
@@ -1617,14 +1541,6 @@ function validRemoteBrowserUrl(value: string): string {
 function isBrowserUrl(value: string): boolean {
   try {
     return ['http:', 'https:', 'file:', 'about:'].includes(new URL(value).protocol)
-  } catch {
-    return false
-  }
-}
-
-function isHistoryRecordableUrl(value: string): boolean {
-  try {
-    return ['http:', 'https:', 'file:'].includes(new URL(value).protocol)
   } catch {
     return false
   }

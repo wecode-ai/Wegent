@@ -4,7 +4,7 @@ import {
   type EmbeddedBrowserAgentCursorEvent,
   type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
-  type EmbeddedBrowserDownloadEvent,
+  type EmbeddedBrowserDownloadRecord,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
   type EmbeddedBrowserNavigationError,
   type EmbeddedBrowserOpenRequest,
@@ -22,6 +22,7 @@ import type { BrowserAnnotationComment, BrowserAnnotationScope } from '@/types/b
 import type { BrowserAnnotationCommand } from '@/types/browser-annotation'
 import type { TFunction } from 'i18next'
 import type { GeometrySnapshot } from '@wegent/collaboration/dom-events'
+import type { createBrowserDownloads } from './workspaceBrowserDownloads'
 import type { createBrowserNavigation } from './workspaceBrowserNavigation'
 import type { createBrowserViewport } from './workspaceBrowserViewport'
 import type { createBrowserAnnotations } from './workspaceBrowserAnnotations'
@@ -108,7 +109,7 @@ export interface WorkspaceBrowserPanelProps {
   onUrlChange?: (url: string | null) => void
 }
 export type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
-export type BrowserDownload = EmbeddedBrowserDownloadEvent
+export type BrowserDownload = EmbeddedBrowserDownloadRecord
 export type BrowserAgentState = EmbeddedBrowserAgentStateEvent
 export type BrowserAgentCursor = EmbeddedBrowserAgentCursorEvent
 export type BrowserOpenDiagnosticStage =
@@ -249,6 +250,9 @@ export interface BrowserSessionState {
   discardingAnnotations: boolean
   originalViewHeld: boolean
   downloads: BrowserDownload[]
+  downloadsLoading: boolean
+  downloadsError: boolean
+  unreadDownloadCount: number
   downloadsOpen: boolean
   downloadPeek: {
     id: string
@@ -338,6 +342,7 @@ export type BrowserStateUpdate<K extends keyof BrowserSessionState> =
   | BrowserSessionState[K]
   | ((current: BrowserSessionState[K]) => BrowserSessionState[K])
 export type BrowserSessionActions = ReturnType<typeof createBrowserNavigation> &
+  ReturnType<typeof createBrowserDownloads> &
   ReturnType<typeof createBrowserViewport> &
   ReturnType<typeof createBrowserAnnotations> &
   ReturnType<typeof createBrowserActions>
@@ -392,6 +397,9 @@ export function createBrowserSessionInitial(options: BrowserSessionOptions) {
     discardingAnnotations: false,
     originalViewHeld: false,
     downloads: [],
+    downloadsLoading: false,
+    downloadsError: false,
+    unreadDownloadCount: 0,
     downloadsOpen: false,
     downloadPeek: null,
     localFilePreviewToast: null,

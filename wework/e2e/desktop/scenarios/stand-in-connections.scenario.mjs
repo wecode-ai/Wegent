@@ -9,6 +9,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project-connections.mjs'
 import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-catalog.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { verifyStandInSessionSettings } from '../modules/stand-in-session-settings.mjs'
 import { verifyStandInGroupMessageScope } from '../modules/stand-in-group-message-scope.mjs'
 import { verifyStandInDelegationVisual } from '../modules/stand-in-delegation-visual.mjs'
@@ -116,8 +117,15 @@ export function createDesktopScenario(options) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await verifyProjectFieldFocus(control, 'stand-in-primary-open', {
+          nextButtonPattern: /^stand-in-(?:overview-role-.+|create-role)$/,
+        })
         await verifyStandInProfileNavigation(control, options.captureScreenshot)
         await openStandInSettings(control)
+        await verifyProjectFieldFocus(control, 'stand-in-preferences', {
+          includeParent: true,
+          nextButtonPattern: /^stand-in-primary-connections-open$/,
+        })
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-connections-open"]'
