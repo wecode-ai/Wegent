@@ -163,10 +163,11 @@ export function getVisibleRuntimeSidebarTaskItems(
       isAlwaysVisibleTask?.(item) ||
       isRuntimeTaskQueued(item.task)
   )
+  const visibleTaskIds = new Set(visibleUnpinnedItems.map(item => item.task.taskId))
   for (const item of alwaysVisibleItems) {
-    if (!visibleUnpinnedItems.some(visibleItem => visibleItem.task.taskId === item.task.taskId)) {
-      visibleUnpinnedItems.push(item)
-    }
+    if (visibleTaskIds.has(item.task.taskId)) continue
+    visibleTaskIds.add(item.task.taskId)
+    visibleUnpinnedItems.push(item)
   }
   return [...pinnedItems, ...visibleUnpinnedItems]
 }
@@ -218,7 +219,6 @@ export function getRuntimeTaskAddress(
     taskId: task.taskId,
     ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-    ...(task.taskId ? { taskId: task.taskId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }

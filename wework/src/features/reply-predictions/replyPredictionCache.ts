@@ -10,9 +10,10 @@ interface CachedPrediction {
 const storagePrefix = 'wework.replyPrediction.v1.'
 const storageKey = (scope: string) => `${storagePrefix}${scope}`
 
-export function subscribeReplyPredictionCache(listener: () => void) {
+export function subscribeReplyPredictionCache(listener: (scope?: string) => void) {
   const update = (event: StorageEvent) => {
-    if (event.key === null || event.key.startsWith(storagePrefix)) listener()
+    if (event.key === null) listener()
+    else if (event.key.startsWith(storagePrefix)) listener(event.key.slice(storagePrefix.length))
   }
   window.addEventListener('storage', update)
   return () => window.removeEventListener('storage', update)

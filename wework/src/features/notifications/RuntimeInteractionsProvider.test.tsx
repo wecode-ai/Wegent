@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import { createIssueHumanInteractionSource } from './issueHumanInteractionSource'
 
 import {
   ConversationTranslationProvider,
@@ -18,6 +19,26 @@ import {
   interactionTranscript,
 } from './runtimeInteractions.fixtures'
 describe('unified human response', () => {
+  it('keeps the shared inbox snapshot stable across empty polls', async () => {
+    const source = createIssueHumanInteractionSource(
+      {
+        inbox: async () => ({ items: [] }),
+        list: vi.fn(),
+        assign: vi.fn(),
+      },
+      'backend',
+      []
+    )
+    const unsubscribe = source.subscribe(vi.fn())
+    const snapshot = source.getSnapshot()
+    try {
+      await source.refresh()
+      expect(source.getSnapshot()).toBe(snapshot)
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('never writes a stale shared draft into the answer input during IME composition', async () => {
     function Answer() {
       const interactions = useRuntimeInteractions()
