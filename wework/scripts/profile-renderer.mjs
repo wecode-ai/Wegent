@@ -513,7 +513,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
-  const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
+  const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
   const processSamples = []
