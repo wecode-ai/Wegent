@@ -4,7 +4,7 @@ import {
   WorkbenchQueueActionsContext,
   WorkbenchSidebarRemindersContext,
 } from './workbenchContexts'
-import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
+import { useRuntimeTaskReminders, type RuntimeTaskReminderState } from './runtimeTaskReminders'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
@@ -12,12 +12,50 @@ import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscus
 import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import {
   RuntimeTaskLifecycleProvider,
+  useRuntimeTaskLifecycleStoreSnapshot,
   type RuntimeTaskLifecycleStore,
 } from './runtimeTaskLifecycle'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type { WorkbenchContextValue, WorkbenchPaneContextValue } from './workbenchContextTypes'
 import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
 import { useMemo, type ReactNode } from 'react'
+
+function WorkbenchReminderProvider({
+  runtimeWork,
+  lifecycleStore,
+  services,
+  publish,
+  children,
+}: {
+  runtimeWork: WorkbenchContextValue['state']['runtimeWork']
+  lifecycleStore: RuntimeTaskLifecycleStore
+  services: WorkbenchPaneContextValue['services']
+  publish: (reminders: RuntimeTaskReminderState) => void
+  children: ReactNode
+}) {
+  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const runtimeTaskReminders = useRuntimeTaskReminders({
+    runtimeWork,
+    lifecycleStore,
+    lifecycleSnapshot,
+    standInApi: services.standInApi,
+    runtimeApi: services.runtimeWorkApi,
+    publish,
+  })
+  const { unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead } = runtimeTaskReminders
+  const sidebarReminders = useMemo(
+    () => ({ unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead }),
+    [unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead]
+  )
+  return (
+    <RuntimeTaskRemindersContext.Provider value={runtimeTaskReminders}>
+      <WorkbenchSidebarRemindersContext.Provider value={sidebarReminders}>
+        {children}
+      </WorkbenchSidebarRemindersContext.Provider>
+    </RuntimeTaskRemindersContext.Provider>
+  )
+}
+
 export function WorkbenchContextProviders({
   value,
   paneValue,
@@ -25,7 +63,7 @@ export function WorkbenchContextProviders({
   lifecycleStore,
   refreshDevicesAfterRestart,
   retainOwner,
-  runtimeTaskReminders,
+  publishTaskReminders,
   children,
 }: {
   value: WorkbenchContextValue
@@ -34,18 +72,13 @@ export function WorkbenchContextProviders({
   lifecycleStore: RuntimeTaskLifecycleStore
   refreshDevicesAfterRestart: WorkbenchSessionOperations['refreshDevicesAfterRestart']
   retainOwner: () => () => void
-  runtimeTaskReminders: RuntimeTaskReminderState
+  publishTaskReminders: (reminders: RuntimeTaskReminderState) => void
   children: ReactNode
 }) {
   const { forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError } = value
   const queueActions = useMemo(
     () => ({ forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError }),
     [forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError]
-  )
-  const { unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead } = runtimeTaskReminders
-  const sidebarReminders = useMemo(
-    () => ({ unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead }),
-    [unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead]
   )
   return (
     <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
@@ -64,11 +97,14 @@ export function WorkbenchContextProviders({
                     refreshDevices={refreshDevicesAfterRestart}
                   >
                     <WorkbenchQueueActionsContext.Provider value={queueActions}>
-                      <RuntimeTaskRemindersContext.Provider value={runtimeTaskReminders}>
-                        <WorkbenchSidebarRemindersContext.Provider value={sidebarReminders}>
-                          <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
-                        </WorkbenchSidebarRemindersContext.Provider>
-                      </RuntimeTaskRemindersContext.Provider>
+                      <WorkbenchReminderProvider
+                        runtimeWork={value.state.runtimeWork}
+                        lifecycleStore={lifecycleStore}
+                        services={paneValue.services}
+                        publish={publishTaskReminders}
+                      >
+                        <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                      </WorkbenchReminderProvider>
                     </WorkbenchQueueActionsContext.Provider>
                   </WorkbenchCloudDeviceRestarts>
                 </DesktopGitAccountConfigurationProvider>

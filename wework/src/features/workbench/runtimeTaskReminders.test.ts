@@ -6,6 +6,7 @@ import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
 import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
@@ -258,6 +259,7 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       items,
       listedItems: items,
       unreadMessageCounts: new Map(),
+      preferences: defaultAppPreferences,
       notificationPreferences: {
         ...defaultNotificationPreferences,
         tasks: { in_app: true, system: true, im: null },
