@@ -4,7 +4,7 @@ import {
 } from '@/features/workbench/scopedDraftStore'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { StrictMode, type ComponentProps } from 'react'
@@ -2165,6 +2165,15 @@ describe('TemporaryChatPanel', () => {
           </I18nextProvider>
         )
       }
+      const selectModel = async (name: string) => {
+        await user.click(screen.getByTestId('model-selector-button'))
+        const menu = await screen.findByTestId('model-selector-menu')
+        if (menu.dataset.panel === 'simple') {
+          await user.click(within(menu).getByTestId('model-advanced-toggle'))
+        }
+        await waitFor(() => expect(menu).toHaveAttribute('data-panel', 'advanced'))
+        await user.click(await within(menu).findByTestId(`model-option-${name}`))
+      }
       try {
         const view = render(<Conversation />)
         await waitFor(() => expect(services.standInApi.catalog).toHaveBeenCalled())
@@ -2197,12 +2206,9 @@ describe('TemporaryChatPanel', () => {
         } else {
           await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
         }
-        await user.click(screen.getByTestId('model-selector-button'))
-        const advanced = screen.queryByTestId('model-advanced-toggle')
-        if (advanced) await user.click(advanced)
         const modelName =
           target === 'cloud' ? cloud.name : target === 'official' ? official.name : 'company-codex'
-        await user.click(await screen.findByTestId(`model-option-${modelName}`))
+        await selectModel(modelName)
         if (existing) {
           expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
             threadRouting
@@ -2220,10 +2226,7 @@ describe('TemporaryChatPanel', () => {
             expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
             if (providerFailure || providerPending)
               expect(screen.getByTestId('send-message-button')).toBeDisabled()
-            await user.click(screen.getByTestId('model-selector-button'))
-            const advanced = screen.queryByTestId('model-advanced-toggle')
-            if (advanced) await user.click(advanced)
-            await user.click(await screen.findByTestId(`model-option-${modelName}`))
+            await selectModel(modelName)
           }
           if (providerPending && !changeTargetRoundtrip) {
             expect(releaseProviderRead).toBeTypeOf('function')
@@ -2240,10 +2243,7 @@ describe('TemporaryChatPanel', () => {
           expect(releaseProviderRead).toBeTypeOf('function')
           await act(async () => releaseProviderRead?.())
           for (const name of ['company-codex', cloud.name]) {
-            await user.click(screen.getByTestId('model-selector-button'))
-            const advanced = screen.queryByTestId('model-advanced-toggle')
-            if (advanced) await user.click(advanced)
-            await user.click(await screen.findByTestId(`model-option-${name}`))
+            await selectModel(name)
             expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
             await user.keyboard('{Escape}')
           }
@@ -2254,10 +2254,7 @@ describe('TemporaryChatPanel', () => {
           'Keep this stand-in draft'
         )
         if (revertBeforeSend) {
-          await user.click(screen.getByTestId('model-selector-button'))
-          const advanced = screen.queryByTestId('model-advanced-toggle')
-          if (advanced) await user.click(advanced)
-          await user.click(await screen.findByTestId(`model-option-${official.name}`))
+          await selectModel(official.name)
           expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
         }
         if (screen.queryByTestId('model-selector-menu')) await user.keyboard('{Escape}')
@@ -2356,7 +2353,7 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          await user.type(screen.getByTestId('chat-message-input'), 'Continue recovered session')
+          setComposerValue(screen.getByTestId('chat-message-input'), 'Continue recovered session')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
@@ -2402,18 +2399,15 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          await user.type(screen.getByTestId('chat-message-input'), 'Continue here')
+          setComposerValue(screen.getByTestId('chat-message-input'), 'Continue here')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
             'startNewSession'
           )
-          await user.click(screen.getByTestId('model-selector-button'))
-          const advanced = screen.queryByTestId('model-advanced-toggle')
-          if (advanced) await user.click(advanced)
-          await user.click(await screen.findByTestId(`model-option-${official.name}`))
+          await selectModel(official.name)
           await user.click(screen.getByTestId('model-switch-warning-confirm-button'))
-          await user.type(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
+          setComposerValue(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toMatchObject({
