@@ -1,5 +1,5 @@
 {
-  "description": "Conservative Core checkpoint costs from three successful same-product CI observations: upper quartile with linear interpolation, rounded up; existing runner and worker counts are unchanged. Cloud costs retain the original successful baseline. Core tail costs include later observations on shards 1, 4 and 10 and extra shards 1, 2 and 5. The merged PR #4808 Core extra shard 3 supplies the latest long-tail measurements.",
+  "description": "Conservative Core checkpoint costs from three successful same-product CI observations: upper quartile with linear interpolation, rounded up; existing runner and worker counts are unchanged. Cloud tail costs use recent passing checkpoint durations on the busiest Cloud shard. Core tail costs include later observations on shards 1, 4 and 10 and extra shards 1, 2 and 5. The merged PR #4808 Core extra shard 3 supplies the latest long-tail measurements.",
   "run": "https://github.com/wecode-ai/Wegent/actions/runs/41664748816",
   "headSha": "d2464703681da8542657ff5e02c0464ac29c148c",
   "coreShard10Observation": "https://github.com/wecode-ai/Wegent/actions/runs/44477794083/job/135408742636",
@@ -15,6 +15,10 @@
   "coreExclusiveCpuCheckpointObservations": [
     "https://github.com/wecode-ai/Wegent/actions/runs/45143942480",
     "https://github.com/wecode-ai/Wegent/actions/runs/45146663379"
+  ],
+  "cloudExtraShard2Observations": [
+    "https://github.com/wecode-ai/Wegent/actions/runs/45594073274/job/139142221663",
+    "https://github.com/wecode-ai/Wegent/actions/runs/45599132550/job/139154043747"
   ],
   "workers": 4,
   "scopes": {
@@ -205,13 +209,13 @@
       "cloud-model-recovery": 280,
       "cloud-project-creation": 111,
       "cloud-worktree-archive-restore": 118,
-      "cloud-worktree-capability": 69,
+      "cloud-worktree-capability": 103,
       "cloud-worktree-create": 109,
       "cloud-worktree-queued-cancel": 87,
       "cloud-worktree-tools": 88,
       "conversation-state": 434,
       "core-task-flow": 401,
-      "embedded-browser": 170,
+      "embedded-browser": 340,
       "goal-lifecycle": 179,
       "model-routing": 223,
       "plugin-account-auth-conversation": 188,
@@ -223,7 +227,7 @@
       "plugin-account-auth-transfer": 118,
       "plugin-auto-update": 317,
       "plugin-background-sync-isolation": 203,
-      "plugin-collaboration-composer-isolation": 101,
+      "plugin-collaboration-composer-isolation": 228,
       "plugin-composer-long-list": 321,
       "plugin-periodic-reconcile": 245,
       "plugin-registration-coordination": 119,
@@ -234,8 +238,8 @@
       "plugin-uninstall-reinstall-race": 175,
       "plugin-uninstall-restart-recovery": 231,
       "plugin-uninstall-unknown-result": 207,
-      "plugin-workspace-publication": 80,
-      "plugin-write-coordination": 546,
+      "plugin-workspace-publication": 181,
+      "plugin-write-coordination": 655,
       "priority-filter": 152,
       "project-automation": 140,
       "rendering-extensions": 90,
