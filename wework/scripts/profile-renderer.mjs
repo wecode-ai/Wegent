@@ -375,7 +375,9 @@ async function measureConcurrentTasks({
     'pane-activity'
   )
   assert.ok([...concurrentResponses.values()].every(response => !response.destroyed))
+  await control.command('focusMainWindow', 'body')
   const foregroundBefore = await windowState()
+  assert.equal(foregroundBefore.focused, true, 'The concurrent performance window must have focus')
   await mark('concurrent-conversation-start')
   const foregroundSamples = [await cpuSnapshot(pids)]
   startConcurrent.resolve()
@@ -410,6 +412,7 @@ async function measureConcurrentTasks({
     '[data-testid="workspace-tab-select-pending-interactions"]'
   )
   await control.command('waitFor', pendingIssueSelector, { timeoutMs: uiTimeoutMs })
+  await control.command('focusMainWindow', 'body')
   assert.ok(
     [...concurrentResponses.values()].every(response => !response.writableEnded),
     'All ten streams must still be running when the pending Issues measurement starts'
@@ -799,8 +802,10 @@ export function createDesktopScenario({
             await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
           }
         }
+        await control.command('focusMainWindow', 'body')
         const before = await windowState()
         assert.equal(before.activity, 'foreground', 'Measure the foreground presentation path')
+        assert.equal(before.focused, true, 'The performance window must have native focus')
         const running = await requestExecutor(
           control,
           'runtime.tasks.running_count',
@@ -865,6 +870,11 @@ export function createDesktopScenario({
         if (interaction.status === 'rejected') throw interaction.reason
         if (sampling.status === 'rejected') throw sampling.reason
         const end = interaction.value
+        const singleTaskAfter = await windowState()
+        assert.ok(
+          singleTaskAfter.activity === 'foreground' && singleTaskAfter.focused,
+          `The single-task performance window lost focus: ${JSON.stringify(singleTaskAfter)}`
+        )
         assert.ok(start, 'The isolated model stream did not start')
         await waitForBottom(control, 'The streamed conversation', uiTimeoutMs)
         const { taskId } = await waitForWorkbenchDebugState(
@@ -932,7 +942,10 @@ export function createDesktopScenario({
           after,
           foregroundWindow.before,
           foregroundWindow.after,
-        ].every(state => state.activity === 'foreground')
+        ].every(
+          state =>
+            state.activity === 'foreground' && state.visibility === 'visible' && state.focused
+        )
         const report = {
           measurements,
           concurrentCpuPercent,
@@ -1022,7 +1035,7 @@ async function main() {
       WEWORK_E2E_APP_BIN: app,
       WEWORK_E2E_EXECUTOR_BIN: executor,
       WEWORK_E2E_DESKTOP_SCENARIO_ONLY: 'true',
-      WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_E2E_BACKGROUND_WINDOW: '0',
       WEWORK_E2E_DESKTOP_SCENARIO_MODULE: import.meta.url,
       WEWORK_RENDERER_PROFILE_CAPTURE: String(args.includes('--capture')),
       WEWORK_RENDERER_PROFILE_CHECK: String(args.includes('--check')),
