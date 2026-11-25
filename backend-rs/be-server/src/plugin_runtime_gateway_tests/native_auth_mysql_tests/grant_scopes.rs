@@ -47,7 +47,7 @@ pub(super) async fn verify(
     let held =
         PluginWriteLease::acquire_names(state.redis.as_ref(), OWNER, vec!["grant-scope-b".into()])
             .await?;
-    for pending in [false, true] {
+    for (pending, inventory) in [(false, Vec::new()), (true, Vec::new()), (true, ids.clone())] {
         if pending {
             mysql.execute("UPDATE kinds SET json=JSON_REMOVE(json,'$.spec.deviceGrants.\"grant-cloud\"') WHERE user_id=? AND kind='ConnectorConnection' AND namespace='plugin-auth' AND JSON_EXTRACT(json,'$.spec.installedPluginId')=?",(OWNER,ids[0])).await?;
         }
@@ -57,7 +57,7 @@ pub(super) async fn verify(
             session,
             "grant-socket",
             plugin_account_auth::AUTOMATIC,
-            &json!({"installed_plugin_ids":[]}),
+            &json!({"installed_plugin_ids":inventory}),
         )
         .await;
         assert_eq!(

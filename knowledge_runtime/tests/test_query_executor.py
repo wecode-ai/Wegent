@@ -558,6 +558,72 @@ class TestQueryExecutor:
         assert result.total == 4  # Total from all KBs before limiting
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("deduplicate", [False, True])
+    async def test_execute_forwards_document_diversity_to_real_selection(
+        self, query_request, deduplicate: bool
+    ) -> None:
+        """The transport flag changes the real engine's candidate window and output."""
+        candidates = [
+            {
+                "content": "best-chunk",
+                "title": "First document",
+                "score": 0.99,
+                "document_id": 100,
+            },
+            {
+                "content": "repeated-chunk",
+                "title": "First document",
+                "score": 0.98,
+                "metadata": {"document_id": "doc_100"},
+            },
+            {
+                "content": "second-document",
+                "title": "Second document",
+                "score": 0.9,
+                "doc_ref": "doc_101",
+            },
+        ]
+        storage = MagicMock()
+        storage.retrieve.side_effect = lambda **kwargs: {
+            "records": candidates[: kwargs["retrieval_setting"]["top_k"]]
+        }
+        config = _make_query_config(1)
+        config.retrieval_config = RuntimeRetrievalConfig(top_k=2)
+        query_request.knowledge_base_ids = [1]
+        query_request.max_results = 2
+        query_request.deduplicate_by_document = deduplicate
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=storage,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await QueryExecutor(
+                config_loader=_make_config_loader(config)
+            ).execute(query_request)
+
+        assert [record.document_id for record in result.records] == (
+            [100, 101] if deduplicate else [None, None]
+        )
+        assert [record.content for record in result.records] == [
+            "best-chunk",
+            "second-document" if deduplicate else "repeated-chunk",
+        ]
+        assert result.total == (3 if deduplicate else 2)
+        assert result.total_estimated_tokens == sum(
+            len(record.content) // 4 for record in result.records
+        )
+        assert storage.retrieve.call_args.kwargs["retrieval_setting"]["top_k"] == (
+            8 if deduplicate else 2
+        )
+        assert config.retrieval_config.top_k == 2
+
+    @pytest.mark.asyncio
     async def test_execute_empty_results(self, query_request) -> None:
         """Test handling of empty query results."""
         mock_storage_backend = MagicMock()

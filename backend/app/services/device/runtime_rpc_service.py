@@ -8,6 +8,7 @@ import asyncio
 import base64
 import copy
 import gzip
+import hashlib
 import json
 import logging
 import time
@@ -364,15 +365,20 @@ class RuntimeRpcService:
             request["appTaskAccessScope"] = "project-session"
         elif app_stand_in_allowed:
             request["appTaskAccessScope"] = "stand-in-conversation"
+        request_id = uuid4().hex
+        request["request_id"] = request_id
+        socket_ref = hashlib.sha256(route.socket_id.encode()).hexdigest()[:12]
         started_at = time.perf_counter()
         logger.info(
             "[RuntimeRpcService] Sending runtime RPC: user_id=%s "
             "logical_device_id=%s runtime_device_id=%s method=%s "
-            "timeout_seconds=%s payload_keys=%s",
+            "request_id=%s socket_ref=%s timeout_seconds=%s payload_keys=%s",
             user_id,
             route.logical_device_id,
             route.runtime_device_id,
             method,
+            request_id,
+            socket_ref,
             normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
             sorted(payload.keys()),
         )
@@ -389,11 +395,13 @@ class RuntimeRpcService:
             logger.warning(
                 "[RuntimeRpcService] Runtime RPC failed: user_id=%s "
                 "logical_device_id=%s runtime_device_id=%s method=%s "
-                "elapsed_ms=%s error_type=%s",
+                "request_id=%s socket_ref=%s elapsed_ms=%s error_type=%s",
                 user_id,
                 route.logical_device_id,
                 route.runtime_device_id,
                 method,
+                request_id,
+                socket_ref,
                 elapsed_ms,
                 exc.__class__.__name__,
             )
@@ -434,11 +442,13 @@ class RuntimeRpcService:
         logger.info(
             "[RuntimeRpcService] Runtime RPC completed: user_id=%s "
             "logical_device_id=%s runtime_device_id=%s method=%s "
-            "elapsed_ms=%s result_keys=%s",
+            "request_id=%s socket_ref=%s elapsed_ms=%s result_keys=%s",
             user_id,
             route.logical_device_id,
             route.runtime_device_id,
             method,
+            request_id,
+            socket_ref,
             elapsed_ms,
             sorted(result.keys()),
         )

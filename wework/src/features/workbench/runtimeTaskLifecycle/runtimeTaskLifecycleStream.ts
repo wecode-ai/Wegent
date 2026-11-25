@@ -57,23 +57,13 @@ function matchingLifecycleAddress(
   payload: LifecycleEventPayload
 ): RuntimeTaskAddress | null {
   if (!payload.taskId) return null
-  const snapshot = store.getSnapshot()
-  for (const lifecycle of snapshot.tasks.values()) {
-    if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
-    if (
-      payload.deviceId &&
-      lifecycle.address.deviceId !== payload.deviceId &&
-      store.getTask({ ...lifecycle.address, deviceId: payload.deviceId })?.key !== lifecycle.key
-    ) {
-      continue
-    }
-    return lifecycle.address
+  if (payload.deviceId) {
+    const address = { deviceId: payload.deviceId, taskId: payload.taskId }
+    return store.getTask(address)?.address ?? address
   }
-  if (!payload.deviceId) return null
-  return {
-    deviceId: payload.deviceId,
-    taskId: payload.taskId,
-  }
+  for (const lifecycle of store.getSnapshot().tasks.values())
+    if (lifecycle.address.taskId === payload.taskId) return lifecycle.address
+  return null
 }
 
 interface InterruptedRecovery {
@@ -348,13 +338,15 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
         terminalTurnId !== currentTurnId &&
         store.isPriorTurn(address, terminalTurnId)
       )
-      if (payload.task && !terminalTurnIsPrior) store.syncRuntimeTask(address, payload.task)
-      const activeTurnId = store.getTask(address)?.turn.id
-      if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
-        return { address, settled: false, terminalTurnId }
-      }
-      store.turnSettled(address, terminalTurnId, outcome)
-      return { address, settled: true, terminalTurnId }
+      return store.batch(() => {
+        if (payload.task && !terminalTurnIsPrior) store.syncRuntimeTask(address, payload.task)
+        const activeTurnId = store.getTask(address)?.turn.id
+        if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
+          return { address, settled: false, terminalTurnId }
+        }
+        store.turnSettled(address, terminalTurnId, outcome)
+        return { address, settled: true, terminalTurnId }
+      })
     }
 
     const reconcileTerminalTranscript = async (
@@ -495,11 +487,10 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
     const refreshActiveSettlementChecks = () => {
       if (disposed) return
       const activeKeys = new Set<string>()
-      for (const lifecycle of store.getSnapshot().tasks.values()) {
-        if (!lifecycle?.turn.active) continue
-        const key = runtimeConversationKey(lifecycle.address)
+      for (const address of store.getActiveTurnAddresses()) {
+        const key = runtimeConversationKey(address)
         activeKeys.add(key)
-        watchActiveTurnSettlement(lifecycle.address)
+        watchActiveTurnSettlement(address)
       }
       for (const [key, timer] of settlementChecks) {
         if (activeKeys.has(key)) continue
@@ -519,8 +510,10 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
       onChatStart: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (!address) return
-        if (payload.task) store.syncRuntimeTask(address, payload.task)
-        store.turnStarted(address, payload.subtaskId?.trim() || null)
+        store.batch(() => {
+          if (payload.task) store.syncRuntimeTask(address, payload.task)
+          store.turnStarted(address, payload.subtaskId?.trim() || null)
+        })
         watchActiveTurnSettlement(address)
       },
       onBlockCreated: payload => {

@@ -150,7 +150,11 @@ The comparison uses conversations handled by the same role under both versions. 
 
 Reply examples and source observations from the past seven days can inform subsequent replies. Older records can still be reviewed or forgotten while their sources remain authorized. Each account retains up to 1,000 reply examples and 1,000 source observations. When either limit is reached, a new record replaces the earliest collected record of the same kind. Ordinary memories have a separate capacity.
 
-Once independent examples are available, the execution device compares trial answers from the current and proposed role instructions in isolated model sessions. With enough independent cases, the stand-in uses up to six to draft a revision and up to six others to test it. A candidate that passes the first comparison is checked again with the same answers in reverse order. At least one case must improve in both orders, with sufficient evidence and no regression in any case. Open **Pending configuration** for that identity to inspect the text changes, evidence and comparison. Accept to apply a revision, or inspect and undo the latest applicable revision in **Manage assistant → Last accepted assistant instructions**. Source work can use the default assistant's responsibilities, while private preferences are used in identity conversations. Turning learning off stops new examples and evaluations. Saved memories remain manageable. Offline comparisons currently require a Codex model on the execution device.
+Once independent examples are available, the execution device compares trial answers from the current and proposed role instructions in isolated model sessions. With enough independent cases, the stand-in uses up to six to draft a revision and up to six others to test it. A candidate that passes the first comparison is checked again with the same answers in reverse order. At least one case must improve in both orders, with sufficient evidence and no regression in any case. Open **Pending configuration** for that identity to inspect the text changes, evidence and comparison. Accept to apply a revision, or inspect and undo the latest applicable revision in **Manage assistant → Assistant learning report**. Source work can use the default assistant's responsibilities, while private preferences are used in identity conversations. Turning learning off stops new examples and evaluations. Saved memories remain manageable. Offline comparisons currently require a Codex model on the execution device.
+
+Open **Manage assistant → Assistant learning report** to see completed iterations on the identity’s execution device, its current instructions score, the latest before and after scores, and the improvement status. Scores weight wins and ties across independent cases on a 100-point scale. The after score describes the candidate. The current score reflects that candidate once you accept it. Scores are unavailable without comparable results.
+
+Capability retest shows intent, verification, judgment, actionability, and clarity on a 100-point scale. Each dimension uses its own set of comparable cases. The report uses a radar chart for three or more scored dimensions and comparison tracks for one or two. Insufficient evidence and not applicable appear as separate states, and a measured zero appears as a score. The overall blind verdict determines whether the assistant proposes an improvement. When the proposal is available for review, select **Review improvement** in the report. You can also review pending changes in order from **Assistant details → Pending configuration**.
 
 The default assistant memory panel also lists unreferenced **Legacy forgetting fingerprints** under **Forgetting rules**, with their time and short identifier. Older versions retained neither fact text nor scope, so these show **Unknown scope** without reconstructing content. They are never supplied to models or shown in project-specific panels. Choose **Delete rule** and confirm to remove only that fingerprint; one old memory may have multiple fingerprints, and other restrictions remain. Fingerprints referenced by current rules cannot be removed separately. Concurrent changes require reloading before deletion.
 
@@ -200,6 +204,16 @@ Stand-in chats currently require the Codex runtime for operation approvals. If t
 
 If the current model is unavailable, select **Reload models** in the chat. When an older session’s provider cannot be read or is incompatible with the profile model, select **Continue in a new session**. After confirmation, your next message starts a new session in the same stand-in chat and preserves its history and draft.
 
+<a id="stand-in-task-permissions"></a>
+
+## Assistant task permissions
+
+Open **My assistants → select an assistant → Assistant details → Manage assistant → Execution environment**. Under **Default task permissions**, choose **Read-only**, **Workspace**, or **Full access**, then save. Read-only is the default. Full access uses the same confirmation and high-risk command approval options as ordinary conversations.
+
+When an assistant creates a Codex task for work you initiate, the task starts with the assigned assistant’s saved mode. Open the full task conversation to change its mode in the composer. The change takes effect starting with the next turn you submit. Resolve approvals for the current turn in their original cards. Existing delegations without a selection default to read-only. Background follow-ups and work triggered by an Issue, connection, or calendar use their own execution policies.
+
+Moving an assistant to another execution device resets its default task permissions to Read-only on the receiving device. Save the move, then open the assistant on that device to choose its default task permissions.
+
 <a id="stand-in-source-session-policy"></a>
 
 ## DingTalk and collaboration sources
@@ -209,6 +223,8 @@ The shared DSH EventBus schedules connection collection for the assistant, the G
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
 
 Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.
+
+Under **My assistants → Assistant details → Manage assistant → Connections → Collaboration projects**, turn on **Receive collaboration issues**, select **Issues I participate in**, and save. You can leave project selection empty to receive only participating Issues. This scope includes Issues whose participant list contains you. Assignment and comment mentions trigger handling. Each assistant handles an event once when it matches both this scope and a connected project.
 
 Open a source to install its plugin or sign in, then choose the receive scope and handling. Sources on remote execution devices require authorization on that device. Existing scopes remain visible and removable when a source is unavailable. Returning to Connections or the role settings home retains the draft; save to apply it, or cancel and confirm discarding it. Press Enter to add a project tag. Unfinished or overlong tags prevent saving and retain the input; leaving or disabling intake requires confirmation before discarding the draft. Scope and handling changes take effect after saving stand-in settings; verifying a mailbox account also requires saving those settings before receiving new mail.
 

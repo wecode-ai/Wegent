@@ -540,6 +540,7 @@ export function DingTalkDelegationControls({
                   data-testid={'stand-in-delegation-template-' + template}
                   checked={delegation.delegation.templates[template]}
                   disabled={blocked}
+                  className="keyboard:focus:ring-2 keyboard:focus:ring-focus/40"
                   onCheckedChange={checked =>
                     updateDraft({
                       ...selection,

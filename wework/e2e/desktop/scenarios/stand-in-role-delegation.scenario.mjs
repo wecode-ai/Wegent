@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
-import { mkdir, realpath } from 'node:fs/promises'
+import { mkdir, readFile, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
+import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { ACTIVE_WORKBENCH_SELECTOR } from '../modules/shared.mjs'
+import {
+  shellCommandPollResponse,
+  shellCommandResponse,
+} from '../modules/shell-command-response.mjs'
+import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import {
   assistantMessage,
@@ -42,6 +49,14 @@ const FOLLOW_UP = '发布窗口定在周五下午，我还能继续跟你聊吗�
 const FOLLOW_UP_REPLY = '可以，分工仍在进行。'
 const AUDIENCE_QUESTION = '这份发布公告面向哪些读者？'
 const AUDIENCE_CALL = 'release-announcement-audience'
+const WORKSPACE_WRITE_CALL = 'role-workspace-permission-write'
+const READ_ONLY_WRITE_CALL = 'role-readonly-permission-write'
+const WORKSPACE_FILE = 'role-workspace-permission.txt'
+const READ_ONLY_FILE = 'role-readonly-permission.txt'
+const WRITE_ALLOWED = 'ROLE_WORKSPACE_WRITE_ALLOWED'
+const WRITE_BLOCKED = 'ROLE_WORKSPACE_WRITE_BLOCKED'
+const READ_ONLY_FOLLOW_UP = '请核对这条任务恢复只读后的工作区写入权限。'
+const READ_ONLY_RESULT = '已确认只读任务无法直接写入工作区。'
 const FINAL = '发布方案已汇总：迁移可回滚，公告草稿已就绪。'
 const CANCEL_REQUEST = '请并行核对下次发布窗口和公告读者。'
 const DEPENDENCY_REQUEST = '先核对维护窗口，再写一条使用核验结果的通知。'
@@ -70,14 +85,21 @@ const work = [
   { title: '核实迁移回滚', message: '检查本次数据库迁移是否支持回滚，并给出核验结论。' },
 ]
 
+function writeProbe(file) {
+  return process.platform === 'win32'
+    ? `try { Set-Content -LiteralPath '${file}' -Value '${WRITE_ALLOWED}' -NoNewline -ErrorAction Stop; Write-Output '${WRITE_ALLOWED}' } catch { Write-Output '${WRITE_BLOCKED}' }`
+    : `if printf '%s' '${WRITE_ALLOWED}' > '${file}'; then printf '%s\\n' '${WRITE_ALLOWED}'; else printf '%s\\n' '${WRITE_BLOCKED}'; fi`
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
   modelResponseTimeoutMs,
+  resultDir,
   workspacePath,
 }) {
   const taskIds = new Map()
-  const reported = new Set()
+  const reported = new Map()
   const waitingModels = new Map()
   const cancellationTasks = new Map()
   const dependencyTasks = new Map()
@@ -85,6 +107,8 @@ export function createDesktopScenario({
   const retryRuns = [0, 0]
   let dependentStarted = false
   let prerequisiteReleased = false
+  let readOnlyFollowUpReported = false
+  let writingWorkspace
   let sequence = 0
   const reply = (response, events) => {
     const id = `role-delegation-${++sequence}`
@@ -120,6 +144,24 @@ export function createDesktopScenario({
     return true
   }
 
+  const audienceQuestion = body =>
+    selectedToolCall(
+      AUDIENCE_CALL,
+      selectTool(body, 'request_user_input', {
+        questions: [
+          {
+            header: '公告读者',
+            id: 'audience',
+            question: AUDIENCE_QUESTION,
+            options: [
+              { label: '内部团队', description: '为参与发布的同事起草。' },
+              { label: '产品用户', description: '为使用产品的用户起草。' },
+            ],
+          },
+        ],
+      })
+    )
+
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) {
@@ -135,11 +177,43 @@ export function createDesktopScenario({
       const latest = JSON.stringify(
         (body.input ?? []).filter(item => item.role === 'user').at(-1) ?? ''
       )
+      if (latest.includes(READ_ONLY_FOLLOW_UP)) {
+        const result = accountCommandResult(body.input, READ_ONLY_WRITE_CALL)
+        if (!result) {
+          reply(
+            response,
+            shellCommandResponse(
+              body,
+              READ_ONLY_WRITE_CALL,
+              writeProbe(READ_ONLY_FILE),
+              writingWorkspace
+            )
+          )
+        } else if (result.sessionId) {
+          reply(response, shellCommandPollResponse(body, result.pollId, result.sessionId))
+        } else {
+          assert.match(result.output, new RegExp(WRITE_BLOCKED))
+          reply(response, [assistantMessage(READ_ONLY_RESULT)])
+        }
+        return true
+      }
       const answer = toolOutputText(body, AUDIENCE_CALL)
       if (answer !== null) {
         assert.deepEqual(JSON.parse(answer), { answers: { audience: { answers: ['内部团队'] } } })
         reply(response, [assistantMessage('面向内部团队的公告草稿已就绪。')])
         return true
+      }
+      if (latest.includes(work[1].message)) {
+        const result = accountCommandResult(body.input, WORKSPACE_WRITE_CALL)
+        if (result) {
+          if (result.sessionId) {
+            reply(response, shellCommandPollResponse(body, result.pollId, result.sessionId))
+          } else {
+            assert.match(result.output, new RegExp(WRITE_ALLOWED))
+            reply(response, audienceQuestion(body))
+          }
+          return true
+        }
       }
       const results = delegatedTaskResultEvents(body)
       if (results) {
@@ -166,12 +240,26 @@ export function createDesktopScenario({
         }
         const finalResult = results[0]?.item?.role === 'assistant'
         if (finalResult && [taskIds.get(roles[0].id), taskIds.get(roles[1].id)].includes(child)) {
+          const resultId = latest.match(/resultId=([^,]+),/)?.[1]
+          assert.ok(resultId, 'A branch report must identify its execution result')
+          if (
+            child === taskIds.get(roles[1].id) &&
+            JSON.stringify(results).includes(READ_ONLY_RESULT)
+          ) {
+            assert.equal(readOnlyFollowUpReported, false, 'The follow-up must report once')
+            assert.ok(reported.has(child), 'The original branch must have reported first')
+            assert.notEqual(resultId, reported.get(child), 'The follow-up must have a new result')
+            assert.ok(latest.includes('status=done,'), 'The follow-up must complete successfully')
+            readOnlyFollowUpReported = true
+            reply(response, [])
+            return true
+          }
           assert.equal(
             reported.has(child),
             false,
             'A branch must report only after aggregating its children'
           )
-          reported.add(child)
+          reported.set(child, resultId)
           reply(response, reported.size === 2 ? [assistantMessage(FINAL)] : [])
         } else {
           reply(response, results)
@@ -366,6 +454,7 @@ export function createDesktopScenario({
           return realpath(path)
         })
       )
+      writingWorkspace = workspaces[1]
       for (const [index, role] of roles.entries()) {
         await control.command('seedLocalProject', 'body', {
           value: JSON.stringify({
@@ -415,6 +504,41 @@ export function createDesktopScenario({
       try {
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', CHAT)
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-overview-role-release-writing"]'
+        )
+        await openStandInSettings(control)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-advanced-open"]')
+        const settingsMode =
+          '[data-testid="stand-in-task-permissions"] [data-testid="permission-mode-menu-button"]'
+        await control.command('clickWhenEnabled', `${settingsMode}[aria-label*="只读"]`)
+        await control.command('clickWhenEnabled', '[data-testid="permission-mode-workspace-write"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-close"]')
+        await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
+          visible: false,
+        })
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
+        await control.command('waitFor', EDITOR)
+        const executorLog = join(resultDir, 'executor.log')
+        const waitForNativeProfile = (taskId, profile, fromOffset = 0) =>
+          storyUntil(
+            async () =>
+              (await readFile(executorLog, 'utf8'))
+                .slice(fromOffset)
+                .split('\n')
+                .filter(line => line.includes(`codex source sandbox applied task_id=${taskId} `)),
+            lines =>
+              lines.some(
+                line =>
+                  line.includes(String.raw`\"id\":\"${profile}\"`) &&
+                  line.includes(String.raw`reviewer="\"user\""`)
+              ),
+            uiTimeoutMs,
+            `Task ${taskId} must run with native profile ${profile} and the human reviewer`
+          )
         const ordinaryTaskId = 'stand-in-delegation-story-ordinary-task'
         const origin = {
           type: 'stand_in_task',
@@ -540,21 +664,11 @@ export function createDesktopScenario({
         const writing = waitingModels.get(1)
         reply(
           writing.response,
-          selectedToolCall(
-            AUDIENCE_CALL,
-            selectTool(writing.body, 'request_user_input', {
-              questions: [
-                {
-                  header: '公告读者',
-                  id: 'audience',
-                  question: AUDIENCE_QUESTION,
-                  options: [
-                    { label: '内部团队', description: '为参与发布的同事起草。' },
-                    { label: '产品用户', description: '为使用产品的用户起草。' },
-                  ],
-                },
-              ],
-            })
+          shellCommandResponse(
+            writing.body,
+            WORKSPACE_WRITE_CALL,
+            writeProbe(WORKSPACE_FILE),
+            writingWorkspace
           )
         )
         await control.command('waitFor', card, {
@@ -610,6 +724,10 @@ export function createDesktopScenario({
           assert.equal(task.runtimeHandle.origin.standInId, role.id)
           assert.equal(await realpath(task.workspacePath), workspaces[index])
         }
+        const writingTaskId = taskIds.get(roles[1].id)
+        await waitForNativeProfile(writingTaskId, ':workspace')
+        await waitForNativeProfile(taskIds.get(roles[0].id), 'wework-source-read')
+        assert.equal(await readFile(join(writingWorkspace, WORKSPACE_FILE), 'utf8'), WRITE_ALLOWED)
         // A compact viewport can unmount the original request after the result and panel visit.
         await control.command(
           'scrollToRatioAsUser',
@@ -778,6 +896,64 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await captureScreenshot(control, '16-ordinary-task-open.png')
+
+        await control.command('navigate', 'body', { value: '/stand-in' })
+        await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
+        await control.command(
+          'scrollToRatioAsUser',
+          `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
+          { value: '0' }
+        )
+        await selectDelegation(writingTaskId)
+        await expandDelegation()
+        await control.command('clickElementWithText', row, {
+          text: '起草公告',
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+          {
+            text: '面向内部团队的公告草稿已就绪。',
+          }
+        )
+        const taskMode = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="permission-mode-menu-button"]`
+        await control.command('clickWhenEnabled', `${taskMode}[aria-label*="工作区"]`)
+        await control.command('clickWhenEnabled', '[data-testid="permission-mode-read-only"]')
+        await control.command('waitFor', `${taskMode}[aria-label*="只读"]`)
+        const fromOffset = (await readFile(executorLog, 'utf8')).length
+        await control.command(
+          'fill',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
+          { value: READ_ONLY_FOLLOW_UP }
+        )
+        await control.command(
+          'clickWhenEnabled',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+          {
+            text: READ_ONLY_RESULT,
+            timeoutMs: modelResponseTimeoutMs,
+          }
+        )
+        await waitForNativeProfile(writingTaskId, 'wework-source-read', fromOffset)
+        await assert.rejects(readFile(join(writingWorkspace, READ_ONLY_FILE)), { code: 'ENOENT' })
+        await storyUntil(
+          () => Promise.resolve(readOnlyFollowUpReported),
+          Boolean,
+          modelResponseTimeoutMs,
+          'The read-only follow-up must deliver its distinct result to the original conversation'
+        )
+        const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
+        assert.equal(
+          saved.roles.find(role => role.id === roles[1].id)?.taskPermissions?.permissionMode,
+          'workspace-write',
+          'Changing one task must leave its role default intact'
+        )
       } finally {
         for (const { response } of waitingModels.values()) {
           if (!response.writableEnded) response.end()

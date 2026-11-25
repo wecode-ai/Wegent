@@ -2,7 +2,8 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    project_role, role_project_matches, stand_in_connection, stand_in_identities, DINGTALK_PROVIDER,
+    project_role, role_project_matches, role_receives_participating_issues, stand_in_connection,
+    stand_in_identities, DINGTALK_PROVIDER,
 };
 
 fn active_dingtalk_delegation(primary: &Value) -> bool {
@@ -99,7 +100,97 @@ fn unique_native_codex_default(catalog: &Value) -> Option<Value> {
     }))
 }
 
+pub(super) fn issue_role_config(
+    role: &Value,
+    user: i64,
+    project: &str,
+    kind: &str,
+    participant: bool,
+) -> Option<Value> {
+    let project_matches = role_project_matches(role, project, kind);
+    let participation = participant
+        && role_receives_participating_issues(role)
+        && role["participatingIssuesEnabledAfter"].is_string();
+    if !project_matches && !participation {
+        return None;
+    }
+    let mut config = project_role(role, user, project, kind);
+    if participation
+        && (!project_matches
+            || config["enabledAfter"].as_str().is_none()
+            || role["participatingIssuesEnabledAfter"].as_str() < config["enabledAfter"].as_str())
+    {
+        config["enabledAfter"] = role["participatingIssuesEnabledAfter"].clone();
+    }
+    Some(config)
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn issue_intake_roles(
+        &self,
+        roles: &[Value],
+        user: i64,
+        project: &str,
+        kind: &str,
+        issue_id: &str,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let participant = if roles.iter().any(role_receives_participating_issues) {
+            if kind == "local" {
+                let store =
+                    LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+                store
+                    .participating_issue_ids(project, &[0, user])
+                    .map_err(settings_error)?
+                    .contains(issue_id)
+            } else {
+                self.verify_runtime_user(&json!({"userId":user})).await?;
+                let members = self
+                    .runtime_http(
+                        reqwest::Method::GET,
+                        &format!("/v1/loop-items/{issue_id}/collaborators"),
+                        None,
+                    )
+                    .await?;
+                members
+                    .as_array()
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "cloud_response_invalid",
+                            "Issue participants are not a list",
+                        )
+                    })?
+                    .iter()
+                    .any(|row| row["user_id"] == user)
+            }
+        } else {
+            false
+        };
+        Ok(roles
+            .iter()
+            .filter_map(|role| issue_role_config(role, user, project, kind, participant))
+            .collect())
+    }
+
+    pub(super) async fn cloud_issue_intake_configs(
+        &self,
+        settings: &[Value],
+        user: i64,
+        project: &str,
+        issue_id: &str,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let roles = settings
+            .iter()
+            .filter(|settings| {
+                settings["userId"] == user
+                    && settings["executionDeviceId"] == self.device_id
+                    && settings["lifecycle"]["status"].is_null()
+            })
+            .flat_map(stand_in_identities)
+            .collect::<Vec<_>>();
+        self.issue_intake_roles(&roles, user, project, "cloud", issue_id)
+            .await
+    }
+
     pub(super) async fn personal_stand_in_projects(&self) -> Result<Vec<Value>, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = store
@@ -175,7 +266,25 @@ impl RuntimeWorkRpcHandler {
             .list_projects()
             .map_err(settings_error)?
             .into_iter()
-            .flat_map(|project| self.stand_in_project_configs(&personal, &project.id, "local"))
+            .flat_map(|project| {
+                personal
+                    .iter()
+                    .filter(|settings| settings["executionDeviceId"] == self.device_id)
+                    .flat_map(stand_in_identities)
+                    .filter(|role| {
+                        role_project_matches(role, &project.id, "local")
+                            || role_receives_participating_issues(role)
+                    })
+                    .map(|role| {
+                        project_role(
+                            &role,
+                            role["userId"].as_i64().unwrap_or_default(),
+                            &project.id,
+                            "local",
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect())
     }
 
@@ -267,6 +376,12 @@ impl RuntimeWorkRpcHandler {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
             if let Some(route) = payload.get("delegationRoute") {
+                if payload.get("transferRoleId").is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "A role transfer cannot save a delegation route",
+                    ));
+                }
                 return store
                     .save_stand_in_delegation_route(user, &self.device_id, route)
                     .map_err(settings_error);
@@ -279,6 +394,26 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
+            if let Some(transfer) = payload.get("transferRoleId") {
+                let invalid =
+                    || AppIpcError::new("bad_request", "Invalid transferred stand-in role");
+                let id = transfer
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(invalid)?;
+                let role = settings["roles"]
+                    .as_array_mut()
+                    .and_then(|roles| roles.iter_mut().find(|role| role["id"] == id))
+                    .filter(|role| {
+                        role["migrationSource"]
+                            .as_str()
+                            .is_some_and(|source| !source.is_empty())
+                            && self.stand_in_role_runs_here(role)
+                    })
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(invalid)?;
+                role.remove("taskPermissions");
+            }
             let normalized = store
                 .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                 .map_err(settings_error)?;

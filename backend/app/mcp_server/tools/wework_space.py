@@ -190,17 +190,31 @@ def _update_item(
 
 
 def _list_items(
-    db: Session, project: CloudProject, user_id: int
+    db: Session, project: CloudProject, user_id: int, *, participating: bool = False
 ) -> list[dict[str, Any]]:
-    if project.task_provider in {"github", "gitlab"}:
-        values = external_loop_item_provider.list(db, project.id, user_id)
+    if project.task_provider not in {"github", "gitlab"}:
         return [
-            LoopItemResponse.model_validate(value).model_dump(mode="json")
-            for value in values
+            _item_view(db, item, user_id)
+            for item in loop_item_service.list(
+                db, project.id, user_id, participating=participating
+            )
         ]
+    values = external_loop_item_provider.list(db, project.id, user_id)
+    if participating:
+        from app.services.loop_items.participation import participating_item_filter
+
+        participating_ids = {
+            item_id
+            for (item_id,) in db.query(LoopItem.id).filter(
+                LoopItem.cloud_project_id == str(project.id),
+                loop_datetime_is_unset(LoopItem.deleted_at),
+                participating_item_filter(user_id),
+            )
+        }
+        values = [value for value in values if value["id"] in participating_ids]
     return [
-        _item_view(db, item, user_id)
-        for item in loop_item_service.list(db, project.id, user_id)
+        LoopItemResponse.model_validate(value).model_dump(mode="json")
+        for value in values
     ]
 
 
@@ -388,13 +402,21 @@ def update_space(
     ),
 )
 def list_board_items(
-    token_info: MCPAuthInfo, space_id: str = ""
-) -> list[dict[str, Any]]:
+    token_info: MCPAuthInfo, space_id: str = "", participating: bool = False
+) -> list[dict[str, Any]] | dict[str, Any]:
     """List project Issues (事项), distinct from personal tasks and conversations."""
 
     with SessionLocal() as db:
+        if (
+            participating
+            and _board_context(db, token_info).get("dispatch_role") == "executor"
+        ):
+            raise ValueError("Executor cannot enumerate participating Issues")
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        return _list_items(db, project, token_info.user_id)
+        items = _list_items(
+            db, project, token_info.user_id, participating=participating
+        )
+        return {"items": items, "participation": "mine"} if participating else items
 
 
 @mcp_tool(server="wework_space")

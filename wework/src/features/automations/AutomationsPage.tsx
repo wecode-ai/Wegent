@@ -12,7 +12,7 @@ import { AutomationDetailWorkspace } from '@/features/automations/AutomationDeta
 import {
   automationDraftFromAutomation,
   automationModelFields,
-  automationWorkspaceTarget,
+  automationProjectTargetForPath,
   buildAutomationProjectOptions,
   emptyAutomationDraft,
   initialGoalFromAutomationDraft,
@@ -28,7 +28,7 @@ import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import { getWorkbenchDeviceIds, resolveWorkbenchDeviceId } from '@/lib/workbench-device'
 import { track } from '@/telemetry/client'
 import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
 import type {
@@ -190,12 +190,8 @@ export function AutomationsPage({
     loadRuns,
   } = source
   useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
-  const subscribeCatalog = useCallback(
-    (notify: () => void) => source.subscribeCatalog(notify, state.runtimeWork),
-    [source, state.runtimeWork]
-  )
   const catalog = useSyncExternalStore(
-    subscribeCatalog,
+    source.subscribeCatalog,
     source.catalog.getSnapshot,
     source.catalog.getSnapshot
   )
@@ -262,34 +258,25 @@ export function AutomationsPage({
     })
   }, [automations, query, statusFilter])
 
-  const defaultWorkspacePathForDevice = useCallback(
-    (deviceId: string) => {
-      if (
-        state.currentRuntimeTask?.deviceId === deviceId &&
+  const defaultProjectTargetForDevice = (deviceId: string) => {
+    const projects = state.runtimeWork?.projects ?? []
+    if (state.currentRuntimeTask?.deviceId === deviceId && state.currentRuntimeTask.workspacePath) {
+      return automationProjectTargetForPath(
+        projects,
+        deviceId,
         state.currentRuntimeTask.workspacePath
-      ) {
-        return state.currentRuntimeTask.workspacePath
-      }
-      if (state.standaloneDeviceId === deviceId && state.standaloneWorkspacePath) {
-        return state.standaloneWorkspacePath
-      }
-      const currentProjectWork = state.currentProject
-        ? state.runtimeWork?.projects.find(
-            project => runtimeProjectUiId(project.project) === state.currentProject?.id
-          )
-        : null
-      return currentProjectWork
-        ? (buildAutomationProjectOptions([currentProjectWork], deviceId)[0]?.workspacePath ?? '')
-        : ''
-    },
-    [
-      state.currentProject,
-      state.currentRuntimeTask,
-      state.runtimeWork?.projects,
-      state.standaloneDeviceId,
-      state.standaloneWorkspacePath,
-    ]
-  )
+      )
+    }
+    if (state.standaloneDeviceId === deviceId && state.standaloneWorkspacePath) {
+      return automationProjectTargetForPath(projects, deviceId, state.standaloneWorkspacePath)
+    }
+    const currentProjectWork = projects.find(
+      project => runtimeProjectUiId(project.project) === state.currentProject?.id
+    )
+    return currentProjectWork
+      ? (buildAutomationProjectOptions([currentProjectWork], deviceId)[0]?.target ?? null)
+      : null
+  }
 
   const openCreate = (template?: Partial<AutomationDraft>) =>
     requestLeave(() => {
@@ -301,7 +288,7 @@ export function AutomationsPage({
       const nextDraft = emptyAutomationDraft(
         device && (isCloudDevice(device) || isRemoteDevice(device)) ? 'cloud' : 'local',
         deviceId,
-        defaultWorkspacePathForDevice(deviceId),
+        defaultProjectTargetForDevice(deviceId),
         projectChat.selectedModel,
         projectChat.selectedModelOptions
       )
@@ -353,7 +340,7 @@ export function AutomationsPage({
       source.resolveInitialSelection()
       setSelectedAutomationId(automation.id)
       setEditing(automation)
-      setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
+      setDraft(automationDraftFromAutomation(automation))
       setDirty(false)
     })
 
@@ -373,7 +360,7 @@ export function AutomationsPage({
             ...current,
             source,
             deviceId,
-            workspacePath: defaultWorkspacePathForDevice(deviceId),
+            projectTarget: defaultProjectTargetForDevice(deviceId),
             conversationMode: 'independent',
           }
         : current
@@ -424,12 +411,18 @@ export function AutomationsPage({
     if (!draft.deviceId) {
       throw new Error(t('todo.automation_target_required', '请选择设备'))
     }
+    const project = draft.conversationMode === 'independent' ? draft.projectTarget : null
     const projectTarget =
-      draft.conversationMode === 'independent'
-        ? buildAutomationProjectOptions(state.runtimeWork?.projects ?? [], draft.deviceId).find(
-            option => option.workspacePath === draft.workspacePath
-          )?.target
-        : null
+      project?.workspacePath &&
+      project.projectId == null &&
+      project.deviceWorkspaceId == null &&
+      !project.runtimeProjectKey
+        ? automationProjectTargetForPath(
+            state.runtimeWork?.projects ?? [],
+            resolveWorkbenchDeviceId(state.devices, draft.deviceId) ?? draft.deviceId,
+            project.workspacePath
+          )
+        : project
     const taskRequest: RuntimeTaskCreateRequest = {
       schemaVersion: 2,
       ...(standInOwner
@@ -438,7 +431,7 @@ export function AutomationsPage({
           ? { standInOwner: editing.taskRequest.standInOwner }
           : {}),
       deviceId: draft.deviceId,
-      ...automationWorkspaceTarget(projectTarget),
+      ...(projectTarget ?? { standaloneChatWorkspace: true }),
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),
@@ -670,7 +663,7 @@ export function AutomationsPage({
             setPendingNavigation(null)
             setDraftError(null)
             setDirty(false)
-            setDraft(editing ? automationDraftFromAutomation(editing, state.runtimeWork) : null)
+            setDraft(editing ? automationDraftFromAutomation(editing) : null)
             if (!editing) setSelectedAutomationId(null)
             action?.()
           }}

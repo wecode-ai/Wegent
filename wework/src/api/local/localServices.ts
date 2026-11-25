@@ -2018,19 +2018,12 @@ export function createRuntimeWorkApiFromIpc(
       const response = await (requestOptions
         ? request<TResponse>(method, normalizedData, deviceId, requestOptions)
         : request<TResponse>(method, normalizedData, deviceId))
-      if (method === 'runtime.tasks.transcript') {
-        logRuntimeTaskCreateStage('runtime-transcript-origin', {
-          transport: transportLabel,
-          deviceId,
-          taskId: stringValue(recordValue(normalizedData).taskId) ?? null,
-          ...runtimeOriginDiagnostic(recordValue(response).origin),
-        })
-      }
       if (debugTranscript) {
         console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           ...runtimeTranscriptSummary(response),
+          ...runtimeOriginDiagnostic(recordValue(response).origin),
         })
       }
       return response
@@ -2511,6 +2504,9 @@ export function createRuntimeWorkApiFromIpc(
             address: { ...data.address, deviceId: localDeviceId, taskId },
             message: data.message,
             requestUserInputResponse: inputResponse,
+            ...(data.clientUserMessageId ? { clientUserMessageId: data.clientUserMessageId } : {}),
+            ...(data.attachmentIds?.length ? { attachmentIds: data.attachmentIds } : {}),
+            ...(data.attachments?.length ? { attachments: data.attachments } : {}),
           },
           localDeviceId
         )

@@ -198,6 +198,54 @@ export interface AssistantProseRegion {
   sources: ConversationSearchSource[];
 }
 
+export function hasSameAssistantRenderInputs(
+  previous: WorkbenchMessage,
+  next: WorkbenchMessage,
+): boolean {
+  if (
+    previous.id !== next.id ||
+    previous.content !== next.content ||
+    previous.status !== next.status ||
+    previous.runtimeStatus !== next.runtimeStatus ||
+    previous.error !== next.error
+  )
+    return false;
+
+  const nextBlocks = next.blocks;
+  if (
+    previous.blocks !== nextBlocks &&
+    (!previous.blocks ||
+      !nextBlocks ||
+      previous.blocks.length !== nextBlocks.length ||
+      !previous.blocks.every(
+        (block, index) =>
+          block === nextBlocks[index] ||
+          (block.type === "thinking" && nextBlocks[index]?.type === "thinking"),
+      ))
+  )
+    return false;
+
+  const nextItems = next.runtimeDisplayItems;
+  return (
+    previous.runtimeDisplayItems === nextItems ||
+    Boolean(
+      previous.runtimeDisplayItems &&
+      nextItems &&
+      previous.runtimeDisplayItems.length === nextItems.length &&
+      previous.runtimeDisplayItems.every((item, index) => {
+        const candidate = nextItems[index];
+        return (
+          item.id === candidate.id &&
+          (item.type === "assistant_text"
+            ? candidate.type === "assistant_text" &&
+              item.content === candidate.content
+            : candidate.type === "block")
+        );
+      }),
+    )
+  );
+}
+
 /** Rendering and search share the prose layout. Only the index needs source offsets. */
 export function getAssistantRenderProjection(
   message: WorkbenchMessage,
@@ -209,8 +257,9 @@ export function getAssistantRenderProjection(
     isCancelledAssistantMessage(message),
     presentation.content,
   );
+  const hasContent = Boolean(presentation.content.trim());
   const ordered =
-    blocks.length || includeSearchSources
+    (hasContent && blocks.length) || includeSearchSources
       ? getOrderedRuntimeDisplaySegments(
           message.runtimeDisplayItems,
           blocks,
@@ -223,13 +272,15 @@ export function getAssistantRenderProjection(
   const orderedContent = contentSegments
     .map((segment) => segment.content)
     .join("\n\n");
+  const firstProseIndex = ordered.findIndex(
+    (segment) => segment.kind === "content",
+  );
   const interleaved =
-    Boolean(presentation.content.trim()) &&
+    hasContent &&
     orderedContent === presentation.content &&
     ordered.some(
       (segment, index) =>
-        segment.kind === "content" &&
-        ordered.slice(index + 1).some((next) => next.kind === "processing"),
+        index > firstProseIndex && segment.kind === "processing",
     );
   const firstItem = message.runtimeDisplayItems?.find(
     (item) => item.type === "assistant_text",

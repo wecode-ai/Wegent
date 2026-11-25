@@ -7,6 +7,7 @@ import type { RuntimeGoalCreateInput, RuntimeSendRequest, RuntimeTaskAddress } f
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 import {
   appendAcceptedRuntimeConversationMessage,
+  appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationOperation,
   cacheRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuedMessages,
@@ -37,6 +38,7 @@ export interface RuntimeQueuedMessageSendResult {
   accepted: boolean
   queued: boolean
   queuePosition?: number | null
+  guidanceTurnId?: string
 }
 
 export function createRuntimeQueuedUserMessage(
@@ -69,11 +71,15 @@ export async function sendRuntimeQueuedMessage(
       options.appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
     let queued = false
     let queuePosition: number | null | undefined
+    let guidanceTurnId: string | undefined
     const accepted = await sendRuntimePaneMessage(
       {
         address,
         message: message.content,
         clientUserMessageId: message.id,
+        ...(message.requestUserInputResponse
+          ? { requestUserInputResponse: message.requestUserInputResponse }
+          : {}),
         ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
         ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
         ...(message.startNewSession !== undefined
@@ -99,11 +105,16 @@ export async function sendRuntimeQueuedMessage(
           queued = true
           queuePosition = response.queuePosition
         },
+        onAccepted: response => {
+          if (response.guidanceId) guidanceTurnId = response.turnId ?? response.turn_id
+        },
         silentBusyRetry: options.silentBusyRetry,
       }
     )
     if (!isCurrent()) return { accepted: false, queued: false }
-    if (accepted && !queued && turnIdsBeforeSend !== null) {
+    if (accepted && guidanceTurnId) {
+      appendOptimisticRuntimeConversationGuidance(address, guidanceTurnId, message)
+    } else if (accepted && !queued && turnIdsBeforeSend !== null) {
       logRuntimeQueueStage(address, 'queue-send-writeback', {
         messageId: message.id,
         runtimeQueued: false,
@@ -117,7 +128,12 @@ export async function sendRuntimeQueuedMessage(
       )
     }
     if (accepted) markRuntimeTerminalAdditionalContextDelivered(terminalContext)
-    return { accepted, queued, ...(queued ? { queuePosition } : {}) }
+    return {
+      accepted,
+      queued,
+      ...(queued ? { queuePosition } : {}),
+      ...(guidanceTurnId ? { guidanceTurnId } : {}),
+    }
   } finally {
     operation?.dispose()
   }

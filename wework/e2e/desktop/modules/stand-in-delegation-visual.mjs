@@ -61,6 +61,30 @@ async function checkControlInView(control, selector, narrow) {
   }
 }
 
+async function waitForKeyboardFocus(selector) {
+  return waitForValue(
+    () =>
+      rendererValue(`(() => {
+        const target = document.querySelector(${JSON.stringify(selector)})
+        if (!(target instanceof HTMLElement)) return null
+        return {
+          active: document.activeElement === target,
+          focused: target.matches(':focus'),
+          modality: document.documentElement.dataset.inputModality,
+          boxShadow: getComputedStyle(target).boxShadow,
+        }
+      })()`),
+    value =>
+      value?.active &&
+      value.focused &&
+      value.modality === 'keyboard' &&
+      value.boxShadow &&
+      value.boxShadow !== 'none',
+    `Keyboard focus is not visible for ${selector}`,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+}
+
 async function verifyKeyboard(control, captureScreenshot) {
   const [document, schedule, process] = templates
   await control.command('nativePress', connectionKind, { key: 'Enter' })
@@ -68,16 +92,11 @@ async function verifyKeyboard(control, captureScreenshot) {
   await control.command('nativePress', ':focus', { key: 'Escape' })
   await control.command('waitFor', `${connectionKind}[aria-expanded="false"]`)
   await control.command('nativePress', document, { key: 'Tab' })
-  await control.command('waitFor', `${schedule}:focus-visible`)
+  await waitForKeyboardFocus(schedule)
   await control.command('nativePress', schedule, { key: 'Tab' })
-  await control.command('waitFor', `${process}:focus-visible`)
+  await waitForKeyboardFocus(process)
   await control.command('nativePress', process, { key: 'Shift+Tab' })
-  await control.command('waitFor', `${schedule}:focus-visible`)
-  const focusedStyle = await rendererValue(`(() => {
-    const target = document.querySelector(${JSON.stringify(`${schedule}:focus-visible`)})
-    return target && getComputedStyle(target).boxShadow
-  })()`)
-  assert.ok(focusedStyle && focusedStyle !== 'none', 'The focused template must show its ring')
+  await waitForKeyboardFocus(schedule)
   await captureScreenshot(control, 'stand-in-dingtalk-390-keyboard-focus.png')
   await control.command('nativePress', schedule, { key: 'Space' })
   await control.command('waitFor', `${schedule}[aria-checked="false"]`)

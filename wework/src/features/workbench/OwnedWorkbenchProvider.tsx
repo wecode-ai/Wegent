@@ -10,6 +10,7 @@ import {
 import { createWorkbenchRuntimeOperations } from './workbenchRuntimeOperations'
 import {
   createWorkbenchPaneActions,
+  useWorkbenchContextValue,
   useWorkbenchPaneValue,
   useWorkbenchProjectChatValue,
 } from './useWorkbenchContextProjection'
@@ -40,7 +41,7 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { WORKBENCH_NEW_CHAT_REQUEST_EVENT } from '@/lib/workbenchComposerFocus'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
-import type { LocalDeviceApp, PluginPathComponent, User } from '@/types/api'
+import type { LocalDeviceApp, PluginPathComponent, RuntimeTaskAddress, User } from '@/types/api'
 import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   getProjectWorkPreferenceKey,
@@ -116,11 +117,7 @@ import {
   useUpdateGlobalImNotification,
 } from './useWorkbenchTaskCallbacks'
 import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
-import type {
-  WorkbenchContextValue,
-  WorkbenchPaneContextValue,
-  WorkbenchProviderProps,
-} from './workbenchContextTypes'
+import type { WorkbenchPaneContextValue, WorkbenchProviderProps } from './workbenchContextTypes'
 import {
   getModelSelectionScopeKey,
   getNewChatModelSelection,
@@ -422,16 +419,19 @@ export function OwnedWorkbenchProvider({
       ? (runtimeProject?.aiSettings?.modelSelection ?? null)
       : null
   }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+  const savedTaskModelSelection = resolveRuntimeTaskSummary(
+    state.currentRuntimeTask
+  )?.modelSelection
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
-        resolveRuntimeTaskSummary(state.currentRuntimeTask)?.modelSelection ??
+        savedTaskModelSelection ??
         modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
         null
       )
     }
     return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, projectModelSelection, resolveRuntimeTaskSummary, state.currentRuntimeTask])
+  }, [currentUser, projectModelSelection, savedTaskModelSelection, state.currentRuntimeTask])
   const defaultModelSelectionConfig = defaultNewChatModelSelection
   const persistNewChatModelSelection = usePersistNewChatModelSelection({
     latestUserPreferencesRef,
@@ -494,6 +494,14 @@ export function OwnedWorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
+  // The model store restores selections missing from the discovery catalog.
+  const resolveActiveTaskSelectionReady = useCallback(
+    (address: RuntimeTaskAddress) =>
+      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+        ? modelSelection.isSelectionReady
+        : null,
+    [modelSelection.isSelectionReady, state.currentRuntimeTask]
+  )
   const {
     resolveRuntimeTaskModelSelection,
     setRuntimeTaskSelectedModel,
@@ -503,12 +511,7 @@ export function OwnedWorkbenchProvider({
     userId: currentUser.id,
     resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
-    // The model store restores the focused task's saved selection, including a
-    // persisted cloud reference that the discovery catalog does not list.
-    resolveActiveTaskSelectionReady: address =>
-      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
-        ? modelSelection.isSelectionReady
-        : null,
+    resolveActiveTaskSelectionReady,
   })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
@@ -893,11 +896,11 @@ export function OwnedWorkbenchProvider({
   )
   const paneValue: WorkbenchPaneContextValue = useWorkbenchPaneValue({
     ...paneActions,
+    workspaceTabId,
     services: resolvedServices,
     state: paneState,
     isStartupReady,
     workspaceFileApi,
-    runtimeTaskReminders,
     projectChat: paneProjectChatValue,
     upgradingDevices,
     projectExecutionMode,
@@ -914,17 +917,13 @@ export function OwnedWorkbenchProvider({
     resolvedServices,
     t
   )
-  const value: WorkbenchContextValue = useMemo(
-    () => ({
-      ...paneValue,
-      workspaceTabId,
-      state,
-      cloudWorkStatus,
-      projectChat: projectChatValue,
-      updateUserPreferences,
-    }),
-    [paneValue, workspaceTabId, state, cloudWorkStatus, projectChatValue, updateUserPreferences]
-  )
+  const value = useWorkbenchContextValue(paneValue, {
+    state,
+    cloudWorkStatus,
+    runtimeTaskReminders,
+    projectChat: projectChatValue,
+    updateUserPreferences,
+  })
 
   const operationTargets: WorkbenchSessionOperations = {
     ...createWorkbenchRuntimeOperations({

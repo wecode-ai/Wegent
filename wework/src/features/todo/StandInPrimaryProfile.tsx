@@ -21,6 +21,7 @@ import type { StandInConnectionNavigationHandle } from './StandInConnectionSetti
 import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
+import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import {
   StandInSettingsActions,
   StandInSettingsEntry,
@@ -33,6 +34,11 @@ import {
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
+
+type NormalizedPrimary = StandInIdentity & {
+  collaboration: NonNullable<StandInIdentity['collaboration']>
+  connections: NonNullable<StandInIdentity['connections']>
+}
 
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
@@ -89,21 +95,26 @@ export function StandInPrimaryProfile({
     ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
   }
-  // Legacy profiles retain their single editor. Learning-enabled profiles keep sources and private preferences separate.
   const separatePrompt = saved.selfLearningEnabled !== undefined
-  const original = {
-    ...saved,
-    delegation: saved.delegation,
-    collaboration: saved.collaboration ?? defaultCollaboration,
-    calendar: saved.calendar,
-    connections: saved.connections ?? [],
-    prompt: separatePrompt ? saved.prompt : '',
-    preferences: separatePrompt
-      ? saved.preferences
-      : [saved.prompt, saved.preferences].filter(Boolean).join('\n\n'),
+  const normalizePrimary = (primary: StandInIdentity): NormalizedPrimary => {
+    // Legacy profiles retain their single editor. Learning-enabled profiles keep sources and private preferences separate.
+    const separatePrompt = primary.selfLearningEnabled !== undefined
+    return {
+      ...primary,
+      delegation: primary.delegation,
+      collaboration: primary.collaboration ?? defaultCollaboration,
+      calendar: primary.calendar,
+      connections: primary.connections ?? [],
+      prompt: separatePrompt ? primary.prompt : '',
+      preferences: separatePrompt
+        ? primary.preferences
+        : [primary.prompt, primary.preferences].filter(Boolean).join('\n\n'),
+    }
   }
+  const original = normalizePrimary(saved)
   const [draft, setDraft] = useState(original)
   const [baseline, setBaseline] = useState(original)
+  const [acceptedPrimary, setAcceptedPrimary] = useState<NormalizedPrimary | null>(null)
   if (!dequal(baseline, original)) {
     setBaseline(original)
     if (dequal(draft, baseline)) setDraft(original)
@@ -157,10 +168,15 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot,
     tagDraft.getDirtySnapshot
   )
-  const profileDirty = !dequal(
-    { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
-    { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
-  )
+  if (acceptedPrimary && dequal(original, acceptedPrimary)) {
+    setAcceptedPrimary(null)
+  }
+  const profileDirty = acceptedPrimary
+    ? !dequal(draft, acceptedPrimary)
+    : !dequal(
+        { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
+        { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
+      )
   const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
@@ -191,17 +207,9 @@ export function StandInPrimaryProfile({
     )
     const primary = next?.primary
     if (!primary) return false
-    setDraft(current => ({
-      ...current,
-      enabled: primary.enabled,
-      model: primary.model,
-      modelOptions: primary.modelOptions,
-      delegation: primary.delegation,
-      connections: [
-        ...current.connections.filter(row => !isDingTalkSource(row)),
-        ...(primary.connections ?? []).filter(isDingTalkSource),
-      ],
-    }))
+    const accepted = normalizePrimary(primary)
+    setAcceptedPrimary(accepted)
+    setDraft(accepted)
     return true
   }
   const role = {
@@ -445,6 +453,11 @@ export function StandInPrimaryProfile({
                 onChange={onSelectDevice}
               />
             }
+          />
+          <StandInTaskPermissionSettings
+            value={draft.taskPermissions}
+            disabled={blocked}
+            onChange={taskPermissions => setDraft(current => ({ ...current, taskPermissions }))}
           />
           <p className="text-xs text-text-secondary">
             {t('standIn.workspace.execution_device_help')}

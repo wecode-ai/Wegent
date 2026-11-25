@@ -11,10 +11,7 @@ import {
   getRuntimeTaskReminderKey,
 } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
-import {
-  getRuntimeTaskLifecycleKey,
-  useRuntimeTaskLifecycleStoreSnapshot,
-} from '@/features/workbench/runtimeTaskLifecycle'
+import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
 
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { getLocalRuntimeStateDeviceId } from '@/lib/runtime-project-state'
@@ -53,7 +50,8 @@ type SidebarCatalogInput = Pick<
   showOfflineDeviceItems: boolean
   expandedProjectIds: Set<number>
   visibleUnreadRuntimeTaskKeys: ReadonlySet<string>
-  lifecycleSnapshot: ReturnType<typeof useRuntimeTaskLifecycleStoreSnapshot>
+  busyTaskKeys: ReadonlySet<string>
+  waitingTaskKeys: ReadonlySet<string>
   storageScope: string
 }
 export function useDesktopSidebarCatalog({
@@ -68,7 +66,8 @@ export function useDesktopSidebarCatalog({
   localHarnessSessions,
   visibleUnreadRuntimeTaskKeys,
   currentRuntimeTask,
-  lifecycleSnapshot,
+  busyTaskKeys,
+  waitingTaskKeys,
   storageScope,
 }: SidebarCatalogInput) {
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
@@ -266,13 +265,11 @@ export function useDesktopSidebarCatalog({
     ]
     for (const { workspace, task } of items) {
       const key = getRuntimeTaskReminderItemKey(workspace, task)
-      const lifecycle = lifecycleSnapshot.tasks.get(
-        getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-      )
+      const lifecycleKey = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
       collapsibleTaskKeys.add(key)
       if (
-        lifecycle?.derived.isBusy ||
-        lifecycle?.derived.shouldShowSidebarWaiting ||
+        busyTaskKeys.has(lifecycleKey) ||
+        waitingTaskKeys.has(lifecycleKey) ||
         isRuntimeTaskWaiting(task)
       ) {
         keepVisibleTaskKeys.add(key)
@@ -283,7 +280,8 @@ export function useDesktopSidebarCatalog({
     allSidebarRuntimeProjects,
     chatTaskItems,
     currentRuntimeTask,
-    lifecycleSnapshot.tasks,
+    busyTaskKeys,
+    waitingTaskKeys,
     visibleUnreadRuntimeTaskKeys,
   ])
   const { collapsedReadTaskKeys, collapseReadConversations, expandReadConversations } =

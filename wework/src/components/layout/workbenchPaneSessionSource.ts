@@ -31,7 +31,7 @@ import {
 import { createPaneSessionView } from './workbenchPaneSessionView'
 import {
   deferHiddenConversationText,
-  isAssistantTextAppend,
+  isTranscriptOnlyStreamingUpdate,
   type PaneTranscript,
 } from './workbenchPaneConversationPresentation'
 import type {
@@ -82,6 +82,8 @@ export function createWorkbenchPaneSessionSource(
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
+  const presentationActivity = (): WorkbenchWindowActivity =>
+    external.presentationActive ? windowActivity : 'hidden'
   type Conversation = ReturnType<typeof getRuntimeConversationSnapshot>
   let presentedConversation:
     | { key: string; current: Conversation; visible: Conversation }
@@ -91,7 +93,7 @@ export function createWorkbenchPaneSessionSource(
     const current = getRuntimeConversationSnapshot(address)
     const previous = presentedConversation?.key === key ? presentedConversation : undefined
     let visible = current
-    if (windowActivity === 'hidden' && previous) {
+    if (presentationActivity() === 'hidden' && previous) {
       if (previous.current === current) return previous.visible
       visible = deferHiddenConversationText(current, previous.visible)
     }
@@ -110,12 +112,13 @@ export function createWorkbenchPaneSessionSource(
   const flushConversation = (streaming = false) => {
     cancelConversationPublication()
     pendingStreamPresentation = false
-    if (isActive()) publish(streaming)
+    if (isActive() && external.presentationActive) publish(streaming)
   }
   const presentStreamingProgress = () => {
     pendingStreamPresentation = true
-    if (windowActivity === 'foreground') flushConversation(true)
-    else if (windowActivity === 'background' && conversationTimer === undefined)
+    const activity = presentationActivity()
+    if (activity === 'foreground') flushConversation(true)
+    else if (activity === 'background' && conversationTimer === undefined)
       conversationTimer = setTimeout(() => flushConversation(true), 500)
   }
   const publishConversation = () => {
@@ -351,6 +354,10 @@ export function createWorkbenchPaneSessionSource(
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.ignoreRequestUserInput(...args)
     },
+    skipRequestUserInput: (...args: Parameters<PaneCommands['skipRequestUserInput']>) => {
+      if (!isActive()) return
+      return bind().commands.skipRequestUserInput(...args)
+    },
     sendQueuedMessage: (...args: Parameters<PaneCommands['sendQueuedMessage']>) => {
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.sendQueuedMessage(...args)
@@ -520,7 +527,7 @@ export function createWorkbenchPaneSessionSource(
           separateTranscript &&
           streaming &&
           transcriptChanged &&
-          isAssistantTextAppend(transcriptSnapshot, nextTranscript)
+          isTranscriptOnlyStreamingUpdate(transcriptSnapshot, nextTranscript)
         transcriptSnapshot = nextTranscript
         if (!transcriptOnly)
           snapshot = createPaneSessionView(current, commands, search, attachmentCommands)
@@ -586,7 +593,7 @@ export function createWorkbenchPaneSessionSource(
           ? subscribeRuntimeConversation(
               observedTarget.address,
               (action, coalesced) => {
-                if (!isActive()) return
+                if (!isActive() || !external.presentationActive) return
                 if (coalesced) presentStreamingProgress()
                 else if (!action) {
                   reconcile()
@@ -644,6 +651,10 @@ export function createWorkbenchPaneSessionSource(
     transcript,
     subscribe(next: PaneSessionExternal, listener: () => void) {
       const previousInputScope = currentInputScope()
+      if (external.presentationActive && !next.presentationActive) {
+        cancelConversationPublication()
+        pendingStreamPresentation = false
+      }
       external = next
       accountId ??= next.workbench.state.user?.id
       listeners.add(listener)
@@ -666,6 +677,7 @@ export function createWorkbenchPaneSessionSource(
         next.attachmentState.uploadingFiles,
         next.attachmentState.errors,
         next.debugSnapshotEnabled,
+        next.presentationActive,
       ]
       const changed = differs(externalSignature, signature)
       externalSignature = signature
