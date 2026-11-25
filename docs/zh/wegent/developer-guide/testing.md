@@ -314,6 +314,8 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 普通 PR、定时任务和手动任务均不触发内存 E2E。
 
 平台 E2E 在 PR 和 merge queue 上按改动路径运行，定时和手动运行保留全量覆盖。
+仅改动任务执行 Rust crate 的源码时，由平台 E2E 和 Rust 测试验证执行行为。交付镜像
+继续在打包、启动和其余后端输入变动时验证，也会参加全量回归。
 Executor E2E 的设备用例和独立沙箱用例在不同 runner 上并行执行，各自使用独立的服务和数据库。
 设备用例保留单 worker，沙箱用例保留双 worker。Rust Backend 的 Clippy 与测试并行运行，
 `Test Summary` 要求两项都通过。

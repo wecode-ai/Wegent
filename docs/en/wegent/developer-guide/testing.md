@@ -328,6 +328,9 @@ The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
 Platform E2E selects tests by changed paths on PRs and merge queue commits.
+Platform E2E and Rust tests cover source-only changes in the task execution
+crates. Delivery-image verification still runs for packaging, startup and other
+Backend inputs, and during full regression runs.
 Scheduled and manual runs retain full coverage. Executor device and sandbox
 projects run in parallel on separate runners with their own services and
 databases. Device tests keep one worker and sandbox tests keep two. Rust Backend

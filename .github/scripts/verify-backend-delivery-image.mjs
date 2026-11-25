@@ -15,17 +15,34 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
 export function deliveryImageRequired(paths) {
-  return paths.some(
-    (path) =>
-      /^(backend|backend-rs|shared|chat_shell|knowledge_engine)\//.test(path) ||
+  return paths.some((path) => {
+    if (
       [
         "docker/backend/Dockerfile",
         ".dockerignore",
         ".github/workflows/e2e-tests.yml",
         ".github/scripts/verify-backend-delivery-image.mjs",
         ".github/scripts/backend-delivery-image.test.mjs",
-      ].includes(path),
-  );
+      ].includes(path)
+    ) {
+      return true;
+    }
+    if (/^(backend|chat_shell|knowledge_engine|shared)\/tests\//.test(path)) {
+      return false;
+    }
+    // The delivery probes exercise startup, initialized routes and process
+    // supervision. Task execution implementations have their own real E2E.
+    if (
+      /^backend-rs\/execution-(completion|emission|events|runtime)\/src\/.*\.rs$/.test(
+        path,
+      )
+    ) {
+      return false;
+    }
+    return /^(backend|backend-rs|shared|chat_shell|knowledge_engine)\//.test(
+      path,
+    );
+  });
 }
 
 export function assertHealthy(body) {
