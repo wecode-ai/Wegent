@@ -1292,7 +1292,7 @@ async function main() {
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
     const assistantCheckpoint =
       DESKTOP_SEGMENT?.startsWith('stand-in-') ||
-      ['coordination-runtime', 'dots-closed-loops'].includes(DESKTOP_SEGMENT)
+      ['stand-in', 'coordination-runtime', 'dots-closed-loops'].includes(DESKTOP_SEGMENT)
     const localAssistantStory = assistantCheckpoint && !scenarioRequiresCloudEnvironment
     let assistantFixtureToken
     if (

@@ -25,7 +25,6 @@ interface OverviewObservation {
   requestLeave(action: () => void): void
   reload(): void
   refreshInbox(): void
-  setDraft(value: PersonalStandInSettings): void
   rememberProfileTrigger(): void
   closeReview(): void
   closeDetails(): void
@@ -321,7 +320,6 @@ export function createStandInOverviewSource(initial: {
             value.userId === current.userId &&
             value.executionDeviceId === current.deviceId
           ) {
-            current.setDraft(value)
             current.reload()
           }
         })

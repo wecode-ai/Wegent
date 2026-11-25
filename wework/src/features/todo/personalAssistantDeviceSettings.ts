@@ -34,14 +34,15 @@ function applyDefinitions(settings: PersonalStandInSettings, account: PersonalAs
   return {
     ...settings,
     cloudDefinitionRevision: account.revision,
-    primary: primary
-      ? {
-          enabled: true,
-          preferences: '',
-          ...settings.primary,
-          prompt: primary.ghost.spec.systemPrompt,
-        }
-      : settings.primary,
+    primary:
+      primary && (settings.primary || primary.ghost.spec.systemPrompt)
+        ? {
+            enabled: true,
+            preferences: '',
+            ...settings.primary,
+            prompt: primary.ghost.spec.systemPrompt,
+          }
+        : settings.primary,
     roles: [...roles.values()],
   }
 }
@@ -130,9 +131,8 @@ export function personalAssistantDeviceSettings(
         }
         const device = await executor.personalGet(userId, deviceId)
         const configured = new Set(device.roles.map(role => role.id))
-        const projected = new Map(
-          applyDefinitions(device, account).roles.map(role => [role.id, role])
-        )
+        const projectedSettings = applyDefinitions(device, account)
+        const projected = new Map(projectedSettings.roles.map(role => [role.id, role]))
         const localRoles = settings.roles.filter(role => {
           const original = projected.get(role.id)
           return (
@@ -141,10 +141,19 @@ export function personalAssistantDeviceSettings(
             !dequal(role, { ...original, prompt: role.prompt, name: role.name })
           )
         })
+        const primary =
+          definitionChange ||
+          (!device.primary && dequal(settings.primary, projectedSettings.primary))
+            ? device.primary
+            : deviceSettings.primary
         // Keep the source grants and existing device-side workers on their owning Executor.
         const saved = await executor.personalSave(
           userId,
-          { ...deviceSettings, roles: localRoles },
+          {
+            ...deviceSettings,
+            primary,
+            roles: localRoles,
+          },
           deviceId,
           transferRoleId
         )

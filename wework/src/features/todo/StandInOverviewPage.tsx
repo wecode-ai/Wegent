@@ -108,7 +108,7 @@ export function StandInOverviewPage({
     props.initialDeviceId,
     localDeviceId
   )
-  const { saved, setDraft, reload } = state
+  const { saved, reload } = state
   const [overview] = useState(() =>
     createStandInOverviewSource({
       roleId:
@@ -186,7 +186,6 @@ export function StandInOverviewPage({
       onSelectLocation,
       onOpenTask,
       reload,
-      setDraft,
       refreshInbox: inbox.refresh,
       rememberProfileTrigger,
       requestLeave: (action: () => void) =>
@@ -208,7 +207,6 @@ export function StandInOverviewPage({
       onSelectLocation,
       onOpenTask,
       reload,
-      setDraft,
       inbox.refresh,
       rememberProfileTrigger,
     ]

@@ -36,7 +36,12 @@ export async function createStandInFixtureSession(cloud) {
   const member = await fetchJson(`${cloud.backendUrl}/api/admin/users`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...credentials, role: 'user', auth_source: 'password' }),
+    body: JSON.stringify({
+      ...credentials,
+      email: 'desktop-e2e@example.com',
+      role: 'user',
+      auth_source: 'password',
+    }),
   })
   assert.equal(member.id, 9001)
   const session = await fetchJson(`${cloud.backendUrl}/api/auth/login`, {

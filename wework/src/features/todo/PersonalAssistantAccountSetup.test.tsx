@@ -125,6 +125,7 @@ test('saving and retrying a new shared role never uploads a device-only profile'
   const settings = await api.personalGet(7, 'mac')
   await api.personalSave(7, settings, 'mac')
   expect(updateDefinitions).not.toHaveBeenCalled()
+  expect(device.primary).toBeUndefined()
 
   const draft = { ...settings, version: device.version, roles: [...settings.roles, newRole] }
   const change = { kind: 'create', roleId: newRole.id } as const
@@ -132,6 +133,7 @@ test('saving and retrying a new shared role never uploads a device-only profile'
     code: 'cloud_definition_save_unconfirmed',
   })
   expect(device.roles.map(role => role.id)).toEqual([local.id, newRole.id])
+  expect(device.primary).toBeUndefined()
   await api.personalSave(7, { ...draft, version: device.version }, 'mac', undefined, change)
   expect(updateDefinitions).toHaveBeenLastCalledWith(current.revision, [
     { roleId: '@primary', name: 'Default', prompt: 'Default prompt' },

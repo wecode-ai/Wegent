@@ -124,7 +124,7 @@ export function createDesktopScenario({
         settings: {
           ...initial,
           roles: [...initial.roles, standInRoleFixture(initial.executionDeviceId)],
-          primary: { enabled: true, prompt: '帮我跟进工作', preferences: '回复简洁，发送前确认' },
+          primary: { enabled: true, prompt: '', preferences: '回复简洁，发送前确认' },
         },
       })
       await ensureExperimentalFeaturesEnabled(control)
@@ -133,10 +133,12 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await openStandInSettings(control)
       await control.command('waitFor', PANEL)
-      assert.equal(await control.command('getElementCount', `${PANEL} textarea`), '1')
+      const duty = '[data-testid="stand-in-primary-ghost-prompt"]'
+      await control.command('waitFor', duty)
+      await control.command('fill', duty, { value: '帮我跟进工作' })
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-preferences"]'),
-        '帮我跟进工作\n\n回复简洁，发送前确认'
+        '回复简洁，发送前确认'
       )
       await control.command('waitFor', '[data-testid="stand-in-primary-execution"]')
       await captureScreenshot(control, '01-unified-profile.png', PANEL)
@@ -177,8 +179,8 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', PANEL, { visible: false })
       const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
-      assert.equal(saved.primary.prompt, '')
-      assert.equal(saved.primary.preferences, '帮我跟进工作\n\n回复简洁，发送前确认')
+      assert.equal(saved.primary.prompt, '帮我跟进工作')
+      assert.equal(saved.primary.preferences, '回复简洁，发送前确认')
       assert.equal(saved.primary.workspace.projectKey, NAME)
       assert.equal(saved.primary.workspace.workspacePath, undefined)
       assert.equal(saved.primary.model.model_id, model.model_id)
@@ -194,6 +196,7 @@ export function createDesktopScenario({
         await control.command('getValue', '[data-testid="stand-in-preferences"]'),
         saved.primary.preferences
       )
+      assert.equal(await control.command('getValue', duty), '帮我跟进工作')
       await control.command('fill', '[data-testid="stand-in-preferences"]', { value: '未保存修改' })
       await control.command('click', '[data-testid="stand-in-primary-cancel"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-keep-editing"]')
