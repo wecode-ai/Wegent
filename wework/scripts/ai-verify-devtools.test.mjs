@@ -21,6 +21,82 @@ import {
 } from './ai-verify-devtools.mjs'
 
 describe('DevTools evidence analysis', () => {
+  test('retains replayed source maps when stream events evict script metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'devtools-script-replay-'))
+    const map = {
+      version: 3,
+      sources: ['file:///build/source.ts'],
+      names: [],
+      mappings: 'AAMA',
+    }
+    const script = {
+      sequence: 1,
+      method: 'Debugger.scriptParsed',
+      params: {
+        scriptId: '1',
+        url: 'file:///build/app.js',
+        sourceMapURL: `data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`,
+      },
+    }
+    let replay = false
+    let recording = false
+    const client = async input => {
+      if (input.method === 'Debugger.enable') replay = true
+      if (input.method === 'Profiler.start') {
+        recording = true
+        replay = false
+      }
+      if (input.action === 'events') {
+        const sequence = replay ? (recording ? 4 : 1) : recording ? 3 : 0
+        return {
+          events: replay
+            ? [{ ...script, sequence }]
+            : recording
+              ? [{ sequence, method: 'Tracing.tracingComplete', params: { stream: 'trace' } }]
+              : [],
+          next: sequence,
+          latest: sequence,
+          lost: recording && !replay ? 1 : 0,
+          attached: true,
+        }
+      }
+      if (input.method === 'Profiler.stop')
+        return {
+          profile: {
+            nodes: [
+              {
+                id: 1,
+                callFrame: {
+                  scriptId: '1',
+                  functionName: 'hot',
+                  url: script.params.url,
+                  lineNumber: 0,
+                  columnNumber: 0,
+                },
+              },
+            ],
+            samples: [1],
+            timeDeltas: [1000],
+          },
+        }
+      if (input.method === 'IO.read') return { data: '{"traceEvents":[]}', eof: true }
+      return {}
+    }
+    try {
+      await startPerformanceRecording(client, directory, 1)
+      const reportPath = join(directory, 'report.json')
+      await stopPerformanceRecording(client, directory, 1, reportPath)
+      const report = JSON.parse(await readFile(reportPath, 'utf8'))
+      expect(report.evidence.lostEvents).toBe(1)
+      expect(report.cpu[0].location).toMatchObject({
+        mapped: true,
+        source: '/build/source.ts',
+        line: 7,
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test('discards interrupted recording state only after an authenticated detach succeeds', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'devtools-detach-'))
     const statePath = join(directory, 'performance-1.json')
