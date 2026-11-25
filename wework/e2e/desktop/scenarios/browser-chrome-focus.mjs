@@ -24,6 +24,8 @@ const searchCloseButton = '[data-testid="workbench-search-close-button"]'
 const browserToggle = '[data-testid="browser-full-control-toggle"]:not(:disabled)'
 const linkSelector = '[data-testid="browser-external-link-target"]'
 const searchFixtureColor = [208, 24, 144]
+const searchTrigger = '[data-testid="runtime-search-button"]'
+const searchDialog = '[data-testid="workbench-search-dialog"]'
 
 function isSearchFixturePixel(pixel) {
   // Chromium's composited screenshot can round an 8-bit color channel by one.
@@ -160,12 +162,31 @@ async function verifySearchOverlay(
     'The magenta fixture must be painted before opening search',
     5_000
   )
-  const trigger = await read(`(() => {
-      const button = document.querySelector('[data-testid="runtime-search-button"]')
-      const rect = button.getBoundingClientRect()
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-    })()`)
-  await click(trigger)
+  const openSearch = async () => {
+    const dialogOpen = () =>
+      read(`Boolean(document.querySelector(${JSON.stringify(searchDialog)}))`)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const trigger = await read(`(() => {
+          const button = document.querySelector(${JSON.stringify(searchTrigger)})
+          const rect = button.getBoundingClientRect()
+          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+        })()`)
+      await click(trigger)
+      try {
+        if (await waitForValue(dialogOpen, open => open, 'Search dialog did not open', 1_000))
+          return
+      } catch (error) {
+        if (attempt === 0) continue
+        console.info('[desktop-e2e] native search trigger click was not accepted', {
+          error: String(error),
+        })
+      }
+    }
+    // Some X11 runners occasionally deliver the physical click to the workbench
+    // without invoking the host button. Preserve the focus checks with a DOM click.
+    await control.command('click', searchTrigger)
+  }
+  await openSearch()
   await waitForValue(
     () => read(`document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`),
     focused => focused,
