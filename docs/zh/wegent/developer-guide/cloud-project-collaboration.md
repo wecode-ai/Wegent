@@ -105,6 +105,8 @@ status, version, created_at, updated_at
 
 现有 `loop_items` 作为云 TODO 使用。它通过 `cloud_project_id` 指向 `cloud_projects`，并使用 `sequence_number` 生成 `WEG-18` 形式的展示编号。
 
+云端创建事项统一使用 `POST /api/v1/loop-items`。请求通过 `issue` 提交事项字段，可通过 `project_id` 指定项目。看板创建沿用目标项目的提供方、权限和自动化规则。从独立事项弹窗创建并选择项目时，事项和项目关联在同一事务提交。
+
 固定状态如下：
 
 ```text

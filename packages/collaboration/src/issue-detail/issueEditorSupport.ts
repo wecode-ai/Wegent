@@ -1,5 +1,7 @@
 import { type CommentIssueActions, type IssueCommentBoardContext } from './issueCommentActions'
 import { type ReactNode } from 'react'
+import { localizeStandardStatuses, type CollaborationTranslate } from '../i18n'
+import type { IssueDetailDraftValue } from './IssueDetailDraft'
 import {
   type DueDateSourceContext,
   type IssueAssigneeTarget,
@@ -74,6 +76,7 @@ export interface SharedIssueDetailExtensions {
     sizeBytes: number
   ): Promise<void>
   renderDescriptionEditor?(context: {
+    testId?: string
     value: string
     editable: boolean
     placeholder: string
@@ -83,7 +86,9 @@ export interface SharedIssueDetailExtensions {
     onInlineAttachmentIdsChange(attachmentIds: string[]): void
   }): ReactNode
   renderActivity?(
-    context: Omit<SharedIssueDetailExtensionContext, 'project'> & { project?: SharedEditorProject }
+    context: Omit<SharedIssueDetailExtensionContext, 'project'> & {
+      project?: SharedEditorProject
+    }
   ): ReactNode
   renderAITableFields?(context: {
     item: SharedEditorIssue
@@ -121,6 +126,30 @@ export const columns = [
   { status: 'in_review', label: '待确认' },
   { status: 'completed', label: '已完成' },
 ]
+export function issueEditorStatuses(
+  configured: CollaborationStatus[] | undefined,
+  translate: CollaborationTranslate,
+  noProject = false
+): CollaborationStatus[] {
+  if (configured) return localizeStandardStatuses(configured, translate)
+  return columns
+    .filter(({ status }) => !noProject || ['pending', 'in_progress', 'completed'].includes(status))
+    .map(({ status, label }) => ({
+      id: status,
+      name: translate(`todo.status_${status}`, label),
+      color: 'gray',
+    }))
+}
+
+export function issuePriorityLabels(t: CollaborationTranslate) {
+  return {
+    none: t('todo.priority_none', '无'),
+    low: t('todo.priority_low', '低'),
+    medium: t('todo.priority_medium', '普通'),
+    high: t('todo.priority_high', '高'),
+    urgent: t('todo.priority_urgent', '紧急'),
+  }
+}
 export const columnDotClasses: Record<string, string> = {
   inbox: 'bg-zinc-400',
   pending: 'bg-indigo-500',
@@ -136,7 +165,7 @@ export function memberNameById(
 }
 export type AttachmentRow = Pick<
   CloudLoopItemAttachment,
-  'id' | 'display_name' | 'content_type' | 'size_bytes'
+  'id' | 'display_name' | 'content_type' | 'size_bytes' | 'removable'
 >
 export type TodoDraft = {
   title: string
@@ -232,20 +261,62 @@ export function scheduleRangeLabel(
   if (dueDate) return `→ ${compact(dueDate)}`
   return notSetLabel
 }
-export interface TodoEditorCreateProps {
+interface IssueDraftFormProps {
   mode: 'create'
-  project: CloudProject
   initialParent: CloudLoopItem | null
   initialStatus: CloudLoopItem['status']
   initialTitle?: string
   initialTags?: string[]
   initialMilestoneId?: string
   draftScope?: string
+}
+
+export interface TodoEditorCreateProps extends IssueDraftFormProps {
+  project: CloudProject
+  draftForm?: never
   onCreated: (item: CloudLoopItem) => void | Promise<void>
   onCreateError?: (
     error: unknown,
     retry: (overrides?: Partial<SharedIssueDetailCreateInput>) => Promise<CloudLoopItem>
   ) => boolean | Promise<boolean>
+}
+
+export interface TodoEditorDraftFormProps extends IssueDraftFormProps {
+  project?: CloudProject
+  draftForm: {
+    initial: IssueDetailDraftValue
+    submit(draft: IssueDetailDraftValue): Promise<void>
+    onDirtyChange?(dirty: boolean): void
+    renderParticipants?(input: {
+      assignee: IssueAssigneeTarget
+      onAssign(assignee: IssueAssigneeTarget): void
+      saving: boolean
+    }): ReactNode
+    beforeDescription?: ReactNode
+    afterDescription?: ReactNode
+    propertiesDisclosure?: { testId: string; label: string }
+    propertyTestIds?: {
+      status: string
+      destinationStatus: string
+      priority: string
+      schedule: string
+      due: string
+    }
+    destinationStatus?: {
+      options: CollaborationStatus[]
+      value: string
+      onChange(value: string): void
+    }
+    scrollTestId?: string
+    footerTestId?: string
+    confirmTestId?: string
+    confirmLabel?: string
+    cancelTestId?: string
+    onCancel?(): void
+    titleTestId?: string
+    descriptionTestId?: string
+    heading?: string
+  }
 }
 export interface TodoEditorEditProps {
   mode: 'edit'
@@ -266,7 +337,7 @@ export type TodoEditorProps = {
   allItems: CloudLoopItem[]
   onClose: () => void
   onEscape?: () => void
-  presentation?: 'modal' | 'workspace-panel'
+  presentation?: 'modal' | 'workspace-panel' | 'embedded'
   workspacePanelFill?: boolean
   readFirst?: boolean
   showPanelControls?: boolean
@@ -290,14 +361,30 @@ export type TodoEditorProps = {
   /** Device display names keyed by the device ID stored in task bindings. */
   deviceNamesById?: Readonly<Record<string, string>>
   headerActions?: ReactNode
+  issueActions?: readonly {
+    id: string
+    label: string
+    onSelect(): void
+    disabled?: boolean
+    destructive?: boolean
+  }[]
+  issueActionsTestId?: string
+  closeTestId?: string
+  closeDisabled?: boolean
+  panelExpansion?: {
+    expanded: boolean
+    onChange(expanded: boolean): void
+    testId: string
+  }
+  detailActions?: ReactNode
   /** Render the host-provided destructive or lifecycle action in the menu. */
   onDelete?: () => void
   deleteLabel?: string
   selectedTaskId?: string | null
-  linkedTaskAction?: ReactNode
+  linkedTaskAction?: (tasks: SharedIssueDetailTaskBinding[]) => ReactNode
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void
   onOpenChildTask?: (task: CloudLoopItem) => void
   onOpenRelatedIssue?: (issue: CloudLoopItem) => void
   onWorkflowPlanChanged?: () => void | Promise<void>
-} & (TodoEditorCreateProps | TodoEditorEditProps)
+} & (TodoEditorCreateProps | TodoEditorDraftFormProps | TodoEditorEditProps)

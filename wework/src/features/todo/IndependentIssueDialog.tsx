@@ -1,3 +1,4 @@
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   IndependentIssueDialog as SharedIndependentIssueDialog,
   PersonalIssueTranslation,
@@ -5,11 +6,13 @@ import {
 } from '@wegent/collaboration/platform'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
-import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
+import { useIndependentIssueTaskActions } from './useIndependentIssueTaskActions'
 import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
 import { SharedIssueSourceButton } from './SharedIssueSourceButton'
+import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TaskIssueShareFiles } from './TaskIssueShareFiles'
 
 export function IndependentIssueDialog(
@@ -18,19 +21,45 @@ export function IndependentIssueDialog(
     | 'api'
     | 'ShareFiles'
     | 'renderExecutionSettings'
-    | 'renderTaskAction'
+    | 'renderDescriptionEditor'
+    | 'translateIssueDetail'
+    | 'taskActions'
+    | 'attachments'
+    | 'commentSendKey'
     | 'renderSourceAction'
     | 'saveAttachment'
   > & { api: PersonalIssuesApi }
 ) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const translateDetail = createCollaborationTranslator(
+    i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+  )
   const { api, collaborationApi } = props
+  const workbench = useWorkbench()
+  const taskActions = useIndependentIssueTaskActions(api)
   return (
     <PersonalIssueTranslation.Provider value={(key, options) => t(key, options)}>
       <SharedIndependentIssueDialog
         {...props}
         ShareFiles={TaskIssueShareFiles}
+        translateIssueDetail={translateDetail}
+        attachments={
+          collaborationApi?.attachments ?? workbench.services.sharedWorkspaceApi?.attachments
+        }
+        commentSendKey={workbench.state.user?.preferences?.send_key}
         saveAttachment={saveBlobToDownloads}
+        renderDescriptionEditor={context => (
+          <TaskDescriptionEditor
+            testId={context.testId}
+            value={context.value}
+            ariaLabel={t('todo.issue_description_label')}
+            placeholder={context.placeholder}
+            onChange={context.onChange}
+            readAttachment={context.readAttachment}
+            onInlineAttachmentIdsChange={context.onInlineAttachmentIdsChange}
+            disabled={!context.editable}
+          />
+        )}
         renderExecutionSettings={(projectId, busy) =>
           projectId && collaborationApi ? (
             <IssueProjectEnvironmentPicker
@@ -43,9 +72,7 @@ export function IndependentIssueDialog(
             <DefaultRunnerSetting compact confirmChanges />
           )
         }
-        renderTaskAction={(issue, onError) => (
-          <IndependentIssueTaskButton api={api} issue={issue} onError={onError} />
-        )}
+        taskActions={taskActions}
         renderSourceAction={(issueId, onOpen) => (
           <SharedIssueSourceButton api={api} issueId={issueId} onOpen={onOpen} />
         )}

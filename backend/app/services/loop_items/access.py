@@ -55,13 +55,21 @@ def visible_item_filter(user_id: int, project: object) -> ColumnElement[bool]:
     return or_(security == "open", related_item_filter(user_id))
 
 
+def issue_participation_filter(user_id: int) -> ColumnElement[bool]:
+    """Direct Issue access requires creation or a current invitation."""
+    collaborator_item_ids = select(LoopItemCollaborator.loop_item_id).where(
+        LoopItemCollaborator.user_id == user_id
+    )
+    return or_(
+        LoopItem.created_by_user_id == user_id,
+        LoopItem.id.in_(collaborator_item_ids),
+    )
+
+
 def related_item_filter(user_id: int) -> ColumnElement[bool]:
     active_task_item_ids = select(LoopItemTaskBinding.loop_item_id).where(
         LoopItemTaskBinding.task_user_id == user_id,
         loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-    )
-    collaborator_item_ids = select(LoopItemCollaborator.loop_item_id).where(
-        LoopItemCollaborator.user_id == user_id
     )
     owned_agent_ids = select(ProjectChatAgent.id).where(
         ProjectChatAgent.created_by_user_id == user_id,
@@ -69,10 +77,9 @@ def related_item_filter(user_id: int) -> ColumnElement[bool]:
         loop_datetime_is_unset(ProjectChatAgent.deleted_at),
     )
     return or_(
-        LoopItem.created_by_user_id == user_id,
+        issue_participation_filter(user_id),
         LoopItem.assignee_user_id == user_id,
         LoopItem.id.in_(active_task_item_ids),
-        LoopItem.id.in_(collaborator_item_ids),
         LoopItem.assignee_agent_id.in_(owned_agent_ids),
     )
 

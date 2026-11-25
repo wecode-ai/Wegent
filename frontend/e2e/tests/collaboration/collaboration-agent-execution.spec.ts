@@ -230,8 +230,8 @@ test.describe('Collaboration agent execution', () => {
     await page.getByTestId('cloud-todo-detail-assignee').click()
     const saved = page.waitForResponse(
       response =>
-        response.request().method() === 'POST' &&
-        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+        response.request().method() === 'PATCH' &&
+        new URL(response.url()).pathname === `/api/v1/loop-items/${issue.id}`
     )
     await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`).click()
     expect((await saved).ok()).toBe(true)
@@ -411,8 +411,8 @@ test.describe('Collaboration agent execution', () => {
     await page.getByTestId('cloud-todo-detail-assignee').click()
     const assignmentSaved = page.waitForResponse(
       response =>
-        response.request().method() === 'POST' &&
-        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+        response.request().method() === 'PATCH' &&
+        new URL(response.url()).pathname === `/api/v1/loop-items/${issue.id}`
     )
     await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agentCase.agent.id}`).click()
     expect((await assignmentSaved).ok()).toBe(true)

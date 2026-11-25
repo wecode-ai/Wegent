@@ -174,6 +174,17 @@ describe('comment assignment', () => {
     expect(transfer.target).toBe('')
   })
 
+  it('keeps a pending assignee scoped to the selected action', () => {
+    createChild = vi.fn()
+    render('Create a child')
+    act(() => transfer.setTarget('1'))
+    act(() => transfer.setMode('child'))
+    expect(transfer.target).toBe('')
+    act(() => transfer.setTarget('2'))
+    act(() => transfer.setMode('current'))
+    expect(transfer.target).toBe('')
+  })
+
   it('uses a newly selected child target after cancelling invitation without reposting', async () => {
     const create = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce({ id: 'child' })
     createChild = create

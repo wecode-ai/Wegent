@@ -7,7 +7,6 @@ import { apiClient } from '@/apis/client'
 
 export const webPersonalIssuesApi = createPersonalIssuesApi<CollaborationProject>({
   get: (endpoint, options) => apiClient.get(endpoint, options),
-  getBlob: endpoint => apiClient.getBlob(endpoint),
   post: (endpoint, input) =>
     input instanceof FormData
       ? apiClient.postForm(endpoint, input)

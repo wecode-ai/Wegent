@@ -10,6 +10,7 @@ interface IssueConversationDrawersProps {
   children: (close: () => void) => ReactNode
   conversation: ReactNode
   conversationKey?: string
+  canClose?: () => boolean
   onClose: () => void
   onCloseConversation: () => void
 }
@@ -22,6 +23,7 @@ export function IssueConversationDrawers({
   children,
   conversation,
   conversationKey,
+  canClose,
   onClose,
   onCloseConversation,
 }: IssueConversationDrawersProps) {
@@ -32,7 +34,9 @@ export function IssueConversationDrawers({
   const [retainedConversation, setRetainedConversation] = useState(conversation)
   const [dismissing, setDismissing] = useState(false)
   const hasConversation = Boolean(conversation)
-  const requestClose = () => setDismissing(true)
+  const requestClose = () => {
+    if (canClose?.() !== false) setDismissing(true)
+  }
   if (conversation && conversation !== retainedConversation) {
     setRetainedConversation(conversation)
   }

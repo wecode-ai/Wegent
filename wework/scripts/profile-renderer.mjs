@@ -25,6 +25,7 @@ import {
 import { waitForWorkbenchDebugState } from '../e2e/desktop/modules/workspace-flows.mjs'
 import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 import { waitForValue } from '../e2e/desktop/modules/workspace-agent-setup.mjs'
+import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window-state.mjs'
 import {
   createDevtoolsClient,
   startPerformanceRecording,
@@ -705,6 +706,7 @@ export function createDesktopScenario({
         }
       )
       assert.equal(provider, 'wework-e2e', 'The selected model must use the isolated model service')
+      await waitForClosedStartupSplash(control, uiTimeoutMs)
       pids = await rendererPids(control)
       const inventory = await requestExecutor(control, 'runtime.tasks.list', {}, uiTimeoutMs)
       const savedTaskCount = inventory.workspaces

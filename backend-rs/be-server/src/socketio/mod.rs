@@ -52,6 +52,7 @@ pub use wegent_device_lifecycle::device_upsert;
 mod engineio_wire_tests;
 pub use wegent_runtime_execution::execution_aggregate;
 pub mod handlers;
+pub(crate) mod issue_discussion;
 mod issue_room_access;
 mod project_chat_comment;
 pub mod project_chat_events;

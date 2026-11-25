@@ -401,6 +401,7 @@ export function TodoEditor(props: TodoEditorProps) {
         : undefined,
   }
 
+  const existingTaskSource = props.existingTaskSource
   const commonProps = {
     port,
     extensions,
@@ -440,20 +441,22 @@ export function TodoEditor(props: TodoEditorProps) {
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
     linkedTaskAction:
-      props.mode === 'edit' && canEditProjectSpaceIssue(props.item) && props.existingTaskSource ? (
-        <IssueExistingTaskAction
-          deviceNamesById={props.deviceNamesById}
-          key={props.item.id}
-          source={props.existingTaskSource}
-          issue={props.item}
-          project={{
-            projectStore: props.project?.project_store ?? 'backend',
-            projectId: props.project?.id ?? props.item.cloud_project_id,
-          }}
-          bindings={props.initialTaskBindings}
-          onLinked={() => setTaskLinkRevision(value => value + 1)}
-        />
-      ) : undefined,
+      props.mode === 'edit' && canEditProjectSpaceIssue(props.item) && existingTaskSource
+        ? (bindings: SharedIssueDetailTaskBinding[]) => (
+            <IssueExistingTaskAction
+              deviceNamesById={props.deviceNamesById}
+              key={props.item.id}
+              source={existingTaskSource}
+              issue={props.item}
+              project={{
+                projectStore: props.project?.project_store ?? 'backend',
+                projectId: props.project?.id ?? props.item.cloud_project_id,
+              }}
+              bindings={bindings}
+              onLinked={() => setTaskLinkRevision(value => value + 1)}
+            />
+          )
+        : undefined,
     onCreateTask: props.onCreateTask,
     onAddAssigneeMember: props.onAddAssigneeMember,
     onAddAssigneeAgent: props.onAddAssigneeAgent,
