@@ -467,15 +467,61 @@ async function readMessagePage(ctx, source, window, ownId) {
       if (delegated) args.conversationIds = conversationId
     }
   }
-  const response = await readTool(
-    ctx,
-    source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages',
-    args
-  )
-  return messagePage(source, response, ownId, window.cursor, selfConversationId, {
-    delegated,
-    conversationId,
-  })
+  const tool = source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages'
+  const options = { delegated, conversationId, selfConversationId }
+  return readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options)
+}
+
+async function readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options) {
+  if (source.kind !== 'group') {
+    const response = await readTool(ctx, tool, args)
+    return messagePage(source, response, ownId, window.cursor, options)
+  }
+
+  const poll = {
+    groupId: source.id,
+    start: window.start,
+    end: window.end,
+    firstPage: window.cursor === '0',
+    tool,
+  }
+  console.info('[wework-dingtalk-collection] poll started', JSON.stringify(poll))
+  const filtered = []
+  let returned
+  let page
+  try {
+    const response = await readTool(ctx, tool, args)
+    const conversations = response.result?.conversationMessagesList
+    returned = Array.isArray(conversations)
+      ? conversations.map(conversation => ({
+          conversationId: diagnosticId(conversation?.openConversationId),
+          messageIds: Array.isArray(conversation?.messages)
+            ? conversation.messages.map(message => diagnosticId(message?.openMessageId))
+            : null,
+        }))
+      : null
+    page = messagePage(source, response, ownId, window.cursor, {
+      ...options,
+      reportFilter: entry => filtered.push(entry),
+    })
+    return page
+  } finally {
+    console.info(
+      '[wework-dingtalk-collection] poll finished',
+      JSON.stringify({
+        ...poll,
+        outcome: page ? 'normalized' : returned === undefined ? 'request_failed' : 'invalid_page',
+        returned,
+        filtered,
+        acceptedMessageIds: page?.events.map(event => event.id),
+        hasMore: page?.hasMore,
+      })
+    )
+  }
+}
+
+function diagnosticId(value) {
+  return typeof value === 'string' ? value : null
 }
 
 function validateCollection(source) {
@@ -503,8 +549,8 @@ function validateNativePage(page, limit) {
     throw invalid('Incomplete native conversation response')
 }
 
-function messagePage(source, response, ownId, cursor, selfConversationId, options) {
-  const events = normalizeMessages(source, response, ownId, selfConversationId, options)
+function messagePage(source, response, ownId, cursor, options) {
+  const events = normalizeMessages(source, response, ownId, options.selfConversationId, options)
   if (typeof response.result?.hasMore !== 'boolean') throw invalid('Missing pagination state')
   const hasMore = response.result.hasMore
   const nextCursor = hasMore ? required(response.result, 'nextCursor') : '0'
@@ -513,6 +559,7 @@ function messagePage(source, response, ownId, cursor, selfConversationId, option
 }
 
 export function normalizeMessages(source, response, ownId, selfConversationId, options = {}) {
+  const { reportFilter } = options
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -526,23 +573,54 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
   for (const conversation of conversations) {
     if (typeof conversation.singleChat !== 'boolean') throw invalid('Missing conversation kind')
     const direct = conversation.singleChat
-    if (direct !== (source.kind === 'direct')) continue
+    if (direct !== (source.kind === 'direct')) {
+      reportFilter?.({
+        conversationId: diagnosticId(conversation.openConversationId),
+        reason: 'conversation_kind_mismatch',
+      })
+      continue
+    }
     const conversationId = required(conversation, 'openConversationId')
-    if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
-    if (options.conversationId && conversationId !== options.conversationId) continue
+    if (
+      (!direct && source.scope !== 'all' && conversationId !== source.id) ||
+      (options.conversationId && conversationId !== options.conversationId)
+    ) {
+      reportFilter?.({
+        conversationId,
+        reason: direct ? 'conversation_mismatch' : 'group_mismatch',
+      })
+      continue
+    }
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       // Bot notifications can come from another account and feed our own task output back in.
-      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) continue
+      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) {
+        reportFilter?.({
+          conversationId,
+          messageId: diagnosticId(message.openMessageId),
+          reason: message.sendType === 'robot' ? 'robot_message' : 'ai_generated_message',
+        })
+        continue
+      }
       const sender = required(message, 'senderOpenDingTalkId')
       const isOwn = sender === ownId
       const manualSelfMessage =
         message.sendType === 'user' &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
+      if (isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)) {
+        reportFilter?.({
+          conversationId,
+          messageId: diagnosticId(message.openMessageId),
+          reason: options.delegated ? 'own_delegated_message' : 'non_manual_own_message',
+        })
+        continue
+      }
       if (
-        (isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)) ||
-        (direct && source.scope !== 'all' && sender !== source.id && !(isOwn && options.includeOwn))
+        direct &&
+        source.scope !== 'all' &&
+        sender !== source.id &&
+        !(isOwn && options.includeOwn)
       )
         continue
       const at = messageSentAt(message)

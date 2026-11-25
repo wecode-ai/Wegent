@@ -94,6 +94,7 @@ pub struct AppState {
     /// Optional employee directory. The public default returns no external
     /// employee identities or department memberships.
     pub erp: std::sync::Arc<dyn ErpProvider + Send + Sync>,
+    pub issue_im_recipient: Option<Arc<dyn wegent_project_notifications::IssueImRecipientResolver>>,
     /// Video URL refresh for assembled task detail responses. The public
     /// default leaves every result payload unchanged.
     pub video_result_urls: Arc<dyn crate::video_result_urls::VideoResultUrlRefresh>,

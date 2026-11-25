@@ -245,21 +245,24 @@ async function verifySearchOverlay(
     'The restored guest must own the former close-button hit target',
     5_000
   )
-  // Move from the former close button into the restored surface, then back
-  // to verify native input at the exact point where the dialog intercepted it.
-  const moveInGuest = async (point, previousMoves) => {
-    await movePointer(point)
-    return waitForValue(
-      readGuestInput,
-      state => state.moves > previousMoves,
-      `Native pointer movement at ${point.x},${point.y} must reach the restored guest`,
-      5_000
-    )
-  }
+  // Chromium can route the first motion to the host after the DOM hit target
+  // has recovered. Probe with distinct positions until the guest receives motion.
   const beforeMove = await readGuestInput()
-  const approached = await moveInGuest(overlap.sample, beforeMove.moves)
-  const clickTarget = overlap.close
-  const { moves: readyMoves, ...readyInput } = await moveInGuest(clickTarget, approached.moves)
+  let offset = 1
+  const {
+    point: clickTarget,
+    input: { moves: readyMoves, ...readyInput },
+  } = await waitForValue(
+    async () => {
+      const point = { x: overlap.close.x + offset, y: overlap.close.y }
+      offset = 3 - offset
+      await movePointer(point)
+      return { point, input: await readGuestInput() }
+    },
+    state => state.input.moves > beforeMove.moves,
+    'Native pointer movement must reach the restored guest',
+    5_000
+  )
   assert.deepEqual(readyInput, closedInput, 'Moving into the guest must not click it')
   await pressAndRelease(clickTarget)
   const pageClicked = await bridgeCall({
@@ -281,7 +284,6 @@ async function verifySearchOverlay(
         pointerMoves: {
           closed: closedMoves,
           before: beforeMove.moves,
-          approached: approached.moves,
           ready: readyMoves,
           final: finalMoves,
         },

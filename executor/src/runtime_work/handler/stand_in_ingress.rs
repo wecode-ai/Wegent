@@ -4,7 +4,7 @@ use super::*;
 use crate::task_runtime::personal_stand_in::{
     active_delegated_source, is_primary_dingtalk, requires_dingtalk_delegation,
     source_collection_namespace, source_provider, stand_in_collection_connection,
-    stand_in_identities,
+    stand_in_connection, stand_in_identities,
 };
 
 #[derive(Clone, Copy)]
@@ -377,31 +377,65 @@ impl RuntimeWorkRpcHandler {
             LocalTaskStore::validate_connection_message_version(&message)
                 .map_err(settings_error)?;
             message_time(&message["at"])?;
-            {
-                for role in roles {
-                    let Some(grant) = stand_in_collection_connection(role, source) else {
-                        continue;
-                    };
-                    if requires_dingtalk_delegation(role, grant) {
-                        if let Some(grant) = active_delegated_source(role, source) {
-                            self.store_delegated_event(store, user, role, grant, &message)?;
+            let mut manual_roles = Vec::new();
+            let mut matched = false;
+            for role in roles {
+                let role_id = role["id"].as_str().unwrap_or_default();
+                let Some(grant) = stand_in_collection_connection(role, source) else {
+                    if is_dingtalk_group(source) {
+                        if let Some(connection) = stand_in_connection(role, source) {
+                            matched = true;
+                            let reason =
+                                if connection.get("collectionKey") != source.get("collectionKey") {
+                                    "collection_partition_mismatch"
+                                } else {
+                                    "excluded_group"
+                                };
+                            log_dingtalk_group_intake(source, &message, role_id, reason);
                         }
-                        continue;
                     }
-                    if grant["policy"]["automatic"] != true
-                        || !source_accepts_message(grant, &message)
-                    {
-                        continue;
+                    continue;
+                };
+                matched = true;
+                if requires_dingtalk_delegation(role, grant) {
+                    if let Some(grant) = active_delegated_source(role, source) {
+                        self.store_delegated_event(store, user, role, grant, &message)
+                            .map_err(|error| {
+                                log_dingtalk_group_intake(
+                                    source,
+                                    &message,
+                                    role_id,
+                                    "delegation_intake_failed",
+                                );
+                                error
+                            })?;
+                        log_dingtalk_group_intake(source, &message, role_id, "delegation_checked");
+                    } else {
+                        log_dingtalk_group_intake(source, &message, role_id, "inactive_delegation");
                     }
-                    let role = &role["id"];
-                    // A shared poll starts at the earliest activation. Dispatch and
-                    // later receipt matching use this recipient's concrete grant.
-                    let scoped = concrete_role_grant(grant, source);
-                    let event = json!({"kind":"connection","source":scoped,"message":message,"roleIds":[role],
+                    continue;
+                }
+                if !source_accepts_message(grant, &message) {
+                    log_dingtalk_group_intake(
+                        source,
+                        &message,
+                        role_id,
+                        "outside_subscription_boundary",
+                    );
+                    continue;
+                }
+                if grant["policy"]["automatic"] != true {
+                    log_dingtalk_group_intake(source, &message, role_id, "manual_only");
+                    manual_roles.push(role);
+                    continue;
+                }
+                let role = &role["id"];
+                // A shared poll starts at the earliest activation. Dispatch and
+                // later receipt matching use this recipient's concrete grant.
+                let scoped = concrete_role_grant(grant, source);
+                let event = json!({"kind":"connection","source":scoped,"message":message,"roleIds":[role],
                         "roleScoped":true,"roleEnabledAfter":grant["enabledAfter"]});
-                    let event_identity = LocalTaskStore::canonical_connection_event_identity(
-                        &event,
-                    )
+                let event_identity = LocalTaskStore::canonical_connection_event_identity(&event)
                     .unwrap_or_else(|| {
                         json!([
                             source_provider(source),
@@ -412,18 +446,23 @@ impl RuntimeWorkRpcHandler {
                             role
                         ])
                     });
-                    store
-                        .enqueue_stand_in_event(user, event_identity, event)
-                        .map_err(settings_error)?;
-                }
+                let record = store
+                    .enqueue_stand_in_event(user, event_identity, event)
+                    .map_err(|error| {
+                        log_dingtalk_group_intake(source, &message, role_id, "enqueue_failed");
+                        settings_error(error)
+                    })?;
+                log_dingtalk_group_intake(
+                    source,
+                    &message,
+                    role_id,
+                    record["status"].as_str().unwrap_or("unknown_queue_status"),
+                );
             }
-            for role in roles.iter().filter(|role| {
-                stand_in_collection_connection(role, source).is_some_and(|connection| {
-                    !requires_dingtalk_delegation(role, connection)
-                        && connection["policy"]["automatic"] != true
-                        && source_accepts_message(connection, &message)
-                })
-            }) {
+            if !matched {
+                log_dingtalk_group_intake(source, &message, "", "no_matching_subscription");
+            }
+            for role in manual_roles {
                 if let Err(error) = self
                     .collect_connection_message(store, user, role, source, &message)
                     .await
@@ -552,9 +591,27 @@ fn collection_retry_pending(state: &Value, version: &Value) -> bool {
             .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
 }
 
-fn is_dingtalk_group_timeout(source: &Value, code: &Value) -> bool {
+fn is_dingtalk_group(source: &Value) -> bool {
     source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
         && source["kind"] == "group"
+}
+
+fn log_dingtalk_group_intake(source: &Value, message: &Value, role_id: &str, outcome: &str) {
+    if is_dingtalk_group(source) {
+        log_executor_event(
+            "DingTalk group intake",
+            &[
+                ("group_id", source["id"].to_string()),
+                ("message_id", message["id"].to_string()),
+                ("role_id", role_id.to_owned()),
+                ("outcome", outcome.to_owned()),
+            ],
+        );
+    }
+}
+
+fn is_dingtalk_group_timeout(source: &Value, code: &Value) -> bool {
+    is_dingtalk_group(source)
         && source["collectionKey"] == "all-messages"
         && code == "request_timeout"
 }
@@ -580,7 +637,11 @@ fn recover_dingtalk_group_checkpoint(
     }) {
         log_executor_event(
             "DingTalk group collection skipped timed-out backlog",
-            &[("from", after.to_owned()), ("until", cutoff.to_rfc3339())],
+            &[
+                ("group_id", source["id"].to_string()),
+                ("from", after.to_owned()),
+                ("until", cutoff.to_rfc3339()),
+            ],
         );
         state["checkpoint"] =
             json!({"after":cutoff.to_rfc3339(),"cursor":"0","windowMinutes":minutes});
@@ -642,6 +703,14 @@ fn save_collection_result(
                         ),
                         ("code", error.code),
                         ("retry_after_ms", retry_after_ms.to_string()),
+                        (
+                            "group_id",
+                            if is_dingtalk_group(source) {
+                                source["id"].to_string()
+                            } else {
+                                String::new()
+                            },
+                        ),
                     ],
                 );
             } else {

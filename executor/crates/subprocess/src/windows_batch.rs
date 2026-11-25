@@ -253,12 +253,6 @@ mod tests {
         path
     }
 
-    fn binary(directory: &Path, name: &str) -> PathBuf {
-        let path = directory.join(name);
-        fs::write(&path, b"not really an executable").unwrap();
-        path
-    }
-
     #[test]
     fn resolves_bare_program_to_path_batch_shim() {
         let directory = tempdir().unwrap();
