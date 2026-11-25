@@ -35,8 +35,16 @@ it('reuses the recorded issue on launch retry and opens its accepted bound task'
     status: 'pending',
     version: 1,
   } as CollaborationIssue
-  const create = vi.fn(async () => issue)
+  const longDraft = 'Review handoff with the project team '.repeat(15).trim()
+  const create = vi.fn(
+    async (_projectId: string, input: { title: string; description?: string }) => {
+      issue = { ...issue, ...input }
+      return issue
+    }
+  )
   const update = vi.fn(async (_id: string, input: Partial<CollaborationIssue>) => {
+    if (input.version !== issue.version)
+      throw Object.assign(new Error('stale issue'), { code: 'version_conflict' })
     issue = { ...issue, ...input, version: issue.version + 1 }
     return issue
   })
@@ -79,21 +87,24 @@ it('reuses the recorded issue on launch retry and opens its accepted bound task'
       )
     )
     await act(async () => {
-      expect(await submit?.('Review handoff', [])).toBe(false)
+      expect(await submit?.(longDraft, [])).toBe(false)
     })
     expect(issue.status).toBe('pending')
     expect(unbindTask).toHaveBeenCalledOnce()
     expect(onCreated).not.toHaveBeenCalled()
     await act(async () => {
-      expect(await submit?.('Review handoff', [])).toBe(true)
+      expect(await submit?.(longDraft + '\nInclude the rollout checklist.', [])).toBe(true)
     })
     expect(create).toHaveBeenCalledOnce()
+    expect(create.mock.calls[0][1].title.length).toBeLessThan(longDraft.length)
+    expect(create.mock.calls[0][1].description).toBe(longDraft)
+    expect(issue.description).toContain('Include the rollout checklist.')
     expect(issue.status).toBe('in_progress')
     const acceptedTaskId = createRuntimeTask.mock.calls[1][0].taskId
     expect(bindTask).toHaveBeenLastCalledWith(
       'issue',
       expect.objectContaining({ taskId: acceptedTaskId }),
-      'Review handoff'
+      issue.title
     )
     expect(onCreated).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'issue' }),

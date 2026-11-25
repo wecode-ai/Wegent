@@ -9,7 +9,9 @@ import {
 } from '../controls/runtimeModelSelection'
 import { createHttpCommentRuntime } from '../execution/httpCommentRuntime'
 import type { CollaborationTranslate } from '../i18n'
-import { issueDraftFromText } from '../issueDraft'
+import { truncateRuntimeTaskTitle } from '@wegent/chat-core/runtime-task-title'
+import { composerMarkdownText } from '../composer'
+import { persistIssueDetailFields } from '../issue-detail/persistIssueDetailFields'
 import { useBrowserCommentExecution } from '../issue-detail/useBrowserCommentExecution'
 import { prepareIssueStartStatus } from '../issue-detail/prepareIssueStartStatus'
 import { useMediaQuery } from '../media-query'
@@ -80,7 +82,8 @@ export function BrowserIssueHomeTask({
   )
   async function submit(text: string, files: File[]) {
     const bindings = api.taskBindings
-    if (!ready || !target || !bindings || operation.current) return false
+    const title = truncateRuntimeTaskTitle(composerMarkdownText(text, { firstLine: true }) || text)
+    if (!title || !ready || !target || !bindings || operation.current) return false
     operation.current = true
     setPending(true)
     onPendingChange(true)
@@ -91,7 +94,6 @@ export function BrowserIssueHomeTask({
     }
     drafts.set(project.id, draft)
     try {
-      const { title } = issueDraftFromText(text)
       let issue =
         draft.issue ??
         (await api.issues.create(project.id, {
@@ -104,11 +106,7 @@ export function BrowserIssueHomeTask({
         }))
       draft.issue = issue
       if (issue.title !== title || issue.description !== text) {
-        issue = await api.issues.update(issue.id, {
-          version: issue.version,
-          title,
-          description: text,
-        })
+        issue = await persistIssueDetailFields(issue, { title, description: text }, api.issues)
         draft.issue = issue
       }
       const attachments = []

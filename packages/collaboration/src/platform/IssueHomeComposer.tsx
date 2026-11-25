@@ -257,6 +257,7 @@ export function IssueHomeComposer({
       options={projects.map(project => ({ value: String(project.id), label: project.name }))}
     />
   )
+  const validationError = referenceError ? translate('issue_creation.invalid_reference') : null
   if (renderTaskComposer)
     return (
       <>
@@ -275,12 +276,7 @@ export function IssueHomeComposer({
           onSubmit: submit,
           disabled: pending,
           placeholder,
-          error: referenceError
-            ? translate(
-                'issue_creation.invalid_reference',
-                'The project changed. Remove or reselect mentions before creating the Issue.'
-              )
-            : error,
+          error: validationError ?? error,
           members: [...candidates, ...issueCandidates],
           attachments: files,
           pendingFiles: files.map(item => item.file),
@@ -299,7 +295,7 @@ export function IssueHomeComposer({
     submit(content: string, files: File[]): Promise<boolean>
   }) => (
     <>
-      <ComposerErrorBanner error={task?.error ?? error} />
+      <ComposerErrorBanner error={validationError ?? task?.error ?? error} />
       <ProjectComposerBody
         workBar={
           task ? (

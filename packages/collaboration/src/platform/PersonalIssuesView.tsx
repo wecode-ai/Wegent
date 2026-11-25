@@ -147,7 +147,7 @@ export function PersonalIssuesView({
     taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
   ) => {
     if (issue.can_view_detail === false) return
-    if (!renderIssueDetail) {
+    if (!renderIssueDetail || !projects.some(project => project.id === issue.cloud_project_id)) {
       onOpenIssue(issue)
       return
     }
@@ -182,7 +182,10 @@ export function PersonalIssuesView({
     translate: t,
     renderActivity,
   }
-  const detailOpen = Boolean(independentId || selected)
+  const detailOpen = Boolean(
+    (selected && project && renderIssueDetail) ||
+    (independentId && independent?.api && renderIndependentIssue)
+  )
   return (
     <IssueDetailDraftProvider scope={sources[0]}>
       <div
@@ -198,7 +201,7 @@ export function PersonalIssuesView({
             focusComposer={() => {
               const region = composerRegion.current
               const input = region?.querySelector<HTMLElement>(
-                '[data-testid="collaboration-home-issue-content"]'
+                '[data-testid="personal-home-task-content"], [data-testid="collaboration-home-issue-content"]'
               )
               const create = region?.querySelector<HTMLButtonElement>(
                 '[data-testid="collaboration-first-issue-create"]'
@@ -215,7 +218,7 @@ export function PersonalIssuesView({
           />
         ) : (
           <main
-            className={`min-h-0 min-w-0 flex-1 overflow-auto p-4 lg:p-5 ${independentId || selected ? 'max-md:hidden' : ''}`}
+            className={`min-h-0 min-w-0 flex-1 overflow-auto p-4 lg:p-5 ${detailOpen ? 'max-md:hidden' : ''}`}
             data-testid={`personal-issues-${scope}`}
           >
             <div className="mx-auto w-full max-w-6xl">
@@ -313,8 +316,7 @@ export function PersonalIssuesView({
             </div>
           </main>
         )}
-        {(selected && project && renderIssueDetail) ||
-        (independentId && independent?.api && renderIndependentIssue) ? (
+        {detailOpen ? (
           <div
             className={`collaboration-personal-home-detail relative flex min-h-0 min-w-0 shrink-0 flex-col border-l border-border ${expanded || detailExpanded ? 'w-full md:w-[min(75%,72rem)]' : 'w-full md:w-[min(44%,32rem)]'}`}
             data-testid="personal-issues-detail"

@@ -63,6 +63,7 @@ export function BrowserPersonalHomeIssue({
   const taskSnapshot = useResource(binding, accessible && Boolean(taskRequest))
   const task = taskSnapshot.data
   const failedResources = [
+    [detail, snapshot],
     [comments, commentSnapshot],
     [assignments, assignmentSnapshot],
     [issues, issueSnapshot],

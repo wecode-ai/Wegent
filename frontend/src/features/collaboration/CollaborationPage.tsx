@@ -408,7 +408,15 @@ export function CollaborationPage({
           home={home}
           language={locale}
           translate={issueTranslate}
-          onOpenIssue={onOpenIssue}
+          onOpenIssue={issue => {
+            if (!home) {
+              onOpenIssue(issue)
+            } else if (issue.cloud_project_id && issue.can_view_detail !== false) {
+              router.push(
+                `/collaboration/${encodeURIComponent(issue.cloud_project_id)}/issues/${encodeURIComponent(issue.id)}`
+              )
+            }
+          }}
           renderIssueDetail={
             home
               ? context => (
