@@ -626,29 +626,36 @@ async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_res
     );
 }
 
-#[tokio::test]
-async fn terminating_shared_app_servers_releases_every_registered_process() {
-    let mut child = spawn_idle_app_server_child();
-    let stdin = child.stdin.take().expect("the child should expose stdin");
-    let state = shared_codex_app_server_state("codex-app-server-termination-test");
-    state.lock().await.process = Some(CodexAppServerProcess {
-        child,
-        stdin: Arc::new(Mutex::new(stdin)),
-        pending: Arc::new(Mutex::new(HashMap::new())),
-        notifications: CodexNotificationHub::new(),
-        reader_task: tokio::spawn(async {}),
-    });
+#[test]
+fn terminating_shared_app_servers_releases_every_registered_process() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut child = spawn_idle_app_server_child();
+            let stdin = child.stdin.take().expect("the child should expose stdin");
+            let state = shared_codex_app_server_state("codex-app-server-termination-test");
+            state.lock().await.process = Some(CodexAppServerProcess {
+                child,
+                stdin: Arc::new(Mutex::new(stdin)),
+                pending: Arc::new(Mutex::new(HashMap::new())),
+                notifications: CodexNotificationHub::new(),
+                reader_task: tokio::spawn(async {}),
+            });
 
-    let terminated = terminate_shared_codex_app_servers().await;
+            let terminated = terminate_shared_codex_app_servers().await;
 
-    assert!(
-        terminated >= 1,
-        "the registered app-server process was not terminated"
-    );
-    assert!(
-        state.lock().await.process.is_none(),
-        "the terminated app-server process stayed registered"
-    );
+            assert!(
+                terminated >= 1,
+                "the registered app-server process was not terminated"
+            );
+            assert!(
+                state.lock().await.process.is_none(),
+                "the terminated app-server process stayed registered"
+            );
+        });
 }
 
 #[tokio::test]

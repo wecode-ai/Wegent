@@ -12,7 +12,6 @@ import {
   activateLinuxMainWindow,
   clickLinuxPointer,
   moveLinuxWindowPointer,
-  readLinuxPointerState,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -246,37 +245,24 @@ async function verifySearchOverlay(
     'The restored guest must own the former close-button hit target',
     5_000
   )
-  // Probe native routing while Chromium restores the guest's input region.
-  // A single early move can be lost, so each readiness probe makes a fresh
-  // movement. Only send the single press/release pair after the guest receives it.
-  const clickTarget = { x: overlap.close.x + 1, y: overlap.close.y }
+  // Chromium can route the first motion to the host after the DOM hit target
+  // has recovered. Probe with distinct positions until the guest receives motion.
   const beforeMove = await readGuestInput()
-  const { moves: readyMoves, ...readyInput } = await waitForValue(
+  let offset = 1
+  const {
+    point: clickTarget,
+    input: { moves: readyMoves, ...readyInput },
+  } = await waitForValue(
     async () => {
-      await movePointer(overlap.close)
-      await movePointer(clickTarget)
-      return readGuestInput()
+      const point = { x: overlap.close.x + offset, y: overlap.close.y }
+      offset = 3 - offset
+      await movePointer(point)
+      return { point, input: await readGuestInput() }
     },
-    state => state.moves > beforeMove.moves,
+    state => state.input.moves > beforeMove.moves,
     'Native pointer movement must reach the restored guest',
     5_000
-  ).catch(async error => {
-    const [hit, input, windowState, pointerState] = await Promise.allSettled([
-      read(readHit),
-      readGuestInput(),
-      control.command('getNativeWindowState', 'body'),
-      linuxWindow ? readLinuxPointerState() : Promise.resolve(null),
-    ])
-    await writeFile(
-      join(resultDir, 'search-overlay-input-failure.json'),
-      JSON.stringify(
-        { linuxWindow, clickTarget, beforeMove, readyHit, hit, input, windowState, pointerState },
-        null,
-        2
-      )
-    ).catch(cause => console.error('Failed to retain native pointer diagnostics', cause))
-    throw error
-  })
+  )
   assert.deepEqual(readyInput, closedInput, 'Moving into the guest must not click it')
   await pressAndRelease(clickTarget)
   const pageClicked = await bridgeCall({

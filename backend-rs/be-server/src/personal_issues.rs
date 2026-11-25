@@ -436,9 +436,9 @@ async fn participation_notice(
         i64::from(actor),
         "issue_participation",
         if created {
-            "Issue 已创建"
+            "事项已创建"
         } else {
-            "你已加入 Issue"
+            "你已加入事项"
         },
         "打开 Wework 查看事项。",
         payload,

@@ -78,6 +78,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         decision_http: wegent_model_decisions::build_client().unwrap(),
         url_metadata_http: wegent_web_content::build_client().unwrap(),
         erp: Arc::new(crate::erp_provider::NoopErpProvider),
+        issue_im_recipient: None,
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
         cloud_device_destroyer: None,
