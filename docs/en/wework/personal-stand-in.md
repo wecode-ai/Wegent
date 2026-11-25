@@ -30,6 +30,8 @@ From **Collaboration → My work**, the right-hand **Stand-in** tab lists work b
 
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
+After sending a message, three dots appear while you wait for the assistant's first reply. As soon as reply text arrives, it appears in the usual message bubble and the composer returns to its send button. You can send a follow-up while a subagent continues working in the background.
+
 This presentation applies to primary and role conversations on the **My assistants** page and the embedded primary conversation on the collaboration home. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
 Stand-in identity conversations and collaborative Issue stand-in conversations enable native subagent v2, including resumed conversations. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents. Native permission, source-scope and approval constraints remain unchanged.
@@ -39,6 +41,26 @@ Open **Left sidebar → My assistants**, then select an assistant. AI replies us
 The desktop prompt above the composer offers **Notification settings**, **Don't show again**, and **Dismiss for now**. Notification settings opens the OS notification settings on macOS and Windows and the bell's unified Wework settings. Allow OS notifications and check the system channel under **Stand-in alerts**. On Linux, enable notifications manually in your desktop environment. Opening settings does not establish that permission was granted. Temporary dismissal lasts for the app session; permanent dismissal is account-scoped on this device and hides only the prompt, without disabling notifications. You can always use **Top-right bell → Notification settings → Stand-in alerts**.
 
 The number beside **My assistants** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. A completed stand-in turn generates at most one desktop notification showing its final reply. Background tasks routed through the stand-in deliver their results in the stand-in conversation. Primary notifications use the title **My assistants** and open the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
+
+<a id="assistant-teams"></a>
+
+## Organize assistant teams
+
+Open **My assistants → Teams → Create team**, enter a name, choose a lead and members, and add team duties as needed. A specialist can join multiple teams, with duties configured separately for each team. Use the primary assistant or a specialist on the current device as lead. Other members can run on their configured devices.
+
+Open a saved team from **Teams** to give it work. The lead delegates based on the team roster and duties, and results return to the team conversation. Each team conversation has its own history. Changing the lead opens a conversation under the new lead.
+
+From **Teams**, edit or delete a team. Its assistants remain available individually and in other teams after deletion.
+
+<a id="assistant-sharing"></a>
+
+## Share an assistant or team
+
+Open **My assistants → Sharing → Share an assistant or team**. Choose what to share, search for and select a recipient, then select **Send share**. Select **Allow recipient to copy** to enable **Copy to my assistants** for the recipient under **My assistants → Sharing → Shared with me**. The recipient configures connections, execution devices, and workspaces for their own assistants.
+
+In **Shared with me**, select **Use directly** to start a separate conversation, then select **Open conversation** to return. The owner maintains the configuration, and the executor reads the current version before starting a new turn. Under **Shared by me**, select **Revoke share** to end the recipient’s access. Recipients retain any copies they created.
+
+When two teams include the same source assistant, copying them on the same device reuses the existing assistant copy. When a newer version is available, select **Update team** or **Update to shared version** under **Shared with me** and confirm to apply the new team duties or assistant prompt.
 
 <a id="assistant-role-delegation"></a>
 

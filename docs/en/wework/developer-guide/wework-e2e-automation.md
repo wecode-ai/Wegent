@@ -347,7 +347,8 @@ become network timeouts. Backend identity and address expiry are checked before 
 safe failure categories under `parent-python-downloads-failed`, including descriptor timeouts,
 without credentials or download addresses.
 Linux Core balancing avoids colocating Python startup with checkpoints observed during descriptor
-timeouts, including `stand-in-cli`, `quota-recovery`, and `permission-modes`.
+timeouts, including `stand-in-cli`, `quota-recovery`, `permission-modes`, `model-routing`,
+`human-interactions`, and `runtime-task-queue`.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated

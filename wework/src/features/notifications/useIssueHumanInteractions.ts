@@ -57,6 +57,7 @@ export function useIssueHumanInteractions(
       items: [...cloud.items, ...local.items],
       errors,
       resolved: [...cloud.resolved, ...local.resolved],
+      transferred: [...cloud.transferred, ...local.transferred],
     }
   }, [cloud, local])
   return { ...snapshot, refresh, discover }

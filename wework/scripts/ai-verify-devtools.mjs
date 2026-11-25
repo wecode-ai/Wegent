@@ -96,9 +96,11 @@ export async function startPerformanceRecording(
   let profiling = false
   let tracing = false
   try {
-    for (const domain of ['Runtime', 'Log', 'Network', 'Debugger', 'Performance', 'Profiler']) {
+    for (const domain of ['Runtime', 'Log', 'Network', 'Performance', 'Profiler']) {
       await command(`${domain}.enable`)
     }
+    // Retain execution contexts before stream traffic fills the event buffer.
+    const metadata = await collectProtocolEvents(client, target, initial.cursor)
     const baseline = await command('Performance.getMetrics')
     if (samplingIntervalUs !== undefined) {
       await command('Profiler.setSamplingInterval', { interval: samplingIntervalUs })
@@ -120,11 +122,11 @@ export async function startPerformanceRecording(
     tracing = true
     await writeDiagnosticFile(statePath, {
       target,
-      after: initial.cursor,
-      metadata: initial.events.filter(event =>
+      after: metadata.cursor,
+      metadata: [...initial.events, ...metadata.events].filter(event =>
         ['Debugger.scriptParsed', 'Runtime.executionContextCreated'].includes(event.method)
       ),
-      metadataLostEvents: initial.lost,
+      metadataLostEvents: initial.lost + metadata.lost,
       baseline,
       startedAt: Date.now(),
     })
@@ -366,12 +368,21 @@ async function finishPerformanceRecording(client, command, target, state, profil
   if (!complete.params.stream) throw new Error('Trace did not return a stream')
   const trace = JSON.parse(await readProtocolStream(command, complete.params.stream))
   const metrics = await command('Performance.getMetrics')
-  await writeDiagnosticFile(outputPath + '.evidence.json', {
-    profile,
-    trace,
-    events,
-    metadata: state.metadata,
-  })
+  // Read source maps after measurement so the debugging domain does not affect
+  // the recorded workload or lose its script metadata to later stream traffic.
+  try {
+    await command('Debugger.enable')
+    const scripts = await collectProtocolEvents(client, target, cursor)
+    events.push(...scripts.events)
+    lost += scripts.lost
+  } finally {
+    await writeDiagnosticFile(outputPath + '.evidence.json', {
+      profile,
+      trace,
+      events,
+      metadata: state.metadata,
+    })
+  }
   const { maps, errors } = await loadSourceMaps(command, [...state.metadata, ...events], profile)
   const report = {
     target,

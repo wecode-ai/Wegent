@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod assistant_share;
 pub mod chat_errors;
 pub mod collaboration;
 pub mod connection_events;
@@ -26,7 +27,9 @@ pub use execution::{
     AgentKind, ExecutionRequest, KnowledgeBaseScope, StandInCommandApproval, StandInPermissionMode,
     StandInTaskPermissions, FULL_KB_TOOL_ACCESS_MODE,
 };
-pub use openai::{OpenAIResponsesRequest, ProtocolError, LEGACY_SESSION_FALLBACK};
+pub use openai::{
+    map_request_model, OpenAIResponsesRequest, ProtocolError, LEGACY_SESSION_FALLBACK,
+};
 pub use status::TaskStatus;
 
 pub const CODEX_FILES_MENTIONED_HEADER: &str = "# Files mentioned by the user:";
