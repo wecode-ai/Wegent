@@ -101,7 +101,7 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
   {
     capability: 'issues.create',
     status: 'supported',
-    endpoint: 'POST /v1/cloud-projects/{id}/loop-items',
+    endpoint: 'POST /v1/loop-items',
   },
   { capability: 'issues.update', status: 'supported', endpoint: 'PATCH /v1/loop-items/{id}' },
   {
@@ -638,10 +638,10 @@ export function createWebSharedWorkspaceApi(
         return client.get(`/v1/loop-items/${encoded(issueId)}`)
       },
       create(projectId, input) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/loop-items`,
-          keysToSnakeCase(input)
-        )
+        return client.post('/v1/loop-items', {
+          project_id: String(projectId),
+          issue: keysToSnakeCase(input),
+        })
       },
       update(issueId, input) {
         return client.patch(`/v1/loop-items/${encoded(issueId)}`, keysToSnakeCase(input))

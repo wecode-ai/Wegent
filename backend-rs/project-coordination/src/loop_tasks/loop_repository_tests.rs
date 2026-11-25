@@ -166,7 +166,7 @@ fn role_hierarchy() {
 fn workflow_node_id_reads_metadata() {
     let binding = |metadata: Value| BindingRow {
         id: "1".to_string(),
-        cloud_project_id: "2".to_string(),
+        cloud_project_id: Some("2".to_string()),
         loop_item_id: Some("3".to_string()),
         task_user_id: 1,
         device_id: "d".to_string(),

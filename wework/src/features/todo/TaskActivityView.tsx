@@ -1,10 +1,8 @@
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { IssueCommentChildAction } from '@wegent/collaboration'
 import { useContext } from 'react'
-import { IssueAssignmentEvent } from './IssueAssignmentEvent'
 import { IssueAssignmentReceiptStatus } from './IssueAssignmentReceipts'
 import { IssueHumanRequests } from './IssueHumanRequests'
 import { IssueManagerEvent } from './IssueManagerEvent'
@@ -16,10 +14,9 @@ import { boundCardSessionAddress } from './taskActivityHelpers'
 import { issueActivityRole } from './issueActivityRole'
 
 import {
-  formatIssueTimestamp,
   IssueActivityFeed,
   IssueActivityThread,
-  IssueStatusHistoryList,
+  IssueActivityTimelineRows,
 } from '@wegent/collaboration'
 
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
@@ -39,7 +36,6 @@ import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { TaskCommentComposer } from './TaskCommentComposer'
 
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
-import { statusHistoryLabels } from './statusHistoryLabels'
 import { ChatMessage } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 import { memberNameById } from './todoShared'
@@ -349,102 +345,36 @@ function TaskActivityContent(props: TaskActivityViewProps) {
         }
       >
         {linear ? (
-          <div className="flex flex-col">
-            {visibleActivity.map(row => {
-              if (row.kind === 'collapsed')
-                return (
-                  <div
-                    key="collapsed-middle"
-                    className="my-3 flex items-center gap-3"
-                    data-testid="issue-collapsed-activity"
-                    data-activity-collapsed-first-sequence={row.firstSequence}
-                    data-activity-collapsed-last-sequence={row.lastSequence}
-                  >
-                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
-                    <ControlButton
-                      variant="unstyled"
-                      type="button"
-                      data-testid="issue-expand-activity"
-                      onClick={() => setExpandedActivityScope(activityScope)}
-                      className="min-h-11 shrink-0 rounded-lg border border-border px-3 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
-                    >
-                      {t('personalHome.expandActivity', { count: row.count })}
-                    </ControlButton>
-                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
-                  </div>
-                )
-              const activity = row.activity
-              if (activity.kind === 'created') {
-                return (
-                  <div
-                    key="issue-created"
-                    data-testid="cloud-task-status-created"
-                    className="task-detail-timeline-system-event"
-                  >
-                    <span className="task-detail-timeline-marker" aria-hidden="true" />
-                    <div className="task-detail-timeline-system-content text-xs text-text-primary">
-                      <span className="font-medium">
-                        {task.created_by_user_name ||
-                          memberNameById(projectMembers, task.created_by_user_id) ||
-                          t('todo.status_history_system')}
-                      </span>{' '}
-                      {t('todo.status_action_create')} Issue
-                      <time dateTime={activity.at} className="ml-2 text-text-secondary">
-                        {formatIssueTimestamp(activity.at)}
-                      </time>
-                    </div>
-                  </div>
-                )
-              }
-              if (activity.kind === 'status') {
-                return (
-                  <div
-                    key={`status-${activity.index}`}
-                    data-testid={`cloud-task-status-event-${activity.index}`}
-                    className="task-detail-timeline-system-event"
-                  >
-                    <span className="task-detail-timeline-marker" aria-hidden="true" />
-                    <div className="task-detail-timeline-system-content">
-                      <IssueStatusHistoryList
-                        entries={[activity.entry]}
-                        startIndex={activity.index}
-                        memberName={userId => memberNameById(projectMembers, userId)}
-                        labels={statusHistoryLabels(t)}
-                      />
-                    </div>
-                  </div>
-                )
-              }
-              if (activity.kind === 'assignment') {
-                return (
-                  <IssueAssignmentEvent
-                    key={`assignment-${activity.index}`}
-                    entry={activity.entry}
-                    index={activity.index}
-                    projectMembers={projectMembers}
-                    receipts={
-                      activity === latestAssignment &&
-                      activity.entry.action !== 'unassign' &&
-                      activity.entry.to_type === 'user' &&
-                      currentReceipts?.assigneeUserId != null &&
-                      activity.entry.to_id === String(currentReceipts.assigneeUserId) ? (
-                        <span
-                          data-testid="issue-assignment-activity-receipts"
-                          className="inline-flex items-center gap-1 text-xs text-text-muted"
-                          aria-live="polite"
-                        >
-                          <IssueAssignmentReceiptStatus
-                            {...currentReceipts}
-                            currentUserId={activeUserId ?? undefined}
-                          />
-                        </span>
-                      ) : null
-                    }
+          <IssueActivityTimelineRows
+            rows={visibleActivity}
+            creator={
+              task.created_by_user_name ||
+              memberNameById(projectMembers, task.created_by_user_id) ||
+              t('todo.status_history_system')
+            }
+            memberName={userId => memberNameById(projectMembers, userId)}
+            translate={activityTranslate}
+            expandLabel={count => t('personalHome.expandActivity', { count })}
+            onExpand={() => setExpandedActivityScope(activityScope)}
+            renderAssignmentDetails={activity =>
+              activity === latestAssignment &&
+              activity.entry.action !== 'unassign' &&
+              activity.entry.to_type === 'user' &&
+              currentReceipts?.assigneeUserId != null &&
+              activity.entry.to_id === String(currentReceipts.assigneeUserId) ? (
+                <span
+                  data-testid="issue-assignment-activity-receipts"
+                  className="inline-flex items-center gap-1 text-xs text-text-muted"
+                  aria-live="polite"
+                >
+                  <IssueAssignmentReceiptStatus
+                    {...currentReceipts}
+                    currentUserId={activeUserId ?? undefined}
                   />
-                )
-              }
-              const card = activity.card
-              const displayReplies = card.displayReplies ?? card.replies
+                </span>
+              ) : null
+            }
+            renderComment={card => {
               const rootId = card.root.messageId
               const role = issueActivityRole(card.root)
               if (
@@ -494,17 +424,9 @@ function TaskActivityContent(props: TaskActivityViewProps) {
               return (
                 <IssueActivityThread
                   key={rootId}
+                  thread={card}
+                  renderMessage={(message, isRoot) => renderActivityMessage(message, { isRoot })}
                   variant={issueTimeline ? 'timeline' : 'card'}
-                  cardAttributes={{
-                    'data-testid': `cloud-task-activity-card-${rootId}`,
-                  }}
-                  message={renderActivityMessage(card.root, { isRoot: true })}
-                  replies={
-                    displayReplies.length
-                      ? displayReplies.map(reply => renderActivityMessage(reply))
-                      : null
-                  }
-                  repliesTestId={`cloud-task-activity-replies-${rootId}`}
                   composer={
                     <>
                       <div data-testid={`cloud-task-activity-card-queue-${rootId}`}>
@@ -559,8 +481,8 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                   eventTestId={`task-activity-events-toggle-${rootId}`}
                 />
               )
-            })}
-          </div>
+            }}
+          />
         ) : (
           <div
             className={

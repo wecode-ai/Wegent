@@ -25,7 +25,7 @@ export interface IssueCommentBoardContext {
 export interface CommentIssueActions {
   moves: SearchableSelectOption[]
   assigneeMoves?: string[]
-  boardName: string
+  boardName?: string
   currentColumns: string[]
   closed: boolean
   canToggle: boolean
@@ -78,48 +78,54 @@ export function createIssueCommentActions({
   statuses,
   editable,
   canAssign,
+  currentUserId,
   issues,
   onUpdated,
   confirmAssignee,
   translate: t,
 }: {
   issue: CollaborationIssue
-  board: IssueCommentBoardContext
+  board?: IssueCommentBoardContext
   statuses: CollaborationStatus[]
   editable: boolean
   canAssign: boolean
+  currentUserId?: string | number
   issues: SharedIssueDetailPort['issues']
   onUpdated(issue: CollaborationIssue): void
   confirmAssignee(target: string): Promise<boolean>
   translate: CollaborationTranslate
 }): CommentIssueActions {
-  const matches = board.columns.filter(column =>
-    matchesStandardCloudBoardColumn(issue, column, board.groupBy, {})
+  const columns = board?.columns ?? []
+  const groupBy = board?.groupBy ?? 'status'
+  const matches = columns.filter(column =>
+    matchesStandardCloudBoardColumn(issue, column, groupBy, {})
   )
-  const source = matches.find(column => column.key === board.sourceColumnKey)
-  const sources = source
-    ? [source]
-    : matches.length
-      ? matches
-      : [
-          {
-            key: 'issue-current-status',
-            type: 'status' as const,
-            groupValue: issue.status,
-            label: issue.status,
-            status: issue.status,
-            dotClass: '',
-          },
-        ]
+  const source = matches.find(column => column.key === board?.sourceColumnKey)
+  const sources = !board
+    ? []
+    : source
+      ? [source]
+      : matches.length
+        ? matches
+        : [
+            {
+              key: 'issue-current-status',
+              type: 'status' as const,
+              groupValue: issue.status,
+              label: issue.status,
+              status: issue.status,
+              dotClass: '',
+            },
+          ]
   const operations = new Map<string, { from: ProjectBoardColumn; to: ProjectBoardColumn }>()
   for (const from of sources) {
-    for (const to of board.columns) {
-      const type = to.type ?? board.groupBy
+    for (const to of columns) {
+      const type = to.type ?? groupBy
       if (from.key === to.key || (type === 'assignee' ? !canAssign : !editable)) continue
       const mutation = resolveStandardCloudBoardGroupMutation({
         column: to,
         sourceColumn: from,
-        groupBy: board.groupBy,
+        groupBy,
         item: issue,
         items: [issue],
         extensions: {},
@@ -137,15 +143,15 @@ export function createIssueCommentActions({
     }
   }
   return {
-    boardName: board.name,
+    boardName: board?.name,
     currentColumns: matches.map(column => column.label),
     assigneeMoves: [...operations]
-      .filter(([, { to }]) => (to.type ?? board.groupBy) === 'assignee')
+      .filter(([, { to }]) => (to.type ?? groupBy) === 'assignee')
       .map(([value]) => value),
     moves: [...operations].map(([value, { from, to }]) => ({
       value,
       label: sources.length > 1 ? `${from.label} → ${to.label}` : to.label,
-      group: t(`todo.comment_lane_${to.type ?? board.groupBy}`),
+      group: t(`todo.comment_lane_${to.type ?? groupBy}`),
     })),
     closed: issue.status === 'completed',
     canToggle:
@@ -157,12 +163,12 @@ export function createIssueCommentActions({
       if (!operation) throw new Error(t('todo.comment_move_unavailable'))
       const latest = await issues.get(issue.id)
       const { from, to } = operation
-      if (!matchesStandardCloudBoardColumn(latest, from, board.groupBy, {}))
+      if (!matchesStandardCloudBoardColumn(latest, from, groupBy, {}))
         throw new Error(t('todo.comment_move_conflict'))
       const mutation = resolveStandardCloudBoardGroupMutation({
         column: to,
         sourceColumn: from,
-        groupBy: board.groupBy,
+        groupBy,
         item: latest,
         items: [latest],
         extensions: {},
@@ -178,11 +184,12 @@ export function createIssueCommentActions({
       if (mutation.kind === 'assignee' && mutation.assigneeType && mutation.assigneeId) {
         if (!(await confirmAssignee(`${mutation.assigneeType}:${mutation.assigneeId}`)))
           return false
-        const updated = await issues.assign(issue.cloud_project_id, issue.id, {
+        const updated = await issues.update(issue.id, {
           version: latest.version,
-          assigneeType: mutation.assigneeType,
-          assigneeId: mutation.assigneeId,
-          notifyAssignee: true,
+          ...patch,
+          notify_assignee:
+            mutation.assigneeType !== 'user' ||
+            String(mutation.assigneeId) !== String(currentUserId),
         })
         onUpdated(updated)
       } else {

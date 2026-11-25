@@ -140,3 +140,23 @@ fn index_insert_statements(required: &HashSet<String>) -> (String, String) {
     let assignment = loop_node_storage::insert_sql(&columns, &values, required);
     (marker, assignment)
 }
+
+/// The caller has just inserted the Issue and its first assignment in this transaction.
+pub async fn initialize_first_assignment(
+    tx: &mut impl MysqlTransaction,
+    item_id: &str,
+    assignment_id: &str,
+) -> MysqlResult<()> {
+    let required = loop_node_storage::required_columns(tx).await?;
+    let (marker_insert, assignment_insert) = index_insert_statements(&required);
+    let active = index_id("active-assignment", assignment_id);
+    tx.execute(
+        &assignment_insert,
+        (active.as_str(), item_id, 0i64, assignment_id),
+    )
+    .await?;
+    let marker = index_id("assignment-index", item_id);
+    tx.execute(&marker_insert, (marker.as_str(), item_id, 0i64))
+        .await?;
+    Ok(())
+}

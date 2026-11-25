@@ -47,6 +47,22 @@ function reminderItem(key: string): RuntimeTaskReminderItem {
 }
 
 describe('runtime task reminders', () => {
+  test('keeps the read action stable when another task starts', () => {
+    const store = new RuntimeTaskLifecycleStore('reminder-read-action-identity')
+    const { result, rerender } = renderHook(
+      lifecycleSnapshot =>
+        useRuntimeTaskReminders({ runtimeWork: null, lifecycleStore: store, lifecycleSnapshot }),
+      { initialProps: store.getSnapshot() }
+    )
+    const markRead = result.current.markRuntimeTaskRead
+
+    store.executorStarted(reminderItem('other').address)
+    rerender(store.getSnapshot())
+
+    expect(result.current.hasRunningTasks).toBe(true)
+    expect(result.current.markRuntimeTaskRead).toBe(markRead)
+  })
+
   test('preserves listed reminder rows when only an unlisted task changes', () => {
     const listed = reminderItem('listed')
     const unlisted = new RuntimeTaskMachine(reminderItem('unlisted').address).getSnapshot()

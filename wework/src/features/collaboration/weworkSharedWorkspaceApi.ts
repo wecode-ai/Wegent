@@ -572,6 +572,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_group_id: input.assigneeGroupId,
               assignee_agent_id: input.assigneeAgentId,
               assignee_team_id: input.assigneeTeamId,
+              notify_assignee: input.notifyAssignee,
               start_at: input.startAt,
               due_at: input.dueAt,
               tags: input.tags,

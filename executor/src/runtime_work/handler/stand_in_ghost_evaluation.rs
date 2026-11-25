@@ -26,6 +26,12 @@ struct Samples {
     holdout: Vec<Value>,
 }
 
+enum TrainingSelection {
+    Ready { samples: Samples, evidence: Value },
+    Insufficient,
+    AlreadyEvaluated,
+}
+
 impl Samples {
     fn select(mut cases: Vec<Value>) -> Option<Self> {
         const KINDS: &[&str] = &["correction", "positive", "demonstration"];
@@ -220,7 +226,7 @@ fn output_schema(fields: &[&str]) -> Value {
 struct Evaluation<'a> {
     handler: &'a RuntimeWorkRpcHandler,
     store: &'a LocalTaskStore,
-    run: &'a AutomationRun,
+    scheduled_run: Option<&'a AutomationRun>,
     role: &'a str,
     device: &'a str,
     user: i64,
@@ -237,7 +243,9 @@ enum ComparisonOutcome {
 
 impl Evaluation<'_> {
     fn current(&self) -> Result<(), AppIpcError> {
-        self.handler.current_arrangement(self.run)?;
+        if let Some(run) = self.scheduled_run {
+            self.handler.current_arrangement(run)?;
+        }
         self.handler.verify_local_stand_in_owner(self.user)?;
         if !self.handler.stand_in_device_runs_here(self.device)
             || !self
@@ -553,6 +561,55 @@ fn improved(outcomes: &[Preference]) -> bool {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn run_stand_in_learning(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let user = super::runtime_owner::runtime_user(&payload)?;
+        self.verify_local_stand_in_owner(user)?;
+        let role_id = match payload.get("roleId") {
+            Some(value) => value.as_str().filter(|id| !id.is_empty()).ok_or_else(|| {
+                AppIpcError::new("bad_request", "roleId must identify an assistant")
+            })?,
+            None => "@primary",
+        };
+        let gate = self.task_send_gate(&format!("ghost-training:{user}"));
+        let Ok(guard) = gate.try_lock_owned() else {
+            return Ok(json!({"status":"busy"}));
+        };
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let settings = store
+            .configured_personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        let role = stand_in_identities(&settings)
+            .into_iter()
+            .find(|role| role["id"] == role_id && self.stand_in_role_runs_here(role))
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "permission_denied",
+                    "Assistant belongs to another executor or is unavailable",
+                )
+            })?;
+        if !learns(&role) || !settings["lifecycle"]["status"].is_null() {
+            return Ok(json!({"status":"disabled"}));
+        }
+        let (samples, evidence) = match Self::select_stand_in_training(&store, &settings, &role)? {
+            TrainingSelection::Ready { samples, evidence } => (samples, evidence),
+            TrainingSelection::Insufficient => return Ok(json!({"status":"insufficient"})),
+            TrainingSelection::AlreadyEvaluated => {
+                return Ok(json!({"status":"already_evaluated"}))
+            }
+        };
+        let handler = self.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            if let Err(error) = handler
+                .evaluate_stand_in_role(None, &store, &settings, &role, samples, evidence)
+                .await
+            {
+                log_executor_event("Manual stand-in evaluation failed", &[("code", error.code)]);
+            }
+        });
+        Ok(json!({"status":"started"}))
+    }
+
     pub(super) fn start_stand_in_ghost_evaluation(&self, run: &AutomationRun) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             log_executor_event("stand-in Ghost evaluation has no running executor", &[]);
@@ -625,23 +682,26 @@ impl RuntimeWorkRpcHandler {
         settings: &Value,
         role: &Value,
     ) -> Result<(), AppIpcError> {
-        let user = settings["userId"]
-            .as_i64()
-            .ok_or_else(|| AppIpcError::new("permission_denied", "Missing training owner"))?;
-        let version = settings["version"]
-            .as_i64()
-            .ok_or_else(|| AppIpcError::new("configuration_changed", "Missing profile version"))?;
-        let role_id = role["id"]
-            .as_str()
-            .ok_or_else(|| AppIpcError::new("configuration_changed", "Missing role"))?;
-        let device = role["executionDeviceId"]
-            .as_str()
-            .ok_or_else(|| AppIpcError::new("configuration_changed", "Missing role device"))?;
+        if let TrainingSelection::Ready { samples, evidence } =
+            Self::select_stand_in_training(store, settings, role)?
+        {
+            self.evaluate_stand_in_role(Some(run), store, settings, role, samples, evidence)
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn select_stand_in_training(
+        store: &LocalTaskStore,
+        settings: &Value,
+        role: &Value,
+    ) -> Result<TrainingSelection, AppIpcError> {
+        let (user, version, role_id, device) = Self::training_identity(settings, role)?;
         let cases = store
             .stand_in_training_cases(user, device, role_id)
             .map_err(settings_error)?;
         let Some(samples) = Samples::select(cases) else {
-            return Ok(());
+            return Ok(TrainingSelection::Insufficient);
         };
         let evidence = samples.evidence();
         if store
@@ -654,8 +714,40 @@ impl RuntimeWorkRpcHandler {
             )
             .map_err(settings_error)?
         {
-            return Ok(());
+            return Ok(TrainingSelection::AlreadyEvaluated);
         }
+        Ok(TrainingSelection::Ready { samples, evidence })
+    }
+
+    fn training_identity<'a>(
+        settings: &Value,
+        role: &'a Value,
+    ) -> Result<(i64, i64, &'a str, &'a str), AppIpcError> {
+        let user = settings["userId"]
+            .as_i64()
+            .ok_or_else(|| AppIpcError::new("permission_denied", "Missing training owner"))?;
+        let version = settings["version"]
+            .as_i64()
+            .ok_or_else(|| AppIpcError::new("configuration_changed", "Missing profile version"))?;
+        let role_id = role["id"]
+            .as_str()
+            .ok_or_else(|| AppIpcError::new("configuration_changed", "Missing role"))?;
+        let device = role["executionDeviceId"]
+            .as_str()
+            .ok_or_else(|| AppIpcError::new("configuration_changed", "Missing role device"))?;
+        Ok((user, version, role_id, device))
+    }
+
+    async fn evaluate_stand_in_role(
+        &self,
+        scheduled_run: Option<&AutomationRun>,
+        store: &LocalTaskStore,
+        settings: &Value,
+        role: &Value,
+        samples: Samples,
+        evidence: Value,
+    ) -> Result<(), AppIpcError> {
+        let (user, version, role_id, device) = Self::training_identity(settings, role)?;
         let config =
             json!({"model":role["model"],"modelOptions":role["modelOptions"],"userId":user});
         let payload = self
@@ -672,7 +764,7 @@ impl RuntimeWorkRpcHandler {
         let evaluation = Evaluation {
             handler: self,
             store,
-            run,
+            scheduled_run,
             role: role_id,
             device,
             user,
@@ -689,6 +781,42 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn manual_learning_checks_selected_assistant_and_its_executor() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("local", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store.materialize_implicit_primary(7, "local").unwrap();
+        let mut settings = store.personal_stand_in(7, "local").unwrap();
+        settings["primary"]["selfLearningEnabled"] = json!(false);
+        let mut role = crate::test_env::stand_in_role("local");
+        role["enabled"] = json!(true);
+        role["selfLearningEnabled"] = json!(true);
+        let mut remote_role = role.clone();
+        remote_role["id"] = json!("remote");
+        remote_role["executionDeviceId"] = json!("remote-device");
+        settings["roles"] = json!([role, remote_role]);
+        store.save_personal_stand_in(7, "local", settings).unwrap();
+        let run = |payload| handler.dispatch_method("runtime.stand_in.learning.run", payload);
+
+        assert_eq!(
+            run(json!({"userId":7})).await.unwrap()["status"],
+            "disabled"
+        );
+        assert_eq!(
+            run(json!({"userId":7,"roleId":"default"})).await.unwrap()["status"],
+            "insufficient"
+        );
+        assert_eq!(
+            run(json!({"userId":7,"roleId":"remote"}))
+                .await
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+    }
 
     #[test]
     fn evaluation_starts_only_for_an_enabled_identity_with_learning_turned_on() {

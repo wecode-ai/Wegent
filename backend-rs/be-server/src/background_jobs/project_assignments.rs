@@ -346,12 +346,7 @@ pub(crate) async fn record(
     trigger: &str,
     automation: &Value,
 ) -> brz_mysql::MysqlResult<(String, bool)> {
-    let comments: Vec<CommentRow> = tx
-        .fetch_all(
-            format!("{} FOR UPDATE", item_comments_query()),
-            (issue.id.as_str(),),
-        )
-        .await?;
+    let comments = assignment_events_on(tx, issue).await?;
     let canonical = if kind == "human" { "human" } else { "agent" };
     let active = uncancelled_events(&comments);
     let existing = active.iter().rev().find(|comment| {
@@ -381,12 +376,154 @@ pub(crate) async fn record(
             {
                 continue;
             }
-            store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"unassign","assignment_event_id":previous.comment.id,"target_type":previous.metadata.target_type,"target_id":previous.metadata.target_id,"workflow_step":"","notify":false,"trigger":"reassignment"}})).await?;
+            cancel_assignment(tx, issue, owner, &previous).await?;
         }
     }
-    let id=store::insert(tx,"comment",json!({"cloud_project_id":issue.cloud_project_id,"loop_item_id":issue.id,"created_by_user_id":owner,"updated_by_user_id":owner,"status":"active","metadata":{"event_type":"assignment","action":"assign","target_type":canonical,"target_id":target,"target_name":name,"workflow_step":"","notify":notify,"trigger":trigger,"automation":automation}})).await?;
+    let id = append_assignment(
+        tx,
+        issue,
+        owner,
+        (canonical, target, name),
+        notify,
+        trigger,
+        automation,
+    )
+    .await?;
     refresh_active_index(tx, &issue.id).await?;
     Ok((id, true))
+}
+
+pub(crate) async fn clear_human_assignment(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+    owner: i64,
+) -> brz_mysql::MysqlResult<()> {
+    let comments = assignment_events_on(tx, issue).await?;
+    let mut changed = false;
+    for previous in uncancelled_events(&comments) {
+        if previous.metadata.target_type.as_deref() == Some("human")
+            && previous
+                .metadata
+                .workflow_step
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
+        {
+            cancel_assignment(tx, issue, owner, &previous).await?;
+            changed = true;
+        }
+    }
+    if changed {
+        refresh_active_index(tx, &issue.id).await?;
+    }
+    Ok(())
+}
+
+async fn assignment_events_on(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+) -> brz_mysql::MysqlResult<Vec<CommentRow>> {
+    tx.fetch_all(
+        format!("{} FOR UPDATE", item_comments_query()),
+        (issue.id.as_str(),),
+    )
+    .await
+}
+
+async fn cancel_assignment(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+    owner: i64,
+    previous: &wegent_project_coordination::loop_tasks::assignment_events::ActiveEvent<'_>,
+) -> brz_mysql::MysqlResult<()> {
+    insert_assignment(tx, issue, owner, json!({
+        "event_type":"assignment", "action":"unassign", "assignment_event_id":previous.comment.id,
+        "target_type":previous.metadata.target_type, "target_id":previous.metadata.target_id,
+        "workflow_step":"", "notify":false, "trigger":"reassignment"
+    })).await?;
+    Ok(())
+}
+
+async fn insert_assignment(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+    owner: i64,
+    metadata: Value,
+) -> brz_mysql::MysqlResult<String> {
+    store::insert(tx, "comment", json!({
+        "cloud_project_id":issue.cloud_project_id, "loop_item_id":issue.id,
+        "created_by_user_id":owner, "updated_by_user_id":owner, "status":"active", "metadata":metadata
+    })).await
+}
+
+async fn append_assignment(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+    owner: i64,
+    (kind, target, name): (&str, &str, &str),
+    notify: bool,
+    trigger: &str,
+    automation: &Value,
+) -> brz_mysql::MysqlResult<String> {
+    insert_assignment(tx, issue, owner, json!({
+        "event_type":"assignment", "action":"assign", "target_type":kind, "target_id":target,
+        "target_name":name, "workflow_step":"", "notify":notify, "trigger":trigger, "automation":automation
+    })).await
+}
+
+pub(crate) async fn record_manual_human(
+    tx: &mut impl MysqlTransaction,
+    issue: &Node,
+    actor: i32,
+    assignee: i32,
+    notify: bool,
+    fresh_issue: bool,
+) -> brz_mysql::MysqlResult<String> {
+    let (name,): (String,) = tx
+        .fetch_one("SELECT user_name FROM users WHERE id=?", (assignee,))
+        .await?;
+    let target = assignee.to_string();
+    let (assignment, created) = if fresh_issue {
+        let id = append_assignment(
+            tx,
+            issue,
+            i64::from(actor),
+            ("human", &target, &name),
+            notify,
+            "manual",
+            &Value::Null,
+        )
+        .await?;
+        wegent_project_participation::assignment_index::initialize_first_assignment(
+            tx, &issue.id, &id,
+        )
+        .await?;
+        (id, true)
+    } else {
+        record(
+            tx,
+            issue,
+            "human",
+            &target,
+            &name,
+            i64::from(actor),
+            notify,
+            "manual",
+            &Value::Null,
+        )
+        .await?
+    };
+    if notify && created {
+        crate::stand_in_issue_events::enqueue_assignment_on(
+            tx,
+            i64::from(assignee),
+            &issue.cloud_project_id,
+            &issue.id,
+            &assignment,
+        )
+        .await?;
+    }
+    Ok(assignment)
 }
 
 pub(super) fn history(metadata: &mut Value, user: i64, kind: &str, id: &str, name: &str) {

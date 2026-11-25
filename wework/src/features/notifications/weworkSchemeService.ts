@@ -2,9 +2,8 @@ import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import type { TFunction } from 'i18next'
 import { createHttpClient } from '@/api/http'
-import { resolveMovedPersonalIssue } from '@wegent/collaboration/platform'
+import { detailProjectId } from '@wegent/collaboration/platform'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
-import { createDeliveryApi } from '@/api/deliveries'
 import { getRuntimeConfig } from '@/config/runtime'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { harnessAppsApi } from '@/api/local/harnessApps'
@@ -158,12 +157,8 @@ export function createWeworkSchemeService() {
       })
       const issueId = destination.issueId
       const movedProjectId = await createPersonalIssuesApi(client)
-        .get(issueId)
-        .then(
-          () => null,
-          reason =>
-            resolveMovedPersonalIssue(reason, () => createDeliveryApi(client).getLoopItem(issueId))
-        )
+        .issueDetail(issueId)
+        .then(detailProjectId, () => null)
       if (
         !input ||
         revision !== generation ||
