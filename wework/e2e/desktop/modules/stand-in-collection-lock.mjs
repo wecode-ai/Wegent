@@ -6,17 +6,39 @@ import { storyUntil } from './stand-in-source-story-evidence.mjs'
 /** Reproduce the persisted SQLite failure observed on an all-contact subscription. */
 export async function verifyCollectionLockRecovery({ database, rpc, root, userId, timeoutMs }) {
   const providerId = '@wegent/dsh-connection-dingtalk/dingtalk'
+  const roleId = 'collection-lock-recovery'
   const originalSettings = await rpc('runtime.stand_in.personal.get', { userId })
   const settings = structuredClone(originalSettings)
-  settings.primary.connections = [
+  const roleTemplate = structuredClone(settings.primary)
+  delete roleTemplate.delegation
+  settings.roles = [
+    ...settings.roles.filter(role => role.id !== roleId),
     {
-      providerId,
-      profile: 'connection-test-account',
-      kind: 'direct',
-      id: '*',
-      scope: 'all',
-      name: 'All direct messages',
-      policy: { automatic: true, askBeforeAct: true, immediate: true },
+      ...roleTemplate,
+      id: roleId,
+      name: 'Collection lock recovery',
+      enabled: true,
+      tags: [],
+      executionDeviceId: settings.executionDeviceId,
+      version: 0,
+      collaboration: {
+        enabled: false,
+        allProjects: false,
+        projects: [],
+        excludedProjects: [],
+        tags: [],
+      },
+      connections: [
+        {
+          providerId,
+          profile: 'connection-test-account',
+          kind: 'direct',
+          id: '*',
+          scope: 'all',
+          name: 'All direct messages',
+          policy: { automatic: true, askBeforeAct: true, immediate: true },
+        },
+      ],
     },
   ]
   const saved = await rpc('runtime.stand_in.personal.save', { userId, settings })

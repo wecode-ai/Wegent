@@ -248,10 +248,25 @@ async function verifySearchOverlay(
   // Move from the former close button into the restored surface, then back
   // to verify native input at the exact point where the dialog intercepted it.
   const moveInGuest = async (point, previousMoves) => {
+    // Chromium can route the first motion after the DOM hit target recovers to the
+    // host, and it reports no motion when the pointer does not move. Nudge across
+    // the restored boundary until the guest observes motion, then settle on the
+    // exact point so the native click lands where the dialog intercepted it.
+    let offset = 1
+    const primed = await waitForValue(
+      async () => {
+        await movePointer({ x: point.x + offset, y: point.y })
+        offset = 3 - offset
+        return readGuestInput()
+      },
+      state => state.moves > previousMoves,
+      `Native pointer movement near ${point.x},${point.y} must reach the restored guest`,
+      5_000
+    )
     await movePointer(point)
     return waitForValue(
       readGuestInput,
-      state => state.moves > previousMoves,
+      state => state.moves > primed.moves,
       `Native pointer movement at ${point.x},${point.y} must reach the restored guest`,
       5_000
     )

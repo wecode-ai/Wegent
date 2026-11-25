@@ -4,10 +4,15 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 
 /** Reuse the installed DingTalk protocol fixture and real renderer/settings persistence. */
-export async function verifyStandInSessionSettings(control, uiTimeoutMs) {
+export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId) {
   const id = 'stand-in-dingtalk-policy-connection-migration-fixture'
   const timing = `[data-testid="${id}"]`
   const strategy = `[data-testid="${id}-session-strategy"]`
+  const primary = roleId === undefined
+  const connectionsOpen = primary
+    ? '[data-testid="stand-in-primary-connections-open"]'
+    : '[data-testid="stand-in-connections-open"]'
+  const save = primary ? '[data-testid="stand-in-primary-save"]' : '[data-testid="stand-in-save"]'
   const load = () =>
     requestExecutor(control, 'runtime.stand_in.personal.get', { userId: 9001 }, uiTimeoutMs)
   await control.command(
@@ -31,14 +36,18 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs) {
         String(independent)
       )
         await control.command('clickWhenEnabled', strategy)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
-        visible: false,
-      })
+      await control.command('clickWhenEnabled', save)
+      if (primary) {
+        await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+          visible: false,
+        })
+      } else {
+        await control.command('waitFor', '[data-testid="stand-in-connections-open"]')
+        await control.command('waitFor', '[data-testid="stand-in-saved"]')
+      }
       const saved = await load()
-      const source = saved.primary.connections.find(
-        row => row.id === 'connection-migration-fixture'
-      )
+      const role = primary ? saved.primary : saved.roles.find(row => row.id === roleId)
+      const source = role.connections.find(row => row.id === 'connection-migration-fixture')
       assert.deepEqual(
         { ...source.policy, sessionStrategy: source.policy.sessionStrategy ?? 'reuse' },
         {
@@ -48,8 +57,8 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs) {
           sessionStrategy,
         }
       )
-      await openStandInSettings(control)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
+      if (primary) await openStandInSettings(control)
+      await control.command('clickWhenEnabled', connectionsOpen)
       await openConnectionTypePicker(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
       await control.command(
