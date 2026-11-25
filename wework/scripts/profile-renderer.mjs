@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, writeFile } from 'node:fs/promises'
+import { availableParallelism, freemem, loadavg } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -88,7 +89,13 @@ export function installTurnUpdateProbe() {
     const status = payload.data?.status
     if (event !== 'runtime.turn.updated' || !payload.data?.task) return
     if (status !== 'started' && status !== 'settled') return
-    updates.push({ taskId: payload.taskId, status, observedAt: performance.now() })
+    const update = { taskId: payload.taskId, status, observedAt: performance.now() }
+    updates.push(update)
+    // The observer runs before the application handlers. Record the first
+    // microtask checkpoint after this event, within the same browser task.
+    queueMicrotask(() => {
+      update.afterDeliveryAt = performance.now()
+    })
     performance.mark?.(`wework-profile:turn-${status}`)
     if (status === 'settled') {
       settled.add(payload.taskId)
@@ -124,7 +131,7 @@ export function installTurnUpdateProbe() {
       let index = 0
       return updates
         .filter(update => update.taskId === taskId)
-        .map(({ status, observedAt }) => {
+        .map(({ status, observedAt, afterDeliveryAt }) => {
           while (
             longTasks[index] &&
             longTasks[index].startTime + longTasks[index].duration <= observedAt
@@ -132,15 +139,18 @@ export function installTurnUpdateProbe() {
             index++
           }
           const task = longTasks[index]
-          const matchingTask = task && task.startTime <= observedAt ? task : null
+          const longTask = task && task.startTime <= observedAt ? task : null
           const frame = longFrames.find(
             entry => entry.startTime <= observedAt && observedAt < entry.startTime + entry.duration
           )
           return {
             status,
             observedAt,
-            longTaskMs: matchingTask?.duration ?? 0,
-            ...(matchingTask && { longTaskStartMs: matchingTask.startTime }),
+            longTaskMs: longTask?.duration ?? 0,
+            ...(longTask && {
+              longTaskStartMs: longTask.startTime,
+              afterDeliveryAt,
+            }),
             ...(frame && {
               frame: {
                 durationMs: frame.duration,
@@ -516,7 +526,7 @@ export function createDesktopScenario({
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
   const enforceBudgets = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
-  const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
+  const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
   const processSamples = []
@@ -762,6 +772,11 @@ export function createDesktopScenario({
         processSamples.push({
           phase,
           at: snapshot.capturedAt,
+          system: {
+            availableParallelism: availableParallelism(),
+            freeMemoryBytes: freemem(),
+            loadAverage: loadavg(),
+          },
           incomplete: Boolean(snapshot.collectingSystemProcesses),
           degradation: snapshot.degraded?.map(entry => entry.code) ?? [],
           processes: snapshot.processes.map(process => ({

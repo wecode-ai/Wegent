@@ -1,20 +1,37 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
-import { createUnlistedStandInTasksSource } from './unlistedStandInTasksSource'
+import {
+  createUnlistedStandInTasksSource,
+  isStandInNotificationTask,
+} from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+
+function needsStandInLookup(task: RuntimeTaskReminderItem['task'] | null): boolean {
+  const handle = task?.runtimeHandle
+  // Native task summaries preserve the origin used by readTask.
+  if (
+    !task ||
+    task.cachedProjection ||
+    task.optimistic ||
+    !handle ||
+    !Object.hasOwn(handle, 'threadId')
+  )
+    return true
+  return isStandInNotificationTask(task)
+}
 
 /** Sidebar project filters must not hide executions from collaboration notifications. */
 export function useUnlistedStandInTasks(
   items: RuntimeTaskReminderItem[],
   snapshot: RuntimeTaskLifecycleStoreSnapshot,
-  reader?: StandInExecutorApi
+  reader?: Pick<StandInExecutorApi, 'readTask'>
 ): RuntimeTaskReminderItem[] {
   const source = useMemo(() => createUnlistedStandInTasksSource(reader), [reader])
   const visible = useMemo(() => new Set(items.map(item => item.key)), [items])
   const pending = useMemo(() => {
     return [...snapshot.tasks.values()]
-      .filter(task => !visible.has(task.key))
+      .filter(task => !visible.has(task.key) && needsStandInLookup(task.task))
       .map(task => ({
         key: task.key,
         address: task.address,

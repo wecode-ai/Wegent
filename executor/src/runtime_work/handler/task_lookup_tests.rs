@@ -196,6 +196,7 @@ fn task_lookup_uses_same_live_execution_state_as_desktop() {
     });
     let execution_id = start_test_execution(&handler, "task-1");
     let result = handler.get_task(&json!({"taskId": "task-1"})).unwrap();
+    assert_eq!(result["deviceId"], handler.device_id.as_str());
     assert_eq!(result["task"]["running"], true);
     handler.finish_local_task_execution("task-1", execution_id);
     fs::remove_dir_all(root).unwrap();
