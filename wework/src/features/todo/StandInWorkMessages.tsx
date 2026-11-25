@@ -43,7 +43,7 @@ export function StandInWorkMessages({
   onOrganize(value: StandInWorkDrag): Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const { id: workId, roleId, messageCount } = work
+  const { id: workId, roleId, messageCount, updatedAt } = work
   const resource = useMemo(
     () =>
       createAsyncResource(
@@ -53,8 +53,8 @@ export function StandInWorkMessages({
     [api, userId, deviceId, roleId, workId]
   )
   const subscribe = useCallback(
-    (listener: () => void) => resource.subscribe(listener, messageCount),
-    [resource, messageCount]
+    (listener: () => void) => resource.subscribe(listener, `${updatedAt}:${messageCount}`),
+    [resource, updatedAt, messageCount]
   )
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const messages =

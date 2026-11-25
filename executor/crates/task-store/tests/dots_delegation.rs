@@ -272,6 +272,42 @@ fn an_existing_explicit_delegation_without_version_migrates_to_one() {
 }
 
 #[test]
+fn omitting_primary_cannot_erase_the_saved_delegation() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    let mut settings = saved(&store, settings);
+    settings["primary"]["delegation"]["action"] = json!("pause");
+    let settings = saved(&store, settings);
+    let mut role_only = settings.clone();
+    role_only.as_object_mut().unwrap().remove("primary");
+
+    let proposal = store
+        .propose_stand_in_settings(
+            7,
+            "desktop",
+            None,
+            "Update other settings",
+            role_only.clone(),
+        )
+        .unwrap();
+    let reviewed = store
+        .resolve_stand_in_proposal(7, "desktop", proposal["id"].as_str().unwrap(), true, None)
+        .unwrap();
+    assert_eq!(reviewed["primary"], settings["primary"]);
+
+    role_only["version"] = reviewed["version"].clone();
+    let mut saved_settings = saved(&store, role_only);
+    assert_eq!(saved_settings["primary"], settings["primary"]);
+    saved_settings["primary"]["delegation"]["action"] = json!("resume");
+    assert_eq!(
+        saved(&store, saved_settings)["primary"]["delegation"]["version"],
+        3
+    );
+}
+
+#[test]
 fn connector_account_change_revokes_the_current_selection_without_reusing_its_version() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -454,7 +490,7 @@ fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_indepe
     assert_eq!(replayed["delegationResult"]["status"], "unknown");
     let followup = json!({"id":"followup","quotedMessageId":"original","text":"Any update?","at":"2099-01-01T00:01:00Z"});
     let linked = store
-        .ingest_stand_in_message(7, "@primary", source, &followup, Some(work))
+        .ingest_stand_in_message(7, "@primary", source, &followup, None)
         .unwrap();
     assert_eq!(linked["id"], work);
     let linked_message = store
@@ -463,45 +499,71 @@ fn unknown_submission_survives_restart_and_blocks_linked_followup_but_not_indepe
         .unwrap();
     let linked_record = linked_message["recordId"].as_str().unwrap();
     assert_ne!(linked_record, record);
+    let split = store
+        .adjust_stand_in_message(7, work, linked_record, None)
+        .unwrap();
+    let split_work = split["id"].as_str().unwrap();
+    assert_ne!(split_work, work);
     assert!(store
-        .record_delegation_decision(7, "desktop", work, linked_record, decision.clone())
+        .record_delegation_decision(7, "desktop", split_work, linked_record, decision.clone())
         .unwrap()
         .is_none());
     let messages = store.stand_in_messages(7, work).unwrap();
-    assert_eq!(messages.len(), 2);
-    let original = messages
-        .iter()
-        .find(|message| message["id"] == "original")
-        .unwrap();
-    let followup = messages
-        .iter()
-        .find(|message| message["id"] == "followup")
-        .unwrap();
-    assert_eq!(original["delegationResult"]["status"], "unknown");
-    assert_eq!(followup["delegationResult"]["action"], "skip");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["id"], "original");
+    assert_eq!(messages[0]["delegationResult"]["status"], "unknown");
+    let split_messages = store.stand_in_messages(7, split_work).unwrap();
+    assert_eq!(split_messages.len(), 1);
+    assert_eq!(split_messages[0]["id"], "followup");
+    assert_eq!(split_messages[0]["delegationResult"]["action"], "skip");
 
-    let independent = json!({"id":"independent", "text":"Where is the release checklist?", "at":"2099-01-01T00:02:00Z"});
+    let further = json!({"id":"further","quotedMessageId":"followup","text":"Still waiting","at":"2099-01-01T00:02:00Z"});
+    let item = store
+        .ingest_stand_in_message(7, "@primary", source, &further, None)
+        .unwrap();
+    assert_eq!(item["id"], split_work);
+    let further = store
+        .known_stand_in_message(7, "@primary", source, "further")
+        .unwrap()
+        .unwrap();
+    assert!(store
+        .record_delegation_decision(
+            7,
+            "desktop",
+            split_work,
+            further["recordId"].as_str().unwrap(),
+            decision.clone(),
+        )
+        .unwrap()
+        .is_none());
+
+    let independent = json!({"id":"independent", "text":"Where is the release checklist?", "at":"2099-01-01T00:03:00Z"});
     let item = store
         .ingest_stand_in_message(7, "@primary", source, &independent, None)
         .unwrap();
     let independent_work = item["id"].as_str().unwrap();
     let independent_record = item["latestMessage"]["recordId"].as_str().unwrap();
     assert_ne!(independent_work, work);
+    let merged = store
+        .adjust_stand_in_message(7, independent_work, independent_record, Some(work))
+        .unwrap();
+    assert_eq!(merged["id"], work);
     assert!(store
-        .record_delegation_decision(7, "desktop", independent_work, independent_record, decision)
+        .record_delegation_decision(7, "desktop", work, independent_record, decision)
         .unwrap()
         .is_some());
     store
-        .finish_delegated_submission(
-            7,
-            independent_work,
-            independent_record,
-            Some("channel-receipt"),
-        )
+        .finish_delegated_submission(7, work, independent_record, Some("channel-receipt"))
         .unwrap();
-    let result = store.stand_in_work(7, independent_work).unwrap();
-    assert_eq!(result["delegationResult"]["status"], "sent");
-    assert_eq!(result["delegationResult"]["receiptId"], "channel-receipt");
+    let independent = store
+        .known_stand_in_message(7, "@primary", source, "independent")
+        .unwrap()
+        .unwrap();
+    assert_eq!(independent["delegationResult"]["status"], "sent");
+    assert_eq!(
+        independent["delegationResult"]["receiptId"],
+        "channel-receipt"
+    );
 }
 
 #[test]

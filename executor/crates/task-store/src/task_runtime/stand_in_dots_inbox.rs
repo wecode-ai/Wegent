@@ -1,6 +1,14 @@
 //! Transactional outcomes and send claims for the primary DingTalk delegation.
 use super::*;
 
+pub(super) fn delegated_reply_chain(message: &Value) -> &Value {
+    // Older messages retain their initial grouping when they are moved.
+    message
+        .get("delegationChainId")
+        .or_else(|| message.get("originalWorkId"))
+        .unwrap_or(&message["workId"])
+}
+
 impl LocalTaskStore {
     /// Claim one scoped channel send or record a terminal local decision.
     pub fn record_delegation_decision(
@@ -73,9 +81,12 @@ impl LocalTaskStore {
             }
             let replied = connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='stand_in_message'
-                 AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2
+                 AND json_valid(metadata) AND json_extract(metadata,'$.userId')=?1
+                 AND COALESCE(json_extract(metadata,'$.delegationChainId'),
+                              json_extract(metadata,'$.originalWorkId'),
+                              json_extract(metadata,'$.workId'))=?2
                  AND json_extract(metadata,'$.delegationResult.action')='reply')",
-                params![user, work_id],
+                params![user, delegated_reply_chain(&message).as_str()],
                 |row| row.get::<_, bool>(0),
             )?;
             if replied {

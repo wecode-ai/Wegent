@@ -773,6 +773,9 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
+        if value.get("primary").is_none() && previous["primary"]["delegation"].is_object() {
+            value["primary"] = previous["primary"].clone();
+        }
         super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);

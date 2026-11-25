@@ -24,24 +24,8 @@ impl RuntimeWorkRpcHandler {
         }
         let mut message = message.clone();
         message["delegationVersion"] = role["delegation"]["version"].clone();
-        let linked = if let Some(id) = message["quotedMessageId"].as_str() {
-            store
-                .known_stand_in_message(user, "@primary", source, id)
-                .map_err(settings_error)?
-                .filter(|previous| previous["conversationId"] == message["conversationId"])
-        } else {
-            None
-        };
         store
-            .ingest_stand_in_message(
-                user,
-                "@primary",
-                source,
-                &message,
-                linked
-                    .as_ref()
-                    .and_then(|previous| previous["workId"].as_str()),
-            )
+            .ingest_stand_in_message(user, "@primary", source, &message, None)
             .map_err(settings_error)?;
         Ok(())
     }
@@ -93,7 +77,7 @@ impl RuntimeWorkRpcHandler {
                 let response = crate::runtime_work::dingtalk::reply(
                     &source,
                     message,
-                    work_id,
+                    record_id,
                     decision["text"].as_str().unwrap_or_default(),
                     &Value::Null,
                 )

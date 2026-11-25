@@ -8,11 +8,18 @@ function nonEmptyString(value) {
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
-export function activeAccountIdentity(response) {
+function activeProfile(response) {
   const profile = nonEmptyString(response.currentProfile)
   if (!profile)
     throw Object.assign(new Error('Authorize the account'), { code: 'connector_auth_required' })
-  const account = response.profiles?.find(row => row.profile === profile)
+  return { profile, account: response.profiles?.find(row => row.profile === profile) }
+}
+
+export function activeAccountIdentity(response) {
+  return describeAccount(activeProfile(response))
+}
+
+function describeAccount({ profile, account }) {
   const userId = nonEmptyString(account?.userId)
   const organizationId = nonEmptyString(account?.corpId) ?? nonEmptyString(account?.orgId)
   return {
@@ -52,7 +59,8 @@ export function validateDelegatedSource(source) {
 
 export async function boundAccount(ctx, source, readTool) {
   validateDelegatedSource(source)
-  const active = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
+  const selected = activeProfile(await readTool(ctx, 'listProfiles'))
+  const active = describeAccount(selected)
   if (
     active.profile !== source.profile ||
     (active.accountId && active.accountId !== source.accountId)
@@ -61,7 +69,7 @@ export async function boundAccount(ctx, source, readTool) {
       code: 'dingtalk_account_changed',
     })
   if (!active.accountId) throw invalid('The active DingTalk account cannot be verified')
-  return active
+  return selected.account
 }
 
 export async function exactConversation(ctx, source, until, readTool, validateNativePage) {

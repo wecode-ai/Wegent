@@ -222,6 +222,20 @@ pub(crate) fn stand_in_record_key(prefix: &str, value: &Value) -> String {
     )
 }
 
+fn immutable_message_key(user: i64, role: &str, source: &Value, message_id: &Value) -> String {
+    stand_in_record_key(
+        "stand-in-message",
+        &json!([
+            user,
+            role,
+            source_namespace(source),
+            source["kind"],
+            source["id"],
+            message_id
+        ]),
+    )
+}
+
 fn read_record(
     connection: &Connection,
     id: &str,
@@ -697,30 +711,25 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::validate_connection_message_version(message)?;
-        let identity = if message.get("objectId").is_some() {
-            json!([
-                user,
-                role,
-                super::personal_stand_in::source_provider(source),
-                if source["delegated"] == true {
-                    source_namespace(source)
-                } else {
-                    source["profile"].clone()
-                },
-                message["objectId"],
-                message["version"]
-            ])
+        let key = if message.get("objectId").is_some() {
+            stand_in_record_key(
+                "stand-in-message",
+                &json!([
+                    user,
+                    role,
+                    super::personal_stand_in::source_provider(source),
+                    if source["delegated"] == true {
+                        source_namespace(source)
+                    } else {
+                        source["profile"].clone()
+                    },
+                    message["objectId"],
+                    message["version"]
+                ]),
+            )
         } else {
-            json!([
-                user,
-                role,
-                source_namespace(source),
-                source["kind"],
-                source["id"],
-                message["id"]
-            ])
+            immutable_message_key(user, role, source, &message["id"])
         };
-        let key = stand_in_record_key("stand-in-message", &identity);
         if let Some(existing) = find_event_message(&connection, user, role, source, message)? {
             let result = read_record(
                 &connection,
@@ -731,6 +740,18 @@ impl LocalTaskStore {
             connection.commit()?;
             return Ok(result);
         }
+        let delegated = role == "@primary" && source["delegated"] == true;
+        let quoted = if delegated
+            && message["quotedMessageId"].is_string()
+            && message["quotedMessageId"] != message["id"]
+        {
+            let quoted_key = immutable_message_key(user, role, source, &message["quotedMessageId"]);
+            read_record(&connection, &quoted_key, "stand_in_message")?
+                .filter(|row| row["conversationId"] == message["conversationId"])
+        } else {
+            None
+        };
+        let work_id = work_id.or_else(|| quoted.as_ref().and_then(|row| row["workId"].as_str()));
         let mut work = if let Some(id) = work_id {
             read_record(&connection, id, "stand_in_work")?
                 .filter(|work| {
@@ -749,6 +770,13 @@ impl LocalTaskStore {
         record["roleId"] = json!(role);
         record["workId"] = work["id"].clone();
         record["source"] = source.clone();
+        if delegated {
+            record["delegationChainId"] = quoted
+                .as_ref()
+                .map(dots_inbox::delegated_reply_chain)
+                .cloned()
+                .unwrap_or_else(|| json!(key));
+        }
         record["dispatchStatus"] = json!(status);
         record["dispatchFailureCount"] = json!(0);
         if status == "needs_grouping" {
