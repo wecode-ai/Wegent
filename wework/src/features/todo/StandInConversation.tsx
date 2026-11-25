@@ -1,4 +1,5 @@
 import { standInConversationTaskId, type StandInConversationScope } from '@/api/personalStandIn'
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Button } from '@/components/ui/button'
@@ -88,6 +89,7 @@ export function StandInConversation({
   }
   const resource = owner.resource
   const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
     {
@@ -110,7 +112,7 @@ export function StandInConversation({
       : modelControls
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
-    workbench?.runtimeTaskReminders.items.some(
+    taskReminderItems.some(
       item =>
         item.address.taskId === taskId &&
         (aliases.get(item.address.deviceId) ?? item.address.deviceId) ===
@@ -145,7 +147,7 @@ export function StandInConversation({
   const delegatedWork = !roleDelegationEnabled
     ? []
     : selectStandInDelegatedWork(
-        workbench?.runtimeTaskReminders.items ?? [],
+        taskReminderItems,
         remoteBranches.data?.items ?? [],
         userId,
         deviceId,

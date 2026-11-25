@@ -49,8 +49,12 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>允许 WeWork 拍摄照片并作为会话附件发送。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>允许 WeWork 使用麦克风进行语音输入。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>允许 WeWork 选择照片并作为会话附件发送。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>允许 WeWork 使用语音识别将语音转换为文字。</string>
 	<key>RCTMetroPort</key>
 	<string>$(RCT_METRO_PORT)</string>
 	<key>RCTNewArchEnabled</key>
