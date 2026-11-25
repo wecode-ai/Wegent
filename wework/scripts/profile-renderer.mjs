@@ -66,7 +66,8 @@ const measuredReasoningTasks = new Set(['01', '02', '03'])
 const measuredReasoningPieces = 25
 const limits = {
   idleCpuPercent: 3,
-  singleTaskCpuPercent: 15,
+  // Hosted macOS runners vary by several CPU points between identical builds.
+  singleTaskCpuPercent: 18,
   tenTaskCpuPercent: 20,
   maxTurnUpdateLongTaskMs: 100,
   peakObservedJsHeapBytes: 200_000_000,
