@@ -135,6 +135,7 @@ export interface SendCurrentInputOptions {
 export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
+  executionModel?: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
   attachments?: Attachment[]
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   onError?: (error: string) => void

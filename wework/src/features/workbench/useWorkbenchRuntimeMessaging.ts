@@ -1091,6 +1091,7 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        executionModel?: CreateTemporaryRuntimeTaskOptions['executionModel']
         preserveAttachments?: boolean
         launchStartedAt?: number
         taskCreateRequest?: RuntimeTaskCreateRequest | null
@@ -1139,13 +1140,12 @@ export function useWorkbenchRuntimeMessaging({
               modelType: taskRequestSelection.modelType,
               modelOptions: taskRequestSelection.options,
             }
-          : overrideExecutionModel
-            ? overrideExecutionModel
-            : {
-                modelId: intent.modelId,
-                modelType: intent.modelType,
-                modelOptions: intent.modelOptions,
-              }
+          : (options?.executionModel ??
+            overrideExecutionModel ?? {
+              modelId: intent.modelId,
+              modelType: intent.modelType,
+              modelOptions: intent.modelOptions,
+            })
       const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
       const friendlyTitle =
         runtime === 'codex'
@@ -1932,12 +1932,17 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
       const prepared = buildSendPayload(message, options?.attachments, options?.project)
+      const executionModel = options?.executionModel
 
       return sendPreparedRuntimeMessage(message, prepared.intent, prepared.activeDeviceId, {
         optimisticUserMessage: options?.optimisticUserMessage,
         onError: options?.onError,
         onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         ephemeral: true,
+        executionModel,
+        modelSelection: executionModel?.modelId
+          ? modelSelectionFromCreateRequest(executionModel)
+          : undefined,
         sideSource: options?.source && runtimeThreadId(options.source) ? options.source : null,
         openInMainPane: false,
         refreshWorkListsOnResolve: false,
@@ -2279,7 +2284,10 @@ function buildOptimisticRuntimeTask({
 }
 
 function modelSelectionFromCreateRequest(
-  request: RuntimeTaskCreateRequest
+  request: Pick<
+    RuntimeTaskCreateRequest,
+    'modelId' | 'modelType' | 'modelOptions' | 'modelSelection'
+  >
 ): ModelSelectionConfig | null {
   if (request.modelSelection?.modelName) {
     return request.modelSelection

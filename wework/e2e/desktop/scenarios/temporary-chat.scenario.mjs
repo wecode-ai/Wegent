@@ -28,6 +28,8 @@ const ACTIVE_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-workbench-main"
 const SIDE_CHAT = `${ACTIVE_SURFACE} [data-testid="right-workspace-chat-panel"]`
 const SIDE_SCROLL = `${SIDE_CHAT} [data-testid="right-workspace-chat-scroll-area"]`
 const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
+const MAIN_MODEL_SELECTOR = `${ACTIVE_SURFACE} [data-testid="desktop-floating-composer-card"] [data-testid="model-selector-button"]`
+const SIDE_MODEL_SELECTOR = `${SIDE_CHAT} [data-testid="model-selector-button"]`
 const SOURCE_PROMPT = 'TEMPORARY_CHAT_SOURCE_CONVERSATION'
 const SOURCE_COMPLETION = 'TEMPORARY_CHAT_SOURCE_COMPLETE'
 const INITIAL_PROMPT = 'TEMPORARY_CHAT_INITIAL_MESSAGE'
@@ -41,6 +43,32 @@ const ATTACHMENT_TEXT = JSON.stringify({
   cardInstanceId: '501435'.repeat(20),
   content: 'Long attachment preview in a narrow chat '.repeat(20),
 })
+
+async function selectSideChatReasoning(control, timeoutMs) {
+  const track = '[data-testid="model-control-reasoning-track"]'
+  const high = '[data-testid="model-control-reasoning-high"]'
+  const mainModel = await control.command('getText', MAIN_MODEL_SELECTOR)
+  await control.command('clickWhenEnabled', SIDE_MODEL_SELECTOR, { timeoutMs })
+  await control.command('waitFor', high, { visible: true, timeoutMs })
+  const previous = await control.command('getAttribute', track, { value: 'aria-valuetext' })
+  const highLabel = await control.command('getAttribute', high, { value: 'aria-label' })
+  const effort = previous === highLabel ? 'low' : 'high'
+  await control.command('clickWhenEnabled', `[data-testid="model-control-reasoning-${effort}"]`, {
+    timeoutMs,
+  })
+  assert.notEqual(
+    await control.command('getAttribute', track, { value: 'aria-valuetext' }),
+    previous,
+    'The temporary chat did not apply its new reasoning effort'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  assert.equal(
+    await control.command('getText', MAIN_MODEL_SELECTOR),
+    mainModel,
+    'Changing temporary-chat reasoning changed the main conversation model controls'
+  )
+  return effort
+}
 
 async function assertComposerBottomSpacing(control, timeoutMs, expanded = false) {
   const sideSelector = `${SIDE_CHAT} [data-testid="project-chat-composer"]`
@@ -460,6 +488,7 @@ export function createDesktopScenario({
   let active = false
   let followUpRequestCount = 0
   let recoveredModelHistory = null
+  let initialReasoningEffort
   const filePreview = createTemporaryChatFilePreview(workspacePath)
   let releaseSource
   let releaseFollowUp
@@ -504,6 +533,7 @@ export function createDesktopScenario({
       ].find(([prompt]) => input.includes(prompt))
       if (!match) return false
       const [prompt, completion] = match
+      if (prompt === INITIAL_PROMPT) initialReasoningEffort = body.reasoning?.effort
       if (prompt === RECOVERY_PROMPT) {
         recoveredModelHistory = JSON.stringify(body.input ?? body.messages ?? [])
       }
@@ -581,6 +611,7 @@ export function createDesktopScenario({
       await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       await assertComposerBottomSpacing(control, uiTimeoutMs)
+      const sideReasoningEffort = await selectSideChatReasoning(control, uiTimeoutMs)
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await control.command('dropFile', SIDE_COMPOSER, {
@@ -598,6 +629,11 @@ export function createDesktopScenario({
         text: INITIAL_COMPLETION,
         timeoutMs: taskTimeoutMs,
       })
+      assert.equal(
+        initialReasoningEffort,
+        sideReasoningEffort,
+        'The first temporary-chat message did not use the selected reasoning effort'
+      )
       await assertSideChatBottomAnchored(control)
       const [scrollMetrics] = JSON.parse(await control.command('getElementMetrics', SIDE_SCROLL))
       const [firstUserMetrics] = JSON.parse(
