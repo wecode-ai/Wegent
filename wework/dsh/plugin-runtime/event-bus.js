@@ -152,21 +152,26 @@ export class EventBus {
   }
 
   async #collect(provider, key, query, job) {
-    const timeout = setTimeout(() => {
-      job.controller.abort(
-        Object.assign(new Error('Event provider timed out'), {
+    const { signal } = job.controller
+    let partialResult
+    let timeout
+    const aborted = new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      timeout = setTimeout(() => {
+        const error = Object.assign(new Error('Event provider timed out'), {
           code: 'request_timeout',
           retryAfterMs: 30_000,
         })
-      )
-    }, this.timeoutMs)
-    timeout.unref?.()
-    const { signal } = job.controller
-    const aborted = new Promise((_, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        if (partialResult) resolve(partialResult(error))
+        job.controller.abort(error)
+      }, this.timeoutMs)
+      timeout.unref?.()
     })
     try {
-      const result = await Promise.race([provider.poll(query, signal), aborted])
+      const result = await Promise.race([
+        provider.poll(query, signal, recover => (partialResult = recover)),
+        aborted,
+      ])
       for (const entry of job.entries) {
         if (!this.#subscribers.has(entry)) continue
         try {
