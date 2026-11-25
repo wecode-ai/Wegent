@@ -350,6 +350,8 @@ from a PR.
 
 Rust backend E2E first looks up the exact runtime. On a miss, the build can
 reuse a prebuilt dependency image and GHCR BuildKit layers written by main.
+The dependency resolver is part of the runtime cache key so changes to it
+exercise a real build.
 If the current dependency image is missing, the resolver searches the eight
 most recent first-parent revisions from the base for a matching toolchain and
 dependency build recipe. Cargo validates dependencies against the current lockfile
@@ -362,6 +364,10 @@ The two Linux Core latency benchmarks and running-conversation history keep
 dedicated shards. The scheduler distributes the remaining checkpoints across
 the existing shards, spreading long checkpoints to reduce CPU contention
 between Electron sessions.
+Changes to CI scheduling, path classification, or Rust E2E build orchestration
+run desktop smoke checks for packaged startup, native lifecycle, and plugin
+routing. Product paths retain their scenario selection. Scheduled, manual, and
+`ci:all` runs execute the full desktop suites.
 
 The Backend Rust module check reuses workspace test binaries for package-specific
 MySQL and Redis regressions, retaining each step's service configuration and logs.

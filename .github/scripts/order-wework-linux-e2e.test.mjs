@@ -172,22 +172,33 @@ test('Linux balancing isolates history without changing coverage, runners or exc
   )
 })
 
-test('changes to Linux scheduling or MinIO setup select the existing desktop suites', () => {
+test('Linux scheduling runs desktop smoke coverage and MinIO setup retains full suites', () => {
   for (const path of [
     '.github/ci/wework-linux-checkpoint-durations.json',
     '.github/scripts/order-wework-linux-e2e.mjs',
     '.github/scripts/order-wework-linux-e2e.test.mjs',
-    '.github/actions/setup-minio-e2e/action.yml',
-    '.github/actions/build-minio-e2e/action.yml',
   ]) {
     const outputs = classifiedMatrices([path])
-    assert.deepEqual(outputs, matrices, path)
+    assert.deepEqual(
+      JSON.parse(outputs.wework_desktop_core_e2e_matrix).include.map(({ segments }) => segments),
+      ['release-package-startup,native-lifecycle'],
+      path,
+    )
+    assert.deepEqual(
+      JSON.parse(outputs.wework_desktop_cloud_e2e_matrix).include.map(({ segments }) => segments),
+      ['plugin-runtime-route-refresh'],
+      path,
+    )
     const result = classifiedMatrices(
       [path],
       '.github/scripts/classify-ci-changes.sh',
     )
     assert.equal(result.wework_e2e, 'true', path)
   }
+  for (const path of [
+    '.github/actions/setup-minio-e2e/action.yml',
+    '.github/actions/build-minio-e2e/action.yml',
+  ]) assert.deepEqual(classifiedMatrices([path]), matrices, path)
 })
 
 function completionSeconds(checkpoints, seconds) {
