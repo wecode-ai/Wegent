@@ -168,14 +168,9 @@ export function createDesktopScenario({
       }
       const closeShares = () => click('stand-in-shares-dialog-close')
       const send = async (message, reply) => {
-        await control.command(
-          'fill',
-          `${CHAT} ${testId('chat-message-input')}[contenteditable="true"]`,
-          {
-            value: message,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
+        const editor = `${CHAT} ${testId('chat-message-input')}[contenteditable="true"]`
+        await control.command('waitFor', editor, { visible: true, timeoutMs: uiTimeoutMs })
+        await control.command('fill', editor, { value: message })
         await control.command('clickWhenEnabled', `${CHAT} ${testId('send-message-button')}`)
         await control.command('waitFor', `${CHAT} ${testId('assistant-message-content')}`, {
           text: reply,

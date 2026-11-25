@@ -265,14 +265,21 @@ async fn publish_share(
                 serde_json::json!({"ownerUserId":owner, "kind":kind, "sourceId":source}),
             ).await?)
                 }
-                Ok(Some(notices))
+                let row: DefinitionRow = tx
+                    .fetch_one(
+                        authorized_share(),
+                        (owner, kind, source, source, recipient.to_string()),
+                    )
+                    .await?;
+                Ok(Some((row.into_preview(owner), notices)))
             })
             .await
             .map_err(internal)?;
-    for notification in result.ok_or_else(missing)? {
+    let (preview, notices) = result.ok_or_else(missing)?;
+    for notification in notices {
         notifications::deliver(state, notification).await;
     }
-    preview(&state.mysql, owner, kind, source, recipient).await
+    Ok(preview)
 }
 
 async fn publish_definition(
@@ -319,11 +326,11 @@ async fn set_direct_use(
     body: DirectUse,
 ) -> Result<SharePreview, FastApiError> {
     let recipient = user.0.id;
-    state
+    let row: Option<DefinitionRow> = state
         .mysql
         .with_transaction(async |tx| {
             if !storage::lock_publisher(tx, owner).await? {
-                return Ok(());
+                return Ok(None);
             }
             if let Some(root) = storage::publication(tx, owner, kind, source).await?
                 && grant_state(tx, root.id, recipient)
@@ -336,11 +343,15 @@ async fn set_direct_use(
                     storage::remove(tx, DIRECT, root.id, recipient).await?;
                 }
             }
-            Ok(())
+            tx.fetch_optional(
+                authorized_share(),
+                (owner, kind, source, source, recipient.to_string()),
+            )
+            .await
         })
         .await
         .map_err(internal)?;
-    preview(&state.mysql, owner, kind, source, recipient).await
+    row.map(|row| row.into_preview(owner)).ok_or_else(missing)
 }
 
 #[brz_http_server::delete("/api/v1/assistant-shares/:kind/:source/recipients/:recipient")]
@@ -392,14 +403,19 @@ async fn preview(
         )
         .await
         .map_err(internal)?;
-    let row = row.ok_or_else(missing)?;
-    Ok(SharePreview {
-        owner_user_id: owner,
-        definition: row.definition.0,
-        revision: row.revision,
-        allow_copy: row.allow_copy,
-        direct_enabled: row.direct_enabled,
-    })
+    row.map(|row| row.into_preview(owner)).ok_or_else(missing)
+}
+
+impl DefinitionRow {
+    fn into_preview(self, owner: i32) -> SharePreview {
+        SharePreview {
+            owner_user_id: owner,
+            definition: self.definition.0,
+            revision: self.revision,
+            allow_copy: self.allow_copy,
+            direct_enabled: self.direct_enabled,
+        }
+    }
 }
 
 #[brz_http_server::get("/api/v1/assistant-shares/:owner/:kind/:source/snapshot/:mode")]
@@ -513,20 +529,19 @@ async fn sync_definition(
             return Ok(SyncOutcome::VersionConflict);
         }
         if let Definition::Team(team) = &body.root {
-            let mut missing = Vec::new();
+            let supplied: std::collections::BTreeSet<_> = body.assistants.iter().map(|row| row.key().1).collect();
             for id in team.members.keys() {
-                if storage::publication(tx, owner, "assistant", id).await?.is_some() { continue; }
-                let Some(definition) = body.assistants.iter().find(|row| row.key().1 == id) else {
+                if !supplied.contains(id.as_str()) && storage::publication(tx, owner, "assistant", id).await?.is_none() {
                     return Ok(SyncOutcome::MissingMember);
-                };
-                missing.push(definition);
-            }
-            for definition in missing {
-                storage::insert_publication(tx, owner, definition).await?;
+                }
             }
         }
+        let mut notices = Vec::new();
+        for member in &body.assistants {
+            publish_definition(tx, owner, member, &mut notices).await?;
+        }
         storage::update_publication(tx, &old, &body.root).await?;
-        let notices = definition_update_notices(tx, owner, &body.root, old.id).await?;
+        notices.extend(definition_update_notices(tx, owner, &body.root, old.id).await?);
         Ok(SyncOutcome::Committed(notices))
     }).await.map_err(internal)?;
     match result {
@@ -619,8 +634,8 @@ async fn record_copy(
     }
     let recipient = user.0.id;
     let team_copy_access = storage::team_copy_access("?", false);
-    state.mysql.with_transaction(async |tx| {
-        if !storage::lock_publisher(tx, owner).await? { return Ok(()); }
+    let accepted = state.mysql.with_transaction(async |tx| {
+        if !storage::lock_publisher(tx, owner).await? { return Ok(false); }
         let allowed: Option<(i32,)> = tx.fetch_optional(
             format!("SELECT d.id FROM {PUBLICATIONS} d
                 LEFT JOIN {GRANTS} g ON g.resource_id=d.id AND g.entity_id=? AND g.status='approved' AND g.allow_copy
@@ -630,10 +645,11 @@ async fn record_copy(
         ).await?;
         if let Some((id,)) = allowed {
             storage::approve(tx, RECEIPT, id, owner, recipient).await?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }).await.map_err(internal)?;
-    Ok(serde_json::json!({"accepted":true}))
+    Ok(serde_json::json!({"accepted":accepted}))
 }
 
 fn missing() -> FastApiError {

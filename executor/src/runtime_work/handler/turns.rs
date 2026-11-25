@@ -1288,8 +1288,6 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
         let preparation = async {
-            self.refresh_shared_conversation_request(&mut turn.request)
-                .await?;
             self.prepare_project_environment(&mut turn).await?;
             self.prepare_deferred_worktree(&mut turn).await?;
             self.prepare_creation_branch(&mut turn.request).await?;
@@ -1683,7 +1681,7 @@ impl RuntimeWorkRpcHandler {
             task_kind: _,
             local_task_id,
             runtime: _,
-            request,
+            mut request,
             send_payload: _,
             direct_thread_id,
             fork_thread_id,
@@ -1781,6 +1779,14 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
+            if let Err(error) = handler
+                .refresh_shared_conversation_request(&mut request)
+                .await
+            {
+                handler.retain_failed_runtime_task(&turn_local_task_id, &error);
+                scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
+                return;
+            }
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) =
                 mpsc::unbounded_channel::<CodexNotification>();

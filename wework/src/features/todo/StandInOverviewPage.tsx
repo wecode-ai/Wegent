@@ -205,6 +205,10 @@ export function StandInOverviewPage({
         panelRef.current ? panelRef.current.requestLeave(action) : action(),
       closeReview: () => setReview(null),
       closeDetails: () => setDetailsTarget(null),
+      clearConversationSelection: () => {
+        setSelectedTeam(null)
+        setSelectedShare(null)
+      },
     }),
     [
       api,

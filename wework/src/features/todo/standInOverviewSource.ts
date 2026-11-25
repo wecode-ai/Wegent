@@ -29,6 +29,7 @@ interface OverviewObservation {
   rememberProfileTrigger(): void
   closeReview(): void
   closeDetails(): void
+  clearConversationSelection(): void
 }
 interface OverviewSnapshot {
   roleId?: string
@@ -227,6 +228,7 @@ export function createStandInOverviewSource(initial: {
           current.onSelectLocation(current.primaryDeviceId)
           return
         }
+        current.clearConversationSelection()
         setRoleId(undefined)
         current.closeDetails()
         setCalendarRequest(0)
@@ -249,13 +251,14 @@ export function createStandInOverviewSource(initial: {
       if (settingsRequest) {
         const roleId = owner.initialProfileId === '@primary' ? undefined : owner.initialProfileId
         const profile = owner.initialProfileId === '@primary' ? 'primary' : 'role'
-        if (snapshot.profile !== profile || snapshot.roleId !== roleId)
-          owner.requestLeave(() => {
-            if (!ownsScope(owner)) return
-            setRoleId(roleId)
-            observation!.rememberProfileTrigger()
-            setProfile(profile)
-          })
+        owner.requestLeave(() => {
+          if (!ownsScope(owner)) return
+          observation!.clearConversationSelection()
+          if (snapshot.profile === profile && snapshot.roleId === roleId) return
+          setRoleId(roleId)
+          observation!.rememberProfileTrigger()
+          setProfile(profile)
+        })
       }
     }
     if (owner.active && entryRequest !== owner.entryRequestKey) {
