@@ -419,6 +419,20 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         });
+        let share_handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = share_handler.flush_assistant_shares().await {
+                    log_executor_event(
+                        "Assistant share synchronization failed",
+                        &[("code", error.code)],
+                    );
+                }
+            }
+        });
         let receipt_handler = self.clone();
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(poll_interval);

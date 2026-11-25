@@ -16,16 +16,37 @@ export function taskTimestamp(item: RuntimeTaskReminderItem): number {
   const timestamp = new Date(value).getTime()
   return Number.isFinite(timestamp) ? timestamp : 0
 }
-function summarize({ taskSource, collaborationUnreadCount, generalInbox }: Input) {
-  const unreadTasks =
-    taskSource?.items.filter(
-      item => !standInOrigin(item) && taskSource.unreadTaskKeys.has(item.key)
-    ) ?? []
+function summarize(
+  { taskSource, collaborationUnreadCount, generalInbox }: Input,
+  previous?: ReturnType<typeof buildSummary>
+) {
+  const unreadTasks = taskSource?.unreadTaskKeys.size
+    ? taskSource.items.filter(
+        item => taskSource.unreadTaskKeys.has(item.key) && !standInOrigin(item)
+      )
+    : []
   const cloudUnreadCount = collaborationUnreadCount + (generalInbox?.unread_count ?? 0)
   const taskUnreadCount = unreadTasks.reduce(
     (total, item) => total + (taskSource?.unreadMessageCounts?.get(item.key) ?? 1),
     0
   )
+  if (
+    previous &&
+    previous.cloudUnreadCount === cloudUnreadCount &&
+    previous.taskUnreadCount === taskUnreadCount &&
+    previous.unreadTasks.length === unreadTasks.length &&
+    unreadTasks.every((item, index) => item === previous.unreadTasks[index])
+  ) {
+    return previous
+  }
+  return buildSummary(unreadTasks, cloudUnreadCount, taskUnreadCount)
+}
+
+function buildSummary(
+  unreadTasks: RuntimeTaskReminderItem[],
+  cloudUnreadCount: number,
+  taskUnreadCount: number
+) {
   return {
     unreadTasks,
     sortedTasks: [...unreadTasks].sort((a, b) => taskTimestamp(b) - taskTimestamp(a)),
@@ -46,18 +67,17 @@ export function createNotificationCenterSummary() {
     getSnapshot: () => snapshot,
     subscribe(listener: () => void, input: Input) {
       const revision = ++observation
-      const previousCount = snapshot.unreadCount
-      snapshot = summarize(input)
-      const wasObserved = listeners.size > 0
+      const previous = snapshot
+      snapshot = summarize(input, previous)
       listeners.add(listener)
       if (
         getDesktopWindowLabel() === 'main' &&
-        (!wasObserved || previousCount !== snapshot.unreadCount)
+        (badgeOwner !== owner || previous.unreadCount !== snapshot.unreadCount)
       ) {
         badgeOwner = owner
         syncNotificationUnreadCount(snapshot.unreadCount)
       }
-      for (const observer of listeners) observer()
+      if (snapshot !== previous) for (const observer of listeners) observer()
       return () => {
         listeners.delete(listener)
         queueMicrotask(() => {

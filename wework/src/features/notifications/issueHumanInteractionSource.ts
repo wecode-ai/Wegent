@@ -8,6 +8,7 @@ type Store = 'local' | 'backend'
 interface Snapshot {
   items: RuntimeInteraction[]
   resolved: RuntimeInteraction[]
+  transferred: RuntimeInteraction[]
   error?: string
 }
 const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
@@ -23,6 +24,7 @@ export function createIssueHumanInteractionSource(
       .filter(item => item.sharedRequest && item.project?.store === store)
       .map(item => ({ ...item, cached: true })),
     resolved: [],
+    transferred: [],
   }
   let epoch = 0
   let sequence = 0
@@ -32,7 +34,8 @@ export function createIssueHumanInteractionSource(
     if (
       next.error === snapshot.error &&
       dequal(next.items, snapshot.items) &&
-      next.resolved === snapshot.resolved
+      next.resolved === snapshot.resolved &&
+      dequal(next.transferred, snapshot.transferred)
     )
       return
     snapshot = next
@@ -53,6 +56,7 @@ export function createIssueHumanInteractionSource(
         item => item.sharedRequest && !ids.has(item.sharedRequest.id)
       )
       const incoming = response.items.map(request => issueHumanInteraction(request, store))
+      const transferred = snapshot.transferred.filter(item => !ids.has(item.sharedRequest!.id))
       if (removed.length)
         publish({ items: [...incoming, ...removed.map(item => ({ ...item, cached: true }))] })
       const retained: RuntimeInteraction[] = []
@@ -73,6 +77,8 @@ export function createIssueHumanInteractionSource(
           ) {
             // Missing metadata cannot settle a question; a confirmed handoff retires this inbox lease.
             retained.push({ ...previous, cached: true })
+          } else {
+            transferred.push(previous)
           }
         } catch (cause) {
           if (!current()) return
@@ -83,6 +89,7 @@ export function createIssueHumanInteractionSource(
       if (!current()) return
       publish({
         items: [...incoming, ...retained],
+        transferred: transferred.slice(-100),
         error: failures.length ? failures.join('\n') : undefined,
       })
     } catch (cause) {
