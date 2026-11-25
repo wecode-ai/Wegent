@@ -1754,11 +1754,7 @@ class SandboxManager(metaclass=SingletonMeta):
             # The session hash may have expired before GC reached this entry
             # (Redis restart or a failed TTL extension). Delete by task-id
             # label so the Pod does not become an orphan.
-            if await self._delete_orphaned_executor(task_id_str):
-                self._repository.remove_from_active_set(task_id_str)
-                logger.debug(
-                    f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
-                )
+            await self._cleanup_orphaned_executor(task_id_str)
             return
 
         logger.info(
@@ -1778,6 +1774,26 @@ class SandboxManager(metaclass=SingletonMeta):
             sandbox,
             idle_before=time.time() - self._config.timeout.redis_ttl,
         )
+
+    async def _cleanup_orphaned_executor(self, task_id: str) -> None:
+        """Remove an orphan and its active index under the task lifecycle lease."""
+        lease = await self._try_acquire_task_lifecycle_lease(task_id)
+        if lease is None:
+            return
+        try:
+            if self._repository.load_sandbox(task_id) is not None:
+                return
+            cleanup = asyncio.create_task(self._delete_orphaned_executor(task_id))
+            try:
+                removed = await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                # The deletion thread must finish before releasing the lease.
+                await cleanup
+                raise
+            if removed and not lease.lost.is_set():
+                self._repository.remove_from_active_set(task_id)
+        finally:
+            await self._release_task_lifecycle_lease(lease)
 
     async def _delete_orphaned_executor(self, task_id: str) -> bool:
         """Delete a Pod whose sandbox record is gone but is still tracked.

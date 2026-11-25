@@ -2205,6 +2205,34 @@ class TestSandboxManager:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("new_session", [True, False])
+    async def test_collect_expired_sandboxes_skips_orphan_during_activation(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+        new_session,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
+        if new_session:
+            mock_redis_client.hget.side_effect = [None, sample_sandbox_redis_data]
+        else:
+            mock_redis_client.hget.return_value = None
+            mocker.patch.object(
+                manager, "_try_acquire_task_lifecycle_lease", return_value=None
+            )
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
+        ).return_value
+
+        await manager._collect_expired_sandboxes()
+
+        executor.delete_executor_by_task_id.assert_not_called()
+        mock_redis_client.zrem.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_keeps_orphan_when_delete_fails(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
