@@ -459,7 +459,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
             result = executor.delete_executor(request.executor_name)
 
         # Clean up running task state and the warm-pool binding if we got task_id.
-        if task_id_str:
+        if task_id_str and result.get("status") in ("success", "not_found"):
             try:
                 from executor_manager.services.heartbeat_manager import (
                     HeartbeatType,
@@ -473,6 +473,10 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                 )
 
                 task_id = int(task_id_str)
+                if not get_sandbox_repository().delete_executor_binding(
+                    task_id, expected_executor_name=request.executor_name
+                ):
+                    return result
                 tracker = get_running_task_tracker()
                 heartbeat_mgr = get_heartbeat_manager()
 
@@ -482,8 +486,6 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                     f"(source: delete_executor, executor_name={request.executor_name})"
                 )
                 tracker.remove_running_task(task_id)
-                if result.get("status") in ("success", "not_found"):
-                    get_sandbox_repository().delete_executor_binding(task_id)
             except Exception as e:
                 logger.warning(f"Failed to clean up running task tracker: {e}")
 

@@ -524,12 +524,13 @@ class DockerExecutor(Executor):
         except subprocess.CalledProcessError as e:
             # For validation tasks, report image pull or container start failure
             if is_validation_task:
-                error_msg = e.stderr or f"Docker exited with status {e.returncode}"
+                stderr = (e.stderr or "").lower()
                 stage = (
                     "pulling_image"
-                    if "pull" in error_msg.lower() or "not found" in error_msg.lower()
+                    if "pull" in stderr or "not found" in stderr
                     else "starting_container"
                 )
+                error_msg = f"Docker exited with status {e.returncode}"
                 self._report_validation_stage(
                     task,
                     stage=stage,
@@ -1268,8 +1269,9 @@ class DockerExecutor(Executor):
     ) -> None:
         """Handle exceptions during execution uniformly"""
         if isinstance(exception, subprocess.CalledProcessError):
-            logger.error(f"Docker run error for task {task_id}: {exception.stderr}")
-            error_msg = f"Docker run error: {exception.stderr}"
+            # Docker can include runtime environment values in its diagnostics.
+            error_msg = f"Docker run error: exited with status {exception.returncode}"
+            logger.error("Task %s: %s", task_id, error_msg)
         else:
             logger.error(f"Error for task {task_id}: {str(exception)}")
             error_msg = f"Error: {str(exception)}"

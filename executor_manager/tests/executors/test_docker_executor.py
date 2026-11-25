@@ -415,35 +415,50 @@ class TestDockerExecutor:
         assert result["status"] == "failed"
         assert "has no ports mapped" in result["error_msg"]
 
+    @pytest.mark.parametrize("task_type", ["online", "validation"])
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch.object(docker_executor_module, "generate_executor_name")
-    def test_submit_executor_docker_error(
+    def test_submit_executor_docker_error_keeps_credentials_private(
         self,
         mock_name,
         mock_callback,
         executor,
         sample_task,
         mock_subprocess,
+        task_type,
+        mocker,
     ):
         """Test submitting executor with Docker error"""
         mock_name.return_value = "new-executor"
         mock_callback.return_value = "http://callback.url"
+        sample_task["type"] = task_type
+        credential = "test-only-callback-secret"
+        logger = mocker.patch.object(docker_executor_module, "logger")
+        validation = mocker.patch.object(executor, "_report_validation_stage")
+        mocker.patch.object(executor, "_should_enable_seccomp", return_value=True)
 
         with patch.object(
             docker_executor_module,
             "prepare_callback_token",
-            return_value="callback-token",
+            return_value=credential,
         ):
             # Reset mock and simulate error
             mock_subprocess.run.reset_mock()
             mock_subprocess.run.side_effect = subprocess.CalledProcessError(
-                1, "docker run", stderr="Docker error"
+                1,
+                ["docker", "run", "-e", f"EXECUTOR_CALLBACK_TOKEN={credential}"],
+                stderr=f"Docker failed to pull image: {credential}",
             )
 
             result = executor.submit_executor(sample_task)
 
         assert result["status"] == "failed"
-        assert "Docker run error" in result["error_msg"]
+        assert result["error_msg"] == "Docker run error: exited with status 1"
+        assert credential not in str(logger.mock_calls)
+        if task_type == "validation":
+            assert validation.call_args.kwargs["stage"] == "pulling_image"
+            assert credential not in validation.call_args.kwargs["message"]
+            assert credential not in validation.call_args.kwargs["error_message"]
 
     @patch.object(docker_executor_module, "get_running_task_details")
     def test_cancel_task_uses_running_container_when_task_ids_is_empty(

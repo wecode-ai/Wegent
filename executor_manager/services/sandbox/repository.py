@@ -795,7 +795,9 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.warning(f"[SandboxRepository] Failed to load executor binding: {e}")
             return None
 
-    def delete_executor_binding(self, task_id: int) -> bool:
+    def delete_executor_binding(
+        self, task_id: int, *, expected_executor_name: str = ""
+    ) -> bool:
         """Delete a task-to-executor binding after runtime cleanup."""
         if self.redis_client is None:
             return False
@@ -804,11 +806,25 @@ class SandboxRepository(metaclass=SingletonMeta):
             binding_key = f"task_executor:{task_id}"
             # An inventory pass may have inspected the container before deletion.
             # Retain no credential and prevent that pass from restoring the lease.
-            self.redis_client.setex(
+            revoked = self.redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if current and ARGV[2] ~= '' then
+                    local binding = cjson.decode(current)
+                    if not binding.revoked and binding.executor_name ~= ARGV[2] then
+                        return 0
+                    end
+                end
+                redis.call('SETEX', KEYS[1], ARGV[1], '{"revoked":true}')
+                return 1
+                """,
+                1,
                 binding_key,
                 max(300, self._config.executor.executor_binding_ttl),
-                '{"revoked":true}',
+                expected_executor_name,
             )
+            if not revoked:
+                return False
             logger.info(
                 "[SandboxRepository] Revoked executor binding: task_id=%s",
                 task_id,
