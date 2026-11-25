@@ -163,11 +163,10 @@ impl RuntimeWorkRpcHandler {
         self.role_completion(&link, user).await
     }
 
-    pub(super) fn role_completion_status<'a>(
+    pub(super) fn role_execution_status<'a>(
         &self,
         link: &'a RuntimeTaskLink,
         allow_legacy_completion: bool,
-        has_unprocessed_children: impl FnOnce() -> bool,
     ) -> &'a str {
         if link.interaction_status.is_some() {
             return "waiting_for_user";
@@ -202,9 +201,6 @@ impl RuntimeWorkRpcHandler {
         if !matches!(status, "done" | "failed" | "cancelled") {
             return "running";
         }
-        if has_unprocessed_children() {
-            return "waiting_for_children";
-        }
         status
     }
 
@@ -214,16 +210,12 @@ impl RuntimeWorkRpcHandler {
         user: i64,
     ) -> Result<Value, AppIpcError> {
         let id = &link.local_task_id;
-        let status = self.role_completion_status(link, false, || {
-            self.role_task_has_unprocessed_children(link, user)
-        });
+        let status = self.role_execution_status(link, false);
         if !matches!(status, "done" | "failed" | "cancelled") {
-            let status = if status == "waiting_for_children" {
-                "running"
-            } else {
-                status
-            };
             return Ok(json!({"taskId":id,"status":status}));
+        }
+        if self.role_task_has_unprocessed_children(link, user) {
+            return Ok(json!({"taskId":id,"status":"running"}));
         }
         let recorded = &link.runtime_handle["standInResult"];
         let mut conclusion = String::new();

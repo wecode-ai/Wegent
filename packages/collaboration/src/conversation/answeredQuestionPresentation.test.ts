@@ -80,9 +80,12 @@ test('preserves the async answer pairing while hiding the redundant summary afte
     status: 'done',
     turnId: 'next',
   }
-  const beforeResult = [assistant('question', '', [asyncQuestion]), response]
+  const commentary = assistant('commentary', 'I will wait for your answer')
+  const beforeResult = [assistant('question', '', [asyncQuestion]), commentary, response]
   const resolved = resolveAsyncRequestUserInputAnswers(beforeResult)
+  expect(resolved[0].blocks?.[0]).toMatchObject({ status: 'done' })
   expect(hideAnsweredQuestionSummaries(resolved)[0]).toBe(resolved[0])
+  expect(hideAnsweredQuestionSummaries([resolved[0], commentary])[0]).toBe(resolved[0])
   const unrelated = resolveAsyncRequestUserInputAnswers([
     ...beforeResult,
     assistant('other', 'Unrelated result', [], 'other'),
@@ -91,7 +94,7 @@ test('preserves the async answer pairing while hiding the redundant summary afte
   const source = [...beforeResult, assistant('result', 'Finished', [], 'next')]
   const visible = hideAnsweredQuestionSummaries(resolveAsyncRequestUserInputAnswers(source))
   expect(visible[0].blocks).toEqual([])
-  expect(visible[1]).toBe(response)
+  expect(visible[2]).toBe(response)
   expect(resolveAsyncRequestUserInputReplies(source).get(response.id)).toEqual([
     { question: 'Which project?', answer: 'Local' },
   ])

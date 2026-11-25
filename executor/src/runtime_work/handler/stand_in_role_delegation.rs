@@ -617,13 +617,13 @@ impl RuntimeWorkRpcHandler {
                 "errorCode":metadata["terminalError"]});
             if status == "dispatched" {
                 if let Some(link) = self.accepted_local_role_branch(user, task_id, metadata) {
-                    let status = self.role_completion_status(&link, true, || {
-                        children.has_unprocessed_children(&link, |_| {
+                    let status = self.role_execution_status(&link, true);
+                    row["statusSource"] = json!("local_execution");
+                    if matches!(status, "done" | "cancelled")
+                        && children.has_unprocessed_children(&link, |_| {
                             store.remote_stand_in_role_requests_for_roots(user, &self.device_id, &roots)
                         })
-                    });
-                    row["statusSource"] = json!("local_execution");
-                    if status == "waiting_for_children" {
+                    {
                         row["status"] = json!("running");
                         row["waitingForChildren"] = json!(true);
                     } else {
@@ -925,8 +925,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn branch_status_uses_the_current_owned_local_result_without_needing_a_reminder() {
+    #[tokio::test]
+    async fn branch_status_uses_the_current_owned_local_result_without_needing_a_reminder() {
         struct ExecutorHomeRestore(Option<std::ffi::OsString>);
         impl Drop for ExecutorHomeRestore {
             fn drop(&mut self) {
@@ -1008,6 +1008,26 @@ mod tests {
         let waiting = row();
         assert_eq!(waiting["status"], "running");
         assert_eq!(waiting["waitingForChildren"], true);
+        handler.store.update_task("specialist", |link| {
+            link.status = "failed".into();
+            link.runtime_handle["lastErrorCode"] = json!("model_error");
+        });
+        handler.record_stand_in_completion_outbox("specialist", "failed");
+        let failed = row();
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["retryAllowed"], true);
+        assert_eq!(failed["errorCode"], "model_error");
+        let publication = handler
+            .role_completion(&handler.local_task_link("specialist").unwrap(), user)
+            .await
+            .unwrap();
+        assert_eq!(publication["status"], "running");
+        assert!(publication["resultId"].is_null());
+        handler.store.update_task("specialist", |link| {
+            link.status = "done".into();
+        });
+        handler.record_stand_in_completion_outbox("specialist", "done");
+        assert_eq!(row()["status"], "running");
         handler.store.update_task("specialist", |link| {
             link.runtime_handle["standInRoleConsumedResults"] = json!(["child-result"]);
         });

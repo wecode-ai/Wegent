@@ -70,8 +70,9 @@ export function hideAnsweredQuestionSummaries(messages: WorkbenchMessage[]): Wor
           if (imageResults.has(block.id)) resultFollows = true
           if (
             isAnsweredQuestion(block) &&
-            (resultFollows ||
-              (resultAfterNextAnswer && isAsyncRequestUserInputPayload(block.renderPayload)))
+            (isAsyncRequestUserInputPayload(block.renderPayload)
+              ? resultAfterNextAnswer
+              : resultFollows)
           ) {
             hiddenIds.add(block.id)
           }
