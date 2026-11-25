@@ -1,6 +1,7 @@
 export interface ModelToolDefinition {
   name: string
   namespace?: string
+  shellCommand?: true
 }
 
 export function codeModeToolCall(
@@ -9,8 +10,8 @@ export function codeModeToolCall(
   args: Record<string, unknown>,
   inspectToolNames: string[] = []
 ): { toolName: string; arguments: { input: string } } | null {
-  const exec = modelToolDefinitions(request).find(tool =>
-    ['exec', 'functions__exec'].includes(tool.name)
+  const exec = modelToolDefinitions(request).find(
+    tool => !tool.shellCommand && ['exec', 'functions__exec'].includes(tool.name)
   )
   if (!exec || requestedName === exec.name) return null
   const input = [
@@ -36,7 +37,10 @@ export function modelToolDefinitions(request: unknown): ModelToolDefinition[] {
   const add = (value: unknown, namespace?: string) => {
     if (!value || typeof value !== 'object') return
     const tool = value as Record<string, unknown>
-    const fn = tool.function as { name?: string } | undefined
+    const fn = tool.function as { name?: string; parameters?: unknown } | undefined
+    const schema = (fn?.parameters ?? tool.parameters ?? tool.input_schema) as
+      | { properties?: Record<string, unknown> }
+      | undefined
     const name = fn?.name ?? (typeof tool.name === 'string' ? tool.name : undefined)
     if (Array.isArray(tool.tools)) {
       tool.tools.forEach(child => add(child, name))
@@ -44,6 +48,7 @@ export function modelToolDefinitions(request: unknown): ModelToolDefinition[] {
       definitions.push({
         name,
         namespace: namespace ?? (typeof tool.namespace === 'string' ? tool.namespace : undefined),
+        ...(schema?.properties?.command && { shellCommand: true as const }),
       })
     }
   }
