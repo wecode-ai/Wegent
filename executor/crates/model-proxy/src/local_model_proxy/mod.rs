@@ -180,6 +180,12 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
     let token = registry
         .tokens_by_scope
         .get(route_scope)
+        .filter(|token| {
+            registry
+                .routes
+                .get(*token)
+                .is_none_or(|route| route.gateway_credentials.is_none())
+        })
         .cloned()
         .unwrap_or_else(|| {
             let token = generate_registration_token(&registry);
@@ -480,10 +486,24 @@ pub fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String 
 
 pub fn register_with_vision_sidecar(
     route_scope: &str,
+    upstream: LocalModelProxyUpstream,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) -> String {
+    register_codex_route(route_scope, upstream, vision_sidecar, None)
+}
+
+pub fn register_codex_route(
+    route_scope: &str,
     mut upstream: LocalModelProxyUpstream,
     mut vision_sidecar: Option<VisionSidecarUpstream>,
+    gateway_credentials: Option<GatewayCredentials>,
 ) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    let gateway_credentials =
+        gateway_credentials.filter(|credentials| credentials.matches(&upstream));
+    if gateway_credentials.is_some() {
+        upstream.api_key.clear();
+    }
     apply_wework_headers(&mut upstream.default_headers);
     if let Some(sidecar) = &mut vision_sidecar {
         apply_wework_headers(&mut sidecar.default_headers);
@@ -501,7 +521,10 @@ pub fn register_with_vision_sidecar(
             "routing_model_id",
             upstream.routing_model_id.clone().unwrap_or_default(),
         ),
-        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "auth_present",
+            (gateway_credentials.is_some() || !upstream.api_key.is_empty()).to_string(),
+        ),
         (
             "default_headers",
             upstream.default_headers.len().to_string(),
@@ -514,6 +537,16 @@ pub fn register_with_vision_sidecar(
     let token = registry
         .tokens_by_scope
         .get(route_scope)
+        .filter(|token| {
+            // A route token cannot change the credential source of a concurrent turn.
+            registry.routes.get(*token).is_none_or(|route| {
+                match (&route.gateway_credentials, &gateway_credentials) {
+                    (Some(previous), Some(current)) => previous.same_connection(current),
+                    (None, None) => true,
+                    _ => false,
+                }
+            })
+        })
         .cloned()
         .unwrap_or_else(|| {
             let token = generate_registration_token(&registry);
@@ -553,7 +586,7 @@ pub fn register_with_vision_sidecar(
         token.clone(),
         RegisteredUpstream {
             upstream,
-            gateway_credentials: None,
+            gateway_credentials,
             vision_sidecar,
             text_only: false,
             history,
@@ -580,21 +613,6 @@ pub fn register_with_vision_sidecar(
         ],
     );
     token
-}
-
-pub fn bind_gateway_credentials(token: &str, credentials: GatewayCredentials) -> bool {
-    let mut registry = registry()
-        .lock()
-        .expect("local model proxy registry should not be poisoned");
-    let Some(route) = registry.routes.get_mut(token) else {
-        return false;
-    };
-    if !credentials.matches(&route.upstream) {
-        return false;
-    }
-    route.upstream.api_key.clear();
-    route.gateway_credentials = Some(credentials);
-    true
 }
 
 pub fn mark_model_switch(token: &str) {

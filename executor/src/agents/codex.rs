@@ -2467,8 +2467,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         defer_interactive_forms: _,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
-    launch_config.bind_gateway_credentials(gateway_credentials);
+    let launch_config =
+        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -2987,8 +2987,8 @@ async fn run_codex_app_server_turn_with_runtime(
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
-    launch_config.bind_gateway_credentials(gateway_credentials);
+    let launch_config =
+        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -4825,7 +4825,7 @@ struct CodexLocalImage {
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
-    build_codex_launch_config_with_route_scope(request, &request.task_id)
+    build_codex_launch_config_with_route_scope(request, &request.task_id, None)
 }
 
 fn build_codex_launch_config_for_fork(
@@ -4834,7 +4834,7 @@ fn build_codex_launch_config_for_fork(
 ) -> Result<CodexLaunchConfig, String> {
     // A fork owns its route even when the source is running or was opened after a restart.
     let route_scope = format!("fork:{source_thread_id}:{}", uuid::Uuid::new_v4());
-    build_codex_launch_config_with_route_scope(request, &route_scope)
+    build_codex_launch_config_with_route_scope(request, &route_scope, None)
 }
 
 async fn prepare_codex_fork_launch_config(
@@ -4848,6 +4848,7 @@ async fn prepare_codex_fork_launch_config(
 fn build_codex_launch_config_with_route_scope(
     request: &ExecutionRequest,
     route_scope: &str,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
@@ -4921,7 +4922,12 @@ fn build_codex_launch_config_with_route_scope(
             .push(format!("model={model}"));
     }
 
-    provider_routing::configure_request_provider(&mut launch_config, request, route_scope)?;
+    provider_routing::configure_request_provider(
+        &mut launch_config,
+        request,
+        route_scope,
+        gateway_credentials,
+    )?;
 
     mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
@@ -4950,10 +4956,17 @@ fn build_codex_launch_config_with_route_scope(
 
 fn build_codex_launch_config_for_prepared_request(
     prepared: &PreparedCodexExecutionRequest,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<CodexLaunchConfig, String> {
     let config =
         crate::artifact_workspace::bind(&prepared.request, prepared.request.cwd().map(Path::new))
-            .and_then(|()| build_codex_launch_config(&prepared.request));
+            .and_then(|()| {
+                build_codex_launch_config_with_route_scope(
+                    &prepared.request,
+                    &prepared.request.task_id,
+                    gateway_credentials,
+                )
+            });
     cleanup_generated_files_on_error(&prepared.generated_files, config)
 }
 
@@ -4970,13 +4983,12 @@ fn cleanup_generated_files_on_error<T>(
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
     task_id: &str,
-    mut upstream: LocalModelProxyUpstream,
-    routing_model_id: Option<String>,
+    upstream: LocalModelProxyUpstream,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
     official_websocket: bool,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) {
-    upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
     log_executor_event(
         "codex local model router configuring",
@@ -4994,8 +5006,12 @@ fn configure_codex_router(
             ("auth_present", (!upstream.api_key.is_empty()).to_string()),
         ],
     );
-    let local_token =
-        local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
+    let local_token = local_model_proxy::register_codex_route(
+        task_id,
+        upstream,
+        vision_sidecar,
+        gateway_credentials,
+    );
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
@@ -5005,16 +5021,6 @@ fn configure_codex_router(
         official_chatgpt,
         official_websocket,
     );
-}
-
-impl CodexLaunchConfig {
-    fn bind_gateway_credentials(&self, credentials: Option<local_model_proxy::GatewayCredentials>) {
-        if let (Some(registration), Some(credentials)) =
-            (self.local_proxy_registration.as_deref(), credentials)
-        {
-            local_model_proxy::bind_gateway_credentials(&registration.0, credentials);
-        }
-    }
 }
 
 fn configure_codex_router_registration(

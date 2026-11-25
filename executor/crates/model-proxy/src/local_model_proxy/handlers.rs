@@ -461,6 +461,7 @@ pub(super) async fn handle_for_token(
     log_executor_event("local model proxy request started", &request_log_fields);
 
     let client = if gateway_credentials.is_some() {
+        // The device credential is scoped to the backend, outside model proxy configuration.
         proxy_client_without_redirects(None)?
     } else {
         proxy_client(upstream.proxy_url.as_deref())?
