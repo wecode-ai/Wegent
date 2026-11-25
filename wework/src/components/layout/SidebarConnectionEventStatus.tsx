@@ -3,7 +3,6 @@ import { CircleAlert, CircleArrowDown, Radio } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ConnectionEventSubscription } from '@/lib/runtime-connection-events'
-import styles from './SidebarConnectionEventStatus.module.css'
 
 export function SidebarConnectionEventStatus({
   subscription,
@@ -33,7 +32,7 @@ export function SidebarConnectionEventStatus({
         data-state={state}
         role="status"
         aria-label={label}
-        className={`inline-flex h-6 w-6 items-center justify-center text-text-secondary ${styles.status}`}
+        className="sidebar-connection-event-status inline-flex h-6 w-6 items-center justify-center text-text-secondary"
       >
         <Icon className="h-4 w-4" aria-hidden="true" />
       </span>

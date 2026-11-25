@@ -242,6 +242,83 @@ describe('QuickAccessCards', () => {
     expect(screen.queryByText('Should not appear')).not.toBeInTheDocument()
   })
 
+  test.each([false, true])('places a linked agent first (configured: %s)', async configured => {
+    const team = makeTeam({ id: 65, name: 'linked-agent', displayName: 'Linked agent' })
+    const general = {
+      type: 'system_function' as const,
+      id: 'general',
+      title: 'General recommendation',
+      team_id: 2,
+      name: 'general-agent',
+      enabled: true,
+      order: 0,
+      input_presets: [],
+    }
+    const existing = { ...general, id: 'linked', title: 'Configured agent', team_id: team.id }
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: configured ? [general, existing] : [general],
+      favorite_agents: [],
+    })
+    render(
+      <QuickAccessCards
+        teams={[team]}
+        selectedTeam={team}
+        onTeamSelect={jest.fn()}
+        currentMode="chat"
+        recommendedTeam={team}
+      />
+    )
+
+    await screen.findByText(general.title)
+    const cards = screen.getAllByTestId(/^quick-launcher-system_function-/)
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toHaveTextContent(configured ? existing.title : 'Linked agent')
+    expect(cards[1]).toHaveTextContent(general.title)
+  })
+
+  test.each([false, true])(
+    'keeps open presets only for the newly recommended agent (same agent: %s)',
+    async sameAgent => {
+      const presetTeam = makeTeam({ id: 2, name: 'Presentation agent' })
+      const linkedTeam = sameAgent ? presetTeam : makeTeam({ id: 65, name: 'Linked agent' })
+      mockGetQuickLaunch.mockResolvedValueOnce({
+        system_functions: [
+          {
+            type: 'system_function',
+            id: 'create_ppt',
+            title: 'Create PPT',
+            team_id: presetTeam.id,
+            name: presetTeam.name,
+            enabled: true,
+            order: 0,
+            input_presets: [makeInputPreset('Create a presentation')],
+          },
+        ],
+        favorite_agents: [],
+      })
+      const props = {
+        teams: [presetTeam, linkedTeam],
+        onTeamSelect: jest.fn(),
+        currentMode: 'chat' as const,
+      }
+      const { rerender } = render(<QuickAccessCards {...props} selectedTeam={presetTeam} />)
+      fireEvent.click(await screen.findByText('Create PPT'))
+      expect(screen.getByTestId('quick-phrase-list')).toBeInTheDocument()
+
+      rerender(
+        <QuickAccessCards {...props} selectedTeam={linkedTeam} recommendedTeam={linkedTeam} />
+      )
+
+      if (sameAgent) {
+        expect(screen.getByTestId('quick-phrase-list')).toBeInTheDocument()
+      } else {
+        expect(screen.queryByTestId('quick-phrase-list')).not.toBeInTheDocument()
+        const cards = screen.getAllByTestId(/^quick-launcher-system_function-/)
+        expect(cards[0]).toHaveTextContent('Linked agent')
+      }
+    }
+  )
+
   test('renders system functions and favorite agents in separate rows', async () => {
     mockGetQuickLaunch.mockResolvedValueOnce({
       system_functions: [
@@ -499,6 +576,50 @@ describe('QuickAccessCards', () => {
       'bg-primary/5'
     )
   })
+
+  test.each([false, true])(
+    'carries the linked recommendation across modes (configured: %s)',
+    async configured => {
+      const linked = makeTeam({ id: 65, name: 'Linked code agent', bind_mode: ['code'] })
+      if (configured) {
+        mockGetQuickLaunch.mockResolvedValueOnce({
+          system_functions: [
+            {
+              type: 'system_function',
+              id: 'code_review',
+              title: 'Configured code agent',
+              team_id: linked.id,
+              name: linked.name,
+              bind_mode: ['code'],
+              enabled: true,
+              order: 0,
+              input_presets: [makeInputPreset('Review changes')],
+            },
+          ],
+          favorite_agents: [],
+        })
+      }
+      render(
+        <QuickAccessCards
+          teams={[linked]}
+          selectedTeam={null}
+          onTeamSelect={jest.fn()}
+          currentMode="chat"
+          recommendedTeam={linked}
+        />
+      )
+
+      fireEvent.click(await screen.findByText(configured ? 'Configured code agent' : linked.name))
+      const destination = new URL(routerPush.mock.calls[0][0], window.location.origin)
+      expect(destination.pathname).toBe('/chat')
+      expect(Object.fromEntries(destination.searchParams)).toEqual({
+        teamId: '65',
+        agent: 'code',
+        recommend: '1',
+        ...(configured ? { quickLauncher: 'system:code_review', showPresets: '1' } : {}),
+      })
+    }
+  )
 
   test('routes code-only system functions to code mode with the target team selected', async () => {
     const onTeamSelect = jest.fn()
