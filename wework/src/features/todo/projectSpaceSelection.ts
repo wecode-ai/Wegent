@@ -57,6 +57,7 @@ export interface ProjectSpaceTaskChange {
 
 export interface ProjectSpaceTaskBindingChange extends ProjectSpaceTaskChange {
   type: 'bound' | 'unbound'
+  itemId?: string | null
 }
 
 const projectSpaceByRuntimeTask = new Map<string, RuntimeProjectSpaceRef>()

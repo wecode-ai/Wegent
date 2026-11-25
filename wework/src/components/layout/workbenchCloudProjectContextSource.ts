@@ -1,6 +1,10 @@
 import { runtimeTasksShareOwner } from '@/lib/workbench-device'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  type CloudLoopItem,
+  type CloudProject,
+} from '@/api/deliveries'
 import type { RuntimeTaskAddress, RuntimeProjectSpaceRef } from '@/types/api'
 import type { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -175,7 +179,11 @@ export function createWorkbenchCloudProjectContextSource(
     project.project_store === 'local' || project.task_provider === 'dingtalk_aitable'
       ? (input.services?.projectSpaceApis?.local ?? input.services?.deliveryApi)
       : (input.services?.projectSpaceApis?.cloud ?? input.services?.deliveryApi)
-  const record = (address: RuntimeTaskAddress, project: CloudProject) => {
+  const record = (
+    address: RuntimeTaskAddress,
+    project: CloudProject,
+    item: CloudLoopItem | null
+  ) => {
     const reference = projectSpaceRef(project)
     const identity = runtimeContextAddress(address)
     if (!rememberProjectSpaceTaskBinding(identity, reference)) return
@@ -183,6 +191,7 @@ export function createWorkbenchCloudProjectContextSource(
       task: identity,
       project: reference,
       type: 'bound',
+      itemId: item?.id ?? null,
     }
     publication = change
     try {
@@ -211,7 +220,7 @@ export function createWorkbenchCloudProjectContextSource(
     item: CloudLoopItem | null,
     execution?: RuntimeTaskAddress | null
   ) => {
-    record(address, project)
+    record(address, project, item)
     publish({
       boundCloudProject: project,
       boundCloudItem: item,
@@ -287,10 +296,6 @@ export function createWorkbenchCloudProjectContextSource(
         isIncompleteProjectSpaceTaskContextLookup(error)
       )
         publish({
-          boundCloudProject: null,
-          boundCloudItem: null,
-          boundRuntimeTaskAddress: null,
-          deliveryItem: null,
           contextAvailabilityError: input.t('workbench.cloud_project_context_load_failed'),
         })
       logRuntimeTaskCreateStage(
@@ -806,7 +811,19 @@ export function createWorkbenchCloudProjectContextSource(
             )
               return
 
-            if (change.type === 'unbound' && !projectSpaceForRuntimeTask(change.task))
+            const confirmed = snapshot.boundCloudProject
+            const matchesConfirmed =
+              confirmed && sameProjectSpace(projectSpaceRef(confirmed), change.project)
+            const itemChanged =
+              change.itemId !== undefined && change.itemId !== (snapshot.boundCloudItem?.id ?? null)
+            if (
+              (change.type === 'unbound' && matchesConfirmed && !itemChanged) ||
+              (change.type === 'bound' &&
+                confirmed &&
+                (matchesConfirmed
+                  ? itemChanged
+                  : change.project.projectId !== DEFAULT_WORK_ITEM_PROJECT_ID))
+            )
               publish({
                 boundCloudProject: null,
                 boundCloudItem: null,
