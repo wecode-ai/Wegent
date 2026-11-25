@@ -223,8 +223,17 @@ export function createDesktopScenario(options) {
         const saved = await rpc('runtime.automations.get', { automationId: PERSONAL_AUTOMATION })
         assert.equal(saved.automation.taskRequest.runtimeProjectKey, WORKSPACE_PROJECT)
 
-        const actions = `[data-testid="automation-detail-actions-${PERSONAL_AUTOMATION}"]`
+        const actionsId = `automation-detail-actions-${PERSONAL_AUTOMATION}`
+        const actions = `[data-testid="${actionsId}"]`
+        const menu = `[data-testid="${actionsId}-menu"]`
         await control.command('clickWhenEnabled', actions)
+        await control.command('waitFor', menu, { visible: true, timeoutMs: 5000 })
+        const [triggerBounds] = JSON.parse(await control.command('getElementMetrics', actions))
+        const [menuBounds] = JSON.parse(await control.command('getElementMetrics', menu))
+        assert.ok(
+          triggerBounds && menuBounds && menuBounds.top > triggerBounds.bottom,
+          'The scheduled actions menu must open below its trigger'
+        )
         await control.command('clickWhenEnabled', '[data-testid="automation-run-now-button"]')
         await control.command('waitFor', '[data-testid="automation-run-history"]', {
           text: '已完成',
