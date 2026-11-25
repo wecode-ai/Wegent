@@ -192,7 +192,7 @@ function ProjectCoordinatorPublicationContent({
               onChange={event => setContent(event.target.value)}
               rows={7}
               data-testid="project-coordinator-publication-content"
-              className="w-full resize-y rounded-md border border-border bg-background p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full resize-y rounded-md border border-border bg-background p-3"
             />
           </label>
           {visibleError && (

@@ -1294,6 +1294,7 @@ class DesktopE2EServer {
 
   async commandForClient(clientId, action, selector, options = {}) {
     const {
+      onStarted,
       expectClientReplacement = false,
       exitProcessId,
       preserveResultAcrossClientReplacement = false,
@@ -1371,6 +1372,7 @@ class DesktopE2EServer {
         DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
         `Timed out delivering UI action ${action} for ${selector}`
       )
+      onStarted?.()
       const completion = await withTimeout(
         this.guard(
           exitProcessId === undefined

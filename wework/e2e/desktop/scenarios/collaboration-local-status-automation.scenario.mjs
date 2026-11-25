@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createAgentDispatch } from './collaboration-local-agent-dispatch.scenario.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -203,6 +204,10 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
 
       await openRules()
       await control.command('clickWhenEnabled', scoped('automatic-processing-create'))
+      await verifyProjectFieldFocus(control, 'automatic-processing-trigger-created', {
+        includeParent: true,
+        scope: CONTENT,
+      })
       await control.command(
         'click',
         `${CONTENT} label:has(> [data-testid="automatic-processing-trigger-status_changed"])`
@@ -240,6 +245,10 @@ function createStatusAutomation({ uiTimeoutMs, workbenchReadyTimeoutMs, modelRes
       await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${issueId}`))
       await wait('collaboration-issue-detail', { text: MARKER })
+      await verifyProjectFieldFocus(control, 'cloud-todo-detail-tag-input', {
+        includeParent: true,
+        scope: CONTENT,
+      })
       await control.command('select', scoped('cloud-todo-detail-status'), { value: 'acceptance' })
       const initial = await finishedRuns(1, 'acceptance')
       assert.equal((await issue()).assignee_agent_id, agent.id)

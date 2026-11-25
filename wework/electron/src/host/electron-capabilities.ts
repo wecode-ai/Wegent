@@ -618,14 +618,25 @@ export function createElectronCapabilityRouter(
     return browser.capture(label)
   })
   router.register('browser.pauseDownload', params =>
-    browser.pauseDownload(stringParam(params, 'id'))
+    browser.downloads.pause(stringParam(params, 'id'))
   )
   router.register('browser.resumeDownload', params =>
-    browser.resumeDownload(stringParam(params, 'id'))
+    browser.downloads.resume(stringParam(params, 'id'))
   )
   router.register('browser.deleteDownload', params =>
-    browser.deleteDownload(stringParam(params, 'id'))
+    browser.downloads.delete(stringParam(params, 'id'))
   )
+  router.register('browser.listDownloads', () => browser.downloads.list())
+  router.register('browser.removeDownloadRecord', params =>
+    browser.downloads.removeRecord(stringParam(params, 'id'))
+  )
+  router.register('browser.openDownload', params =>
+    browser.downloads.openFile(stringParam(params, 'id'), false)
+  )
+  router.register('browser.revealDownload', params =>
+    browser.downloads.openFile(stringParam(params, 'id'), true)
+  )
+  router.register('browser.openDownloadsFolder', () => browser.openDownloadsFolder())
   router.register('browser.setRequestHeaderRule', params =>
     browser.setRequestHeaderRule({
       id: stringParam(params, 'id'),
@@ -1943,6 +1954,7 @@ export function registerBrowserHistoryCapabilities(
       endTimeMs: nullableIntegerParam(params, 'endTimeMs') ?? null,
       offset: integerParam(params, 'offset') ?? 0,
       maxResults: integerParam(params, 'maxResults') ?? 100,
+      ...(params.distinctUrls === true && { distinctUrls: true }),
     })
   )
   router.register('browser.historyRemove', params =>
