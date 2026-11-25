@@ -1,6 +1,13 @@
 import type { RuntimeTaskAddress } from '@/types/api'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 
+export function isStandInIdentityTask(task: Pick<RuntimeTaskAddress, 'runtimeHandle'>): boolean {
+  const origin = task.runtimeHandle?.origin
+  return Boolean(
+    origin && typeof origin === 'object' && 'type' in origin && origin.type === 'stand_in_identity'
+  )
+}
+
 export function isStandInMemoryReviewTask(
   task: Pick<RuntimeTaskAddress, 'runtimeHandle'>
 ): boolean {

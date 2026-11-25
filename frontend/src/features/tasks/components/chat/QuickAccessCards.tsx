@@ -46,6 +46,7 @@ interface QuickAccessCardsProps {
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean
   defaultTeam?: Team | null
+  recommendedTeam?: Team | null
   launchIntent?: QuickLaunchIntent | null
   onLaunchIntentConsumed?: () => void
 }
@@ -64,6 +65,7 @@ export function QuickAccessCards({
   onRefreshTeams,
   showWizardButton: _showWizardButton = false,
   defaultTeam,
+  recommendedTeam,
   launchIntent,
   onLaunchIntentConsumed,
 }: QuickAccessCardsProps) {
@@ -638,6 +640,7 @@ export function QuickAccessCards({
         }
         currentMode={currentMode}
         defaultTeam={defaultTeam}
+        recommendedTeam={recommendedTeam}
         launchIntent={launchIntent}
         onLaunchIntentConsumed={onLaunchIntentConsumed}
         renderMoreButton={renderMoreButton}

@@ -89,7 +89,13 @@ export function installTurnUpdateProbe() {
     const status = payload.data?.status
     if (event !== 'runtime.turn.updated' || !payload.data?.task) return
     if (status !== 'started' && status !== 'settled') return
-    updates.push({ taskId: payload.taskId, status, observedAt: performance.now() })
+    const update = { taskId: payload.taskId, status, observedAt: performance.now() }
+    updates.push(update)
+    // The observer runs before the application handlers. Record the first
+    // microtask checkpoint after this event, within the same browser task.
+    queueMicrotask(() => {
+      update.afterDeliveryAt = performance.now()
+    })
     performance.mark?.(`wework-profile:turn-${status}`)
     if (status === 'settled') {
       settled.add(payload.taskId)
@@ -126,7 +132,7 @@ export function installTurnUpdateProbe() {
       let index = 0
       return updates
         .filter(update => update.taskId === taskId)
-        .map(({ status, observedAt }) => {
+        .map(({ status, observedAt, afterDeliveryAt }) => {
           while (
             longTasks[index] &&
             longTasks[index].startTime + longTasks[index].duration <= observedAt
@@ -134,19 +140,21 @@ export function installTurnUpdateProbe() {
             index++
           }
           const task = longTasks[index]
-          const containsUpdate = task && task.startTime <= observedAt
+          const longTask = task && task.startTime <= observedAt ? task : null
           const frame = longFrames.find(
             entry => entry.startTime <= observedAt && observedAt < entry.startTime + entry.duration
           )
           return {
             status,
             observedAt,
-            longTaskMs: containsUpdate ? task.duration : 0,
-            ...(containsUpdate && {
+            longTaskMs: longTask?.duration ?? 0,
+            ...(longTask && {
+              longTaskStartAt: longTask.startTime,
+              afterDeliveryAt,
               executorSubscribers: subscriberTimings.filter(
                 timing =>
-                  timing.startedAt >= task.startTime &&
-                  timing.startedAt < task.startTime + task.duration
+                  timing.startedAt >= longTask.startTime &&
+                  timing.startedAt < longTask.startTime + longTask.duration
               ),
             }),
             ...(frame && {

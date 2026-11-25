@@ -18,6 +18,7 @@ test('uses full ten-second windows to measure the concurrent CPU peak', () => {
 test('attributes a main-thread long task to the matching native turn update', async () => {
   const window = {}
   let now
+  const microtasks = []
   const records = [
     { startTime: 20, duration: 180 },
     { startTime: 400, duration: 100 },
@@ -33,6 +34,7 @@ test('attributes a main-thread long task to the matching native turn update', as
     window,
     PerformanceObserver,
     performance: { now: () => now },
+    queueMicrotask: callback => microtasks.push(callback),
     setTimeout,
     clearTimeout,
   })
@@ -56,6 +58,8 @@ test('attributes a main-thread long task to the matching native turn update', as
   }
 
   emit('measured', 'started', 25)
+  now = 55
+  microtasks.shift()()
   emit('other', 'settled', 410)
   expect(probe.waitForSettled('other', 1000)).toBe(true)
   const settled = probe.waitForSettled('measured', 1000)
@@ -67,6 +71,8 @@ test('attributes a main-thread long task to the matching native turn update', as
       status: 'started',
       observedAt: 25,
       longTaskMs: 180,
+      longTaskStartAt: 20,
+      afterDeliveryAt: 55,
       executorSubscribers: [subscriber],
     },
     { status: 'settled', observedAt: 500, longTaskMs: 0 },
