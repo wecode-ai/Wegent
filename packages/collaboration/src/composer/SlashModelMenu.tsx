@@ -112,10 +112,7 @@ export function SlashModelMenu({
   }
 
   return (
-    <div
-      data-testid="slash-model-menu"
-      className={['flex min-h-0 max-h-80 flex-col', className].join(' ')}
-    >
+    <div data-testid="slash-model-menu" className={className}>
       <Combobox<string>
         open
         value={selectedModel ? modelKey(selectedModel) : null}
@@ -139,7 +136,7 @@ export function SlashModelMenu({
           if (!next) onClose()
         }}
       >
-        <label className="flex h-9 max-md:min-h-11 shrink-0 items-center gap-2 rounded-xl px-2 text-text-secondary">
+        <label className="sticky top-0 z-10 flex h-9 max-md:min-h-11 items-center gap-2 rounded-xl bg-popover px-2 text-text-secondary">
           <Search className="h-4 w-4 shrink-0" />
           <ComboboxInput
             autoFocus
@@ -154,7 +151,7 @@ export function SlashModelMenu({
           <ComboboxList
             aria-label={searchPlaceholder}
             data-testid="slash-model-list"
-            className="min-h-0 max-h-64 overflow-y-auto overscroll-contain py-1"
+            className="py-1"
           >
             {filteredModels.map(model => {
               const selected =

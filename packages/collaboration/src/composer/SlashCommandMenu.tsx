@@ -48,7 +48,7 @@ export function SlashCommandMenu<T extends SlashCommand>({
       onPointerDownCapture={event => event.preventDefault()}
       data-testid="slash-command-menu"
       aria-label={title}
-      className={['min-h-0 max-h-64 overflow-y-auto overscroll-contain', className].join(' ')}
+      className={className}
     >
       {commands.length === 0 && !loadingSkills && !skillLoadError ? (
         <div className="px-2.5 py-2 text-sm leading-[18px] text-text-muted">{noResultsLabel}</div>

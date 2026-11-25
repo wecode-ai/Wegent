@@ -921,7 +921,12 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           label={
             modelMenuOpen ? t('workbench.search_models') : t('workbench.slash_command_menu_title')
           }
-          className={showSlashMenu && !modelMenuOpen ? slashMenuClassName : skillMenuClassName}
+          className={[
+            showSlashMenu && !modelMenuOpen ? slashMenuClassName : skillMenuClassName,
+            modelMenuOpen
+              ? 'max-h-[min(20rem,var(--available-height))] scroll-pt-9 max-md:scroll-pt-11'
+              : 'max-h-[min(17rem,var(--available-height))]',
+          ].join(' ')}
           onClose={restoreEditor => {
             if (modelMenuOpen) closeSlashModelMenu(restoreEditor)
             else closeAutocompleteMenu()
@@ -948,7 +953,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
             />
           )}
           {showSlashMenu && (
-            <div ref={menuRef} className="flex min-h-0 flex-col">
+            <div ref={menuRef}>
               <SlashCommandMenu
                 renderAppIcon={renderAppIcon}
                 commands={filteredSlashCommands}
