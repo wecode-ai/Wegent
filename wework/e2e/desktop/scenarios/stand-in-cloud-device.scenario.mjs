@@ -423,6 +423,15 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
+      await sendChat(control, testId('stand-in-conversation'), LOCAL_PROMPT)
+      await control.command('waitFor', testId('stand-in-conversation'), {
+        text: LOCAL_COMPLETE,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const localTurn = await rpc(control, 'runtime.tasks.get', {
+        taskId: `stand-in-chat-${USER}-primary`,
+      })
+      assert.ok(localTurn.task.threadId, 'The selected local Executor must own the conversation')
       assert.deepEqual(
         await binding(control),
         activeBinding,
@@ -450,6 +459,7 @@ export function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       await stop(control)
+      const stoppedAccount = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       await bind(control, 0, localDevice)
       await createRole(control, LOCAL_NAME)
       const localBefore = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
@@ -631,6 +641,11 @@ export function createDesktopScenario({
       assert.equal(await control.command('getValue', migrationRole), role.id)
       assert.deepEqual(await binding(control), stoppedBinding)
 
+      assert.deepEqual(
+        (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).roles,
+        stoppedAccount.roles,
+        'Cloud execution must preserve unrelated account-local roles'
+      )
       await bind(control, USER, localDevice)
       await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${historyRole.id}`))
       await control.command('waitFor', testId('stand-in-conversation'))
@@ -640,11 +655,6 @@ export function createDesktopScenario({
           row => row.id === memory.id
         ),
         'Stopping and rebinding must retain local memories'
-      )
-      assert.deepEqual(
-        (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).roles,
-        initial.roles,
-        'Cloud execution must preserve unrelated account-local roles'
       )
       await cloud.stopRemoteDockerExecutorAndWaitOffline()
       await observeDevice(control, REMOTE_DOCKER_DEVICE_ID, '离线')
