@@ -64,6 +64,7 @@ export function AssistantMessage({
   isHistoricalTurn = false,
   forceExpanded = false,
   devices,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -93,6 +94,7 @@ export function AssistantMessage({
   isHistoricalTurn?: boolean
   forceExpanded?: boolean
   devices: Array<{ device_id: string; status: string }>
+  onContinueInNewConversation?: () => void
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (
@@ -490,6 +492,7 @@ export function AssistantMessage({
               errorInfo={message.errorInfo}
               rawError={hiddenErrorContent}
               message={message}
+              onContinueInNewConversation={onContinueInNewConversation}
               onRetry={onRetryFailedMessage}
               onSwitchModel={onSwitchModelForFailedMessage}
             />

@@ -333,7 +333,7 @@ export interface WorkbenchContextValue {
     projectRoots?: string[],
     launchOptions?: WorkbenchWorkspaceLaunchOptions
   ) => Promise<void>
-  startNewChat: () => void
+  startNewChat: (options?: import('@/lib/workbenchComposerFocus').NewWorkbenchChatOptions) => void
   startNewSkillChat: (
     skillNames: string[],
     options?: { allowLocalSkills?: boolean }
