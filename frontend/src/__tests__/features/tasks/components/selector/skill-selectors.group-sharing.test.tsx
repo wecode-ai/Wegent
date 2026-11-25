@@ -103,3 +103,28 @@ describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry =
     expect(sharedSkill.namespace).toBe('default')
   })
 })
+
+it.each(['{Enter}', ' '])('activates the focused skill after ArrowDown with %s', async key => {
+  const user = userEvent.setup()
+  const onSelect = jest.fn()
+  const secondSkill = { ...sharedSkill, id: 9, name: 'second-skill' }
+  render(
+    <SkillAutocomplete
+      skills={[sharedSkill, secondSkill]}
+      teamSkillNames={[sharedSkill.name, secondSkill.name]}
+      preloadedSkillNames={[]}
+      query=""
+      position={{ top: 0, left: 0 }}
+      isChatShell={false}
+      onSelect={onSelect}
+      onClose={jest.fn()}
+    />
+  )
+
+  await user.tab()
+  expect(screen.getByRole('button', { name: /ps-agent-recagent/ })).toHaveFocus()
+  await user.keyboard('{ArrowDown}')
+  expect(screen.getByRole('button', { name: /second-skill/ })).toHaveFocus()
+  await user.keyboard(key)
+  expect(onSelect).toHaveBeenCalledWith(secondSkill)
+})

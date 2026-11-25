@@ -26,6 +26,8 @@ interface SkillAutocompleteProps {
   preloadedSkillNames: string[]
   /** Filter query after / */
   query: string
+  /** Editor that opened the slash menu */
+  editorRef?: React.RefObject<HTMLElement | null>
   /** Already selected skill IDs */
   selectedSkillIds?: number[]
   /** Callback when a skill is selected */
@@ -62,6 +64,7 @@ export default function SkillAutocomplete({
   teamSkillNames,
   preloadedSkillNames,
   query = '',
+  editorRef,
   selectedSkillIds = [],
   onSelect,
   onClose,
@@ -106,9 +109,12 @@ export default function SkillAutocomplete({
     })
   }, [groupedSkills, query])
 
-  // Reset selected index when filtered skills change
   useEffect(() => {
-    setSelectedIndex(0)
+    const focused = document.activeElement
+    const focusedIndex = menuRef.current?.contains(focused)
+      ? focused?.getAttribute('data-skill-index')
+      : null
+    setSelectedIndex(Number(focusedIndex ?? 0))
   }, [filteredSkills])
 
   // Close on outside click
@@ -126,13 +132,13 @@ export default function SkillAutocomplete({
   }, [onClose])
 
   const handleSelect = useCallback(
-    (skill: UnifiedSkill, event?: React.MouseEvent | React.KeyboardEvent) => {
+    (skill: UnifiedSkill, option?: HTMLElement | null) => {
       // Get start position from the clicked element or menu
       let startX = 0
       let startY = 0
 
-      if (event && 'currentTarget' in event && event.currentTarget instanceof HTMLElement) {
-        const rect = event.currentTarget.getBoundingClientRect()
+      if (option) {
+        const rect = option.getBoundingClientRect()
         startX = rect.left + rect.width / 2
         startY = rect.top + rect.height / 2
       } else if (menuRef.current) {
@@ -171,38 +177,37 @@ export default function SkillAutocomplete({
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) return
+      if (event.isComposing || event.keyCode === 229 || !(event.target instanceof Node)) return
+
+      const focusInMenu = menuRef.current?.contains(event.target)
+      if (!focusInMenu && !editorRef?.current?.contains(event.target)) return
+
+      const getOption = (index: number) =>
+        menuRef.current?.querySelector<HTMLButtonElement>(`[data-skill-index="${index}"]`)
 
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         onClose()
-      } else if (event.key === 'ArrowDown') {
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         event.stopPropagation()
-        setSelectedIndex(prev => Math.min(prev + 1, filteredSkills.length - 1))
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        event.stopPropagation()
-        setSelectedIndex(prev => Math.max(prev - 1, 0))
-      } else if (event.key === 'Enter') {
-        if (event.target instanceof Node && menuRef.current?.contains(event.target)) return
-        event.preventDefault()
-        event.stopPropagation()
-        if (filteredSkills[selectedIndex]) {
-          // For keyboard selection, get position from the selected item
-          const selectedItem = menuRef.current?.querySelector(
-            `[data-skill-index="${selectedIndex}"]`
-          ) as HTMLElement | null
-          if (selectedItem) {
-            const fakeEvent = {
-              currentTarget: selectedItem,
-            } as unknown as React.KeyboardEvent
-            handleSelect(filteredSkills[selectedIndex].skill, fakeEvent)
-          } else {
-            handleSelect(filteredSkills[selectedIndex].skill)
-          }
+        if (filteredSkills.length === 0) return
+
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        const nextIndex = Math.min(Math.max(selectedIndex + step, 0), filteredSkills.length - 1)
+        setSelectedIndex(nextIndex)
+        const option = getOption(nextIndex)
+        if (focusInMenu) {
+          option?.focus()
+        } else {
+          option?.scrollIntoView?.({ block: 'nearest' })
         }
+      } else if (event.key === 'Enter' && !focusInMenu) {
+        event.preventDefault()
+        event.stopPropagation()
+        const selected = filteredSkills[selectedIndex]
+        if (selected) handleSelect(selected.skill, getOption(selectedIndex))
       }
     }
 
@@ -210,7 +215,7 @@ export default function SkillAutocomplete({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [onClose, filteredSkills, selectedIndex, handleSelect])
+  }, [onClose, filteredSkills, selectedIndex, handleSelect, editorRef])
 
   // Get section header for a group
   const getSectionHeader = (group: 'team' | 'personal' | 'group' | 'public') => {
@@ -308,7 +313,8 @@ export default function SkillAutocomplete({
           displayIndex === selectedIndex ? 'bg-muted' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
         onMouseDown={e => e.preventDefault()}
-        onClick={e => handleSelect(skill, e)}
+        onFocus={() => setSelectedIndex(displayIndex)}
+        onClick={e => handleSelect(skill, e.currentTarget)}
       >
         <Zap className="h-4 w-4 flex-shrink-0 text-primary" />
         <span className="flex-1 min-w-0">

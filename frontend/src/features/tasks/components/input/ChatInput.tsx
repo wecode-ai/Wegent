@@ -822,6 +822,7 @@ export default function ChatInput({
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
           query={skillCommand.query}
+          editorRef={editableRef}
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
           onClose={closeSkillMenu}

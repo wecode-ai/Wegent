@@ -253,6 +253,7 @@ export function useSkillSelector({
     [availableSkills, resolveSkill]
   )
 
+  // The chat API and runtime resolve one requested skill per name.
   const addSkill = useCallback(
     (selection: UnifiedSkill) => {
       const skill = resolveSkill(selection)
