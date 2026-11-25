@@ -30,6 +30,8 @@ From **Collaboration → My work**, the right-hand **Stand-in** tab lists work b
 
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
+After sending a message, three dots appear while you wait for the assistant's first reply. As soon as reply text arrives, it appears in the usual message bubble and the composer returns to its send button. You can send a follow-up while a subagent continues working in the background.
+
 This presentation applies to primary and role conversations on the **My assistants** page and the embedded primary conversation on the collaboration home. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
 Stand-in identity conversations and collaborative Issue stand-in conversations enable native subagent v2, including resumed conversations. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents. Native permission, source-scope and approval constraints remain unchanged.

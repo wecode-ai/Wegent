@@ -54,6 +54,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   loading?: boolean
   historyError?: ReactNode
   isWaitingForAssistant?: boolean
+  waitingIndicatorStyle?: MessageListProps['waitingIndicatorStyle']
   hasMoreBefore?: boolean
   beforeCursor?: string | null
   loadingMoreBefore?: boolean

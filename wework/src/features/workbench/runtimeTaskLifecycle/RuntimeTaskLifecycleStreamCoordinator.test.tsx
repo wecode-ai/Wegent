@@ -7,6 +7,7 @@ import {
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
 } from '../runtimeConversationCache'
+import { pendingTerminalTranscriptTurn } from '../runtimeConversationCacheStore'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { renderRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 
@@ -182,6 +183,9 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       } as never)
     })
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+    expect(pendingTerminalTranscriptTurn(address, store.notificationScope)).toBe(
+      'provider-renamed-turn'
+    )
 
     act(() => store.syncRuntimeWork(runtimeWork(false)))
     await act(async () => {
@@ -224,6 +228,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(pendingTerminalTranscriptTurn(address, store.notificationScope)).toBeNull()
     expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
       'continue',
       'authoritative completed answer',

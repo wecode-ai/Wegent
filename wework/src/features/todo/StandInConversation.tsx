@@ -271,6 +271,7 @@ export function StandInConversation({
           ) : null
         }
         hideProcessing
+        showActivityDots
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
@@ -353,7 +354,7 @@ function createConversationSource(
       const result = await api.readTask(deviceId, taskId)
       return result.task
         ? {
-            deviceId,
+            deviceId: result.deviceId ?? deviceId,
             taskId,
             runtime: result.task.runtime,
             threadId: result.task.threadId,
