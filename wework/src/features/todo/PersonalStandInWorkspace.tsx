@@ -204,9 +204,15 @@ function AccountStandInWorkspace({
     !view.selectionScope || !bindingScope || view.selectionScope === bindingScope
       ? view.roleLocation
       : undefined
-  const [executionDevice, setExecutionDevice] = useState<string>()
+  const [executionSelection, setExecutionSelection] = useState<{
+    scope: string
+    deviceId: string
+  }>()
   const selectedDevice =
     roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
+  const executionScope = JSON.stringify([bindingScope, roleLocation?.roleId, selectedDevice])
+  const executionDevice =
+    executionSelection?.scope === executionScope ? executionSelection.deviceId : undefined
   const sameProjectOwner = view.projectsApi === api && view.projectsScope === bindingScope
   const projects = sameProjectOwner ? view.projects : []
   const error =
@@ -242,7 +248,10 @@ function AccountStandInWorkspace({
           testId="personal-assistant-execution-device"
           ariaLabel={t('standIn.account.conversation_device')}
           onChange={next => {
-            const select = () => setExecutionDevice(next)
+            const select = () =>
+              setExecutionSelection(
+                next === selectedDevice ? undefined : { scope: executionScope, deviceId: next }
+              )
             if (overview.current) overview.current.requestLeave(select)
             else select()
           }}
