@@ -96,25 +96,17 @@ export function createStandInInstanceSource({
     epoch: number,
     revision: number
   ) => {
-    const [owned, local] = await Promise.all([
-      api!.personalGet(userId, deviceId),
-      userId === LOCAL_USER.id
-        ? Promise.resolve(undefined)
-        : api!.personalGet(LOCAL_USER.id, deviceId),
-    ])
+    const owned = await api!.personalGet(userId, deviceId)
     const mayBind = () =>
       observed(revision, deviceId) && observation?.active && activation === epoch
     if (!mayBind()) return { binding: unbound }
-    const localOwner =
-      !initialDeviceId && !hasSavedStandIn(owned) && !!local && hasSavedStandIn(local)
     const available = owner.connected ? availableStandInDevices(owner.devices) : []
     const preferred = available.find(device => device.is_default) ?? available[0]
     const target = {
-      userId: localOwner ? LOCAL_USER.id : userId,
-      backendUrl: localOwner || userId === LOCAL_USER.id ? '' : backendUrl,
+      userId,
+      backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
       deviceId:
-        initialDeviceId ||
-        (hasSavedStandIn(owned) || localOwner ? deviceId : (preferred?.device_id ?? deviceId)),
+        initialDeviceId || (hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)),
     }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)

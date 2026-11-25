@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import { openStandInDetails, openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -250,7 +250,8 @@ export function createDesktopScenario({
         'Cancel leaves the cloud account uninitialized'
       )
       const migrate = testId('personal-assistant-account-initialize')
-      await control.command('waitFor', testId('stand-in-overview'))
+      await control.command('waitFor', migrate)
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
       await captureScreenshot(control, 'personal-assistant-02-migration-deferred.png')
       await control.command('clickWhenEnabled', migrate)
       await control.command('clickWhenEnabled', migrateConfirm)
@@ -268,7 +269,10 @@ export function createDesktopScenario({
         namespace: primary.ghost.metadata.namespace,
       })
       assert.equal(primary.ghost.spec.systemPrompt, legacyPrompt)
-      assert.equal(primary.bot.spec.execution_policy.mode, 'user_select')
+      assert.deepEqual(primary.bot.spec.execution_policy, {
+        mode: 'fixed',
+        environment_id: localDevice,
+      })
       assert.deepEqual((await binding(control)).target, registered)
 
       await createRole(control, 'Ordinary account stand-in')
@@ -408,6 +412,8 @@ export function createDesktopScenario({
       assert.equal(initialAssistant.definitions[0].roleId, '@primary')
       const executionDevice = testId('personal-assistant-execution-device')
       const activeBinding = await binding(control)
+      assert.equal(await control.command('getElementCount', executionDevice), '0')
+      await openStandInDetails(control)
       await control.command('clickWhenEnabled', executionDevice)
       await control.command('waitFor', '[role="listbox"] [role="option"]', {
         text: '当前设备',
@@ -423,6 +429,8 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-conversation'))
       await sendChat(control, testId('stand-in-conversation'), LOCAL_PROMPT)
       await control.command('waitFor', testId('stand-in-conversation'), {
         text: LOCAL_COMPLETE,
@@ -437,7 +445,12 @@ export function createDesktopScenario({
         activeBinding,
         'Execution selection preserves the binding'
       )
-      assert.deepEqual((await readInitialAssistant()).assistant, initialAssistant)
+      assert.equal(
+        (await readInitialAssistant()).assistant.definitions[0].bot.spec.execution_policy
+          .environment_id,
+        localDevice
+      )
+      await openStandInDetails(control)
       await control.command('select', executionDevice, {
         value: firstUse.target.deviceId,
         timeoutMs: uiTimeoutMs,
@@ -460,8 +473,14 @@ export function createDesktopScenario({
       })
       await stop(control)
       const stoppedAccount = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
-      await bind(control, 0, localDevice)
-      await createRole(control, LOCAL_NAME)
+      await saveBinding(control, { userId: 0, deviceId: localDevice, backendUrl: '' })
+      await rpc(control, 'runtime.stand_in.personal.lifecycle', { userId: 0, operation: 'start' })
+      const legacy = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
+      await rpc(control, 'runtime.stand_in.personal.save', {
+        userId: 0,
+        settings: { ...legacy, roles: [{ ...historyRole, name: LOCAL_NAME, id: 'legacy-role' }] },
+      })
+      await reloadMainWindow(control)
       const localBefore = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
       const localRole = localBefore.roles.find(row => row.name === LOCAL_NAME)
       assert.ok(localRole, 'The existing local profile must retain its role')
@@ -488,9 +507,8 @@ export function createDesktopScenario({
         0,
         'Connecting must not replace the existing local binding'
       )
-      await createRole(control, 'Local role with cloud available')
-      const retained = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
-      assert.ok(retained.roles.some(role => role.name === 'Local role with cloud available'))
+      await control.command('waitFor', testId('stand-in-legacy-binding'))
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
       await stop(control)
       const beforeMigration = readProfile(remoteHome)
       await control.command('waitFor', testId('stand-in-migration'))

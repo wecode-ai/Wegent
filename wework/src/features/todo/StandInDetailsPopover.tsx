@@ -38,6 +38,7 @@ export function StandInDetailsPopover({
   name,
   enabled,
   device,
+  deviceControl,
   items,
   activeDelegations,
   inbox,
@@ -56,6 +57,7 @@ export function StandInDetailsPopover({
   anchor: HTMLElement
   name: string
   enabled: boolean
+  deviceControl?: ReactNode
   device?: DeviceInfo
   items: RuntimeTaskReminderItem[]
   activeDelegations: ReturnType<typeof activeStandInBranchRows>
@@ -389,9 +391,9 @@ export function StandInDetailsPopover({
           <section className="flex items-center justify-between gap-2 border-t border-border px-2 pt-2">
             <div className="min-w-0">
               <h4 className="text-base font-medium">{t('standIn.workspace.details_device')}</h4>
-              <p className="truncate text-xs text-text-secondary">
-                {device?.name || t('standIn.workspace.details_device_unknown')}
-              </p>
+              <div className="text-xs text-text-secondary">
+                {deviceControl || device?.name || t('standIn.workspace.details_device_unknown')}
+              </div>
             </div>
             {device && (
               <span className="flex shrink-0 items-center gap-1 text-xs text-text-secondary">

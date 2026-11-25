@@ -1,3 +1,5 @@
+import { saveStandInRoleDevice } from './saveStandInRoleDevice'
+import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import {
   standInConversationTaskId,
@@ -75,8 +77,7 @@ export function StandInOverviewPage({
   primaryDeviceId,
   roleLocations,
   account,
-  executionControl,
-  executionRoute,
+  onBindDevice,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -94,8 +95,7 @@ export function StandInOverviewPage({
   primaryDeviceId?: string
   roleLocations?: StandInRoleLocation[]
   account?: PersonalAssistantAccount
-  executionControl?: ReactNode
-  executionRoute?: { deviceId: string; userId: number }
+  onBindDevice?(roleId: string, device: string): Promise<void>
 }) {
   const { t } = useTranslation('common')
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
@@ -241,9 +241,13 @@ export function StandInOverviewPage({
   const { roleId, profile, calendarRequest, exampleDraft } = view
   const conversationRole = shared ? undefined : team ? teamLead : roleId
   const conversationScope = sharedScope ?? teamScope
-  const routedConversation = conversationScope ? undefined : executionRoute
-  const conversationDevice = routedConversation?.deviceId ?? deviceId
-  const conversationUser = routedConversation?.userId ?? props.userId
+  const definition = account?.definitions.find(entry => entry.roleId === (roleId ?? '@primary'))
+  const boundDevice = definition?.bot.spec?.execution_policy?.environment_id
+  const conversationDevice = (!conversationScope && boundDevice) || deviceId
+  const conversationUser = props.userId
+  const [bindingPending, setBindingPending] = useState(false)
+  const [bindingError, setBindingError] = useState('')
+
   const sameOwner = view.api === api && view.userId === props.userId && view.deviceId === deviceId
   const proposal = sameOwner ? view.proposal : null
   const resolvedProposal = sameOwner ? view.resolvedProposal : null
@@ -499,7 +503,51 @@ export function StandInOverviewPage({
                 : t('standIn.personal.default_role')
             }
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
-            device={device}
+            device={props.devices.find(item => item.device_id === conversationDevice) ?? device}
+            deviceControl={
+              onBindDevice &&
+              definition &&
+              localDeviceId &&
+              conversationDevice && (
+                <>
+                  <StandInDeviceSelect
+                    value={conversationDevice}
+                    currentDeviceId={localDeviceId}
+                    devices={props.devices}
+                    disabled={bindingPending}
+                    testId="personal-assistant-execution-device"
+                    onChange={async next => {
+                      setBindingPending(true)
+                      setBindingError('')
+                      try {
+                        if (role && saved && api && deviceId) {
+                          const moved = { ...role, executionDeviceId: next }
+                          await saveStandInRoleDevice(api, {
+                            userId: props.userId,
+                            sourceDevice: deviceId,
+                            source: saved,
+                            draft: {
+                              ...saved,
+                              roles: saved.roles.map(row => (row.id === role.id ? moved : row)),
+                            },
+                            role: moved,
+                            definitionChange: { kind: 'update', roleId: role.id },
+                          })
+                          onSelectLocation?.(next, role.id)
+                        } else {
+                          await onBindDevice(definition.roleId, next)
+                        }
+                      } catch (error) {
+                        setBindingError(getStandInErrorMessage(error))
+                      } finally {
+                        setBindingPending(false)
+                      }
+                    }}
+                  />
+                  {bindingError && <p role="alert">{bindingError}</p>}
+                </>
+              )
+            }
             items={roleItems.filter(
               item =>
                 !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
@@ -578,7 +626,6 @@ export function StandInOverviewPage({
               })
             }
           />
-          {!conversationScope && executionControl}
           {api && saved && (
             <StandInTeamAndShareControls
               key={teamOwner}
@@ -699,7 +746,7 @@ export function StandInOverviewPage({
                     : account?.definitions.find(item => item.roleId === (roleId ?? '@primary'))
                 }
                 settings={
-                  routedConversation
+                  conversationDevice !== deviceId
                     ? undefined
                     : conversationRole
                       ? saved?.roles.find(role => role.id === conversationRole)

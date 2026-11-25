@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, MysqlError, MysqlResult, MysqlTransaction};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::{
     attachments::upload::Param, auth::SessionUser, http_compat::FastApiError, state::AppState,
@@ -25,6 +25,7 @@ struct Row {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Definition {
+    execution_device_id: Option<String>,
     role_id: String,
     name: String,
     prompt: String,
@@ -62,6 +63,10 @@ impl Initialize {
                             && id.bytes().all(|byte| {
                                 byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
                             })))
+                    && definition
+                        .execution_device_id
+                        .as_ref()
+                        .is_none_or(|id| !id.is_empty() && id.len() <= 255)
                     && definition.name.chars().count() <= 255
                     && definition.prompt.len() <= 256 * 1024
             })
@@ -138,7 +143,7 @@ fn definition_documents(definition: Definition) -> (Value, Value, Value) {
         &definition.name,
         json!({"systemPrompt":definition.prompt}),
     );
-    let bot = resource(
+    let mut bot = resource(
         "Bot",
         &name,
         &definition.name,
@@ -147,6 +152,9 @@ fn definition_documents(definition: Definition) -> (Value, Value, Value) {
             "execution_policy":{"mode":"user_select"},"model_policy":{"mode":"user_select"}
         }),
     );
+    if let Some(device) = definition.execution_device_id {
+        bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
+    }
     (
         json!({"roleId":definition.role_id,"botRef":reference}),
         bot,
@@ -314,6 +322,9 @@ async fn replace_definitions(
             if let Some(entry) = previous.remove(desired.role_id.as_str()) {
                 let mut bot = entry["bot"].clone();
                 let mut ghost = entry["ghost"].clone();
+                if let Some(device) = desired.execution_device_id {
+                    bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
+                }
                 bot["metadata"]["displayName"] = json!(desired.name);
                 ghost["metadata"]["displayName"] = bot["metadata"]["displayName"].clone();
                 ghost["spec"]["systemPrompt"] = json!(desired.prompt);
@@ -390,11 +401,13 @@ pub(crate) async fn verify_concurrent_initialization(
     let request = |prompt: &str| Initialize {
         definitions: vec![
             Definition {
+                execution_device_id: None,
                 role_id: "@primary".into(),
                 name: "Assistant".into(),
                 prompt: prompt.into(),
             },
             Definition {
+                execution_device_id: None,
                 role_id: "support".into(),
                 name: "Support".into(),
                 prompt: "Help".into(),
@@ -416,6 +429,7 @@ pub(crate) async fn verify_concurrent_initialization(
     let revision = first["assistant"]["revision"].as_str().unwrap();
     let changes = || {
         let mut desired = request("updated on the second device");
+        desired.definitions[0].execution_device_id = Some("device-2".into());
         desired.definitions[1].role_id = "operations".into();
         DefinitionChange {
             revision: revision.to_owned(),
@@ -423,6 +437,10 @@ pub(crate) async fn verify_concurrent_initialization(
         }
     };
     let updated = replace_definitions(mysql, user, changes()).await?.unwrap();
+    assert_eq!(
+        updated["assistant"]["definitions"][0]["bot"]["spec"]["execution_policy"],
+        json!({"mode":"fixed","environment_id":"device-2"})
+    );
     assert_eq!(updated["assistant"]["retiredRoleIds"], json!(["support"]));
     assert_eq!(
         updated["assistant"]["definitions"][1]["roleId"],

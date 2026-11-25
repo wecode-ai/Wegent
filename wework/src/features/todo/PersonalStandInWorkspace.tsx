@@ -25,7 +25,6 @@ import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspace
 import { availableStandInDevices } from './standInDevices'
 import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
-import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInMigration } from './StandInMigration'
 import { StandInOverviewPage } from './StandInOverviewPage'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
@@ -58,8 +57,10 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
     props.user.id !== LOCAL_USER.id &&
     props.services.personalAssistantAccountApi
   ) {
+    const available = availableStandInDevices(props.devices)
     return (
       <PersonalAssistantAccountSetup
+        preferredDevice={(available.find(device => device.is_default) ?? available[0])?.device_id}
         key={key}
         services={props.services}
         userId={Number(props.user.id)}
@@ -76,7 +77,7 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
       </PersonalAssistantAccountSetup>
     )
   }
-  return <AccountStandInWorkspace key={key} {...props} />
+  return <StandInCloudConnectionPrompt />
 }
 
 /** Scope binding, project errors and recovery actions to the connected account. */
@@ -205,15 +206,8 @@ function AccountStandInWorkspace({
     !view.selectionScope || !bindingScope || view.selectionScope === bindingScope
       ? view.roleLocation
       : undefined
-  const [executionSelection, setExecutionSelection] = useState<{
-    scope: string
-    deviceId: string
-  }>()
   const selectedDevice =
     roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
-  const executionScope = JSON.stringify([bindingScope, roleLocation?.roleId, selectedDevice])
-  const executionDevice =
-    executionSelection?.scope === executionScope ? executionSelection.deviceId : undefined
   const sameProjectOwner = view.projectsApi === api && view.projectsScope === bindingScope
   const projects = sameProjectOwner ? view.projects : []
   const error =
@@ -234,31 +228,6 @@ function AccountStandInWorkspace({
     refreshKey,
     cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
   )
-  const executionControl = account &&
-    !embedded &&
-    !query.get('deviceId') &&
-    selectedDevice &&
-    localDeviceId && (
-      <div className="flex shrink-0 items-center gap-1 text-sm text-text-secondary">
-        <span aria-hidden="true">{t('standIn.account.conversation_device')}</span>
-        <StandInDeviceSelect
-          value={executionDevice ?? selectedDevice}
-          currentDeviceId={localDeviceId}
-          devices={availableStandInDevices(devices)}
-          disabled={busy}
-          testId="personal-assistant-execution-device"
-          ariaLabel={t('standIn.account.conversation_device')}
-          onChange={next => {
-            const select = () =>
-              setExecutionSelection(
-                next === selectedDevice ? undefined : { scope: executionScope, deviceId: next }
-              )
-            if (overview.current) overview.current.requestLeave(select)
-            else select()
-          }}
-        />
-      </div>
-    )
   const actions = (
     <ControlButton
       variant="unstyled"
@@ -333,7 +302,6 @@ function AccountStandInWorkspace({
           <p className="text-sm text-text-secondary">{t('standIn.instance.bind_help')}</p>
           <div className="flex flex-wrap gap-2">
             {[
-              { userId: LOCAL_USER.id, deviceId: localDeviceId, name: t('standIn.local_profile') },
               ...(Number(user.id) === LOCAL_USER.id
                 ? []
                 : [
@@ -399,6 +367,11 @@ function AccountStandInWorkspace({
           </p>
           {actions}
         </section>
+      ) : target?.userId === LOCAL_USER.id ? (
+        <section className="space-y-3 p-5" data-testid="stand-in-legacy-binding">
+          <p>{t('standIn.account.legacy_binding')}</p>
+          {actions}
+        </section>
       ) : target && embedded ? (
         <StandInHomeSetup
           api={assistantServices.standInApi}
@@ -434,10 +407,22 @@ function AccountStandInWorkspace({
             ref={overview}
             headerActions={actions}
             account={account}
-            executionControl={executionControl}
-            executionRoute={
-              executionDevice && executionDevice !== selectedDevice
-                ? { deviceId: executionDevice, userId }
+            onBindDevice={
+              account && publishAccount && services.personalAssistantAccountApi
+                ? async (roleId, device) => {
+                    const definitions = account.definitions.map(entry => ({
+                      roleId: entry.roleId,
+                      name: entry.bot.metadata.displayName ?? '',
+                      prompt: entry.ghost.spec.systemPrompt,
+                      executionDeviceId: entry.roleId === roleId ? device : undefined,
+                    }))
+                    publishAccount(
+                      await services.personalAssistantAccountApi!.updateDefinitions(
+                        account.revision,
+                        definitions
+                      )
+                    )
+                  }
                 : undefined
             }
             initialProfileId={

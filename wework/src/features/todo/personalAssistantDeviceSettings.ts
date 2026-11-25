@@ -29,6 +29,8 @@ function applyDefinitions(settings: PersonalStandInSettings, account: PersonalAs
     const existing = roles.get(id) ?? newStandInRole(settings.executionDeviceId, id)
     roles.set(id, {
       ...existing,
+      executionDeviceId:
+        definition.bot.spec?.execution_policy?.environment_id ?? existing.executionDeviceId,
       name: definition.bot.metadata.displayName ?? existing.name,
       prompt: definition.ghost.spec.systemPrompt,
     })
@@ -55,6 +57,7 @@ function definitionInputs(account: PersonalAssistantAccount) {
       definition.roleId,
       {
         roleId: definition.roleId,
+        executionDeviceId: definition.bot.spec?.execution_policy?.environment_id,
         name: definition.bot.metadata.displayName ?? '',
         prompt: definition.ghost.spec.systemPrompt,
       },
@@ -69,9 +72,13 @@ function matchesDefinitions(
   const current = definitionInputs(account)
   return (
     wanted.size === current.size &&
-    [...wanted.values()].every(({ roleId, name, prompt }) => {
+    [...wanted.values()].every(({ roleId, name, prompt, executionDeviceId }) => {
       const definition = current.get(roleId)
-      return definition?.name === name && definition.prompt === prompt
+      return (
+        definition?.name === name &&
+        definition.prompt === prompt &&
+        definition.executionDeviceId === executionDeviceId
+      )
     })
   )
 }
@@ -94,7 +101,12 @@ function updateDefinitionInputs(
       (definitions.has(role.id) ||
         (change.kind === 'create' && !account.retiredRoleIds.includes(role.id)))
     ) {
-      definitions.set(role.id, { roleId: role.id, name: role.name, prompt: role.prompt })
+      definitions.set(role.id, {
+        roleId: role.id,
+        name: role.name,
+        prompt: role.prompt,
+        executionDeviceId: role.executionDeviceId,
+      })
     }
   }
   return definitions

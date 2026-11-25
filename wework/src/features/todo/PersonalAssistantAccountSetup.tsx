@@ -18,7 +18,8 @@ async function loadSetup(
   services: WorkbenchServices,
   userId: number,
   name: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  preferredDevice?: string
 ) {
   const cloud = services.personalAssistantAccountApi!
   const account = await cloud.get(signal)
@@ -38,18 +39,23 @@ async function loadSetup(
   const legacy = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
   return legacy
     ? { account: null, local: legacy }
-    : { account: await cloud.initialize(name), local: undefined }
+    : {
+        account: await cloud.initialize(name, undefined, preferredDevice ?? device.deviceId),
+        local: undefined,
+      }
 }
 
 export function PersonalAssistantAccountSetup({
   services,
   userId,
   active,
+  preferredDevice,
   children,
 }: {
   services: WorkbenchServices
   userId: number
   active: boolean
+  preferredDevice?: string
   children(
     account: PersonalAssistantAccount | undefined,
     publish: (account: PersonalAssistantAccount) => void,
@@ -62,12 +68,12 @@ export function PersonalAssistantAccountSetup({
     () =>
       createAsyncResource(
         JSON.stringify([userId]),
-        signal => loadSetup(services, userId, name, signal),
+        signal => loadSetup(services, userId, name, signal, preferredDevice),
         {
           refreshOnSubscribe: true,
         }
       ),
-    [services, userId, name]
+    [services, userId, name, preferredDevice]
   )
   const snapshot = useSyncExternalStore(
     active ? resource.subscribe : subscribeIdleResource,
@@ -75,7 +81,6 @@ export function PersonalAssistantAccountSetup({
     getIdleResourceSnapshot
   )
   const [confirmation, setConfirmation] = useState(true)
-  const [continueLocally, setContinueLocally] = useState(false)
   const [pending, setPending] = useState(false)
   const [migrationNotice, setMigrationNotice] = useState(false)
   const clearMigrationNotice = useCallback(() => setMigrationNotice(false), [])
@@ -90,7 +95,7 @@ export function PersonalAssistantAccountSetup({
     [resource]
   )
   const data = snapshot.data
-  if (data?.account) {
+  if (data?.account && !snapshot.error) {
     return (
       <>
         {children(data.account, publish, readAccount)}
@@ -182,12 +187,10 @@ export function PersonalAssistantAccountSetup({
           pending={pending}
           onClose={() => {
             setConfirmation(false)
-            setContinueLocally(true)
           }}
           onConfirm={() => void initialize()}
         />
       </section>
-      {!!data?.local && continueLocally && children(undefined, publish, readAccount)}
     </>
   )
 }

@@ -102,7 +102,7 @@ Saving a new role enables it. Explicitly adding or enabling a source starts inta
 
 When connected to a cloud account, **My assistant** first checks whether that account has a default assistant. If it does, clients read the same Bot and Ghost. If the cloud account has no assistant and this computer has a saved profile, Wework asks you to migrate the names and instructions of the default assistant and its roles. With no saved profile, Wework proceeds through normal setup. If the cloud check fails, retry from the current page.
 
-Use **Chat device** on the assistant conversation page to choose where the conversation runs. The original device retains its conversations, source grants, schedules, and learning records. To resume an existing conversation, return to its original device.
+Choose the execution device in **Assistant details**. The cloud account saves the selection for this assistant and reuses it for subsequent conversations. Connecting to the cloud and completing any required migration are prerequisites for using the assistant.
 
 If **My assistants** encounters incompatible versions, it first shows an error with compatibility guidance without automatically navigating away. Select **View device status** beside the error to open **Cloud work**, inspect device status and versions, and restart the cloud device if applicable. Check the reported version after reconnection. For local issues, the desktop device section offers **View local version**, which opens About to check for updates even when there are no cloud devices. This action does not install or restart anything automatically. After resolving the issue, return to the stand-in page and select **Reload**. Other loading errors retain reload without this device guidance action.
 

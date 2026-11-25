@@ -56,7 +56,7 @@ test('a saved legacy profile requires confirmation before import', async () => {
   const confirm = await screen.findByTestId('personal-assistant-account-migrate-confirm')
   expect(initialize).not.toHaveBeenCalled()
   fireEvent.click(screen.getByTestId('personal-assistant-account-migrate-cancel'))
-  expect(await screen.findByText('local workspace')).toBeVisible()
+  expect(screen.queryByText('local workspace')).toBeNull()
   const edited = {
     ...legacy,
     version: 2,
@@ -74,7 +74,7 @@ test('a missing cloud and legacy profile takes ordinary initialization', async (
   const { initialize } = setup(null)
   expect(await screen.findByText('primary')).toBeVisible()
   expect(screen.queryByTestId('personal-assistant-account-migrate-confirm')).toBeNull()
-  expect(initialize).toHaveBeenCalledWith(expect.any(String))
+  expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
 })
 
 test('a failed cloud read cannot trigger initialization or local import', async () => {
@@ -137,6 +137,11 @@ test('saving and retrying a new shared role never uploads a device-only profile'
   await api.personalSave(7, { ...draft, version: device.version }, 'mac', undefined, change)
   expect(updateDefinitions).toHaveBeenLastCalledWith(current.revision, [
     { roleId: '@primary', name: 'Default', prompt: 'Default prompt' },
-    { roleId: newRole.id, name: newRole.name, prompt: newRole.prompt },
+    {
+      roleId: newRole.id,
+      name: newRole.name,
+      prompt: newRole.prompt,
+      executionDeviceId: newRole.executionDeviceId,
+    },
   ])
 })

@@ -42,6 +42,8 @@ type Props = {
 /** Share the personal assistant identity while keeping collaboration history separate. */
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
+  const definition = props.account?.definitions.find(item => item.roleId === '@primary')
+  const conversationDevice = definition?.bot.spec?.execution_policy?.environment_id ?? deviceId
   const { t } = useTranslation('common')
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const [view, setView] = useState('conversation')
@@ -165,9 +167,9 @@ export function StandInHomeWorkspace(props: Props) {
               api={services.standInApi}
               services={services}
               userId={userId}
-              deviceId={deviceId}
-              settings={settings.primary}
-              definition={props.account?.definitions.find(item => item.roleId === '@primary')}
+              deviceId={conversationDevice}
+              settings={conversationDevice === deviceId ? settings.primary : undefined}
+              definition={definition}
               scope="collaboration"
               active={active && view === 'conversation'}
               onOpenTask={props.onOpenTask}
