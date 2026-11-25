@@ -9,6 +9,11 @@ import type {
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
 import { type MessageCenterCategory, safeDingTalkUrl } from './messageCenterModel'
 
 export function MessageCenterDetail({
@@ -123,30 +128,32 @@ export function MessageCenterDetail({
           <h4 className="text-sm text-text-secondary">{t(receipt ? 'replySent' : 'reply')}</h4>
           <p className="whitespace-pre-wrap break-words">{record.reply || t('noReply')}</p>
         </section>
-        <details className="border-y border-border">
-          <summary
-            className="min-h-11 cursor-pointer py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        <CollapsibleRoot className="border-y border-border">
+          <CollapsibleTrigger
+            className="py-3 text-base"
             data-testid="message-center-detail-evidence"
           >
             {t('evidence')}
-          </summary>
-          {record.evidence?.length ? (
-            <ul className="space-y-2 break-words pb-3">
-              {record.evidence.map((item, index) => (
-                <li key={index}>
-                  <p>{item.label}</p>
-                  {item.excerpt && (
-                    <p className="whitespace-pre-wrap text-sm text-text-secondary">
-                      {item.excerpt}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="pb-3 text-sm text-text-secondary">{t('noEvidence')}</p>
-          )}
-        </details>
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            {record.evidence?.length ? (
+              <ul className="space-y-2 break-words pb-3">
+                {record.evidence.map((item, index) => (
+                  <li key={index}>
+                    <p>{item.label}</p>
+                    {item.excerpt && (
+                      <p className="whitespace-pre-wrap text-sm text-text-secondary">
+                        {item.excerpt}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="pb-3 text-sm text-text-secondary">{t('noEvidence')}</p>
+            )}
+          </CollapsiblePanel>
+        </CollapsibleRoot>
         <section className="space-y-2 break-words">
           <h4 className="text-sm text-text-secondary">{t('receipt')}</h4>
           <p data-testid="message-center-detail-delivery">{t(`deliveryStatus.${delivery}`)}</p>
@@ -165,64 +172,66 @@ export function MessageCenterDetail({
             <p className="text-sm text-text-secondary">{t('deliveryUnknownHint')}</p>
           )}
         </section>
-        <details className="border-y border-border">
-          <summary
-            className="min-h-11 cursor-pointer py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        <CollapsibleRoot className="border-y border-border">
+          <CollapsibleTrigger
+            className="py-3 text-base"
             data-testid="message-center-detail-process"
           >
             {t('process')}
-          </summary>
-          <dl className="grid gap-2 break-words pb-4 text-sm [&_dt]:text-text-secondary">
-            <div>
-              <dt>{t('progress')}</dt>
-              <dd>{t(`processStatus.${record.progress}`)}</dd>
-            </div>
-            {record.reason && (
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <dl className="grid gap-2 break-words pb-4 text-sm [&_dt]:text-text-secondary">
               <div>
-                <dt>{t('reason')}</dt>
-                <dd className="whitespace-pre-wrap">{record.reason}</dd>
+                <dt>{t('progress')}</dt>
+                <dd>{t(`processStatus.${record.progress}`)}</dd>
               </div>
-            )}
-            <div>
-              <dt>{t('account')}</dt>
-              <dd>
-                {[snapshot.identity?.account, snapshot.identity?.organization]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </dd>
-            </div>
-            {record.policyVersion !== undefined && (
+              {record.reason && (
+                <div>
+                  <dt>{t('reason')}</dt>
+                  <dd className="whitespace-pre-wrap">{record.reason}</dd>
+                </div>
+              )}
               <div>
-                <dt>{t('ruleVersion')}</dt>
-                <dd>{record.policyVersion}</dd>
-              </div>
-            )}
-            <div>
-              <dt>{t('device')}</dt>
-              <dd>{record.deviceName}</dd>
-            </div>
-            {!!record.attempts?.length && (
-              <div>
-                <dt>{t('attempts')}</dt>
+                <dt>{t('account')}</dt>
                 <dd>
-                  <ul className="space-y-1">
-                    {record.attempts.map((attempt, index) => (
-                      <li key={index}>
-                        {[
-                          formatTime(attempt.at),
-                          t(`deliveryStatus.${attempt.status}`),
-                          attempt.reason,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </li>
-                    ))}
-                  </ul>
+                  {[snapshot.identity?.account, snapshot.identity?.organization]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </dd>
               </div>
-            )}
-          </dl>
-        </details>
+              {record.policyVersion !== undefined && (
+                <div>
+                  <dt>{t('ruleVersion')}</dt>
+                  <dd>{record.policyVersion}</dd>
+                </div>
+              )}
+              <div>
+                <dt>{t('device')}</dt>
+                <dd>{record.deviceName}</dd>
+              </div>
+              {!!record.attempts?.length && (
+                <div>
+                  <dt>{t('attempts')}</dt>
+                  <dd>
+                    <ul className="space-y-1">
+                      {record.attempts.map((attempt, index) => (
+                        <li key={index}>
+                          {[
+                            formatTime(attempt.at),
+                            t(`deliveryStatus.${attempt.status}`),
+                            attempt.reason,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </CollapsiblePanel>
+        </CollapsibleRoot>
         <div className="flex flex-wrap gap-2">
           {url && (
             <Button

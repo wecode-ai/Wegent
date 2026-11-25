@@ -1,5 +1,12 @@
-import { type MouseEvent, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   AlertCircle,
   CheckCheck,
@@ -261,8 +268,9 @@ function MessageCenterContent({
                           <p className="text-sm text-text-secondary">{t('confirmedHint')}</p>
                         )}
                       </section>
-                      <button
+                      <ControlButton
                         type="button"
+                        variant="unstyled"
                         className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
                         data-testid="message-center-scope"
                         onClick={event => onOpenSettings(undefined, event.currentTarget)}
@@ -282,7 +290,7 @@ function MessageCenterContent({
                           </span>
                         </span>
                         <ChevronRight aria-hidden="true" className="size-4 shrink-0" />
-                      </button>
+                      </ControlButton>
                       {snapshot.notificationUnavailable && (
                         <div className="space-y-1 border-b border-border pb-3 text-sm text-text-secondary">
                           <p>{t('notificationUnavailable')}</p>
@@ -351,25 +359,30 @@ function MessageCenterContent({
                                   })}
                                 </Button>
                               )}
-                            <select
-                              aria-label={t('filterLabel')}
+                            <SelectRoot<RecordFilter>
                               value={selected}
-                              onChange={event => {
-                                setFilter(event.target.value as RecordFilter)
-                                if (openedId) setOpenedId(undefined)
+                              onValueChange={value => {
+                                if (!value) return
+                                setFilter(value)
+                                setOpenedId(undefined)
                               }}
-                              className="min-h-11 max-w-full rounded-md border border-border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-9"
-                              data-testid="message-center-filter"
                             >
-                              {filters.map(category => (
-                                <option key={category} value={category}>
-                                  {t('filterOption', {
-                                    label: t(`recordStatus.${category}`),
-                                    count: groups[category].length,
-                                  })}
-                                </option>
-                              ))}
-                            </select>
+                              <SelectTrigger
+                                aria-label={t('filterLabel')}
+                                className="min-h-11 max-w-full md:min-h-9"
+                                data-testid="message-center-filter"
+                              />
+                              <SelectContent>
+                                {filters.map(category => (
+                                  <SelectItem key={category} value={category}>
+                                    {t('filterOption', {
+                                      label: t(`recordStatus.${category}`),
+                                      count: groups[category].length,
+                                    })}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </SelectRoot>
                           </div>
                         </header>
                         {snapshot.syncGap && (
@@ -444,14 +457,13 @@ function RecordList({
     <ul className="divide-y divide-border border-b border-border">
       {records.map(record => (
         <li key={record.id} className="min-w-0">
-          <button
+          <ControlButton
             type="button"
+            variant="unstyled"
             className="flex min-h-11 w-full min-w-0 items-center gap-3 rounded-md px-1 py-3 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus"
             data-testid={`message-center-record-${record.id}`}
             aria-expanded={openedId === record.id}
-            onClick={(event: MouseEvent<HTMLButtonElement>) =>
-              onOpen(record.id, event.currentTarget)
-            }
+            onClick={event => onOpen(record.id, event.currentTarget)}
           >
             <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted">
               <Icon aria-hidden="true" className="size-4 text-text-secondary" />
@@ -477,7 +489,7 @@ function RecordList({
               {record.takenOver && <span className="block">{t('takenOver')}</span>}
             </span>
             <ChevronRight aria-hidden="true" className="size-4 shrink-0" />
-          </button>
+          </ControlButton>
         </li>
       ))}
     </ul>

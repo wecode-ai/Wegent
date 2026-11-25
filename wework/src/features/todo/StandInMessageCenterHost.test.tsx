@@ -262,7 +262,7 @@ it('binds takeover to the current account and applies the host result', async ()
   const user = userEvent.setup()
   const row = await screen.findByTestId('message-center-record-shared-record-id')
 
-  expect(screen.getByTestId('message-center-filter')).toHaveValue('exceptions')
+  expect(screen.getByTestId('message-center-filter')).toHaveTextContent('异常')
   await user.click(row)
   await user.click(screen.getByTestId('message-center-take-over'))
 
