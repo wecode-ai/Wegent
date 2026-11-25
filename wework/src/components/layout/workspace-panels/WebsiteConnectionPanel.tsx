@@ -96,6 +96,8 @@ export function WebsiteConnectionPanel({
   const captured = useRef<string | undefined>(undefined)
   const preview = stage.kind === 'preview' ? stage : undefined
   const firstRow = preview?.trial.page.items[0] ?? preview?.trial.continuation?.items[0]
+  const trialMatch =
+    preview?.trial.collection.events[0] ?? preview?.trial.collectionContinuation?.events[0]
   const threshold = preview?.trial.threshold
   const thresholdField =
     threshold && preview
@@ -463,31 +465,55 @@ export function WebsiteConnectionPanel({
             </p>
           )}
           {firstRow && (
-            <dl className="max-h-32 space-y-1 overflow-auto rounded-md bg-muted p-2">
-              {Object.entries(firstRow).map(([field, value]) => {
-                const { label, formatted } = trialField(
-                  stage.authored.definition.read,
-                  field,
-                  value,
-                  i18n.language
-                )
-                return (
-                  <div key={field} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-2">
-                    <dt className="break-words text-text-secondary">{label}</dt>
-                    <dd className="break-words">{formatted}</dd>
-                  </div>
-                )
-              })}
-            </dl>
+            <div className="rounded-md bg-muted p-2">
+              <p className="mb-1 font-medium">{t('workbench.web_connection_query_example')}</p>
+              <dl className="max-h-32 space-y-1 overflow-auto">
+                {Object.entries(firstRow).map(([field, value]) => {
+                  const { label, formatted } = trialField(
+                    stage.authored.definition.read,
+                    field,
+                    value,
+                    i18n.language
+                  )
+                  return (
+                    <div key={field} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-2">
+                      <dt className="break-words text-text-secondary">{label}</dt>
+                      <dd className="break-words">{formatted}</dd>
+                    </div>
+                  )
+                })}
+              </dl>
+            </div>
           )}
-          <Button
-            size="sm"
-            disabled={busy}
-            data-testid="website-connection-install"
-            onClick={() => void install(stage.trial)}
-          >
-            {t('workbench.web_connection_install')}
-          </Button>
+          {trialMatch && (
+            <p className="break-words" data-testid="website-connection-trial-match">
+              {t('workbench.web_connection_match_example', { id: trialMatch.objectId })}
+            </p>
+          )}
+          <p className="text-text-secondary">{t('workbench.web_connection_install_hint')}</p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              data-testid="website-connection-edit-intent"
+              onClick={() => {
+                discardCapture()
+                setDetail('')
+                setStage({ kind: 'intent' })
+              }}
+            >
+              {t('workbench.web_connection_edit_intent')}
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy}
+              data-testid="website-connection-install"
+              onClick={() => void install(stage.trial)}
+            >
+              {t('workbench.web_connection_install')}
+            </Button>
+          </div>
         </div>
       )}
       {stage.kind === 'installed' && (

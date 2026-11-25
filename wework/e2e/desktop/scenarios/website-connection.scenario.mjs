@@ -308,6 +308,7 @@ export function createDesktopScenario({
         assert.equal(modelCalls, 1)
         assert.ok(csrfVersion >= 3, 'Both trial requests must send the current CSRF cookie')
         await wait('website-connection-trial-result', { text: '运行时长' })
+        await wait('website-connection-trial-match', { text: 'run-long' })
         assert.ok(
           reportCalls >= beforeTrial + 2,
           'The trial query and poll must both reuse the signed-in browser session'

@@ -53,13 +53,18 @@ interface WebConnectionTrialPage {
   hasMore: boolean
 }
 
+interface WebConnectionTrialEvent {
+  objectId: string
+  at: string
+}
+
 export interface WebConnectionTrial {
   trialId: string
   providerId: string
   page: WebConnectionTrialPage
   continuation?: WebConnectionTrialPage
-  collection: { events: Array<{ id: string; text: string; at: string }>; hasMore: boolean }
-  collectionContinuation?: { events: Array<{ id: string; text: string; at: string }> }
+  collection: { events: WebConnectionTrialEvent[]; hasMore: boolean }
+  collectionContinuation?: { events: WebConnectionTrialEvent[] }
   observationWindow: { since: string; until: string }
   threshold?: { field: string; value: number }
 }
