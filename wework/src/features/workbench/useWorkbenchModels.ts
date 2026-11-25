@@ -45,8 +45,8 @@ export function useWorkbenchModels({
   const traceId = useId()
   const source = useMemo(() => createWorkbenchModelSource(api, traceId), [api, traceId])
   const derive = useCallback(
-    () =>
-      deriveWorkbenchModelSelection(source.getSnapshot(), source.getModels(filterModel), {
+    (snapshot = source.getSnapshot()) =>
+      deriveWorkbenchModelSelection(snapshot, source.getModels(filterModel), {
         api,
         locked,
         enabled,
@@ -102,6 +102,7 @@ export function useWorkbenchModels({
     [source, resolveInput]
   )
   const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const modelView = useMemo(() => derive(snapshot), [derive, snapshot])
   const {
     selectedModel,
     selectedModelOptions,
@@ -110,7 +111,7 @@ export function useWorkbenchModels({
     configuredModelUnavailable,
     isSelectionReady,
     modelSelectionDiagnostics,
-  } = derive()
+  } = modelView
   const models = source.getModels(filterModel)
   const refreshModels = source.refreshModels
   useDOMEvent<Event>(

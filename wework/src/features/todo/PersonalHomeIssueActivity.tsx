@@ -3,7 +3,7 @@ import {
   runtimeTaskSummaryTrackingExecutionStatus,
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import { WorkbenchContext, useWorkbenchReminderItems } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
@@ -31,10 +31,11 @@ export function PersonalHomeIssueActivity({
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const reminderItems = useWorkbenchReminderItems()
   const resolveLifecycle = useRuntimeTaskLifecycleResolver()
   const [taskAnchor, setTaskAnchor] = useState<HTMLButtonElement | null>(null)
   const tasks = bindings.map(binding => {
-    const reminder = workbench?.runtimeTaskReminders.items.find(
+    const reminder = reminderItems.find(
       item => item.address.deviceId === binding.deviceId && item.address.taskId === binding.taskId
     )
     const lifecycle = resolveLifecycle(binding) ?? reminder?.lifecycle

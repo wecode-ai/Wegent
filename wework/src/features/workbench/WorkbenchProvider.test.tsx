@@ -130,7 +130,11 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
-import { useWorkbench } from './useWorkbench'
+import {
+  useWorkbench,
+  useWorkbenchReminderItems,
+  useWorkbenchSidebarReminders,
+} from './useWorkbench'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 
@@ -3034,6 +3038,47 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('publishes reminder items without invalidating workbench and sidebar consumers', async () => {
+    const workbenchRender = vi.fn()
+    const sidebarRender = vi.fn()
+    const WorkbenchReader = memo(function WorkbenchReader() {
+      workbenchRender(useWorkbench())
+      return null
+    })
+    const SidebarReader = memo(function SidebarReader() {
+      sidebarRender(useWorkbenchSidebarReminders())
+      return null
+    })
+    function ReminderReader() {
+      const ids = useWorkbenchReminderItems().map(item => item.address.taskId)
+      return <span data-testid="reminder-ids">{ids.join(',')}</span>
+    }
+    const { lifecycleStore } = renderWorkbenchWithLifecycleCoordinator(
+      <>
+        <BootstrapProbe />
+        <WorkbenchReader />
+        <SidebarReader />
+        <ReminderReader />
+      </>
+    )
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    const workbenchCount = workbenchRender.mock.calls.length
+    const sidebarCount = sidebarRender.mock.calls.length
+    const address = { deviceId: 'device-1', taskId: 'hidden-question' }
+    act(() => {
+      lifecycleStore.syncRuntimeTask(address, {
+        taskId: address.taskId,
+        title: 'Hidden question',
+        workspacePath: '/workspace/repo',
+        runtime: 'codex',
+        interactionStatus: 'awaitingUserReply',
+      })
+    })
+    expect(screen.getByTestId('reminder-ids')).toHaveTextContent(address.taskId)
+    expect(workbenchRender).toHaveBeenCalledTimes(workbenchCount)
+    expect(sidebarRender).toHaveBeenCalledTimes(sidebarCount)
+  })
+
   test('coalesces work-change events while a list refresh is pending', async () => {
     let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
     const pending = deferred<RuntimeWorkListResponse>()

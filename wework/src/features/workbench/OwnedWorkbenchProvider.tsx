@@ -920,7 +920,6 @@ export function OwnedWorkbenchProvider({
   const value = useWorkbenchContextValue(paneValue, {
     state,
     cloudWorkStatus,
-    runtimeTaskReminders,
     projectChat: projectChatValue,
     updateUserPreferences,
   })
@@ -995,6 +994,7 @@ export function OwnedWorkbenchProvider({
   return (
     <WorkbenchContextProviders
       value={value}
+      taskReminders={runtimeTaskReminders}
       retainOwner={observation.retain}
       paneValue={paneValue}
       sharedLifecycleStore={sharedLifecycleStore}

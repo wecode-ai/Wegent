@@ -1,4 +1,10 @@
-import { WorkbenchOwnerLeaseContext, WorkbenchQueueActionsContext } from './workbenchContexts'
+import {
+  WorkbenchOwnerLeaseContext,
+  WorkbenchQueueActionsContext,
+  WorkbenchReminderItemsContext,
+  WorkbenchSidebarRemindersContext,
+} from './workbenchContexts'
+import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
@@ -14,6 +20,7 @@ import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
 import { useMemo, type ReactNode } from 'react'
 export function WorkbenchContextProviders({
   value,
+  taskReminders,
   paneValue,
   sharedLifecycleStore,
   lifecycleStore,
@@ -22,6 +29,7 @@ export function WorkbenchContextProviders({
   children,
 }: {
   value: WorkbenchContextValue
+  taskReminders: RuntimeTaskReminderState
   paneValue: WorkbenchPaneContextValue
   sharedLifecycleStore: RuntimeTaskLifecycleStore
   lifecycleStore: RuntimeTaskLifecycleStore
@@ -33,6 +41,11 @@ export function WorkbenchContextProviders({
   const queueActions = useMemo(
     () => ({ forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError }),
     [forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError]
+  )
+  const { items, unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead } = taskReminders
+  const sidebarReminders = useMemo(
+    () => ({ unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead }),
+    [unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead]
   )
   return (
     <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
@@ -51,7 +64,11 @@ export function WorkbenchContextProviders({
                     refreshDevices={refreshDevicesAfterRestart}
                   >
                     <WorkbenchQueueActionsContext.Provider value={queueActions}>
-                      <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                      <WorkbenchReminderItemsContext.Provider value={items}>
+                        <WorkbenchSidebarRemindersContext.Provider value={sidebarReminders}>
+                          <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                        </WorkbenchSidebarRemindersContext.Provider>
+                      </WorkbenchReminderItemsContext.Provider>
                     </WorkbenchQueueActionsContext.Provider>
                   </WorkbenchCloudDeviceRestarts>
                 </DesktopGitAccountConfigurationProvider>
