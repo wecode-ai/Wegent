@@ -790,6 +790,8 @@ export function createDesktopScenario({
           })),
         })
       }
+      const check = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
+      const command = (method, params) => client({ action: 'command', target, method, params })
       let recording = false
       let probingTurnUpdates = false
       try {
@@ -851,6 +853,12 @@ export function createDesktopScenario({
         )
         await evaluate(`(${installTurnUpdateProbe.toString()})()`)
         probingTurnUpdates = true
+        if (check) {
+          await command('Performance.enable')
+          await command('Profiler.enable')
+          await command('Profiler.setSamplingInterval', { interval: 2000 })
+          await command('Profiler.start')
+        }
 
         const controller = new AbortController()
         const collect = async () => {
@@ -911,6 +919,20 @@ export function createDesktopScenario({
           `window.__weworkProfileTurnUpdates.stop(${JSON.stringify(taskId)})`
         )
         probingTurnUpdates = false
+        if (check) {
+          const { profile } = await command('Profiler.stop')
+          await command('Profiler.disable')
+          if (turnUpdates.some(update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs)) {
+            const { metrics } = await command('Performance.getMetrics')
+            await writeDiagnosticFile(join(resultDir, 'renderer-turn-profile.json'), {
+              profile,
+              navigationStartSeconds: metrics.find(metric => metric.name === 'NavigationStart')
+                ?.value,
+              turnUpdates,
+            })
+          }
+          await command('Performance.disable')
+        }
         assert.ok(
           turnUpdates.some(update => update.status === 'started'),
           'The profiled task did not receive a started runtime.turn.updated snapshot'
@@ -989,7 +1011,7 @@ export function createDesktopScenario({
           recording = false
           await stopPerformanceRecording(client, resultDir, target, reportPath)
         }
-        if (process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true') {
+        if (check) {
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
