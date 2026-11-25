@@ -208,8 +208,15 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   lockfile = File.join(directory, "backend-rs/Cargo.lock")
   original_lock = File.read(lockfile)
   File.write(lockfile, original_lock + "\n# new lock")
-  raise "Incompatible base seed was selected" unless seed_selection.call.empty?
-  File.write(lockfile, original_lock)
+  git.call("add", ".")
+  git.call("-c", "user.name=CI", "-c", "user.email=ci@example.com", "commit", "-qm", "unpushed prewarm")
+  environment["BASE_SHA"] = git.call("rev-parse", "HEAD")
+  raise "Older seed with compatible recipe was not reused" unless seed_selection.call == seed
+  toolchain = File.join(directory, ".github/ci/rust-toolchain")
+  original_toolchain = File.read(toolchain)
+  File.write(toolchain, "1.0.0\n")
+  raise "Incompatible toolchain seed was selected" unless seed_selection.call.empty?
+  File.write(toolchain, original_toolchain)
 
   run = lambda do |name, success|
     output, status = Open3.capture2e(environment, "bash", "-e", "-o", "pipefail", "-c",

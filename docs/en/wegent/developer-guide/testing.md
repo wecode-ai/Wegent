@@ -350,16 +350,18 @@ from a PR.
 
 Rust backend E2E first looks up the exact runtime. On a miss, the build can
 reuse a prebuilt dependency image and GHCR BuildKit layers written by main.
-If the current dependency image is missing, a base-revision image can supply
-compiled dependencies when its toolchain, lockfile, and dependency build steps
-match. The build synchronizes workspace sources by content, removes deleted
+If the current dependency image is missing, the resolver searches the eight
+most recent first-parent revisions from the base for a matching toolchain and
+dependency build recipe. Cargo validates dependencies against the current lockfile
+and recompiles affected targets. The build synchronizes workspace sources by content, removes deleted
 files, and preserves unchanged timestamps so Cargo can rebuild affected crates.
 Without a prebuilt dependency image, it compiles the real targets directly.
 Only dependency prewarming compiles placeholder targets. Functional E2E builds
 the gateway package at optimization level 0 and reuses the compiled dependencies.
 The two Linux Core latency benchmarks and running-conversation history keep
 dedicated shards. The scheduler distributes the remaining checkpoints across
-the existing shards.
+the existing shards, spreading long checkpoints to reduce CPU contention
+between Electron sessions.
 
 The Backend Rust module check reuses workspace test binaries for package-specific
 MySQL and Redis regressions, retaining each step's service configuration and logs.

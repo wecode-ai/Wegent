@@ -150,19 +150,35 @@ describe("shared conversation cards without Electron", () => {
   });
 
   it.each([
-    ["server_overloaded", "connection interrupted", "Model service is busy"],
+    [
+      "server_overloaded",
+      "connection interrupted",
+      "Model service is busy",
+      "overloaded",
+    ],
     [
       "timeout_error",
       "codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted",
       "Timed out waiting for a response",
+      "within 180 seconds",
+    ],
+    [
+      "llm_error",
+      "No tool output found for tool call call_1.",
+      "The model could not process the conversation history",
+      "The new conversation will reference this one",
     ],
   ])(
     "shows localized terminal %s separately from diagnostics",
-    (type, error, title) => {
+    (type, error, title, guidance) => {
+      const continueInNewConversation = vi.fn();
       render(
         <AssistantErrorCard
           error={error}
           errorType={type}
+          onContinueInNewConversation={continueInNewConversation}
+          onRetry={vi.fn()}
+          onSwitchModel={vi.fn()}
           message={{
             id: "failed",
             role: "assistant",
@@ -173,13 +189,35 @@ describe("shared conversation cards without Electron", () => {
         />,
       );
       expect(element("assistant-error-title").textContent).toBe(title);
+      const retry = element("assistant-error-retry");
+      const switchModel = element("assistant-error-switch-model-retry");
+      expect(retry.textContent).toBe("Retry");
+      const recovery = container.querySelector<HTMLButtonElement>(
+        '[data-testid="assistant-error-continue-in-new-conversation"]',
+      );
+      if (type === "llm_error") {
+        if (!recovery) throw new Error("Missing new conversation action");
+        expect(recovery.textContent).toBe("Continue in a new conversation");
+        expect(retry.compareDocumentPosition(switchModel)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        expect(switchModel.compareDocumentPosition(recovery)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        act(() => recovery.click());
+        expect(continueInNewConversation).toHaveBeenCalledOnce();
+      } else {
+        expect(recovery).toBeNull();
+        expect(switchModel.compareDocumentPosition(retry)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      }
       expect(
         document.querySelector('[data-testid="assistant-error-details"]'),
       ).toBeNull();
-      if (type === "timeout_error")
-        expect(element("assistant-error-description").textContent).toContain(
-          "within 180 seconds",
-        );
+      expect(element("assistant-error-description").textContent).toContain(
+        guidance,
+      );
       act(() => element("assistant-error-details-toggle").click());
       expect(element("assistant-error-details").textContent).toBe(error);
     },

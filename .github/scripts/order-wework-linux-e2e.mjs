@@ -78,6 +78,7 @@ export function balanceLinuxCoreMatrix(
     scope === 'core' ? linuxCoreCheckpointResources(checkpoint) : []
   for (const checkpoint of ordered) {
     const exclusive = exclusiveFor(checkpoint)
+    const duration = seconds[checkpoint] ?? 180
     const load = (assignment) =>
       exclusive
         ? Math.max(...assignment.workers)
@@ -86,9 +87,16 @@ export function balanceLinuxCoreMatrix(
       const occupied = new Set(assignment.checkpoints.flatMap(resources))
       return Number(resources(checkpoint).some((resource) => occupied.has(resource)))
     }
+    // Concurrent long desktop sessions compete for the same CPU. Spread them
+    // before filling each runner with shorter checkpoints.
+    const longPeers = (assignment) =>
+      duration >= 400
+        ? assignment.checkpoints.filter((peer) => (seconds[peer] ?? 0) >= 400).length
+        : 0
     assignments.sort(
       (a, b) =>
         conflicts(a) - conflicts(b) ||
+        longPeers(a) - longPeers(b) ||
         load(a) - load(b) ||
         a.workers.reduce((sum, value) => sum + value, 0) -
           b.workers.reduce((sum, value) => sum + value, 0) ||
@@ -96,7 +104,6 @@ export function balanceLinuxCoreMatrix(
     )
     const target = assignments[0]
     const worker = target.workers.indexOf(Math.min(...target.workers))
-    const duration = seconds[checkpoint] ?? 180
     if (exclusive)
       target.workers = target.workers.map((value) => value + duration)
     else target.workers[worker] += duration
