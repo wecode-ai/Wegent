@@ -38,7 +38,7 @@ export function createReplyPredictionFeed(
       prediction: ReplyPredictionResult | null
     }
   >()
-  let previous: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']> | undefined
+  let initialized = false
   let stopStore: (() => void) | undefined
   let stopService: (() => void) | undefined
   let synchronizing = false
@@ -61,7 +61,7 @@ export function createReplyPredictionFeed(
     observedActivity.clear()
     for (const owner of owners.values()) owner.release()
     owners.clear()
-    previous = undefined
+    initialized = false
     snapshot = { service, entries: new Map(), accept }
     listeners.forEach(listener => listener())
     reportReplyPredictionFeedError(error)
@@ -104,32 +104,29 @@ export function createReplyPredictionFeed(
       suspend(error)
     }
   }
-  const synchronize = () => {
+  const synchronize: Parameters<RuntimeTaskLifecycleStore['subscribeTaskChanges']>[0] = (
+    changedKeys,
+    before,
+    after
+  ) => {
     synchronizing = true
     let synchronized = false
     try {
-      const next = store.getSnapshot()
-      const before = previous ?? next
-      for (const key of before.tasks.keys()) {
-        if (next.tasks.has(key)) continue
-        owners.get(key)?.release()
-        owners.delete(key)
-        observedActivity.delete(key)
-        tasks.delete(key)
-      }
-      for (const [key, task] of next.tasks) {
-        const prior = before.tasks.get(key)
-        if (task.derived.isBusy || (prior && prior.turn.latestId !== task.turn.latestId))
+      const keys = initialized ? changedKeys : after.keys()
+      for (const key of keys) {
+        const task = after.get(key)
+        const prior = before.get(key)
+        if (task && (task.derived.isBusy || (prior && prior.turn.latestId !== task.turn.latestId)))
           observedActivity.add(key)
-        const source = runtimeReplyPredictionSource(task.address, task)
+        const source = task && runtimeReplyPredictionSource(task.address, task)
+        const owner = owners.get(key)
         if (!source) {
-          tasks.delete(key)
-          owners.get(key)?.release()
+          if (tasks.delete(key)) synchronized = true
+          owner?.release()
           owners.delete(key)
           observedActivity.delete(key)
           continue
         }
-        const owner = owners.get(key)
         if (owner?.scope !== source.scope) {
           owner?.release()
           owners.set(key, { scope: source.scope, release: service.retain(source.scope) })
@@ -139,16 +136,13 @@ export function createReplyPredictionFeed(
         if (!current || current.key !== predictionKey || current.source.busy !== source.busy) {
           current = { source, key: predictionKey, requested: false, prediction: null }
           tasks.set(key, current)
-        }
-        if (source.busy) {
-          service.invalidate(source.scope)
-          current.requested = false
-          current.prediction = null
-          continue
+          synchronized = true
+          if (source.busy) service.invalidate(source.scope)
         }
         // A historical task retains its scope but starts no backlog request.
-        if (!observedActivity.has(key) || current.requested) continue
+        if (source.busy || !observedActivity.has(key) || current.requested) continue
         current.requested = true
+        synchronized = true
         const request = current
         void service.request(source).then(
           prediction => {
@@ -163,8 +157,7 @@ export function createReplyPredictionFeed(
           }
         )
       }
-      previous = next
-      synchronized = true
+      initialized = true
     } catch (error) {
       suspend(error)
     } finally {
@@ -178,10 +171,10 @@ export function createReplyPredictionFeed(
       listeners.add(listener)
       if (listeners.size === 1) {
         try {
-          previous = store.getSnapshot()
+          const { tasks: currentTasks } = store.getSnapshot()
           stopService = service.subscribe(publish)
-          stopStore = store.subscribe(synchronize)
-          synchronize()
+          stopStore = store.subscribeTaskChanges(synchronize)
+          synchronize(new Set(), currentTasks, currentTasks)
         } catch (error) {
           stopStore?.()
           stopStore = undefined
@@ -201,6 +194,7 @@ export function createReplyPredictionFeed(
         owners.clear()
         observedActivity.clear()
         tasks.clear()
+        initialized = false
         snapshot = { service, entries: new Map(), accept }
       }
     },

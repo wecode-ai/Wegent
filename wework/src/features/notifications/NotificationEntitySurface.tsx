@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { useCallback, useMemo, type ContextType, type ReactNode } from 'react'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { NotificationIssueEntity } from './NotificationIssueEntity'
 import { NotificationEntityContext } from './NotificationEntityContext'
@@ -44,6 +44,22 @@ export function NotificationEntitySurface({
     },
     [destination, interactionId, onOriginalUrlChange]
   )
+  const issueContext = useMemo<ContextType<typeof NotificationEntityContext>>(
+    () =>
+      interactionId && destination?.kind === 'board' && destination.itemId
+        ? {
+            id: interactionId,
+            projectId: destination.projectId,
+            issueId: destination.itemId,
+            store: destination.projectStore ?? 'backend',
+            rootCommentId: destination.commentId,
+            address,
+            sourceMessageIds,
+            onFocusedMessage,
+          }
+        : null,
+    [interactionId, destination, address, sourceMessageIds, onFocusedMessage]
+  )
   const openTask = (task: RuntimeTaskAddress) => {
     openWeworkScheme(weworkTaskScheme(task))
   }
@@ -82,22 +98,7 @@ export function NotificationEntitySurface({
   }
   if (destination?.kind === 'board' && destination.itemId && state.user) {
     return (
-      <NotificationEntityContext.Provider
-        value={
-          interactionId
-            ? {
-                id: interactionId,
-                projectId: destination.projectId,
-                issueId: destination.itemId,
-                store: destination.projectStore ?? 'backend',
-                rootCommentId: destination.commentId,
-                address,
-                sourceMessageIds,
-                onFocusedMessage,
-              }
-            : null
-        }
-      >
+      <NotificationEntityContext.Provider value={issueContext}>
         <NotificationIssueEntity
           key={url}
           projectId={destination.projectId}

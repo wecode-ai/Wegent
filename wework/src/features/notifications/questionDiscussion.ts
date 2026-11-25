@@ -1,6 +1,6 @@
 import { createContext, useContext, useId, useState, useSyncExternalStore } from 'react'
 import { createQuestionDiscussionPanels } from './questionDiscussionPanels'
-import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import type { Attachment, RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasRequestUserInputResponse,
   isImplementationPlanRequestUserInput,
@@ -81,20 +81,23 @@ export interface QuestionDiscussionSession {
   payload: RequestUserInputPayload
   address: RuntimeTaskAddress | null
   answers: Record<string, string>
+  optionAnswers?: Record<string, string>
+  attachments?: Record<string, Attachment[]>
   input?: string
 }
 
 export function questionDiscussionDrafts(
   sessions: Record<string, QuestionDiscussionSession>,
   source: RuntimeTaskAddress,
-  payload: RequestUserInputPayload
+  payload: RequestUserInputPayload,
+  field: 'answers' | 'optionAnswers' = 'answers'
 ): Record<string, string> {
   return Object.fromEntries(
     (payload.questions ?? []).flatMap(question => {
       if (!question.id) return []
       const target = requestUserInputQuestionTarget(payload, question.id)
       const answer =
-        sessions[questionDiscussionKey(source, target.payload)]?.answers[target.questionId]
+        sessions[questionDiscussionKey(source, target.payload)]?.[field]?.[target.questionId]
       return answer === undefined ? [] : [[question.id, answer]]
     })
   )

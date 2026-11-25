@@ -126,6 +126,8 @@ mod archives;
 mod assignment_receipts;
 mod assignment_runtime_states;
 mod async_questions;
+mod question_replies;
+use question_replies::PreparedQuestionReply;
 mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;
@@ -211,6 +213,7 @@ mod stand_in_role_dependencies;
 mod stand_in_role_results;
 mod stand_in_schedules;
 mod stand_in_source_tasks;
+mod stand_in_task_permissions;
 mod stand_in_task_results;
 mod stand_in_tasks;
 mod stand_in_telemetry;
@@ -845,11 +848,12 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let mut persisted_turns =
-            turns::read_runtime_turn_state(&turn_queue_path).unwrap_or_else(|error| {
-                log_executor_event("runtime turn queue restore failed", &[("error", error)]);
-                turns::RuntimeTurnQueueState::default()
-            });
+        let persisted_turns = turns::read_runtime_turn_state(&turn_queue_path);
+        let turn_queue_read = persisted_turns.is_ok();
+        let mut persisted_turns = persisted_turns.unwrap_or_else(|error| {
+            log_executor_event("runtime turn queue restore failed", &[("error", error)]);
+            turns::RuntimeTurnQueueState::default()
+        });
         quota_recovery::restore_dispatches(&mut persisted_turns);
         for command in persisted_turns.commands.values_mut() {
             if command.is_owner_abandoned()
@@ -957,6 +961,15 @@ impl RuntimeWorkRpcHandler {
                 &[("count", removed_worktree_turn_count.to_string())],
             );
         }
+        let automation_store =
+            AutomationStore::new(super::store::runtime_work_dir().join("automations.json"));
+        if turn_queue_read {
+            automation_rpc::reconcile_interrupted_runs(
+                &automation_store,
+                &queued_turns,
+                &active_goal_turns,
+            );
+        }
         let handler = Self {
             transcript_transfer_cleanup: Arc::default(),
             #[cfg(test)]
@@ -1008,9 +1021,7 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             local_issue_scheduler_started: Arc::new(AtomicBool::new(false)),
             archived_delete_tx,
-            automation_store: AutomationStore::new(
-                super::store::runtime_work_dir().join("automations.json"),
-            ),
+            automation_store,
             task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,

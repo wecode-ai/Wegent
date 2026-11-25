@@ -18,6 +18,12 @@ const searchInput = '[data-testid="workbench-search-input"]'
 const searchCloseButton = '[data-testid="workbench-search-close-button"]'
 const browserToggle = '[data-testid="browser-full-control-toggle"]:not(:disabled)'
 const linkSelector = '[data-testid="browser-external-link-target"]'
+const searchFixtureColor = [208, 24, 144]
+
+function isSearchFixturePixel(pixel) {
+  // Chromium's composited screenshot can round an 8-bit color channel by one.
+  return pixel.every((channel, index) => Math.abs(channel - searchFixtureColor[index]) <= 1)
+}
 
 async function clickPoint(command, { x, y }) {
   for (const type of ['mousePressed', 'mouseReleased']) {
@@ -105,7 +111,7 @@ async function verifySearchOverlay(
   await writeFile(
     pagePath,
     `<!doctype html><title>Search overlay fixture</title>
-      <style>button { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: rgb(208,24,144); }</style>
+      <style>button { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: rgb(${searchFixtureColor.join(',')}); }</style>
       <button id="page" aria-label="Test page" data-clicks="0"
         onclick="this.dataset.clicks=Number(this.dataset.clicks)+1"></button>`
   )
@@ -122,14 +128,14 @@ async function verifySearchOverlay(
   )
   const pageBounds = await read(`document.querySelector(${JSON.stringify(address)})
       .closest('[data-active-workbench-pane]').querySelector('[data-testid="workspace-browser-electron-webview-placeholder"]').getBoundingClientRect().toJSON()`)
-  // Compare the composited page before and after the modal in the same display color space.
+  // Wait for the fixture's opaque paint; a transitional frame may already look magenta.
   const pagePixel = await waitForValue(
     () =>
       capturePixel(command, read, {
         x: Math.floor(pageBounds.x + pageBounds.width / 2),
         y: Math.floor(pageBounds.y + pageBounds.height / 2),
       }),
-    ([r, g, b]) => r > b && b > g + 100,
+    isSearchFixturePixel,
     'The magenta fixture must be painted before opening search',
     5_000
   )
@@ -174,7 +180,7 @@ async function verifySearchOverlay(
   await control.command('waitFor', searchInput, { visible: false, timeoutMs: 5_000 })
   const restoredPixel = await waitForValue(
     () => capturePixel(command, read, overlap.sample),
-    pixel => pixel.every((channel, index) => channel === pagePixel[index]),
+    isSearchFixturePixel,
     'The guest page must be visible again after closing search',
     5000
   )

@@ -5,6 +5,7 @@ import { createDesktopScenario as createConversations } from './stand-in-issue-c
 import { createDesktopScenario as createDelegation } from './stand-in-issue-delegation.scenario.mjs'
 import { createEventFailureIsolation } from '../modules/stand-in-event-failure-isolation.mjs'
 import { verifyAssignmentBacklogDuringTaskRead } from '../modules/stand-in-assignment-backlog.mjs'
+import { createParticipatingIssuesStory } from '../modules/stand-in-participating-issues.mjs'
 
 export function createDesktopScenario(options) {
   const notifications = createNotifications(options)
@@ -13,6 +14,7 @@ export function createDesktopScenario(options) {
   const conversations = createConversations(options)
   const delegation = createDelegation(options)
   const isolation = createEventFailureIsolation(options)
+  const participatingIssues = createParticipatingIssuesStory(options)
   let cloudFixture
   let active = conversations
   return {
@@ -65,6 +67,8 @@ export function createDesktopScenario(options) {
       active = isolation
       await isolation.verify(control, cloudFixture, delegation.diagnostics())
       await verifyAssignmentBacklogDuringTaskRead(control, cloudFixture, options.uiTimeoutMs)
+      active = participatingIssues
+      await participatingIssues.verify(control, cloudFixture)
     },
     diagnostics() {
       return {

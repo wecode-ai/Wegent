@@ -25,10 +25,13 @@ import {
 } from './browser-video-settings-regression.mjs'
 import {
   ACTIVE_SEND_BUTTON_SELECTOR,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
+  selectE2EModel,
 } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -744,6 +747,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       control.setScenario('embedded_browser_setup')

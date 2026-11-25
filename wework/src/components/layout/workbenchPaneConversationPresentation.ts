@@ -19,8 +19,25 @@ function grows(before: string, after: string) {
   return after.length > before.length && after.startsWith(before)
 }
 
-/** Only an append to an established reply can leave the pane chrome untouched. */
-export function isAssistantTextAppend(previous: Conversation, current: Conversation) {
+function isReasoningUpdate(before: RuntimeConversationTurn, after: RuntimeConversationTurn) {
+  if (!equalExcept(before, after, 'items', 'streamingThinkingContent')) return false
+  return before.items.every((item, index) => {
+    const next = after.items[index]
+    return (
+      item === next ||
+      (item.type === 'block' &&
+        next.type === 'block' &&
+        item.block.type === 'thinking' &&
+        next.block.type === 'thinking' &&
+        item.block.status === 'streaming' &&
+        equalExcept(item, next, 'block') &&
+        equalExcept(item.block, next.block, 'content', 'contentOriginalChars', 'contentTruncated'))
+    )
+  })
+}
+
+/** Updates to an established reply's text or reasoning can leave the pane chrome untouched. */
+export function isTranscriptOnlyStreamingUpdate(previous: Conversation, current: Conversation) {
   const before = previous.turns.at(-1)
   const after = current.turns.at(-1)
   if (
@@ -31,8 +48,13 @@ export function isAssistantTextAppend(previous: Conversation, current: Conversat
     previous.turns.some(
       (turn, index) => index < previous.turns.length - 1 && turn !== current.turns[index]
     ) ||
+    before.items.length !== after.items.length
+  ) {
+    return false
+  }
+  if (isReasoningUpdate(before, after)) return true
+  if (
     !equalExcept(before, after, 'items') ||
-    before.items.length !== after.items.length ||
     before.items.some(
       (item, index) => index < before.items.length - 1 && item !== after.items[index]
     )

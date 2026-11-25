@@ -91,6 +91,7 @@ mod stand_in_lifecycle;
 
 #[path = "stand_in_ghost_proposals.rs"]
 mod stand_in_ghost_proposals;
+pub use stand_in_ghost_proposals::GHOST_LEARNING_AXES;
 #[path = "stand_in_proposals.rs"]
 mod stand_in_proposals;
 

@@ -266,6 +266,7 @@ export async function verifyProjectAgentRoutingRecovery(
   ])
   await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
     value: repairedModel,
+    includeOptionsOnError: true,
   })
   await waitForBoardValue(
     () => control.command('getValue', '[data-testid="cloud-project-chat-agent-model"]'),

@@ -54,12 +54,16 @@ export function StandInProposalSources({
   const scope = (source?: StandInRole['collaboration']) =>
     !source?.enabled
       ? t('standIn.workspace.no_project_connection')
-      : source.allProjects
-        ? t('standIn.workspace.all_projects_with_exclusions', {
-            count: source.excludedProjects.length,
-          })
-        : source.projects.map(ref => projectName(ref.id, ref.store)).join('、') ||
-          t('standIn.workspace.no_project_connection')
+      : [
+          source.includeParticipatingIssues && t('standIn.workspace.receive_participating_issues'),
+          source.allProjects
+            ? t('standIn.workspace.all_projects_with_exclusions', {
+                count: source.excludedProjects.length,
+              })
+            : source.projects.map(ref => projectName(ref.id, ref.store)).join('、'),
+        ]
+          .filter(Boolean)
+          .join(' · ') || t('standIn.workspace.no_project_connection')
   const collaborationChanged = !dequal(previous?.collaboration, identity.collaboration)
   const source = identity.collaboration
   return (

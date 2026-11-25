@@ -1,6 +1,7 @@
 import { useCallback, useContext, useSyncExternalStore } from 'react'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { RuntimeTaskLifecycleContext, RuntimeTaskLifecycleWriterContext } from './internalContext'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import type { RuntimeTaskLifecycleSnapshot, RuntimeTaskLifecycleStoreSnapshot } from './types'
@@ -14,14 +15,19 @@ export function useRuntimeTaskLifecycleStore(): RuntimeTaskLifecycleStore {
 }
 
 export function useRuntimeTaskLifecycleStoreSnapshot(
-  explicitStore?: RuntimeTaskLifecycleStore
+  explicitStore?: RuntimeTaskLifecycleStore,
+  enabled = true
 ): RuntimeTaskLifecycleStoreSnapshot {
   const contextualStore = useContext(RuntimeTaskLifecycleContext)
   const store = explicitStore ?? contextualStore
   if (!store) {
     throw new Error('RuntimeTaskLifecycleProvider is required')
   }
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  return useSyncExternalStore(
+    enabled ? store.subscribe : subscribeIdleResource,
+    store.getSnapshot,
+    store.getSnapshot
+  )
 }
 
 export function useRuntimeTaskLifecycleResolver(explicitStore?: RuntimeTaskLifecycleStore) {
@@ -37,20 +43,41 @@ export function useRuntimeTaskLifecycleResolver(explicitStore?: RuntimeTaskLifec
   )
 }
 
+export function useRuntimeTaskSidebarSnapshot() {
+  const store = useContext(RuntimeTaskLifecycleContext)
+  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
+  return useSyncExternalStore(store.subscribe, store.getSidebarSnapshot, store.getSidebarSnapshot)
+}
+
 export function useRuntimeTaskLifecycle(
   address: RuntimeTaskAddress | null | undefined
 ): RuntimeTaskLifecycleSnapshot | null {
-  return useRuntimeTaskLifecycleResolver()(address)
+  const store = useContext(RuntimeTaskLifecycleContext)
+  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
+  const getSnapshot = useCallback(
+    () => store.selectTask(store.getSnapshot(), address),
+    [address, store]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? store.subscribeTask(address, listener) : subscribeIdleResource(),
+    [address, store]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 export function useRuntimeTaskSummaryResolver(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   explicitStore?: RuntimeTaskLifecycleStore
 ) {
-  const resolve = useRuntimeTaskLifecycleResolver(explicitStore)
+  const contextualStore = useContext(RuntimeTaskLifecycleContext)
+  const store = explicitStore ?? contextualStore
+  if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
   return useCallback(
     (address: RuntimeTaskAddress | null | undefined) =>
-      findRuntimeTask(runtimeWork, address) ?? resolve(address)?.task ?? null,
-    [runtimeWork, resolve]
+      findRuntimeTask(runtimeWork, address) ??
+      store.selectTask(store.getSnapshot(), address)?.task ??
+      null,
+    [runtimeWork, store]
   )
 }

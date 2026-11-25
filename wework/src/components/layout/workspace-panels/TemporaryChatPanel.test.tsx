@@ -15,6 +15,7 @@ import { I18nextProvider } from 'react-i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
+import { setComposerValue } from '@/test/composer'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
@@ -3253,6 +3254,103 @@ describe('TemporaryChatPanel', () => {
     )
   })
 
+  it('skips only the focused async request while another request stays answerable', async () => {
+    const questions = ['first', 'second'].map(itemId => ({
+      kind: 'request_user_input' as const,
+      itemId,
+      delivery: 'async' as const,
+      questions: [{ id: itemId, question: `${itemId} decision?`, is_other: true }],
+    }))
+    mocks.conversationMessages = questions.map(question => ({
+      id: question.itemId,
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      blocks: [
+        {
+          id: question.itemId,
+          type: 'tool',
+          toolName: 'request_user_input_async',
+          status: 'done',
+          renderPayload: question,
+        },
+      ],
+    })) as typeof mocks.conversationMessages
+    const panel = (focusedRequest: (typeof questions)[number]) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="skip-focused"
+        focusedRequest={focusedRequest}
+        focusRequestKey={focusedRequest.itemId}
+      />
+    )
+    const view = render(panel(questions[0]))
+    await userEvent.click(screen.getByTestId('request-user-input-skip-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    )
+    view.rerender(panel(questions[1]))
+    expect(screen.getByTestId('request-user-input-custom-second')).toBeVisible()
+    expect(screen.getByTestId('request-user-input-submit-button')).toBeEnabled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+  })
+
+  it('skips only async questions in the displayed historical turn', async () => {
+    mocks.conversationTurns = ['first', 'second'].map(id => ({
+      id,
+      clientUserMessageId: `${id}-user`,
+      status: 'done',
+      items: [
+        {
+          id: `${id}-user`,
+          type: 'user_message',
+          message: { id: `${id}-user`, role: 'user', content: `${id} context`, status: 'done' },
+        },
+        {
+          id: `${id}-question`,
+          type: 'block',
+          block: {
+            id: `${id}-question`,
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            createdAt: 1,
+            renderPayload: {
+              kind: 'request_user_input',
+              itemId: `${id}-question`,
+              delivery: 'async',
+              interactionScope: id,
+              questions: [{ id, question: `${id} decision?`, is_other: true }],
+            },
+          },
+        },
+      ],
+    })) as typeof mocks.conversationTurns
+    mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+    const panel = (id: string) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="skip-history"
+        historySource={{ turnId: id, userMessageIds: [`${id}-user`] }}
+      />
+    )
+    const view = render(panel('first'))
+    expect(screen.getByTestId('request-user-input-custom-first')).toBeVisible()
+    await userEvent.click(screen.getByTestId('request-user-input-skip-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    )
+    view.rerender(panel('second'))
+    expect(screen.getByTestId('request-user-input-custom-second')).toBeVisible()
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+  })
+
   it('shows the selected older question and targets its original turn instead of the latest request', async () => {
     const older = {
       kind: 'request_user_input' as const,
@@ -3343,8 +3441,8 @@ describe('TemporaryChatPanel', () => {
         />
       )
       const { rerender } = render(panel())
-      await userEvent.type(
-        screen.getByTestId('request-user-input-custom-audience'),
+      setComposerValue(screen.getByTestId('request-user-input-custom-audience'), 'Saved recipients')
+      expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
         'Saved recipients'
       )
       await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))

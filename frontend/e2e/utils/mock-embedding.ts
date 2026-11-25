@@ -111,6 +111,14 @@ export async function handleEmbeddingRequest(
     return true
   }
   const data = inputs.map((input: string, index: number) => {
+    if (typeof payload.model === 'string' && payload.model.startsWith('e2e-mcp-diversity-')) {
+      // Rank only this external model fixture; MCP, Runtime and storage stay real.
+      // A query has no rank marker, while each indexed Markdown section has one.
+      const rank = Number(input.match(/WEGENT-MCP-RANK-(\d+)/)?.[1] ?? 0)
+      const values = [1, rank / 10, ...Array<number>(E2E_EMBEDDING_DIMENSIONS - 2).fill(0)]
+      const norm = Math.hypot(...values)
+      return { object: 'embedding', index, embedding: values.map(value => value / norm) }
+    }
     // Keep every component positive: index text carries metadata while a query
     // text does not, so a signed distribution makes any retrieval assertion a
     // coin flip against a score threshold. Positive components keep the vector

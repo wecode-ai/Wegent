@@ -44,9 +44,18 @@ impl AppInstance {
             "sessionId": self.session,
             "method": "release",
         });
-        if runtime_rpc::call(state, user_id, &self.device, METHOD, params, 75, false)
-            .await
-            .is_err()
+        if runtime_rpc::call(
+            state,
+            user_id,
+            &self.device,
+            METHOD,
+            params,
+            75,
+            false,
+            None,
+        )
+        .await
+        .is_err()
         {
             tracing::warn!(
                 user_id,

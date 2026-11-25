@@ -81,70 +81,78 @@ export function DesktopSidebarArchiveDialogs({
 }: ReturnType<typeof useDesktopSidebarModel>['archiveDialogs']) {
   return (
     <>
-      <ArchiveConversationsConfirmDialog
-        open={priorityArchiveItems !== null}
-        title={t('workbench.priority_filter_archive_title', {
-          defaultValue: '归档 {{count}} 个优先级任务？',
-          count: priorityArchiveItems?.length ?? 0,
-        })}
-        description={t(
-          'workbench.priority_filter_archive_description',
-          '只会归档“优先级”分组中的任务，不会归档最近任务'
-        )}
-        confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        testId="runtime-priority-archive-dialog"
-        onClose={closePriorityArchiveDialog}
-        onConfirm={() => void runPriorityArchive(priorityArchiveItems ?? [])}
-      />
-      <ArchiveConversationsConfirmDialog
-        open={priorityForceArchiveItems !== null}
-        title={t('workbench.archive_runtime_task_dirty_worktree_title')}
-        description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
-        confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        testId="runtime-priority-force-archive-dialog"
-        onClose={closePriorityForceArchiveDialog}
-        onConfirm={() => void runPriorityArchive(priorityForceArchiveItems ?? [], { force: true })}
-      />
-      <ArchiveConversationsConfirmDialog
-        open={archiveSectionMode !== null}
-        title={t(
-          archiveSectionMode === 'chats'
-            ? 'workbench.archive_chats_dialog_title'
-            : 'workbench.archive_projects_dialog_title',
-          {
-            defaultValue: '归档 {{count}} 个对话?',
-            count: archiveSectionDialogCount,
-          }
-        )}
-        description={t(
-          archiveSectionMode === 'chats'
-            ? 'workbench.archive_chats_dialog_desc'
-            : 'workbench.archive_projects_dialog_desc',
-          {
-            defaultValue:
-              archiveSectionMode === 'chats'
-                ? '这会将对话列表中的对话归档。之后你可以在已归档对话中找到它们'
-                : '这会将项目中的对话归档。之后你可以在已归档对话中找到它们',
-          }
-        )}
-        confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        testId={archiveSectionDialogTestId}
-        onClose={closeArchiveSectionDialog}
-        onConfirm={confirmArchiveSectionConversations}
-      />
-      <ArchiveConversationsConfirmDialog
-        open={forceArchiveSectionMode !== null}
-        title={t('workbench.archive_runtime_task_dirty_worktree_title')}
-        description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
-        confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
-        cancelLabel={t('workbench.cancel', '取消')}
-        testId={forceArchiveSectionDialogTestId}
-        onClose={closeForceArchiveSectionDialog}
-        onConfirm={confirmForceArchiveSectionConversations}
-      />
+      {priorityArchiveItems !== null && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.priority_filter_archive_title', {
+            defaultValue: '归档 {{count}} 个优先级任务？',
+            count: priorityArchiveItems?.length ?? 0,
+          })}
+          description={t(
+            'workbench.priority_filter_archive_description',
+            '只会归档“优先级”分组中的任务，不会归档最近任务'
+          )}
+          confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          testId="runtime-priority-archive-dialog"
+          onClose={closePriorityArchiveDialog}
+          onConfirm={() => void runPriorityArchive(priorityArchiveItems)}
+        />
+      )}
+      {priorityForceArchiveItems !== null && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+          description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
+          confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          testId="runtime-priority-force-archive-dialog"
+          onClose={closePriorityForceArchiveDialog}
+          onConfirm={() => void runPriorityArchive(priorityForceArchiveItems, { force: true })}
+        />
+      )}
+      {archiveSectionMode !== null && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t(
+            archiveSectionMode === 'chats'
+              ? 'workbench.archive_chats_dialog_title'
+              : 'workbench.archive_projects_dialog_title',
+            {
+              defaultValue: '归档 {{count}} 个对话?',
+              count: archiveSectionDialogCount,
+            }
+          )}
+          description={t(
+            archiveSectionMode === 'chats'
+              ? 'workbench.archive_chats_dialog_desc'
+              : 'workbench.archive_projects_dialog_desc',
+            {
+              defaultValue:
+                archiveSectionMode === 'chats'
+                  ? '这会将对话列表中的对话归档。之后你可以在已归档对话中找到它们'
+                  : '这会将项目中的对话归档。之后你可以在已归档对话中找到它们',
+            }
+          )}
+          confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          testId={archiveSectionDialogTestId}
+          onClose={closeArchiveSectionDialog}
+          onConfirm={confirmArchiveSectionConversations}
+        />
+      )}
+      {forceArchiveSectionMode !== null && (
+        <ArchiveConversationsConfirmDialog
+          open
+          title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+          description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
+          confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+          cancelLabel={t('workbench.cancel', '取消')}
+          testId={forceArchiveSectionDialogTestId}
+          onClose={closeForceArchiveSectionDialog}
+          onConfirm={confirmForceArchiveSectionConversations}
+        />
+      )}
     </>
   )
 }
