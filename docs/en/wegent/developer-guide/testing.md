@@ -480,6 +480,10 @@ entries without repeating tests already validated by the merge queue. Do not add
 merge-group caches. Use `actions/cache/restore` plus a `main`-only
 `actions/cache/save`, or reuse the existing shared action.
 
+A new push cancels the previous warmup. The replacement compares against the
+last successful main-branch push run so it includes inputs from cancelled runs.
+It warms all inputs when that run has no usable ancestor.
+
 ### Writing GitHub Actions Outputs
 
 Every line written to `$GITHUB_OUTPUT` must use the `name=value` format. Do not

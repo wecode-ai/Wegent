@@ -98,6 +98,9 @@ jobs:
     name: Detect Cache Changes
     if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.prebuild == 'linux')
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
       docker: ${{ steps.classify.outputs.docker }}
       executor_rust: ${{ steps.classify.outputs.executor_rust }}
@@ -117,11 +120,20 @@ jobs:
         id: classify
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            # A superseding push cancels the entire warmup. Include inputs
+            # from cancelled runs until a main push successfully warms them.
+            BEFORE_SHA="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci-cache-warmup.yml/runs" \
+              -f branch=main -f event=push -f status=success -F per_page=1 \
+              --jq '.workflow_runs[0].head_sha // empty')"
+          fi
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] ||
             [[ ! "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
             [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]] ||
-            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null ||
+            ! git merge-base --is-ancestor "$BEFORE_SHA" "$GITHUB_SHA"; then
             .github/scripts/classify-ci-cache-warmup.sh --all
           else
             git diff --name-only "$BEFORE_SHA...$GITHUB_SHA" |

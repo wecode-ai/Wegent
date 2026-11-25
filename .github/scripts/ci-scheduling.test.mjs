@@ -81,6 +81,37 @@ test('obsolete main warmups cancel and branch dispatches cannot populate shared 
   assert.equal(evaluate(warmup.jobs.changes.if, { ref: 'refs/heads/topic', event_name: 'workflow_dispatch' }), false)
 })
 
+test('replacement warmup includes inputs since the last successful push', () => {
+  const classify = warmup.jobs.changes.steps.find(step => step.id === 'classify').run
+  const lastSuccessful = 'a'.repeat(40)
+  const output = execFileSync('bash', ['-e', '-o', 'pipefail', '-c', `
+    gh() { printf '%s\\n' "$LAST_SUCCESSFUL"; }
+    git() {
+      case "$1" in
+        cat-file|merge-base) return 0 ;;
+        diff)
+          [[ "$3" == "$LAST_SUCCESSFUL...$GITHUB_SHA" ]] || return 1
+          printf '%s\\n' 'backend-rs/execution-completion/src/persist.rs'
+          ;;
+      esac
+    }
+    ${classify}
+  `], {
+    cwd: new URL('../../', import.meta.url),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      BEFORE_SHA: 'b'.repeat(40),
+      LAST_SUCCESSFUL: lastSuccessful,
+      GITHUB_SHA: 'c'.repeat(40),
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_REPOSITORY: 'example/project',
+      GITHUB_OUTPUT: '',
+    },
+  })
+  assert.ok(output.split('\n').includes('backend_rs_rust=true'))
+})
+
 test('unit, lint and runtime producers survive unrelated label events', () => {
   for (const [name, summary] of [['test', 'test-summary'], ['lint', 'lint-summary'], ['e2e-tests', 'platform-e2e-summary']]) {
     const source = workflow(name)

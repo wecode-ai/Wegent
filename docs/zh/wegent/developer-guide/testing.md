@@ -424,6 +424,9 @@ CI 稳定性依赖以下约束：
 `actions/cache/restore` 和仅限 `main` 的 `actions/cache/save`，或使用已有共享
 action。
 
+连续推送会取消旧预热。新的主分支预热从最近一次成功的主分支推送运行计算改动，
+覆盖被取消运行中的输入。找不到可用祖先时执行全量预热。
+
 ### 写入 GitHub Actions 输出
 
 写入 `$GITHUB_OUTPUT` 时，每一行必须是 `name=value` 格式。不要把会输出进度或诊断

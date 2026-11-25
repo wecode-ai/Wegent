@@ -1158,7 +1158,7 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/system-mcp.log"
 
       - name: Run terminal handoff gateway E2E
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 8
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1168,13 +1168,21 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           E2E_API_URL: http://localhost:8000
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
-          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/terminal-handoff-gateway
           PYTHONPATH: ..:.
         run: |
           set -o pipefail
           mkdir -p "$E2E_REPORT_DIR"
           uv run --no-sync python tests/e2e/terminal_handoff_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/terminal-handoff.log"
+
+      - name: Upload terminal handoff gateway E2E report
+        if: always() && matrix.shardIndex == 8
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terminal-handoff-gateway-e2e
+          path: .ci-artifacts/terminal-handoff-gateway/
+          retention-days: 14
 
       # Redis ACL fault injection must finish before shared Celery consumers start.
       - name: Start parallel Backend index worker
