@@ -274,8 +274,15 @@ export function createDesktopScenario(options) {
         })
         await mailbox.install(control)
         const catalog = await request('runtime.runner.catalog')
-        const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
-        assert.ok(model, 'Use the actual desktop model connected to the external double')
+        const selectedModel = catalog.models.find(
+          row => row.runtime === 'codex' && row.source !== 'cloud' && row.is_default
+        )
+        assert.ok(selectedModel, 'Use the actual desktop model connected to the external double')
+        const model = {
+          runtime: selectedModel.runtime,
+          provider: selectedModel.provider,
+          model_id: selectedModel.model_id,
+        }
         const accountId = createHash('sha256')
           .update(JSON.stringify([ids.profile, ids.org, ids.owner]))
           .digest('hex')
