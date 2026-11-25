@@ -136,6 +136,29 @@ async function verifyComposerEditorScroll({ composerSelector, control }) {
   await control.command('waitFor', '[data-testid="local-skill-autocomplete"]')
   const menu = await metrics('[data-testid="local-skill-autocomplete"]')
   const viewport = await metrics(scrollSelector)
+  const popupSelector = '[data-testid="composer-autocomplete-popup"]'
+  const popup = await waitForElementWidth(
+    control,
+    popupSelector,
+    width => Math.abs(width - viewport.width) <= 1,
+    `The autocomplete popup matching the editor width (${viewport.width}px)`
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', popupSelector, { value: 'overflow-y' }),
+    'hidden',
+    'The autocomplete popup must not provide a second scrollbar'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', '[data-testid="local-skill-autocomplete"]', {
+      value: 'overflow-y',
+    }),
+    'auto',
+    'The mention list must remain scrollable'
+  )
+  assert.ok(
+    popup.scrollHeight <= popup.clientHeight + 1,
+    'The mention list must fit the available popup height'
+  )
   assert.ok(
     menu.bottom <= viewport.top,
     'The autocomplete menu must open outside the clipped content'

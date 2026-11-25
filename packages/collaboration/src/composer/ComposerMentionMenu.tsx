@@ -82,7 +82,7 @@ export function ComposerMentionMenu<
       onPointerDownCapture={event => event.preventDefault()}
       ref={menuRef}
       data-testid="local-skill-autocomplete"
-      className={['max-h-64 overflow-y-auto', className].join(' ')}
+      className={['min-h-0 max-h-64 overflow-y-auto overscroll-contain', className].join(' ')}
     >
       <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
         {projectSpaceScope

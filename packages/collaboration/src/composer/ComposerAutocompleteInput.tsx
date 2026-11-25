@@ -948,7 +948,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
             />
           )}
           {showSlashMenu && (
-            <div ref={menuRef}>
+            <div ref={menuRef} className="flex min-h-0 flex-col">
               <SlashCommandMenu
                 renderAppIcon={renderAppIcon}
                 commands={filteredSlashCommands}

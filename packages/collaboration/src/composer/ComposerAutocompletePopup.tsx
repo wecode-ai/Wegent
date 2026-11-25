@@ -43,7 +43,7 @@ export function ComposerAutocompletePopup({
         aria-label={label}
         data-testid="composer-autocomplete-popup"
         data-embedded-browser-occlusion
-        className={className}
+        className={['flex flex-col overflow-hidden', className].join(' ')}
       >
         {children}
       </PopoverContent>
