@@ -15,6 +15,10 @@
       "appleTeamId": "27XH7KRW54",
       "config": {
         "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "允许 WeWork 使用麦克风进行语音输入。",
+        "NSSpeechRecognitionUsageDescription": "允许 WeWork 使用语音识别将语音转换为文字。"
       }
     },
     "android": {
@@ -39,11 +43,23 @@
         {
           "photosPermission": "允许 WeWork 选择照片并作为会话附件发送。",
           "cameraPermission": "允许 WeWork 拍摄照片并作为会话附件发送。",
-          "microphonePermission": false
+          "microphonePermission": "允许 WeWork 使用麦克风进行语音输入。"
         }
       ],
       "expo-sharing",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "允许 WeWork 使用麦克风进行语音输入。",
+          "speechRecognitionPermission": "允许 WeWork 使用语音识别将语音转换为文字。",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as",
+            "com.google.android.tts"
+          ]
+        }
+      ]
     ]
   }
 }
