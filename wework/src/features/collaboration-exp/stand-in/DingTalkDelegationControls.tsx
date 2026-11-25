@@ -45,6 +45,7 @@ export function DingTalkDelegationControls({
             data-testid={`stand-in-delegation-template-${template}`}
             checked={model.delegation.templates[template]}
             disabled={disabled}
+            className="keyboard:focus:ring-2 keyboard:focus:ring-focus/40"
             onCheckedChange={checked => onToggleTemplate(template, checked === true)}
           />
         </label>
