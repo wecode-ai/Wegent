@@ -4,16 +4,14 @@ import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { WorkbenchServices } from './workbenchServices'
 import type { WeworkNotificationPreferences } from '@/api/notifications'
+import { isStandInIdentityTask } from '@/lib/runtime-task-visibility'
 import {
   createStandInMessageReminderSource,
   type StandInMessageReminderIdentity,
 } from './standInMessageReminderSource'
 
 export function isStandInIdentity(item: RuntimeTaskReminderItem): boolean {
-  const origin = item.task.runtimeHandle?.origin
-  return Boolean(
-    origin && typeof origin === 'object' && 'type' in origin && origin.type === 'stand_in_identity'
-  )
+  return isStandInIdentityTask(item.task)
 }
 
 /** Observe canonical messages, not task completion; native subagents stay internal. */

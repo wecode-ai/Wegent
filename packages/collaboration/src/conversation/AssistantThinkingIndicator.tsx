@@ -8,12 +8,40 @@ export function AssistantThinkingIndicator({
   content = "",
   testId = "thinking-indicator",
   className,
+  variant,
 }: {
   content?: string;
   testId?: string;
   className?: string;
+  variant?: "dots";
 }) {
   const { t } = useConversationTranslation();
+  if (variant === "dots") {
+    return (
+      <div
+        className={cn(
+          "inline-flex h-6 items-center gap-1 text-text-secondary",
+          className,
+        )}
+        role="status"
+        data-testid={testId}
+      >
+        <span className="sr-only">{t("thinking.running")}</span>
+        {["", "[animation-delay:150ms]", "[animation-delay:300ms]"].map(
+          (delay) => (
+            <span
+              key={delay}
+              aria-hidden="true"
+              className={cn(
+                "size-1.5 rounded-full bg-current motion-safe:animate-pulse",
+                delay,
+              )}
+            />
+          ),
+        )}
+      </div>
+    );
+  }
   const preview = buildThinkingPreview(content);
   const text = preview
     ? `${t("thinking.running")} · ${preview}`

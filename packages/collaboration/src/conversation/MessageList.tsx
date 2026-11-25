@@ -74,6 +74,7 @@ export interface MessageListProps {
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
+  waitingIndicatorStyle?: 'dots'
   disableContentVisibility?: boolean
   forceVirtualMessageId?: string | null
   searchMessageId?: string
@@ -159,6 +160,7 @@ export const MessageList = memo(function MessageList({
   className,
   conversationKey,
   isWaitingForAssistant = false,
+  waitingIndicatorStyle,
   disableContentVisibility = false,
   forceVirtualMessageId = null,
   searchMessageId,
@@ -292,6 +294,7 @@ export const MessageList = memo(function MessageList({
     isWaitingForAssistant &&
     // Outcome views hide the thinking indicator inside streaming assistant messages.
     (showProcessingStatus === false ||
+      waitingIndicatorStyle === 'dots' ||
       !resolvedMessages.some(
         message => message.role === 'assistant' && message.status === 'streaming'
       ))
@@ -618,10 +621,10 @@ export const MessageList = memo(function MessageList({
               data-message-row={hasViewportRows ? true : undefined}
               style={row.style}
               className="min-w-0"
-              role="status"
+              role={waitingIndicatorStyle === 'dots' ? undefined : 'status'}
               data-testid="message-assistant-waiting"
             >
-              <AssistantThinkingIndicator />
+              <AssistantThinkingIndicator variant={waitingIndicatorStyle} />
             </article>
           )
         const nextMessage = visibleMessages[index + 1]

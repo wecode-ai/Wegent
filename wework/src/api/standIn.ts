@@ -551,7 +551,13 @@ export interface StandInExecutorApi {
     deviceId: string,
     taskId: string,
     options?: { resolveActiveProvider?: boolean }
-  ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
+  ): Promise<{
+    success: boolean
+    deviceId?: string
+    task?: RuntimeTaskSummary
+    code?: string
+    error?: string
+  }>
   assignmentTasks(
     userId: number,
     deviceId: string,

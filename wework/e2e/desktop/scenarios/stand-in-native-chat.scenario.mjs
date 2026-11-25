@@ -28,6 +28,7 @@ const NOTIFICATION_RESULT = '助理已完成后台核对。'
 const NOTIFICATION_RESULT_ID = 'native-chat-notification-result'
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
+const WAITING = `${CHAT} [data-testid="message-assistant-waiting"]`
 const TRANSPARENT_BACKGROUND = 'rgba(0, 0, 0, 0)'
 
 async function assertBorderlessAssistantText(control, selector) {
@@ -223,6 +224,18 @@ export function createDesktopScenario(options) {
             childHeld,
           })
         )
+        await control.command('waitFor', WAITING, {
+          visible: false,
+          timeoutMs: options.uiTimeoutMs,
+        })
+        await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]`, {
+          visible: true,
+          timeoutMs: options.uiTimeoutMs,
+        })
+        await control.command('waitFor', `${CHAT} [data-testid="pause-response-button"]`, {
+          visible: false,
+          timeoutMs: options.uiTimeoutMs,
+        })
         // The explicit guide action remains available during the active parent turn.
         await control.command(
           'fill',
@@ -311,8 +324,7 @@ export function createDesktopScenario(options) {
           'The assistant turn is running with the model held'
         )
         const userMessage = `${CHAT} [data-testid="user-message-content"]`
-        const waiting = `${CHAT} [data-testid="message-assistant-waiting"]`
-        const thinking = `${waiting} [data-testid="thinking-indicator"]`
+        const thinking = `${WAITING} [data-testid="thinking-indicator"]:has(> [aria-hidden="true"] + [aria-hidden="true"] + [aria-hidden="true"]:last-child)`
         await control.command('waitFor', userMessage, {
           text: NOTIFICATION_REQUEST,
           visible: true,
@@ -328,10 +340,14 @@ export function createDesktopScenario(options) {
           timeoutMs: options.uiTimeoutMs,
         })
         assert.equal(
-          await control.command('getComputedStyleValue', `${thinking} .activity-shimmer-sweep`, {
-            value: 'animation-name',
-          }),
-          'activity-shimmer-sweep',
+          await control.command(
+            'getComputedStyleValue',
+            `${thinking} > [aria-hidden="true"]:last-child`,
+            {
+              value: 'animation-name',
+            }
+          ),
+          'pulse',
           'The running indicator animates while the model response is held'
         )
         await control.command('click', '[data-testid="new-chat-button"]')
@@ -363,11 +379,11 @@ export function createDesktopScenario(options) {
           visible: true,
           timeoutMs: options.uiTimeoutMs,
         })
-        await control.command('waitFor', waiting, {
+        await control.command('waitFor', WAITING, {
           visible: false,
           timeoutMs: options.uiTimeoutMs,
         })
-        assert.equal(await control.command('getElementCount', waiting), '0')
+        assert.equal(await control.command('getElementCount', WAITING), '0')
         const userMessageId = await control.command('getAttribute', userMessage, {
           text: NOTIFICATION_REQUEST,
           value: 'data-search-region-id',

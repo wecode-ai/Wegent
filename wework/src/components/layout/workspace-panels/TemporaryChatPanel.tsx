@@ -31,7 +31,10 @@ import {
   type RuntimeConversationQueuePort,
 } from '@wegent/collaboration/execution/runtimeConversationQueue'
 import { useCallback, useId, useMemo, useState, useSyncExternalStore } from 'react'
-import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
+import {
+  getAssistantContentPresentation,
+  TemporaryConversationLayout,
+} from '@wegent/collaboration/conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
@@ -120,6 +123,7 @@ export function TemporaryChatPanel({
   showExecutionTools = true,
   showModelSelector = true,
   hideProcessing = false,
+  showActivityDots = false,
   markReadWhenActive = false,
   nativeConversation = false,
   allowMessagesDuringApproval = false,
@@ -435,6 +439,7 @@ export function TemporaryChatPanel({
     historyError,
     historyBeforeCursor,
     historyLoadingMoreBefore,
+    pendingTerminalTurnId,
     queuedMessages,
     hiddenRequestUserInputIds,
   } = useSyncExternalStore(observation.subscribe, observation.getSnapshot, observation.getSnapshot)
@@ -915,9 +920,23 @@ export function TemporaryChatPanel({
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   const messageGaps = renderMessageGaps?.(presentation.messages)
+  const showWaitingDots =
+    showActivityDots &&
+    !readOnly &&
+    !pendingRequest &&
+    !taskLifecycle?.interactionStatus &&
+    (sending ||
+      paneStatus.isResponseActive ||
+      paneStatus.isWaitingForAssistantIndicator ||
+      (pendingTerminalTurnId !== null && pendingTerminalTurnId === taskLifecycle?.turn.latestId)) &&
+    presentation.messages.findLast(
+      message =>
+        message.role === 'user' ||
+        (message.role === 'assistant' && getAssistantContentPresentation(message).content.trim())
+    )?.role !== 'assistant'
   const layout = (
     <TemporaryConversationLayout
-      messageCount={presentation.messages.length}
+      messageCount={presentation.messages.length + Number(showWaitingDots)}
       loading={historyLoading}
       loadError={historyError}
       onRetry={retryHistory}
@@ -1038,7 +1057,7 @@ export function TemporaryChatPanel({
             >
               <ComposerCatalogContext.Provider value={composerCatalog}>
                 <BufferedChatInput
-                  predictionAddress={address}
+                  predictionAddress={showWaitingDots ? null : address}
                   value={input}
                   replaceDraftKey={replaceDraftKey}
                   onChange={value => {
@@ -1081,6 +1100,7 @@ export function TemporaryChatPanel({
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
                   isStreaming={busy}
+                  showPauseButton={!showActivityDots || showWaitingDots}
                   onPause={pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
@@ -1112,7 +1132,8 @@ export function TemporaryChatPanel({
         onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
-        isWaitingForAssistant={isWaitingForAssistant}
+        isWaitingForAssistant={showActivityDots ? showWaitingDots : isWaitingForAssistant}
+        waitingIndicatorStyle={showActivityDots ? 'dots' : undefined}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"
