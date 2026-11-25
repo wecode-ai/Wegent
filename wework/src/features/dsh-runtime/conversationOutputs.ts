@@ -12,6 +12,8 @@ import type {
 import type { WorkbenchMessage } from '@/types/workbench'
 import { extractAssistantFileCitations } from '@wegent/collaboration/markdown'
 
+const EMPTY_OUTPUTS: ConversationOutputsSnapshot = { outputs: [], sources: [] }
+
 export function buildConversationOutputs(
   messages: readonly WorkbenchMessage[]
 ): ConversationOutputsSnapshot {
@@ -123,6 +125,7 @@ export function buildConversationOutputs(
     }
   }
 
+  if (outputs.size === 0 && sources.size === 0) return EMPTY_OUTPUTS
   return {
     outputs: [...outputs.values()].reverse(),
     sources: [...sources.values()].reverse(),

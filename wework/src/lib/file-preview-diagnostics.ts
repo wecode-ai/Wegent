@@ -12,6 +12,14 @@ export function createFilePreviewTraceId(): string {
   return `file-preview-${Date.now().toString(36)}-${traceSequence.toString(36)}`
 }
 
+export function reportImageCommentStage(
+  stage: 'pin_saved' | 'editor_submit' | 'attachment_replaced' | 'message_composed',
+  metadata: Record<string, number | boolean | string>
+): void {
+  if (!isElectronRuntime()) return
+  logFilePreviewDiagnostic(createFilePreviewTraceId(), `image_comments_${stage}`, metadata)
+}
+
 export function filePreviewPathMetadata(path: string): {
   extension: string
   pathLength: number

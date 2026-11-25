@@ -22,6 +22,7 @@ import {
 import { validateUpgradeShardPlan } from './lib/upgrade-verification-shards.mjs'
 import { withTemporaryBuildDirectory } from './lib/temporary-build-directory.mjs'
 import { preparePackagedRuntimeCache } from './lib/packaged-runtime-preparation.mjs'
+import { verifyPackagedReleaseDelta } from './lib/packaged-release-delta.mjs'
 import { prepareInstalledSourceSnapshot } from './lib/installed-source-snapshot-preparation.mjs'
 import { waitForUpgradeSourcePrefetch } from './lib/upgrade-source-prefetch.mjs'
 import { upgradeCheckpointPassed } from './lib/upgrade-checkpoint-result.mjs'
@@ -59,6 +60,7 @@ if (publishedTarget)
     platform,
     arch,
     directory: assets,
+    includeBlockMap: true,
   })
 const diagnosticCheckpoint = process.env.WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT || ''
 if (
@@ -244,6 +246,7 @@ async function downloadSource(source, targetChannel) {
         platform,
         arch,
         installation: join(temporary, `${targetChannel}-${source.version}`, 'source'),
+        includeBlockMap: true,
       })
     : await downloadPublishedDesktopRelease({
         repository,
@@ -254,6 +257,7 @@ async function downloadSource(source, targetChannel) {
           ? join(prefetchDirectory, source.version)
           : join(temporary, `${targetChannel}-${source.version}`),
         expected: source,
+        includeBlockMap: true,
       })
   return {
     ...downloaded,
@@ -325,6 +329,7 @@ async function verifySource(source, targetChannel, previous) {
           platform,
           arch,
           installation: join(directory, 'target'),
+          includeBlockMap: true,
         }),
       () => downloadSourceInputs(source, targetChannel, previous),
     ],
@@ -351,6 +356,25 @@ async function verifySource(source, targetChannel, previous) {
     },
   })
   const directory = dirname(from.path)
+  const reportDirectory = join(diagnostics, targetChannel, source.version)
+  await withTemporaryBuildDirectory({
+    prefix: 'wework-upgrade-delta-',
+    builds: [],
+    consume: async (_results, scratch) => {
+      const delta = await verifyPackagedReleaseDelta({
+        from,
+        target: { ...release, path: join(assets, release.name) },
+        directory: scratch,
+      })
+      if (delta) {
+        await mkdir(reportDirectory, { recursive: true })
+        await writeFile(join(reportDirectory, 'package-delta-result.json'), JSON.stringify(delta))
+        console.log(
+          `[upgrade-verification] ${JSON.stringify({ event: 'package-delta-verified', ...delta })}`
+        )
+      }
+    },
+  })
   const pairPath = join(directory, 'pair.json')
   const evidenceFile = join(directory, 'evidence.json')
   await writeFile(
@@ -374,7 +398,7 @@ async function verifySource(source, targetChannel, previous) {
     WEWORK_E2E_UPGRADE_EVIDENCE: diagnosticCheckpoint ? '' : evidenceFile,
     WEWORK_E2E_UPGRADE_EVIDENCE_CHECKPOINT: 'app-rollback',
     WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1',
-    WEWORK_E2E_RESULT_ROOT: join(diagnostics, targetChannel, source.version),
+    WEWORK_E2E_RESULT_ROOT: reportDirectory,
   })
   if (!passed) {
     console.warn(

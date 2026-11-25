@@ -131,7 +131,7 @@ export async function serveWeworkApp(req, res) {
   const metadata = await stat(asset)
   res.writeHead(200, {
     'content-type': MIME_TYPES[extname(asset)] ?? 'application/octet-stream',
-    'cache-control': weworkAssetCacheControl(process.env),
+    'cache-control': weworkAssetCacheControl(relativePath),
     'content-length': metadata.size,
   })
   if (req.method === 'HEAD') {
@@ -205,10 +205,12 @@ function hotReloadBuildId(buildIdPath, appIndexPath) {
   return fileBuildId(appIndexPath)
 }
 
-export function weworkAssetCacheControl(environment = process.env) {
-  return environment.WEWORK_APP_HOT_RELOAD === '1'
-    ? 'no-store'
-    : 'public, max-age=31536000, immutable'
+export function weworkAssetCacheControl(relativePath, environment = process.env) {
+  // Plugin entries use stable filenames, while their imported chunks are build-specific.
+  return environment.WEWORK_APP_HOT_RELOAD !== '1' &&
+    /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath)
+    ? 'public, max-age=31536000, immutable'
+    : 'no-store'
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {

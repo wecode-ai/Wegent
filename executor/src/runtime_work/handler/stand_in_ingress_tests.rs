@@ -222,6 +222,7 @@ fn explicit_source_retry_clears_the_error_without_resetting_collection_progress(
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["roles"][0]["connections"] = json!([{"providerId":"example.source","profile":"account","kind":"inbox","id":"inbox","name":"Source","policy":{"automatic":false,"askBeforeAct":true}}]);
     settings["roles"][0]["enabled"] = json!(true);
     let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
@@ -264,6 +265,7 @@ async fn connection_all_scope_persists_distinct_conversations_and_rejects_missin
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":kind,"id":"*","scope":"all","name":"All","policy":{"automatic":false,"askBeforeAct":true}});
         settings["roles"][0]["connections"] = json!([source]);
         settings["roles"][0]["enabled"] = json!(true);
@@ -315,6 +317,7 @@ async fn silent_collection_keeps_manual_sources_pending_and_automatic_sources_in
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
     let source = json!({"id":"group","name":"Group","kind":"group","profile":"corp","providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER});
     let base = settings["roles"][0].clone();
@@ -364,6 +367,7 @@ async fn collection_persists_role_scoped_events_without_grouping_or_work() {
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
     let source = json!({"id":"group","name":"Group","kind":"group","profile":"corp","providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"policy":{"automatic":true,"askBeforeAct":true}});
     let base = settings["roles"][0].clone();
@@ -618,6 +622,7 @@ fn stand_in_collection_uses_the_stored_settings_version_without_role_selection_m
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
     let version = settings["version"].clone();
     assert!(validate_collection_version(&store, 7, "mac", &version).is_ok());
     settings["roles"][0]["prompt"] = json!("New instructions");
@@ -911,6 +916,7 @@ async fn dingtalk_blacklist_filters_shared_pages_per_role_for_manual_and_automat
             handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
             let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
             let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
             let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":kind,"id":"*","scope":"all","name":"All","policy":{"automatic":automatic,"askBeforeAct":true}});
             let mut restricted = source.clone();
             restricted["excludedResources"] = json!([{"id":"blocked","name":"Blocked"}]);

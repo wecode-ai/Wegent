@@ -9,7 +9,6 @@ import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { type TaskSupervisorConfig } from './TaskSupervisorControl'
 import type {
   ModelSelectionConfig,
-  RuntimeName,
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
@@ -18,6 +17,20 @@ import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectConte
 import type { TFunction } from 'i18next'
 import type { Dispatch, SetStateAction } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimePaneSendOptions } from './workbenchPaneSessionTypes'
+
+type PaneSubmitOptions = Pick<
+  RuntimePaneSendOptions,
+  | 'guideWhenBusy'
+  | 'interruptWhenBusy'
+  | 'runtime'
+  | 'runtimeExecutablePath'
+  | 'runtimePermissionMode'
+  | 'modelSelection'
+  | 'wegentTeamId'
+  | 'standaloneAttachments'
+  | 'draftAttachmentSourceId'
+>
 interface Input {
   workbenchVisible: boolean
   onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void | (() => void)
@@ -69,18 +82,7 @@ export function useDesktopPaneConversationActions({
   )
   const { getInput } = paneSession
   const sendPaneInputWithContext = useCallback(
-    async (
-      value?: string,
-      options?: {
-        guideWhenBusy?: boolean
-        interruptWhenBusy?: boolean
-        runtime?: RuntimeName
-        runtimeExecutablePath?: string
-        runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
-        modelSelection?: ModelSelectionConfig | null
-        wegentTeamId?: number
-      }
-    ) => {
+    async (value?: string, options?: PaneSubmitOptions) => {
       const sourcePaneKey = paneKey
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
@@ -165,18 +167,7 @@ export function useDesktopPaneConversationActions({
   ) : null
 
   const submitPaneInput = useCallback(
-    async (
-      value?: string,
-      options?: {
-        guideWhenBusy?: boolean
-        interruptWhenBusy?: boolean
-        runtime?: RuntimeName
-        runtimeExecutablePath?: string
-        runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
-        modelSelection?: ModelSelectionConfig | null
-        wegentTeamId?: number
-      }
-    ) => {
+    async (value?: string, options?: PaneSubmitOptions) => {
       connectorAuthRecovery.clearPending()
       return sendPaneInputWithContext(value, options)
     },

@@ -204,8 +204,9 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if read["thread"]["status"]["type"] == "notLoaded" {
-            // Passive discovery must not compete with the running task for its thread writer.
-            if payload["method"] == "discover" && self.is_active_local_task(&link.local_task_id) {
+            // Passive discovery reads only the persisted invocation. Resuming a
+            // thread is reserved for explicit app initialization or active-turn recovery.
+            if payload["method"] == "discover" {
                 return Ok(Value::Null);
             }
             self.resume_codex_thread_for_action(&link, &thread_id)
@@ -810,6 +811,11 @@ done
                 assert!(discovered.is_null());
                 assert!(!fs::read_to_string(&log).unwrap().contains("thread/resume"));
                 assert!(handler.finish_local_task_execution("task", execution));
+                let discovered = handler.mcp_app_request(json!({
+                    "taskId":"task", "callId":"ordinary", "method":"discover"
+                })).await.unwrap();
+                assert!(discovered.is_null());
+                assert!(!fs::read_to_string(&log).unwrap().contains("thread/resume"));
                 let result = handler.mcp_app_request(json!({"taskId":"task","callId":"call"}))
                     .await.unwrap();
                 assert_eq!(result["resource"]["contents"][0]["text"], "<p>Ready</p>");

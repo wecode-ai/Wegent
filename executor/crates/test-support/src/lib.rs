@@ -50,6 +50,26 @@ pub fn lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// An explicitly configured role for tests exercising scenario-role behavior.
+pub fn stand_in_role(device_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "default",
+        "name": "",
+        "enabled": false,
+        "prompt": "",
+        "executionDeviceId": device_id,
+        "version": 0,
+        "tags": [],
+        "collaboration": {
+            "enabled": false,
+            "allProjects": true,
+            "projects": [],
+            "excludedProjects": [],
+            "tags": [],
+        },
+    })
+}
+
 /// Create a deterministic ZIP archive for package protocol fixtures.
 pub fn zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
     use std::io::Write;

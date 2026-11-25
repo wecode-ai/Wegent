@@ -9,6 +9,49 @@ import {
 const content = 'The complete answer'
 const nativeId = 'wework-e2e-response-2-message'
 
+test('streaming text keeps the canonical prompt and preceding text turn projected once', () => {
+  const prior: RuntimeConversationTurn = {
+    id: 'previous',
+    status: 'done',
+    items: [
+      {
+        id: 'answer',
+        type: 'assistant_text',
+        content: 'History',
+        createdAt: '2026-11-02',
+      },
+    ],
+  }
+  const current: RuntimeConversationTurn = {
+    id: 'current',
+    status: 'streaming',
+    items: [
+      {
+        id: 'prompt',
+        type: 'user_message',
+        message: {
+          id: 'user',
+          role: 'user',
+          content: 'Question',
+          status: 'done',
+          createdAt: '2026-11-02',
+        },
+      },
+    ],
+  }
+  const before = projectRuntimeConversationTurns([prior, current])
+  const next = reduceRuntimeConversationTurns([prior, current], {
+    type: 'assistant_chunk',
+    subtaskId: 'current',
+    itemId: nativeId,
+    content,
+  })
+  const after = projectRuntimeConversationTurns(next)
+  expect(after[0]).toBe(before[0])
+  expect(after[1]).toBe(before[1])
+  expect(after[2].content).toBe(content)
+})
+
 test.each(['assistant_text', 'block'] as const)(
   'completion updates an existing %s before a late native user item',
   type => {

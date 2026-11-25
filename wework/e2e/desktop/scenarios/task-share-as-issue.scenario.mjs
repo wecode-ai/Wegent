@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -776,13 +777,15 @@ export function createDesktopScenario({
         { userId },
         uiTimeoutMs
       )
-      Object.assign(settings.roles[0], {
+      const reviewer = standInRoleFixture(settings.executionDeviceId)
+      settings.roles.push(reviewer)
+      Object.assign(reviewer, {
         enabled: true,
         name: reviewerName,
         prompt: reviewPrompt,
         model,
         collaboration: {
-          ...settings.roles[0].collaboration,
+          ...reviewer.collaboration,
           enabled: true,
           includeIndependentIssues: true,
           allProjects: false,

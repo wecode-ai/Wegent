@@ -494,26 +494,36 @@ export function reduceRuntimeConversationTurns(
                 : turn.streamingThinkingContent,
         };
       });
-    case "block_updated":
-      return updateTurn(turns, action.subtaskId, (turn) => {
-        const currentItems = turn.items.some(
-          (item) =>
-            item.type === "block" &&
-            item.id === action.blockId &&
-            isRuntimeReconnectingBlock(item.block),
-        )
-          ? turn.items
-          : settleRuntimeReconnectingBlocks(turn.items);
+    case "block_updated": {
+      const update = (turn: RuntimeConversationTurn) => {
         const previousBlock = turn.items.find(
           (item) => item.type === "block" && item.id === action.blockId,
         );
+        const command =
+          previousBlock?.type === "block" &&
+          commandExecutionPayload(previousBlock.block);
+        const status = action.updates.status;
+        const isTerminal =
+          status !== undefined && isTerminalProcessingBlockStatus(status);
+        // A command can exit after the turn has already been cancelled.
+        if (turn.status === "cancelled" && (!command || !isTerminal))
+          return turn;
+        const currentItems =
+          turn.status === "cancelled" ||
+          (previousBlock?.type === "block" &&
+            isRuntimeReconnectingBlock(previousBlock.block))
+            ? turn.items
+            : settleRuntimeReconnectingBlocks(turn.items);
         const items = currentItems.map((item) =>
           item.type === "block" && item.id === action.blockId
             ? mergeRuntimeConversationItem(
                 item,
                 {
                   ...item,
-                  block: mergeProcessingBlockUpdate(item.block, action.updates),
+                  block: mergeProcessingBlockUpdate(
+                    item.block,
+                    action.updates,
+                  ),
                 },
                 false,
               )
@@ -522,15 +532,15 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           items,
-          ...(action.updates.status !== undefined &&
+          ...(status !== undefined &&
             !(
               previousBlock?.type === "block" &&
-              (commandExecutionPayload(previousBlock.block) ||
+              (command ||
                 previousBlock.block.parentToolUseId ||
                 (previousBlock.block.type === "subagent" &&
                   previousBlock.block.agentThreadId))
             ) &&
-            !isTerminalProcessingBlockStatus(action.updates.status) && {
+            !isTerminal && {
               status: "streaming" as const,
               completedAt: undefined,
               error: undefined,
@@ -548,7 +558,9 @@ export function reduceRuntimeConversationTurns(
                 ? undefined
                 : turn.streamingThinkingContent,
         };
-      });
+      };
+      return updateTurn(turns, action.subtaskId, update, true);
+    }
   }
 }
 

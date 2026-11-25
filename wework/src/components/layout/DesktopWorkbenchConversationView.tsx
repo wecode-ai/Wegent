@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
@@ -40,6 +40,21 @@ import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import type { PaneTranscript } from './workbenchPaneConversationPresentation'
+
+function DesktopTranscript({
+  transcript,
+  ...props
+}: Omit<ComponentProps<typeof ScrollableMessageArea>, 'messages' | 'turns'> & {
+  transcript: PaneTranscript
+}) {
+  const { messages, turns } = useSyncExternalStore(
+    transcript.subscribe,
+    transcript.getSnapshot,
+    transcript.getSnapshot
+  )
+  return <ScrollableMessageArea {...props} messages={messages} turns={turns} />
+}
 
 export function DesktopWorkbenchConversationView({
   model,
@@ -132,7 +147,6 @@ export function DesktopWorkbenchConversationView({
     activeNewChatRuntime,
     activeHarnessDisplayError,
     submitWorkbenchInput,
-    paneMessages,
     workbenchTitle,
     pendingRequestUserInput,
     paneQueuedMessages,
@@ -153,7 +167,7 @@ export function DesktopWorkbenchConversationView({
     composerDisabled,
     inlineComposerDisabledReason,
     projectChatWithModelSelectorSignal,
-    branchNameProjectWork,
+    projectWork,
     emptyProjectWork,
     popoutComposerPlaceholder,
     selectTaskSuggestion,
@@ -175,8 +189,27 @@ export function DesktopWorkbenchConversationView({
     clearCurrentGoal,
     showPageTopBar,
   } = model
+  const { messages: paneMessages, transcript } = paneSession
+  const hasTask = currentRuntimeTask !== null
+  const transcriptLoading = paneSession.transcriptLoading
+  const selectionSharingMounted = hasTask && paneVisible && workbenchVisible
+  const composerContextHeader = useMemo(
+    () =>
+      (projectSpaceContext || hasTask) && (
+        <div
+          className={cn(
+            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
+            transcriptLoading && 'invisible'
+          )}
+          inert={transcriptLoading}
+        >
+          {projectSpaceContext}
+          {selectionSharingMounted && <div ref={setIssueShareToolbarHost} className="contents" />}
+        </div>
+      ),
+    [projectSpaceContext, hasTask, transcriptLoading, selectionSharingMounted]
+  )
   const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
-  const selectionSharingMounted = Boolean(currentRuntimeTask && paneVisible && workbenchVisible)
   return (
     <TaskDetailScrollArea
       viewportRef={workbenchScrollRef}
@@ -208,8 +241,7 @@ export function DesktopWorkbenchConversationView({
             shareRef={issueShareRef}
             key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
             title={workbenchTitle ?? ''}
-            messages={paneMessages}
-            turns={paneSession.turns}
+            readTranscript={transcript.getSnapshot}
             address={{
               ...currentRuntimeTask,
               workspacePath: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath,
@@ -278,12 +310,11 @@ export function DesktopWorkbenchConversationView({
               className="relative flex min-w-0 flex-col"
               onClick={focusComposerFromConversationClick}
             >
-              <ScrollableMessageArea
+              <DesktopTranscript
                 mcpApp={mcpAppConversationServices}
                 searchActive={paneActive && paneVisible && workbenchVisible}
                 imageTarget={remoteImageTarget}
-                messages={paneMessages}
-                turns={paneSession.turns}
+                transcript={transcript}
                 loading={paneSession.transcriptLoading}
                 transcriptError={paneSession.transcriptError}
                 onRetryTranscript={paneSession.reloadRuntimeTranscript}
@@ -519,6 +550,7 @@ export function DesktopWorkbenchConversationView({
                                     showPluginPicker={!hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
+                                    onDismissError={paneSession.clearError}
                                     disabledReason={inlineComposerDisabledReason}
                                     placeholder={t(
                                       'workbench.follow_up_placeholder',
@@ -526,7 +558,7 @@ export function DesktopWorkbenchConversationView({
                                     )}
                                     variant="desktop"
                                     projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={branchNameProjectWork}
+                                    projectWork={projectWork}
                                     showProjectWorkBar={false}
                                     queuedMessages={paneQueuedMessages}
                                     guidanceMessages={paneGuidanceMessages}
@@ -537,27 +569,7 @@ export function DesktopWorkbenchConversationView({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
-                                    contextHeader={
-                                      (projectSpaceContext || currentRuntimeTask) && (
-                                        <div
-                                          className={cn(
-                                            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
-                                            paneSession.transcriptLoading && 'invisible'
-                                          )}
-                                          inert={paneSession.transcriptLoading}
-                                        >
-                                          {projectSpaceContext}
-                                          {currentRuntimeTask &&
-                                            paneVisible &&
-                                            workbenchVisible && (
-                                              <div
-                                                ref={setIssueShareToolbarHost}
-                                                className="contents"
-                                              />
-                                            )}
-                                        </div>
-                                      )
-                                    }
+                                    contextHeader={composerContextHeader}
                                     isStreaming={paneIsBusy}
                                     showPauseButton={showPauseButton}
                                     onPause={pauseCurrentResponse}
@@ -646,7 +658,12 @@ export function DesktopWorkbenchConversationView({
                       }
                 }
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+                  loadTurnFileChangesDiff(
+                    subtaskId,
+                    transcript.getSnapshot().messages,
+                    fileChanges,
+                    currentRuntimeTask
+                  )
                 }
                 onRevertFileChanges={
                   issueExecutionReadOnly
@@ -654,7 +671,7 @@ export function DesktopWorkbenchConversationView({
                     : (subtaskId, fileChanges) =>
                         revertTurnFileChanges(
                           subtaskId,
-                          paneMessages,
+                          transcript.getSnapshot().messages,
                           fileChanges,
                           currentRuntimeTask
                         )
@@ -788,6 +805,10 @@ export function DesktopWorkbenchConversationView({
                           paneSession.status.isSubmitting)
                       }
                       error={centralHarnessError ?? paneSession.error}
+                      onDismissError={() => {
+                        if (centralHarnessError) setCentralHarnessError(null)
+                        else paneSession.clearError()
+                      }}
                       disabledReason={
                         activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
                           ? inlineComposerDisabledReason

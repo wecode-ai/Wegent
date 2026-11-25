@@ -193,6 +193,7 @@ export interface RuntimePaneActionOptions {
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
+  onGuided?: () => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }
@@ -289,8 +290,19 @@ export interface WorkbenchContextValue {
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
     addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
+    replaceImageAttachmentForScope: (
+      scopeKey: string,
+      attachmentId: number,
+      file: File,
+      comments: NonNullable<Attachment['image_markup_comments']>,
+      signal: AbortSignal
+    ) => Promise<Attachment | null>
+    getAttachment: (attachmentId: number) => Attachment | undefined
+    getAttachmentForScope: (scopeKey: string, attachmentId: number) => Attachment | undefined
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
+    releaseAttachment: (attachmentId: number) => void
+    releaseAttachmentForScope: (scopeKey: string, attachmentId: number) => void
     dismissAttachmentError: (filename: string) => void
     dismissAttachmentErrorForScope: (scopeKey: string, filename: string) => void
     resetAttachments: () => void

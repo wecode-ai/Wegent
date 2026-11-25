@@ -13,4 +13,5 @@ pub use contracts::{AgentEngine, EventSink, ExecutionOutcome, RunnerResult, Task
 
 pub mod command;
 
+pub mod model_request_headers;
 pub mod notification;

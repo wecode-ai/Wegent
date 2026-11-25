@@ -39,16 +39,17 @@ export function recordConversationScrollWrite<T>(
   details?: () => Record<string, number | boolean | null>
 ): T {
   const diagnosticsEnabled = isConversationDiagnosticsEnabled()
-  const previousScrollTop = element.scrollTop
+  const fromVirtualizer = writeSource === CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset
+  if (!diagnosticsEnabled && fromVirtualizer) return write()
+  const previousScrollTop = diagnosticsEnabled ? element.scrollTop : 0
   try {
     return write()
   } finally {
-    const scrollTop = element.scrollTop
-    // Native scroll events arrive after ResizeObserver. Publish instant external
-    // writes first so a virtualizer cannot compensate from its previous offset.
-    if (writeSource !== CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset) {
-      offsetObservers.get(element)?.(scrollTop)
-    }
+    const observer = fromVirtualizer ? undefined : offsetObservers.get(element)
+    const scrollTop = observer || diagnosticsEnabled ? element.scrollTop : 0
+    // Notify the virtualizer of programmatic writes even if the browser does not
+    // deliver a native scroll event. The observer can coalesce writes in a commit.
+    observer?.(scrollTop)
     if (diagnosticsEnabled) {
       const clientHeight = element.clientHeight
       recordConversationDiagnostic('scroll-write', {

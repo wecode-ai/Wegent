@@ -1123,9 +1123,11 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PYTHONPATH: ..:.
+          E2E_API_URL: http://localhost:8000
         run: |
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
+          uv run --no-sync python tests/e2e/issue_participation_im.py
 
       - name: Run subscription callback and system MCP gateway E2E
         if: matrix.shardIndex == 1

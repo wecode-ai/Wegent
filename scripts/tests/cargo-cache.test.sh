@@ -168,8 +168,8 @@ test_older_worktree_sources_are_actually_compiled() {
   for project in "$first" "$second"; do
     printf '[package]\nname="cargo-cache-regression"\nversion="0.1.0"\nedition="2021"\n' > "$project/Cargo.toml"
   done
-  printf 'fn main() { println!("first-worktree"); }\n' > "$first/src/main.rs"
-  printf 'fn main() { println!("second-worktree"); }\n' > "$second/src/main.rs"
+  printf 'fn main() { assert!(option_env!("CARGO_TARGET_DIR").is_none()); println!("first-worktree"); }\n' > "$first/src/main.rs"
+  printf 'fn main() { assert!(option_env!("CARGO_TARGET_DIR").is_none()); println!("second-worktree"); }\n' > "$second/src/main.rs"
   touch -t 202001010000 "$second/src/main.rs"
 
   local mode
@@ -184,7 +184,7 @@ test_older_worktree_sources_are_actually_compiled() {
           set -eu
           source "$1"
           configure_wegent_cargo_target_dir "$2" executor
-          cargo build --quiet --manifest-path "$2/Cargo.toml"
+          build_wegent_cargo_in_target --quiet --manifest-path "$2/Cargo.toml"
           "$CARGO_TARGET_DIR/debug/cargo-cache-regression"
         ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh" "$project")"
       if [ "$project" = "$first" ]; then

@@ -583,7 +583,7 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
 
     currentView = view
     ;(currentProps.textareaRef as { current: HTMLElement | null }).current = view.dom
-    defineComposerValueProperty(view)
+    const releaseValueProperty = defineComposerValueProperty(view)
     publish({ value: readComposerSnapshot(view.state).value, composing: view.composing })
     scheduleReady(view)
 
@@ -604,6 +604,7 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
       view.dom.removeEventListener('copy', handleCopyCapture, true)
       releaseWindowFocus?.()
       releaseWindowFocus = undefined
+      releaseValueProperty()
       view.destroy()
     }
   }
@@ -614,6 +615,7 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
     destroyView?.()
     destroyView = undefined
     currentView = null
+    mount = null
     live = false
     ownershipRevision++
   }

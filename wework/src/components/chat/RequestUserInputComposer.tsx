@@ -16,6 +16,7 @@ export function RequestUserInputComposer({
   source,
   renderQuestion,
   questionContext,
+  showComposerWhilePending = false,
   children,
 }: {
   payload: RequestUserInputPayload | null
@@ -23,6 +24,7 @@ export function RequestUserInputComposer({
   renderQuestion: (onCollapse?: () => void) => ReactNode
   children: ReactNode
   questionContext?: ReactNode
+  showComposerWhilePending?: boolean
 }) {
   const { t } = useTranslation('common')
   const key = payload
@@ -81,7 +83,7 @@ export function RequestUserInputComposer({
           <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
         </ControlButton>
       )}
-      {(!payload || hidden) && children}
+      {(!payload || hidden || showComposerWhilePending) && children}
     </>
   )
 }

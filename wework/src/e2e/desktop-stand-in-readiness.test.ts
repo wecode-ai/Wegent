@@ -28,6 +28,22 @@ test('Stand-in confirmation waits for navigation to mount before opening the own
           preferencesApplied = true
           return
         }
+        if (action === 'getLocationOrigin') return 'http://localhost'
+        if (action === 'fetchLocalRuntime') {
+          assert.ok(options?.value)
+          const { body } = JSON.parse(options.value)
+          const { method, params } = JSON.parse(body)
+          assert.equal(params.userId, 9001)
+          let result
+          if (method === 'runtime.stand_in.personal.get') {
+            result = { executionDeviceId: 'fixture-device', roles: [] }
+          } else {
+            assert.equal(method, 'runtime.stand_in.personal.save')
+            assert.equal(params.settings.roles[0].id, 'default')
+            result = params.settings
+          }
+          return JSON.stringify({ status: 200, body: JSON.stringify({ ok: true, result }) })
+        }
         if (selector === '[data-testid="personal-stand-in-button"]') {
           assert.equal(preferencesApplied, true, 'Navigation requires the live preference setup')
           if (action === 'click') throw new Error('Stand-in navigation is still mounting')

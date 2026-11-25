@@ -496,6 +496,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+            "default", "mac"
+        )]);
         settings["processing"] = json!({"mode":"silent","intervalMinutes":5});
         let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
         store

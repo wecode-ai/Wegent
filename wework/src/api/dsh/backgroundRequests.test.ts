@@ -52,6 +52,22 @@ test('two stalled background requests leave foreground work independent across c
   await Promise.all(pending)
 })
 
+test('passive MCP App discovery uses background capacity', () => {
+  expect(executorRequestPriority('runtime.mcp_apps.request', { callId: 'call' })).toBe('background')
+  expect(
+    executorRequestPriority('runtime.mcp_apps.request', { callId: 'call', method: 'discover' })
+  ).toBe('background')
+  expect(
+    executorRequestPriority('runtime.mcp_apps.request', { callId: 'call', method: 'initialize' })
+  ).toBe('foreground')
+  expect(
+    executorRequestPriority('runtime.mcp_apps.request', {
+      callId: 'call',
+      method: 'tools/call',
+    })
+  ).toBe('foreground')
+})
+
 test('queued cancellation never dispatches and failures release capacity', async () => {
   const locks = createTestWebLocks()
   const hold = deferred()

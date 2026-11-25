@@ -1,6 +1,10 @@
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 
 import i18n from '@/i18n'
+import {
+  composeImageMarkupMessage,
+  hasImageMarkupComments,
+} from '@/components/chat/image-preview/imageEdit'
 
 import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
 
@@ -158,6 +162,13 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     const combinedMessage = {
       ...interruptedGuidance,
       content: [interruptedGuidance.content, submittedInput].filter(Boolean).join('\n\n'),
+      ...(interruptedGuidance.imageMarkupDraftText !== undefined
+        ? {
+            imageMarkupDraftText: [interruptedGuidance.imageMarkupDraftText, submittedInput]
+              .filter(Boolean)
+              .join('\n\n'),
+          }
+        : {}),
       notice: undefined,
     }
     setQueuedMessagesPaused(false)
@@ -206,7 +217,10 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     if (!queuedMessage || queuedMessage.status === 'sending' || queuedMessage.runtimeQueued) return
 
     queuedMessageBusyBlocks.delete(id)
-    replaceInput(queuedMessage.content)
+    replaceInput(queuedMessage.imageMarkupDraftText ?? queuedMessage.content)
+    if (queuedMessage.imageMarkupDraftText !== undefined && queuedMessage.codeComments?.length) {
+      sessionOwner.actions.setCodeCommentContexts(queuedMessage.codeComments)
+    }
     queuedMessage.attachments?.forEach(attachment => {
       addExistingAttachment(attachment)
     })
@@ -241,13 +255,24 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     queuedMessageBusyBlocks.delete(id)
     const submittedInput = getInput().trim()
     const currentAttachments = attachmentState.attachments
+    const markupMessage = composeImageMarkupMessage(
+      submittedInput,
+      currentAttachments,
+      queuedMessage.attachments
+    )
+    const queuedDisplayContent = queuedMessage.displayContent ?? queuedMessage.content
+    const draftText = [queuedMessage.imageMarkupDraftText ?? queuedDisplayContent, submittedInput]
+      .filter(Boolean)
+      .join('\n\n')
     const combinedMessage: RuntimePaneQueuedMessage = {
       ...queuedMessage,
-      content: [queuedMessage.content, submittedInput].filter(Boolean).join('\n\n'),
-      displayContent: [queuedMessage.displayContent ?? queuedMessage.content, submittedInput]
-        .filter(Boolean)
-        .join('\n\n'),
+      content: [queuedMessage.content, markupMessage.content].filter(Boolean).join('\n\n'),
+      displayContent: [queuedDisplayContent, markupMessage.content].filter(Boolean).join('\n\n'),
       attachments: [...(queuedMessage.attachments ?? []), ...currentAttachments],
+      ...(queuedMessage.imageMarkupDraftText !== undefined ||
+      hasImageMarkupComments(currentAttachments)
+        ? { imageMarkupDraftText: draftText }
+        : {}),
       notice: undefined,
     }
     setInput('')
@@ -265,9 +290,10 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
       (sessionOwner.live.draftEditVersions.get(sessionOwner.frame.inputScopeKey) ?? 0) ===
         submittedDraftEditVersion
     ) {
-      replaceInput(combinedMessage.displayContent ?? combinedMessage.content)
+      replaceInput(draftText)
     }
-    combinedMessage.attachments?.forEach(addExistingAttachment)
+    queuedMessage.attachments?.forEach(addExistingAttachment)
+    currentAttachments.forEach(addExistingAttachment)
     if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
       setCodeCommentContexts(combinedMessage.codeComments)
     }

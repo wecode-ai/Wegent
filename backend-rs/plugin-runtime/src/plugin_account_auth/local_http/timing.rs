@@ -34,6 +34,8 @@ pub(super) struct ExchangeTiming {
     failure_dependency: Option<&'static str>,
     mysql_error_kind: Option<&'static str>,
     mysql_errno: Option<u16>,
+    redis_error_kind: Option<&'static str>,
+    redis_error_reason: Option<&'static str>,
     pub verify_active_mysql_ms: Option<u64>,
     pub session_proof_redis_ms: Option<u64>,
     pub target_lookup_mysql_ms: Option<u64>,
@@ -88,6 +90,8 @@ impl ExchangeTiming {
             failure_dependency: None,
             mysql_error_kind: None,
             mysql_errno: None,
+            redis_error_kind: None,
+            redis_error_reason: None,
             verify_active_mysql_ms: None,
             session_proof_redis_ms: None,
             target_lookup_mysql_ms: None,
@@ -125,6 +129,34 @@ impl ExchangeTiming {
         self.outcome = Some(outcome);
     }
 
+    pub(super) fn record_redis_error(&mut self, error: &brz_redis::RedisError) {
+        use brz_redis::ErrorKind;
+
+        self.failure_dependency = Some("redis");
+        self.redis_error_kind = Some(match error.kind() {
+            ErrorKind::TypeError => "type_error",
+            ErrorKind::ResponseError => "response_error",
+            ErrorKind::AuthenticationFailed => "authentication_failed",
+            ErrorKind::NoScript => "no_script",
+            ErrorKind::Moved => "moved",
+            ErrorKind::Ask => "ask",
+            ErrorKind::Busy => "busy",
+            ErrorKind::Io => "io",
+            ErrorKind::ClientError => "client_error",
+            ErrorKind::NoConnection => "no_connection",
+            ErrorKind::Overloaded => "overloaded",
+            ErrorKind::Timeout => "timeout",
+            _ => "other",
+        });
+        // Raw Redis replies may contain keys and credential-bearing arguments.
+        self.redis_error_reason = error
+            .detail()
+            .filter(|detail| {
+                detail.contains("Write commands not allowed after non deterministic commands")
+            })
+            .map(|_| "write_after_nondeterministic");
+    }
+
     pub(super) fn finish(&self, status: StatusCode, rejected: bool) {
         let status = status.as_u16();
         let outcome = if rejected {
@@ -143,6 +175,8 @@ impl ExchangeTiming {
             failure_dependency = self.failure_dependency,
             mysql_error_kind = self.mysql_error_kind,
             mysql_errno = self.mysql_errno,
+            redis_error_kind = self.redis_error_kind,
+            redis_error_reason = self.redis_error_reason,
             total_ms = self.started.elapsed().as_millis() as u64,
             verify_active_mysql_ms = self.verify_active_mysql_ms,
             session_proof_redis_ms = self.session_proof_redis_ms,
@@ -194,6 +228,26 @@ impl Drop for StageTimer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redis_error_details_are_reduced_to_safe_classifications() {
+        let mut timing = ExchangeTiming::new(None, "plugin.auth.automatic", true);
+        for (detail, expected) in [
+            (
+                "ERR Write commands not allowed after non deterministic commands; secret-token",
+                Some("write_after_nondeterministic"),
+            ),
+            ("ERR unexpected reply with secret-token", None),
+        ] {
+            timing.record_redis_error(&brz_redis::RedisError::new(
+                brz_redis::ErrorKind::ResponseError,
+                detail,
+            ));
+            assert_eq!(timing.failure_dependency, Some("redis"));
+            assert_eq!(timing.redis_error_kind, Some("response_error"));
+            assert_eq!(timing.redis_error_reason, expected);
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn records_elapsed_time_when_a_phase_is_cancelled() {

@@ -101,6 +101,7 @@ export function ModelSelector({
   onOpenChange,
   openSignal,
   menuPlacement = 'above',
+  menuAlign = 'end',
   buttonClassName = '',
   menuClassName = '',
   maxClosedWidth,
@@ -679,7 +680,7 @@ export function ModelSelector({
             container={document.body}
             anchor={anchor}
             side={menuPlacement === 'above' ? 'top' : 'bottom'}
-            align="end"
+            align={menuAlign}
             sideOffset={8}
             collisionPadding={16}
             initialFocus={() =>

@@ -1,3 +1,4 @@
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import type { AssistantInteractionRequest } from '@wegent/collaboration'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { type PrivateHistorySource } from '@/features/collaboration-exp/private/privateConversationHistory'
@@ -47,10 +48,12 @@ export interface TemporaryChatPanelProps {
   emptyStateText?: string
   placeholder?: string
   showExecutionTools?: boolean
+  showModelSelector?: boolean
   hideProcessing?: boolean
   assistantMessageStyle?: 'plain' | 'bubble'
   markReadWhenActive?: boolean
   nativeConversation?: boolean
+  allowMessagesDuringApproval?: boolean
   modelControls?: ConversationModelControls
   allowInitialGoal?: boolean
   expanded?: boolean
@@ -65,6 +68,7 @@ export interface TemporaryChatPanelProps {
   projectWorkBarTrailingContext?: ReactNode
   composerHeader?: ReactNode
   contentFooter?: ReactNode
+  renderMessageGaps?: (messages: WorkbenchMessage[]) => ReadonlyMap<string, ReactNode>
   onRestoreConversation?: () => void
   onFillSelectionToAnswer?: (text: string) => void
   initialScrollPosition?: 'restore' | 'latest'

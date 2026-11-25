@@ -157,7 +157,10 @@ export function runtimeMessageToWorkbenchMessage(
       message.source?.source === "stand_in_activity")
       ? ({ ...message.source } as MessageSource)
       : undefined;
-  const createdAt = message.createdAt ?? new Date().toISOString();
+  const createdAt =
+    typeof message.createdAt === "string"
+      ? message.createdAt
+      : runtimeTimestampToIso(message.createdAt);
   const completedAt = message.completedAt ?? message.completed_at ?? undefined;
   const stoppedNotice =
     message.stoppedNotice ?? message.stopped_notice ?? undefined;
