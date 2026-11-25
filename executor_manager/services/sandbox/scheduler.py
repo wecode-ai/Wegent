@@ -15,16 +15,13 @@ import asyncio
 import os
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from executor_manager.common.config import get_config
-from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
-from executor_manager.executors.docker.utils import (
-    renew_running_docker_callback_bindings,
-)
+from executor_manager.executors.dispatcher import ExecutorDispatcher
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -46,7 +43,7 @@ class SandboxScheduler:
     Manages periodic lifecycle jobs:
     - Heartbeat check: Runs every HEARTBEAT_CHECK_INTERVAL (default 10s)
     - Sandbox GC: Runs every GC_INTERVAL (default 1 hour)
-    - Docker callback lease reconciliation: Runs before the binding TTL elapses
+    - Executor callback lease reconciliation: Runs before the binding TTL elapses
     """
 
     def __init__(self, sandbox_manager: "SandboxManager"):
@@ -118,13 +115,17 @@ class SandboxScheduler:
             replace_existing=True,
         )
 
-        if EXECUTOR_DISPATCHER_MODE == "docker":
-            ttl = get_config().executor.executor_binding_ttl
+        ttl = get_config().executor.executor_binding_ttl
+        for executor_type, executor in ExecutorDispatcher.registered_executors():
+            renew = getattr(executor, "renew_callback_bindings", None)
+            if renew is None:
+                continue
             self._scheduler.add_job(
-                self._renew_docker_bindings,
+                self._renew_callback_bindings,
                 IntervalTrigger(seconds=min(300, ttl / 3)),
+                args=(renew,),
                 next_run_time=datetime.now(timezone.utc),
-                id="docker_callback_lease",
+                id=f"executor_callback_lease_{executor_type}",
                 replace_existing=True,
             )
 
@@ -137,8 +138,8 @@ class SandboxScheduler:
             f"queue_stall_check (every {QUEUE_STALL_CHECK_INTERVAL}s)"
         )
 
-    async def _renew_docker_bindings(self) -> None:
-        await asyncio.to_thread(renew_running_docker_callback_bindings)
+    async def _renew_callback_bindings(self, renew: Callable[[], None]) -> None:
+        await asyncio.to_thread(renew)
 
     async def stop(self) -> None:
         """Stop the scheduler."""

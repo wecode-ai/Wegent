@@ -49,6 +49,7 @@ from executor_manager.executors.docker.utils import (
     get_container_ports,
     get_container_status,
     get_running_task_details,
+    renew_running_docker_callback_bindings,
 )
 from executor_manager.utils.executor_info import attach_executor_info
 from executor_manager.utils.executor_name import generate_executor_name
@@ -65,6 +66,9 @@ logger = setup_logger(__name__)
 
 class DockerExecutor(Executor):
     """Docker executor for running tasks in Docker containers"""
+
+    def renew_callback_bindings(self) -> None:
+        renew_running_docker_callback_bindings()
 
     def __init__(self, subprocess_module=subprocess, requests_module=None):
         """
