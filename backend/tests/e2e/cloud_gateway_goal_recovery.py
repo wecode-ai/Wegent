@@ -365,6 +365,14 @@ class CloudGatewayGoalRecovery(unittest.TestCase):
                 ),
                 30,
             )
+            paused = executor.rpc(
+                "runtime.tasks.goal.set",
+                address=address,
+                objective=self.marker,
+                status="paused",
+            )
+            self.assertTrue(paused["accepted"], paused.get("error"))
+            self.assertEqual(paused["goal"]["status"], "paused")
         wait_for(
             "real Backend rejecting expired launch JWT",
             lambda: self.api.get("/api/users/me", headers=bearer(launch)).status_code
@@ -387,11 +395,12 @@ class CloudGatewayGoalRecovery(unittest.TestCase):
             resumed = restored.rpc(
                 "runtime.tasks.goal.set",
                 address=address,
-                objective=self.marker,
                 status="active",
             )
             self.assertTrue(resumed["accepted"], resumed.get("error"))
             self.assertEqual(resumed["goal"]["status"], "active")
+            for key in ("threadId", "objective", "createdAt"):
+                self.assertEqual(resumed["goal"][key], paused["goal"][key], key)
             wait_for(
                 "resumed Goal reaching the real model gateway",
                 lambda: any(
