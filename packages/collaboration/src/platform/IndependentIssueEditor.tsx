@@ -119,7 +119,7 @@ export function IndependentIssueEditor({
   if (
     draftOwner.api !== api ||
     draftOwner.userId !== userId ||
-    (!shareDraft && draftOwner.issueId !== issue?.id)
+    (!shareDraft && !allowProjectSelection && draftOwner.issueId !== issue?.id)
   )
     setDraftOwner({
       api,

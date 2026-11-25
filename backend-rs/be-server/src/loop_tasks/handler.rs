@@ -34,21 +34,15 @@ async fn list_loop_item_tasks(
 }
 
 /// Handler body for `GET /api/v1/loop-items/{item_id}/tasks`.
-async fn loop_item_tasks(
+pub(crate) async fn loop_item_tasks(
     state: &AppState,
     item_id: &str,
     user_id: i32,
 ) -> Result<Vec<BindingResponse>, FastApiError> {
-    // `external_loop_item_provider.ensure_shadow(db, item_id, user_id)`.
-    super::assignments::ensure_shadow(state, item_id, user_id).await?;
-
-    // `loop_item_service.get`: `_get_item_row`.
-    let item = LoopItemRepository::new(&state.mysql)
-        .get_task_item_entity(item_id)
-        .await
-        .map_err(HttpError::internal)?
+    let scope = super::assignments::load_issue_scope(state, item_id, user_id)
+        .await?
         .ok_or_else(HttpError::todo_not_found)?;
-    super::item_access::require_item_access(&state.mysql, &item, user_id).await?;
+    scope.require(&state.mysql, item_id, user_id).await?;
 
     // `list_task_bindings` rows.
     let bindings = LoopItemRepository::new(&state.mysql)
@@ -60,7 +54,7 @@ async fn loop_item_tasks(
 
 /// Serialize one `LoopItemTaskBindingResponse`.
 #[derive(serde::Serialize)]
-struct BindingResponse {
+pub(crate) struct BindingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     stand_in_pending: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,7 +87,7 @@ fn binding_response(binding: &BindingRow) -> BindingResponse {
         stand_in_pending: binding.stand_in_pending(),
         stand_in_conversation_id: binding.stand_in_conversation_id(),
         id: binding.id.clone(),
-        cloud_project_id: binding.cloud_project_id.clone(),
+        cloud_project_id: binding.cloud_project_id.clone().unwrap_or_default(),
         loop_item_id: normalize_empty_text(binding.loop_item_id.as_deref()),
         task_user_id: binding.task_user_id,
         device_id: binding.device_id.clone(),
@@ -146,7 +140,7 @@ mod tests {
     fn binding(metadata: serde_json::Value) -> BindingRow {
         BindingRow {
             id: "5147678608484377787".to_string(),
-            cloud_project_id: "2753648597973755964".to_string(),
+            cloud_project_id: Some("2753648597973755964".to_string()),
             loop_item_id: Some("WEWORK2D8526-6".to_string()),
             task_user_id: 2230,
             device_id: "electron-32a59c25-c738-4261-9eee-f80b14e24aa4".to_string(),

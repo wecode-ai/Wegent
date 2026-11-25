@@ -1,5 +1,9 @@
 import type { SharedWorkspaceApi, WorkspaceMyWorkItem } from '../ports/SharedWorkspaceApi'
 
+export type PersonalHomeIssueSource = {
+  myWork?: Pick<NonNullable<SharedWorkspaceApi['myWork']>, 'page'>
+}
+
 export type SubscribePersonalIssueChanges = (reload: () => void) => () => void
 
 export interface PersonalHomeCreationNotice {
@@ -14,25 +18,25 @@ interface Query {
   includeCompleted: boolean
   viewerIds: (string | number)[]
 }
-interface Row {
+interface Row<Source> {
   queryKey: string
   scopeKey: string
-  api: SharedWorkspaceApi
+  api: Source
   items: WorkspaceMyWorkItem[]
   nextCursor: string | null
   loading: boolean
   error: boolean
 }
-interface Snapshot {
-  rows: Row[]
+interface Snapshot<Source> {
+  rows: Row<Source>[]
   revision: number
 }
 
 /** Each authority owns a bounded page; one source failing never blocks another. */
-export function createPersonalHomeIssuesSource(
-  sourceApis: SharedWorkspaceApi[],
+export function createPersonalHomeIssuesSource<Source extends PersonalHomeIssueSource>(
+  sourceApis: Source[],
   query: Query,
-  initial?: Snapshot,
+  initial?: Snapshot<Source>,
   subscribeChanges?: SubscribePersonalIssueChanges
 ) {
   const apis = [...sourceApis]
@@ -44,7 +48,7 @@ export function createPersonalHomeIssuesSource(
   ])
   const queryKey = (revision: number) => JSON.stringify([revision, scopeKey])
   let detach: (() => void) | undefined
-  let snapshot: Snapshot = {
+  let snapshot: Snapshot<Source> = {
     rows: apis.map(
       api =>
         initial?.rows.find(row => row.api === api && row.scopeKey === scopeKey) ?? {
@@ -60,14 +64,14 @@ export function createPersonalHomeIssuesSource(
     revision: initial?.revision ?? 0,
   }
   let generation = 0
-  const pendingPages = new Set<SharedWorkspaceApi>()
+  const pendingPages = new Set<Source>()
   const listeners = new Map<() => void, boolean>()
   const consumedCreations = new Set<string>()
   const hasActiveReaders = () => [...listeners.values()].some(active => active)
   const publish = () => {
     for (const listener of listeners.keys()) listener()
   }
-  const update = (api: SharedWorkspaceApi, change: (row: Row) => Row) => {
+  const update = (api: Source, change: (row: Row<Source>) => Row<Source>) => {
     snapshot = {
       ...snapshot,
       rows: snapshot.rows.map(row => (row.api === api ? change(row) : row)),

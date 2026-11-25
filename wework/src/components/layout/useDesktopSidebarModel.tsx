@@ -18,6 +18,7 @@ import {
   getRuntimeTaskReminderKey,
 } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import {
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskSidebarSnapshot,
@@ -476,7 +477,7 @@ export function useDesktopSidebarModel({
     setPriorityForceArchiveItems(null)
   }
 
-  const setRuntimeTaskPinnedOptimistically = async (data: RuntimeTaskPinRequest) => {
+  const setRuntimeTaskPinnedOptimistically = useStableEvent(async (data: RuntimeTaskPinRequest) => {
     if (!onSetRuntimeTaskPinned) return
     const projectTask = sidebarRuntimeProjectSource
       .flatMap(projectWork =>
@@ -501,7 +502,7 @@ export function useDesktopSidebarModel({
     }
 
     await pinSource.pin(data, onSetRuntimeTaskPinned)
-  }
+  })
   const projectSectionArchiveItems = useMemo(() => {
     return allSidebarRuntimeProjects
       .map(projectWork => ({

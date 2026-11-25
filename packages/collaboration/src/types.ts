@@ -469,6 +469,7 @@ export interface CollaborationAgent {
 }
 
 export interface CollaborationAttachment {
+  removable?: boolean;
   id: string;
   loop_item_id: string;
   display_name: string;

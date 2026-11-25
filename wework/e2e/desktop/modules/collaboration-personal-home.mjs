@@ -320,7 +320,7 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
   )
   assert.ok(selectedTab.startsWith('personal-home-tab-'))
   const issueId = selectedTab.slice('personal-home-tab-'.length)
-  await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-header-${issueId}"]`), {
+  await control.command('waitFor', scoped(`[data-testid="personal-home-issue-${issueId}"]`), {
     text: HOME_ISSUE_TITLE,
   })
   await control.command(

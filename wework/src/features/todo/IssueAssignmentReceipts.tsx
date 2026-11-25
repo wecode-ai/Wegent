@@ -5,7 +5,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { StandInIcon } from '@wegent/collaboration'
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { Check, CircleAlert, CircleDashed, CircleHelp } from 'lucide-react'
+import { Check, CircleAlert, CircleDashed, CircleHelp, Clock3, Wrench } from 'lucide-react'
 import { memo, useCallback, useMemo, useSyncExternalStore } from 'react'
 import type {
   IssueAssignmentReceiptObservation,
@@ -158,23 +158,24 @@ function DispatchReceipt({
     receipt.reasonCode === 'tag_mismatch'
       ? t('todo.dispatch.tag_mismatch')
       : t(`todo.dispatch.${receipt.state}`)
+  const icon = repair ? CircleAlert : receipt.state === 'waiting_user' ? Clock3 : CircleDashed
   return (
     <span
       data-testid="issue-assignment-dispatch"
-      className="inline-flex items-center gap-1"
-      title={`${label} · ${new Date(receipt.updatedAt).toLocaleString()}`}
+      className="inline-flex shrink-0 items-center gap-1"
     >
-      <span>{label}</span>
+      <ReceiptIcon icon={icon} label={label} value={receipt.updatedAt} />
       {repair && canRepair && (
         <Button
-          variant="ghost"
-          size="sm"
+          variant="unstyled"
           type="button"
           data-testid="issue-assignment-dispatch-repair"
-          className="underline"
+          aria-label={t('todo.dispatch.repair')}
+          title={t('todo.dispatch.repair')}
+          className="inline-grid h-5 w-5 shrink-0 place-items-center rounded hover:bg-muted"
           onClick={() => navigateTo('/stand-in?profileId=@primary')}
         >
-          {t('todo.dispatch.repair')}
+          <Wrench className="h-4 w-4" aria-hidden="true" />
         </Button>
       )}
     </span>

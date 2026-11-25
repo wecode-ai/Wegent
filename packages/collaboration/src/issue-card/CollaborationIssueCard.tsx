@@ -1,4 +1,5 @@
-import { Button as ControlButton } from '../markdown/Button'
+import { IssueListTitle } from './IssueListTitle'
+import { IssueOpenControl } from './IssueOpenControl'
 import './issueCard.css'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -6,7 +7,6 @@ import './issueCard.css'
 
 import { Bot, Circle, Clock3, Flag, Ghost, UserRound, UsersRound } from 'lucide-react'
 import {
-  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type HTMLAttributes,
@@ -198,29 +198,21 @@ function IssueCardHeading({
         data-testid={`cloud-todo-card-header-${itemId}`}
         className="collaboration-issue-list-heading min-w-0"
       >
-        <span className="flex min-w-0 flex-1 items-center gap-2">
-          {(unread ?? model.unread) && (
-            <span
-              data-testid={`cloud-todo-card-unread-${itemId}`}
-              aria-hidden="true"
-              className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-            />
-          )}
-          <span
-            data-testid={`cloud-todo-card-title-${itemId}`}
-            className="line-clamp-2 min-w-0 break-words text-base font-medium leading-5 text-text-primary"
-          >
-            {model.title}
-          </span>
-          {display.showReference !== false && (
-            <span
-              data-testid={`cloud-todo-card-reference-${itemId}`}
-              className="shrink-0 pt-1 text-sm text-text-secondary"
-            >
-              {model.shortReference}
-            </span>
-          )}
-        </span>
+        <IssueListTitle
+          title={model.title}
+          issueId={itemId}
+          reference={display.showReference !== false ? model.shortReference : undefined}
+          fullReference={model.reference}
+          leading={
+            (unread ?? model.unread) && (
+              <span
+                data-testid={`cloud-todo-card-unread-${itemId}`}
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+              />
+            )
+          }
+        />
         <span className="collaboration-issue-list-metadata text-sm text-text-secondary">
           {statusLabel && (
             <span
@@ -453,62 +445,47 @@ export function CollaborationIssueCard({
   unread,
   ...contentProps
 }: CollaborationIssueCardProps) {
-  const detailButtonRef = useRef<HTMLButtonElement>(null)
-  const canOpenDetails = Boolean(onOpen) && !detailButtonProps?.disabled
   const model = createCollaborationIssueCardModel(contentProps)
 
   return (
-    <article
-      {...articleProps}
-      onClick={event => {
-        const target = event.target
-        // Portal events bubble through React even when their DOM is outside the card.
-        if (!(target instanceof Element) || !event.currentTarget.contains(target)) return
-        articleProps?.onClick?.(event)
-        if (event.defaultPrevented || !canOpenDetails || dragging) return
-        const control = target.closest(
-          'button, a[href], input, select, textarea, summary, [role="button"], [role="link"], [role="menuitem"], [contenteditable]:not([contenteditable="false"])'
-        )
-        if (control && event.currentTarget.contains(control)) return
-        detailButtonRef.current?.focus({ preventScroll: true })
-        onOpen?.()
-      }}
-      ref={cardRef}
-      data-testid={articleTestId}
-      style={cardStyle}
-      className={collaborationIssueCardClassName({
-        className: classNames('cursor-default', cardClassName),
-        dragging,
-        dropTarget,
-        unread: unread ?? Boolean(contentProps.item.is_unread),
-        variant,
-      })}
-    >
-      {menu}
-      <ControlButton
-        variant="unstyled"
-        {...detailButtonProps}
-        onClick={onOpen}
-        ref={detailButtonRef}
-        type="button"
-        data-testid={detailButtonTestId}
-        className={classNames(
-          'w-full cursor-default text-left',
-          variant === 'list' ? 'px-4 pt-3' : 'px-3.5 pt-3.5',
-          detailButtonClassName
-        )}
-      >
-        <IssueCardHeading
-          variant={variant}
-          itemId={contentProps.item.id}
-          model={model}
-          display={contentProps.display}
-          titleTrailing={contentProps.titleTrailing}
-          unread={unread}
-          metadata={
-            variant === 'list' ? (
+    <IssueOpenControl
+      buttonProps={detailButtonProps}
+      onOpen={onOpen}
+      onRowClick={articleProps?.onClick}
+      rowClickDisabled={dragging}
+      testId={detailButtonTestId}
+      className={classNames(
+        variant === 'list' ? 'px-4 pt-3' : 'px-3.5 pt-3.5',
+        detailButtonClassName
+      )}
+      renderRow={(button, onRowClick) => (
+        <article
+          {...articleProps}
+          onClick={onRowClick}
+          ref={cardRef}
+          data-testid={articleTestId}
+          style={cardStyle}
+          className={collaborationIssueCardClassName({
+            className: classNames('cursor-default', cardClassName),
+            dragging,
+            dropTarget,
+            unread: unread ?? Boolean(contentProps.item.is_unread),
+            variant,
+          })}
+        >
+          {menu}
+          {button}
+          <div
+            className={classNames(
+              variant === 'list' ? 'px-4' : 'px-3.5',
+              detailFlushBottom ? 'pb-0' : variant === 'list' ? 'pb-3' : 'pb-3.5'
+            )}
+          >
+            {summary}
+            {metadata}
+            {variant !== 'list' && (
               <IssueCardMetadata
-                variant="list"
+                variant={variant}
                 item={contentProps.item}
                 itemId={contentProps.item.id}
                 model={model}
@@ -516,39 +493,41 @@ export function CollaborationIssueCard({
                 labels={contentProps.labels}
                 renderAssigneeTooltip={contentProps.renderAssigneeTooltip}
               />
-            ) : undefined
-          }
-          participant={
-            <IssueCardParticipation
+            )}
+          </div>
+          {childrenAction}
+        </article>
+      )}
+    >
+      <IssueCardHeading
+        variant={variant}
+        itemId={contentProps.item.id}
+        model={model}
+        display={contentProps.display}
+        titleTrailing={contentProps.titleTrailing}
+        unread={unread}
+        metadata={
+          variant === 'list' ? (
+            <IssueCardMetadata
+              variant="list"
               item={contentProps.item}
-              labels={contentProps.labels}
+              itemId={contentProps.item.id}
               model={model}
+              display={contentProps.display}
+              labels={contentProps.labels}
+              renderAssigneeTooltip={contentProps.renderAssigneeTooltip}
             />
-          }
-        />
-        {afterContent}
-      </ControlButton>
-      <div
-        className={classNames(
-          variant === 'list' ? 'px-4' : 'px-3.5',
-          detailFlushBottom ? 'pb-0' : variant === 'list' ? 'pb-3' : 'pb-3.5'
-        )}
-      >
-        {summary}
-        {metadata}
-        {variant !== 'list' && (
-          <IssueCardMetadata
-            variant={variant}
+          ) : undefined
+        }
+        participant={
+          <IssueCardParticipation
             item={contentProps.item}
-            itemId={contentProps.item.id}
-            model={model}
-            display={contentProps.display}
             labels={contentProps.labels}
-            renderAssigneeTooltip={contentProps.renderAssigneeTooltip}
+            model={model}
           />
-        )}
-      </div>
-      {childrenAction}
-    </article>
+        }
+      />
+      {afterContent}
+    </IssueOpenControl>
   )
 }

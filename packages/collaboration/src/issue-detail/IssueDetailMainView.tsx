@@ -66,6 +66,18 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
     fullScreenSectionPadding,
     personalTaskAction,
   } = viewModel
+  const draftForm = createProps?.draftForm
+  const embedded = props.presentation === 'embedded'
+  const issueActions = [...(props.issueActions ?? [])]
+  if (editable && props.onDelete) {
+    issueActions.push({
+      id: 'cloud-todo-detail-delete',
+      label: props.deleteLabel ?? t('todo.delete_issue', '删除任务'),
+      onSelect: props.onDelete,
+      destructive: true,
+    })
+  }
+  const panelExpanded = props.panelExpansion?.expanded ?? fullScreen
   return (
     <div
       className={cn(
@@ -76,18 +88,20 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               props.workspacePanelFill && 'task-detail-workspace-panel-fill w-full min-w-0',
               fullScreen && 'is-expanded'
             )
-          : fullScreen
-            ? 'fixed inset-0 z-modal bg-black/35 p-3 backdrop-blur-sm'
-            : twoColumn
-              ? 'fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))]'
-              : 'fixed inset-0 z-modal bg-black/35 px-6 pb-6 pt-[6vh] backdrop-blur-sm'
+          : embedded
+            ? 'h-full min-h-0 w-full'
+            : fullScreen
+              ? 'fixed inset-0 z-modal bg-black/35 p-3 backdrop-blur-sm'
+              : twoColumn
+                ? 'fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))]'
+                : 'fixed inset-0 z-modal bg-black/35 px-6 pb-6 pt-[6vh] backdrop-blur-sm'
       )}
       onMouseDown={event => {
-        if (!workspacePanel && event.currentTarget === event.target) onClose()
+        if (!workspacePanel && !embedded && event.currentTarget === event.target) onClose()
       }}
     >
       <section
-        ref={isCreate ? markIssueCreateOpen : undefined}
+        ref={isCreate && !draftForm ? markIssueCreateOpen : undefined}
         data-testid={isCreate ? 'cloud-todo-create-panel' : 'cloud-todo-detail'}
         data-field-save-state={fieldSaves.pending ? 'pending' : 'idle'}
         aria-busy={fieldSaves.pending || undefined}
@@ -95,21 +109,24 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
           'flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
           workspacePanel
             ? 'todo-floating-panel-surface h-full w-full max-w-none'
-            : fullScreen
-              ? 'h-full w-full'
-              : cn(
-                  'max-w-[calc(100vw-48px)]',
-                  twoColumn
-                    ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-xl'
-                    : cn('max-h-[88vh]', isAITableEdit ? 'w-[1080px]' : 'w-[760px]')
-                )
+            : embedded
+              ? 'h-full min-h-0 w-full rounded-none shadow-none'
+              : fullScreen
+                ? 'h-full w-full'
+                : cn(
+                    'max-w-[calc(100vw-48px)]',
+                    twoColumn
+                      ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-xl'
+                      : cn('max-h-[88vh]', isAITableEdit ? 'w-[1080px]' : 'w-[760px]')
+                  )
         )}
         onKeyDown={handleKeyDown}
         onDragOver={event => event.preventDefault()}
         onDrop={handleDrop}
       >
         <span className="sr-only">
-          {isCreate ? t('todo.new_issue', '新建任务') : t('todo.issue_detail', '任务详情')}
+          {draftForm?.heading ??
+            (isCreate ? t('todo.new_issue', '新建任务') : t('todo.issue_detail', '任务详情'))}
         </span>
         <header
           className={cn(
@@ -133,12 +150,13 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               <Folder className="h-3.5 w-3.5" />
               <span className="truncate">
                 {item
-                  ? `${editProps?.project?.name ?? t('todo.project_space', '项目空间')} / ${item.id}`
-                  : `${createProps?.project.name} · ${
+                  ? `${editProps?.project?.name ?? (item.cloud_project_id ? t('todo.project_space', '项目空间') : t('independentIssues.noProject', '独立事项'))} / ${item.id}`
+                  : (draftForm?.heading ??
+                    `${createProps?.project?.name ?? ''} · ${
                       createProps?.initialParent
                         ? t('todo.new_sub_issue', '新建子任务')
                         : t('todo.new_issue', '新建任务')
-                    }`}
+                    }`)}
               </span>
             </span>
           </IssueHeaderContext>
@@ -179,27 +197,35 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
             </div>
           ) : null}
           {props.headerActions}
-          {workspacePanel && item && editable && props.onDelete ? (
+          {workspacePanel && item && issueActions.length ? (
             <IssuePropertiesPopover
               triggerRef={propertiesTriggerRef}
               label={t('common.actions', '操作')}
-              testIdPrefix="cloud-todo-issue-actions"
+              testIdPrefix={props.issueActionsTestId ?? 'cloud-todo-issue-actions'}
             >
-              <PopoverClose
-                render={
-                  <button
-                    className="task-detail-more-menu-danger"
-                    data-testid="cloud-todo-detail-delete"
-                    onClick={() => {
-                      propertiesTriggerRef.current?.focus()
-                      props.onDelete?.()
-                    }}
-                    type="button"
-                  />
-                }
-              >
-                {props.deleteLabel ?? t('todo.delete_issue', '删除任务')}
-              </PopoverClose>
+              {issueActions.map(action => (
+                <PopoverClose
+                  key={action.id}
+                  render={
+                    <button
+                      className={
+                        action.destructive
+                          ? 'task-detail-more-menu-danger'
+                          : 'task-detail-more-menu-action'
+                      }
+                      data-testid={action.id}
+                      disabled={action.disabled}
+                      onClick={() => {
+                        propertiesTriggerRef.current?.focus()
+                        action.onSelect()
+                      }}
+                      type="button"
+                    />
+                  }
+                >
+                  {action.label}
+                </PopoverClose>
+              ))}
             </IssuePropertiesPopover>
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
@@ -220,25 +246,23 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
           ) : null}
           {showPanelControls ? (
             <>
-              {showFullscreenControl ? (
+              {showFullscreenControl || props.panelExpansion ? (
                 <ControlButton
                   variant="unstyled"
                   type="button"
                   data-testid={
-                    isCreate ? 'cloud-todo-create-fullscreen' : 'cloud-todo-detail-fullscreen'
+                    props.panelExpansion?.testId ??
+                    (isCreate ? 'cloud-todo-create-fullscreen' : 'cloud-todo-detail-fullscreen')
                   }
-                  onClick={() =>
-                    setFullScreen(current => {
-                      const expanded = !current
-                      if (expanded && workspacePanel) {
-                        setDescriptionExpanded(true)
-                      }
-                      return expanded
-                    })
-                  }
+                  onClick={() => {
+                    if (props.panelExpansion) props.panelExpansion.onChange(!panelExpanded)
+                    else setFullScreen(!panelExpanded)
+                    if (!panelExpanded && workspacePanel) setDescriptionExpanded(true)
+                  }}
+                  aria-pressed={props.panelExpansion ? panelExpanded : undefined}
                   className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                   aria-label={
-                    fullScreen
+                    panelExpanded
                       ? workspacePanel
                         ? t('todo.restore_issue_sidebar', '还原侧边栏')
                         : t('todo.exit_full_screen', '退出全屏显示')
@@ -247,7 +271,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                         : t('todo.full_screen', '全屏显示')
                   }
                 >
-                  {fullScreen ? (
+                  {panelExpanded ? (
                     <Minimize2 className="h-4 w-4" />
                   ) : (
                     <Maximize2 className="h-4 w-4" />
@@ -257,7 +281,11 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               <ControlButton
                 variant="unstyled"
                 type="button"
-                data-testid={isCreate ? 'cloud-todo-modal-close' : 'cloud-todo-detail-close'}
+                data-testid={
+                  props.closeTestId ??
+                  (isCreate ? 'cloud-todo-modal-close' : 'cloud-todo-detail-close')
+                }
+                disabled={props.closeDisabled}
                 onClick={onClose}
                 className="-mr-1 flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                 aria-label={
@@ -273,6 +301,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
         </header>
 
         <div
+          data-testid={draftForm?.scrollTestId}
           className={cn(
             'min-h-0 flex-1',
             twoColumn
@@ -282,7 +311,22 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               : 'overflow-y-auto'
           )}
         >
-          <IssueDetailDocumentView model={viewModel} />
+          {draftForm?.renderParticipants ? (
+            <div className="p-5 [container-type:inline-size]">
+              <div className="grid min-w-0 gap-5 [@container_(min-width:620px)]:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
+                <aside className="flex min-w-0 flex-col gap-2 [@container_(min-width:620px)]:border-r [@container_(min-width:620px)]:border-border [@container_(min-width:620px)]:pr-5">
+                  {draftForm.renderParticipants({
+                    assignee: model.assigneeTarget,
+                    onAssign: value => model.changeProperty('assigneeTarget', value),
+                    saving,
+                  })}
+                </aside>
+                <IssueDetailDocumentView model={viewModel} />
+              </div>
+            </div>
+          ) : (
+            <IssueDetailDocumentView model={viewModel} />
+          )}
           {twoColumn && !workspacePanel ? <IssueDetailExecutionRail model={viewModel} /> : null}
         </div>
 
@@ -296,6 +340,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               </div>
             ) : null}
             <footer
+              data-testid={draftForm?.footerTestId}
               className={cn('shrink-0 border-t border-border py-3', fullScreenSectionPadding)}
             >
               <div
@@ -303,27 +348,41 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                 className={cn('flex items-center gap-2', fullScreenReadingColumn)}
               >
                 <span className="text-xs text-text-secondary">
-                  {isCreate
+                  {isCreate && !draftForm
                     ? t('todo.create_shortcut_hint', 'ESC 关闭 · ⌘↵ 创建{{draft}}', {
                         draft: hasDraftContent ? ` · ${t('todo.draft_saved', '草稿已保存')}` : '',
                       })
                     : t('todo.save_shortcut_hint', 'ESC 关闭 · ⌘↵ 保存')}
                 </span>
                 <span className="flex-1" />
+                {draftForm?.cancelTestId ? (
+                  <ControlButton
+                    type="button"
+                    variant="unstyled"
+                    data-testid={draftForm.cancelTestId}
+                    disabled={saving}
+                    onClick={draftForm.onCancel ?? onClose}
+                    className="h-8 rounded-md px-3 text-sm hover:bg-muted"
+                  >
+                    {t('common.cancel', '取消')}
+                  </ControlButton>
+                ) : null}
                 {isCreate ? (
                   <>
                     <IssueSaveButton
-                      testId="cloud-todo-create-confirm"
-                      disabled={!createTitle || saving || scheduleRangeInvalid}
+                      testId={draftForm?.confirmTestId ?? 'cloud-todo-create-confirm'}
+                      disabled={
+                        !(draftForm ? title.trim() : createTitle) || saving || scheduleRangeInvalid
+                      }
                       saving={saving}
-                      notificationAvailable={notificationAvailable}
+                      notificationAvailable={!draftForm && notificationAvailable}
                       labels={notificationSaveLabels}
                       onSave={submitCreate}
                       className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                     >
                       {saving
                         ? t('todo.creating_issue', '正在创建…')
-                        : t('todo.create_issue', '创建任务')}
+                        : (draftForm?.confirmLabel ?? t('todo.create_issue', '创建任务'))}
                     </IssueSaveButton>
                   </>
                 ) : (

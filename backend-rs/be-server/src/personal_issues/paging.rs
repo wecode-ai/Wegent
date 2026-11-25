@@ -46,7 +46,7 @@ fn expressions(order: &str) -> Result<(&'static str, &'static str, String), Fast
     };
     let time = match order {
         "assignment" => "TIMESTAMPDIFF(MICROSECOND,'1970-01-01',COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.assigned_at')),'null'),'9999-12-31 23:59:59'))".to_string(),
-        "attention"|"activity"|"priority"|"recent" => "-TIMESTAMPDIFF(MICROSECOND,'1970-01-01',updated_at)".to_string(),
+        "attention"|"activity"|"priority"|"recent" => "-TIMESTAMPDIFF(MICROSECOND,'1970-01-01',DATE_SUB(updated_at, INTERVAL 8 HOUR))".to_string(),
         _=>return Err(invalid("Invalid Issue order")),
     };
     Ok((rank, priority, time))
@@ -131,20 +131,22 @@ pub(super) async fn list_issues(
     }) {
         return Err(invalid("Cursor does not match this Issue query"));
     }
+    let invited = collaborator_exists("loop_items.id", "?");
     let mut rows: Vec<Issue> = state
         .mysql
         .fetch_all(
             format!(
-                "{SELECT} WHERE {LIVE}
-        AND (created_by_user_id=? OR JSON_CONTAINS(metadata,CAST(? AS JSON),'$.participants'))
+                "{} WHERE {LIVE}
+        AND (created_by_user_id=? OR {invited})
         AND (?<>'assigned' OR assignee_user_id=?) AND (?<>'created' OR created_by_user_id=?)
         AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.archived')),'false')=? AND (? OR status<>'completed')
         AND (? IS NULL OR ({rank},{priority},{time},id)>(?,?,?,?))
-        ORDER BY {rank},{priority},{time},id LIMIT 31"
+        ORDER BY {rank},{priority},{time},id LIMIT 31",
+                select_issue(true),
             ),
             (
                 user.0.id,
-                user.0.id.to_string(),
+                user.0.id,
                 query.scope.as_str(),
                 user.0.id,
                 query.scope.as_str(),

@@ -14,6 +14,7 @@ async fn assignment_count(
 ) -> Result<AssignmentCount, FastApiError> {
     let user_id = user.0.id;
     let visible = crate::cloud_projects::project_access_statement(user_id, None, None);
+    let invited = collaborator_exists("issue.id", "?");
     state.mysql.fetch_one(
         format!(
             "SELECT COUNT(*) AS count FROM loop_items AS issue
@@ -22,13 +23,12 @@ async fn assignment_count(
              AND issue.status NOT IN ('completed','cancelled','archived')
              AND (
                  ((issue.cloud_project_id IS NULL OR issue.cloud_project_id='') AND
-                  JSON_EXTRACT(issue.metadata,'$.standalone')=true AND
                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(issue.metadata,'$.archived')),'false')='false' AND
-                  (issue.created_by_user_id=? OR JSON_CONTAINS(issue.metadata,CAST(? AS JSON),'$.participants')))
+                  (issue.created_by_user_id=? OR {invited}))
                  OR issue.cloud_project_id IN (SELECT loop_items_id FROM ({visible}) AS visible)
              )"
         ),
-        (user_id, user_id, user_id.to_string()),
+        (user_id, user_id, user_id),
     ).await.map_err(internal)
 }
 
