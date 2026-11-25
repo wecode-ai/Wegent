@@ -2,26 +2,24 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import {
   createUnlistedStandInTasksSource,
   isStandInNotificationTask,
+  type UnlistedTaskCandidate,
 } from './unlistedStandInTasksSource'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import type {
-  RuntimeTaskLifecycleSnapshot,
-  RuntimeTaskLifecycleStoreSnapshot,
-} from '@/features/workbench/runtimeTaskLifecycle'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 
-const rowsWithLifecycle = new WeakMap<RuntimeTaskReminderItem, RuntimeTaskReminderItem>()
+const projectedItems = new WeakMap<RuntimeTaskReminderItem, RuntimeTaskReminderItem>()
 
 function withLifecycle(
   item: RuntimeTaskReminderItem,
-  lifecycle: RuntimeTaskLifecycleSnapshot | undefined
+  lifecycle: RuntimeTaskReminderItem['lifecycle']
 ): RuntimeTaskReminderItem {
   if (item.lifecycle === lifecycle) return item
-  const cached = rowsWithLifecycle.get(item)
-  if (cached && cached.lifecycle === lifecycle) return cached
-  const row = { ...item, lifecycle }
-  rowsWithLifecycle.set(item, row)
-  return row
+  const previous = projectedItems.get(item)
+  if (previous && previous.lifecycle === lifecycle) return previous
+  const projected = { ...item, lifecycle }
+  projectedItems.set(item, projected)
+  return projected
 }
 
 function needsStandInLookup(task: RuntimeTaskReminderItem['task'] | null): boolean {
@@ -47,9 +45,10 @@ export function useUnlistedStandInTasks(
   const source = useMemo(() => createUnlistedStandInTasksSource(reader), [reader])
   const visible = useMemo(() => new Set(items.map(item => item.key)), [items])
   const pending = useMemo(() => {
-    return [...snapshot.tasks.values()]
-      .filter(task => !visible.has(task.key) && needsStandInLookup(task.task))
-      .map(task => ({
+    const candidates: UnlistedTaskCandidate[] = []
+    for (const task of snapshot.tasks.values()) {
+      if (visible.has(task.key) || !needsStandInLookup(task.task)) continue
+      candidates.push({
         key: task.key,
         address: task.address,
         signature: JSON.stringify([
@@ -60,7 +59,9 @@ export function useUnlistedStandInTasks(
           task.interactionStatus,
           task.task?.updatedAt,
         ]),
-      }))
+      })
+    }
+    return candidates
   }, [visible, snapshot.tasks])
 
   const subscribe = useCallback(
@@ -71,11 +72,12 @@ export function useUnlistedStandInTasks(
 
   return useMemo(() => {
     let next: RuntimeTaskReminderItem[] | undefined
-    for (const [index, item] of items.entries()) {
-      const row = withLifecycle(item, snapshot.tasks.get(item.key))
-      if (row === item) continue
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index]
+      const projected = withLifecycle(item, snapshot.tasks.get(item.key))
+      if (item === projected) continue
       next ??= items.slice()
-      next[index] = row
+      next[index] = projected
     }
     for (const item of loaded.values()) {
       if (visible.has(item.key)) continue

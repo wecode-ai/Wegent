@@ -12,6 +12,7 @@ import type {
   WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import {
+  CompositedSpinner,
   IssueDetailDraftProvider,
   issueNeedsUser,
   pendingIssueHumanRequests,
@@ -306,7 +307,7 @@ export function WeworkPersonalHome({
           tabIndex={-1}
           aria-busy={state.loading}
           data-testid="personal-home-items-region"
-          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto"
+          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:[scrollbar-gutter:stable]"
         >
           <div className="w-full max-w-6xl">
             <header className="mb-5 flex items-start justify-between gap-4">
@@ -363,6 +364,12 @@ export function WeworkPersonalHome({
                 ))}
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <CompositedSpinner
+                  role="img"
+                  aria-label={t('personalHome.loading')}
+                  aria-hidden={!state.loading}
+                  className={`size-3 text-text-secondary ${state.loading ? '' : 'invisible'}`}
+                />
                 <SelectRoot
                   value={normalizeSelectValue(order)}
                   onValueChange={selectedValue => {
