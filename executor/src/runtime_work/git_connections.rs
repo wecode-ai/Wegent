@@ -3,15 +3,72 @@ use crate::local::app_ipc::AppIpcError;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
+    future::Future,
     sync::{Mutex, OnceLock},
 };
-use std::{process::Stdio, time::Duration};
+use std::{
+    process::Stdio,
+    time::{Duration, Instant},
+};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 use tokio::{io::AsyncReadExt, process::Command};
 mod status;
 
 pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
+
+tokio::task_local! {
+    pub(crate) static GIT_READ_REQUEST_ID: String;
+}
+
+struct GitReadTiming {
+    request_id: String,
+    phase: &'static str,
+    started: Instant,
+    outcome: &'static str,
+}
+
+impl Drop for GitReadTiming {
+    fn drop(&mut self) {
+        crate::logging::log_executor_event(
+            "Git read CLI phase",
+            &[
+                ("request_id", self.request_id.clone()),
+                ("phase", self.phase.to_owned()),
+                ("elapsed_ms", self.started.elapsed().as_millis().to_string()),
+                ("outcome", self.outcome.to_owned()),
+            ],
+        );
+    }
+}
+
+async fn time_read_phase<T, E>(
+    phase: &'static str,
+    read: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let mut timing = GIT_READ_REQUEST_ID
+        .try_with(|id| GitReadTiming {
+            request_id: id.clone(),
+            phase,
+            started: Instant::now(),
+            outcome: "cancelled",
+        })
+        .ok();
+    let result = read.await;
+    if let Some(timing) = &mut timing {
+        timing.outcome = if result.is_ok() { "ok" } else { "error" };
+    }
+    result
+}
+
+async fn read_api(
+    platform: &str,
+    instance: &str,
+    phase: &'static str,
+    path: &str,
+) -> Result<ApiReply, AppIpcError> {
+    time_read_phase(phase, api(platform, instance, "GET", path, None)).await
+}
 
 fn git_cli_command(platform: &str, environment: HashMap<String, String>) -> Command {
     let name = if platform == "github" { "gh" } else { "glab" };
@@ -214,10 +271,8 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
             .ok_or_else(|| invalid("Invalid repository-relative API path"))?;
         return Ok(format!("{base}/{path}"));
     }
-    let number = input["number"]
-        .as_u64()
-        .filter(|n| *n > 0)
-        .ok_or_else(|| invalid("Missing object number"))?;
+    let number =
+        positive_id(input["number"].as_u64()).ok_or_else(|| invalid("Missing object number"))?;
     let kind = input["entityKind"].as_str().unwrap_or("issue");
     let entity = if kind == "change_request" {
         if platform == "github" {
@@ -255,6 +310,10 @@ fn endpoint(platform: &str, input: &Value) -> Result<String, AppIpcError> {
     Ok(format!("{base}/{suffix}"))
 }
 
+fn positive_id(value: Option<u64>) -> Option<u64> {
+    value.filter(|id| *id > 0)
+}
+
 struct ApiReply {
     data: Value,
     poll_interval: u64,
@@ -290,9 +349,16 @@ async fn api(
     endpoint: &str,
     body: Option<&Value>,
 ) -> Result<ApiReply, AppIpcError> {
-    api_request(platform, instance, method, endpoint, body, None)
-        .await
-        .map_err(|failure| failure.error)
+    api_request(
+        platform,
+        instance,
+        method,
+        endpoint,
+        body.map(ApiBody::Json),
+        None,
+    )
+    .await
+    .map_err(|failure| failure.error)
 }
 
 async fn bounded_output<R: AsyncRead + Unpin>(
@@ -407,21 +473,32 @@ fn decode_reply(raw: &[u8]) -> Result<DecodedReply<'_>, AppIpcError> {
     })
 }
 
+enum ApiBody<'a> {
+    Json(&'a Value),
+    GitLabGraphql {
+        query: &'a str,
+        path: &'a str,
+        iid: u64,
+    },
+}
+
 async fn api_request(
     platform: &str,
     instance: &str,
     method: &str,
     endpoint: &str,
-    body: Option<&Value>,
+    body: Option<ApiBody<'_>>,
     pr_number: Option<u64>,
 ) -> Result<ApiReply, GitRequestError> {
     let hostname = instance
         .strip_prefix("https://")
         .ok_or_else(|| GitRequestError::not_sent(invalid("Invalid instance")))?;
-    let serialized = body
-        .map(serde_json::to_vec)
-        .transpose()
-        .map_err(|_| GitRequestError::not_sent(invalid("Invalid Git request")))?;
+    let serialized = match &body {
+        Some(ApiBody::Json(value)) => Some(serde_json::to_vec(value)),
+        _ => None,
+    }
+    .transpose()
+    .map_err(|_| GitRequestError::not_sent(invalid("Invalid Git request")))?;
     if serialized
         .as_ref()
         .is_some_and(|body| body.len() > 256 * 1024)
@@ -451,12 +528,22 @@ async fn api_request(
         "--method",
         method,
     ]);
-    if body.is_some() {
+    if let Some(ApiBody::GitLabGraphql { query, path, iid }) = body {
+        command.env_remove("GLAB_DEBUG_HTTP").args([
+            "--raw-field",
+            &format!("query={query}"),
+            "--raw-field",
+            &format!("path={path}"),
+            "--raw-field",
+            &format!("iid={iid}"),
+        ]);
+    }
+    if serialized.is_some() {
         command.args(["--input", "-"]);
     }
     command
         .arg(endpoint)
-        .stdin(if body.is_some() {
+        .stdin(if serialized.is_some() {
             Stdio::piped()
         } else {
             Stdio::null()
@@ -533,13 +620,13 @@ fn definite_rejection(status: u16) -> bool {
 pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     let platform = provider(&input)?;
     let instance = instance(&input, platform)?;
-    if input["operation"] == "change_request_status" && platform == "github" {
-        let (response, profile) = status::read(&instance, &input).await?;
+    if input["operation"] == "change_request_status" {
+        let (response, profile) = status::read(platform, &instance, &input).await?;
         return Ok(
             json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
         );
     }
-    let identity = api(platform, &instance, "GET", "user", None).await?.data;
+    let identity = read_api(platform, &instance, "user", "user").await?.data;
     let id = identity["id"]
         .as_str()
         .map(str::to_owned)
@@ -622,11 +709,11 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
                 platform,
                 &json!({"operation":"repository","repository":input["repository"]}),
             )?;
-            let repository = api(platform, &instance, "GET", &repository_path, None).await?;
+            let repository = read_api(platform, &instance, "repository", &repository_path).await?;
             verify_repository_id(&repository.data["id"], expected)?;
         }
     }
-    let data = api(platform, &instance, "GET", &path, None).await?;
+    let data = read_api(platform, &instance, "target", &path).await?;
     Ok(json!({"data":data.data,"profile":profile,"pollIntervalSeconds":data.poll_interval}))
 }
 
@@ -690,7 +777,7 @@ pub(crate) async fn write(input: Value) -> Result<Value, GitRequestError> {
         &instance,
         method,
         &path,
-        Some(&input["body"]),
+        Some(ApiBody::Json(&input["body"])),
         None,
     )
     .await?
@@ -755,6 +842,7 @@ fn comment_event_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[tokio::test]
     async fn hosting_cli_uses_path_shims_without_shell_interpolation() {
         let root = tempfile::tempdir().unwrap();
@@ -862,7 +950,7 @@ mod tests {
             "https://github.com",
             "POST",
             "repos/org/repo/issues",
-            Some(&oversized),
+            Some(ApiBody::Json(&oversized)),
             None,
         )
         .await
@@ -879,7 +967,7 @@ mod tests {
             host,
             "POST",
             "projects/1/hooks",
-            Some(&json!({})),
+            Some(ApiBody::Json(&json!({}))),
             None,
         )
         .await;

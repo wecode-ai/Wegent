@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
 import { normalizeSelectValue } from '../controls/selectValue'
+import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
 import { Button as ControlButton } from '../markdown/Button'
 import { PersonalIssueErrors } from './PersonalIssueErrors'
 import { PersonalIssueList } from './PersonalIssueList'
@@ -39,7 +40,7 @@ export function PersonalHome({
       tabIndex={-1}
       aria-busy={state.loading}
       data-testid="personal-home-items-region"
-      className={`min-w-0 flex-1 flex-col p-5 ${scrollOnMobile ? 'overflow-auto' : 'lg:overflow-auto'} ${hideOnMobile ? 'hidden md:flex' : 'flex'}`}
+      className={`min-w-0 flex-1 flex-col p-5 ${scrollOnMobile ? 'overflow-auto [scrollbar-gutter:stable]' : 'lg:overflow-auto lg:[scrollbar-gutter:stable]'} ${hideOnMobile ? 'hidden md:flex' : 'flex'}`}
     >
       <div className="w-full max-w-6xl">
         <header className="mb-5 flex items-start justify-between gap-4">
@@ -81,6 +82,12 @@ export function PersonalHome({
             ))}
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <CompositedSpinner
+              role="img"
+              aria-label={t('personalHome.loading')}
+              aria-hidden={!state.loading}
+              className={`size-3 text-text-secondary ${state.loading ? '' : 'invisible'}`}
+            />
             <SelectRoot
               value={normalizeSelectValue(order)}
               onValueChange={selectedValue => {

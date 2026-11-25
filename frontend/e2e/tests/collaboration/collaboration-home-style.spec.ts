@@ -15,6 +15,46 @@ async function archiveResource(page: Page, path: string): Promise<void> {
   await webApi(page, `${path}?version=${resource.version}`, { method: 'DELETE' })
 }
 
+test('keeps the personal Issue toolbar steady while loading the list', async ({ page }) => {
+  let releaseIssues!: () => void
+  let requestHeld = false
+  const release = new Promise<void>(resolve => {
+    releaseIssues = resolve
+  })
+  await page.route('**/api/v1/cloud-work-items/my-work?*', async route => {
+    requestHeld = true
+    await release
+    await route.continue()
+  })
+
+  try {
+    await page.goto('/collaboration/assigned', { waitUntil: 'domcontentloaded' })
+    await expect
+      .poll(() => requestHeld, { message: 'The real personal Issues request is pending' })
+      .toBe(true)
+    const issues = page.getByTestId('personal-issues-assigned')
+    const toolbar = issues.getByTestId('personal-issues-toolbar')
+    const sort = toolbar.getByTestId('personal-issues-sort')
+    const loadingLabel = /Loading issues…|正在加载 Issue…/
+    const indicator = toolbar.getByRole('img', { name: loadingLabel })
+    await expect(indicator, 'Pending Issues show a spinner inside the toolbar').toBeVisible({
+      timeout: 10_000,
+    })
+    await expect(issues.getByText(loadingLabel)).toHaveCount(0)
+    const pendingSortPosition = await sort.boundingBox()
+    expect(pendingSortPosition).not.toBeNull()
+
+    releaseIssues()
+    await expect(indicator, 'The spinner disappears when the real request settles').toBeHidden({
+      timeout: 10_000,
+    })
+    expect(await sort.boundingBox()).toEqual(pendingSortPosition)
+    await expect(issues.getByRole('alert')).toHaveCount(0)
+  } finally {
+    releaseIssues()
+  }
+})
+
 test('renders the shared personal home and a continuous collaboration sidebar', async ({
   page,
 }, testInfo) => {

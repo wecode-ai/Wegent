@@ -148,11 +148,6 @@ export function PersonalIssueList({
     groups.unshift({ project: null, items: unassignedItems })
   return (
     <>
-      {state.loading && (
-        <p role="status" className="py-4 text-sm text-text-secondary">
-          {t('personalHome.loading')}
-        </p>
-      )}
       {!hideEmpty &&
         !state.loading &&
         !state.error &&
