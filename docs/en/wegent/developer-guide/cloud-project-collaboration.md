@@ -107,6 +107,8 @@ The existing `loop_items` table stores cloud TODOs. `cloud_project_id` reference
 
 Cloud Issue creation uses `POST /api/v1/loop-items`. Send Issue fields in `issue` and optionally set `project_id`. Board creation uses the target project's provider, permissions, and automation rules. If a user selects a project in the standalone creation dialog, the Issue and its project association commit in the same transaction.
 
+Rust forwards board creation to the project Issue provider with a 60-second request deadline that includes reading the response. It does not retry the creation request, because the provider may already have committed the Issue.
+
 The initial fixed workflow is:
 
 ```text
