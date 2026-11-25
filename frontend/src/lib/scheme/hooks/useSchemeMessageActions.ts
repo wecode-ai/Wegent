@@ -10,6 +10,8 @@ import { useEffect, useRef } from 'react'
 export interface SchemeMessageActionsConfig {
   /** Callback to send a message */
   onSendMessage: (text: string) => void
+  sendBlockedReason?: string | null
+  onSendRejected: (reason?: string) => void
   /** Callback to prefill message input */
   onPrefillMessage: (text: string) => void
   /** Callback to change team (optional) */
@@ -34,6 +36,7 @@ export interface SchemeMessageActionsConfig {
  * ```tsx
  * useSchemeMessageActions({
  *   onSendMessage: streamHandlers.handleSendMessage,
+ *   onSendRejected: showSendError,
  *   onPrefillMessage: chatState.setTaskInputMessage,
  *   onTeamChange: (teamId) => {
  *     const team = teams.find(t => t.id === teamId)
@@ -45,7 +48,15 @@ export interface SchemeMessageActionsConfig {
  * ```
  */
 export function useSchemeMessageActions(config: SchemeMessageActionsConfig): void {
-  const { onSendMessage, onPrefillMessage, onTeamChange, currentTeamId, teams } = config
+  const {
+    onSendMessage,
+    sendBlockedReason,
+    onSendRejected,
+    onPrefillMessage,
+    onTeamChange,
+    currentTeamId,
+    teams,
+  } = config
 
   /**
    * Ref to store pending actions that need to be executed after team switching
@@ -64,6 +75,10 @@ export function useSchemeMessageActions(config: SchemeMessageActionsConfig): voi
       teamId?: number
     }) => {
       const { teamId, type, text } = action
+      if (type === 'send' && sendBlockedReason) {
+        onSendRejected(sendBlockedReason)
+        return
+      }
 
       // If a team is specified and different from current, switch team first
       if (teamId && currentTeamId !== teamId && onTeamChange && teams) {
@@ -75,6 +90,11 @@ export function useSchemeMessageActions(config: SchemeMessageActionsConfig): voi
           onTeamChange(teamId)
           return
         }
+      }
+
+      if (type === 'send' && teamId !== undefined && teamId !== currentTeamId) {
+        onSendRejected()
+        return
       }
 
       // Execute action immediately
@@ -99,7 +119,7 @@ export function useSchemeMessageActions(config: SchemeMessageActionsConfig): voi
       const text = detail?.text?.trim()
       if (!text) return
 
-      const teamId = detail?.team ? Number(detail.team) : undefined
+      const teamId = detail?.team === undefined ? undefined : Number(detail.team)
       dispatchAction({ type: 'send', text, teamId })
     }
 
@@ -110,7 +130,15 @@ export function useSchemeMessageActions(config: SchemeMessageActionsConfig): voi
       window.removeEventListener('wegent:prefill-message', onPrefill)
       window.removeEventListener('wegent:send-message', onSend)
     }
-  }, [onSendMessage, onPrefillMessage, onTeamChange, currentTeamId, teams])
+  }, [
+    onSendMessage,
+    sendBlockedReason,
+    onSendRejected,
+    onPrefillMessage,
+    onTeamChange,
+    currentTeamId,
+    teams,
+  ])
 
   // Flush pending action after team switching
   useEffect(() => {
@@ -127,7 +155,8 @@ export function useSchemeMessageActions(config: SchemeMessageActionsConfig): voi
     if (pending.type === 'prefill') {
       onPrefillMessage(pending.text)
     } else {
-      onSendMessage(pending.text)
+      if (sendBlockedReason) onSendRejected(sendBlockedReason)
+      else onSendMessage(pending.text)
     }
-  }, [currentTeamId, onSendMessage, onPrefillMessage])
+  }, [currentTeamId, onSendMessage, onPrefillMessage, onSendRejected, sendBlockedReason])
 }
