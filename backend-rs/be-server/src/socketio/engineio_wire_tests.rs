@@ -338,6 +338,47 @@ async fn runtime_rpc_keeps_the_local_clients_real_ack() {
 }
 
 #[tokio::test]
+async fn runtime_rpc_publishes_ack_with_escaped_workspace_identity() {
+    let server = WireServer::start().await;
+    let client = PollClient::connect(&server.addr, EXECUTOR_NAMESPACE, "{}")
+        .await
+        .expect("local executor");
+    let payload = json!({"method": "runtime.tasks.list", "payload": {}});
+    let scope_identity = "[\"project-id\",\"task-id\",\"cloud-question-files-async-http\"]";
+    let mut workspace_bindings = serde_json::Map::new();
+    workspace_bindings.insert(
+        scope_identity.to_owned(),
+        json!({"workspace": "/tmp/question-files"}),
+    );
+    let ack = json!({
+        "success": true,
+        "tasks": [{
+            "id": "task-1",
+            "workspace": "/tmp/question-files",
+        }],
+        "workspace_bindings": workspace_bindings
+    });
+    let (runtime, workers) = SocketRuntime::new();
+    let sink = runtime.adapter_emit_sink(Arc::clone(&server.emitters));
+    let published = install_capability_callbacks(workers.rpc_jobs, Arc::clone(&server.emitters));
+    sink(runtime_rpc_frame(client.socket_id()));
+    tokio::join!(
+        answer_executor_call(&client, "runtime:rpc", &payload, &ack),
+        wait_published(&published, 1),
+    );
+    let callbacks = published.lock().await;
+    assert_eq!(callbacks.len(), 1);
+    assert_eq!(callbacks[0].host_id, "remote-host");
+    assert_eq!(callbacks[0].room, client.socket_id());
+    assert_eq!(callbacks[0].namespace, EXECUTOR_NAMESPACE);
+    assert_eq!(callbacks[0].id, 7);
+    assert_eq!(callbacks[0].ack, ack);
+
+    let _ = server.stop.send(());
+    server.handle.await.expect("server stopped");
+}
+
+#[tokio::test]
 async fn runtime_rpc_keeps_real_local_ack_timeouts_as_errors() {
     let server = WireServer::start().await;
     let client = PollClient::connect(&server.addr, EXECUTOR_NAMESPACE, "{}")

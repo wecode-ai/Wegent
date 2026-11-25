@@ -380,20 +380,14 @@ pub async fn exchange(
                     .await
                     .map_err(exchange_error);
                 }
-                // Cloud grants lease only installations missing a device grant.
-                // Native reconciliation uses the request's installation IDs.
-                let targets = if operation == AUTOMATIC
-                    && data["installed_plugin_ids"].as_array().is_some_and(Vec::is_empty)
-                    && matches!(
+                let targets = match &request {
+                    Some(request) if matches!(
                         device_type,
                         crate::device_identity::DeviceType::Cloud
                             | crate::device_identity::DeviceType::Remote
-                    )
-                {
-                    automation::grant_targets(transaction, user_id, runtime_id)
-                        .await.map_err(exchange_error)?
-                } else {
-                    write_targets::resolve(transaction, user_id, data).await?
+                    ) => automation::grant_targets(transaction, user_id, runtime_id, request)
+                        .await.map_err(exchange_error)?,
+                    _ => write_targets::resolve(transaction, user_id, data).await?,
                 };
                 let lease = crate::plugins_installed::write_coordination::PluginWriteLease::acquire_installed_on(
                     transaction, redis, user_id, &targets,

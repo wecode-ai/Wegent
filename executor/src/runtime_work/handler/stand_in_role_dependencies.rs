@@ -2,6 +2,7 @@
 use super::stand_in::settings_error;
 use super::stand_in_role_delegation::{denied, owned_role_task, role_attempt};
 use super::*;
+use crate::protocol::StandInTaskPermissions;
 use crate::task_runtime::personal_stand_in::stand_in_identities;
 
 pub(super) fn with_prerequisite_results(intent: &Value, evidence: &Value) -> Value {
@@ -124,7 +125,7 @@ impl RuntimeWorkRpcHandler {
                 "roleDelegation":intent["roleDelegation"],
                 "roleDirectory":actor.runtime_handle["executionRequest"]["standInDelegation"]["roleDirectory"],
                 "attempt":attempt,
-            })).await;
+            }), Some(StandInTaskPermissions::from_role(&role)), None).await;
             match response {
                 Ok(response) if response["accepted"] == true => {
                     store.record_stand_in_role_task_address(id, user, &self.device_id)

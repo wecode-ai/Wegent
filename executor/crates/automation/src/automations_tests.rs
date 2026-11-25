@@ -4,11 +4,26 @@ use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 
 use super::{
-    initial_next_run, migrate_automation_state, read_state, Automation, AutomationRunStatus,
-    AutomationSchedule, AutomationState, AutomationStore, ConversationMode, IntervalUnit,
-    NotificationPolicy, MAX_RUNS_PER_AUTOMATION,
+    initial_next_run, migrate_automation_state, read_state, Automation, AutomationRun,
+    AutomationRunStatus, AutomationSchedule, AutomationState, AutomationStore, ConversationMode,
+    IntervalUnit, NotificationPolicy, MAX_RUNS_PER_AUTOMATION,
 };
 use serde_json::json;
+
+#[test]
+fn legacy_goal_recovery_requires_a_task_created_during_the_run() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 14, 8, 0, 0).unwrap();
+    let mut run: AutomationRun = serde_json::from_value(json!({
+        "id": "legacy-run", "automationId": "weekday-review", "status": "running",
+        "trigger": "scheduled", "scheduledFor": now, "createdAt": now, "updatedAt": now,
+        "taskId": format!("automation-weekday--{}", now.timestamp_millis()),
+    }))
+    .unwrap();
+    assert!(run.owns_task_for_goal_recovery());
+
+    run.task_id = Some(run.independent_task_id(now - chrono::Duration::seconds(1)));
+    assert!(!run.owns_task_for_goal_recovery());
+}
 
 fn china_schedule() -> AutomationSchedule {
     serde_json::from_value(json!({"type":"cron","expression":"0 9 * * *","workdayOnly":true}))
@@ -289,9 +304,7 @@ fn migration_recalculates_existing_cron_next_run() {
     let mut state = AutomationState {
         version: 1,
         automations: HashMap::from([(automation.id.clone(), automation)]),
-        runs: Vec::new(),
-        stand_in_onboarding: HashMap::new(),
-        stand_in_memory_initialized: Default::default(),
+        ..AutomationState::default()
     };
 
     assert!(migrate_automation_state(&mut state, now));
@@ -311,10 +324,7 @@ fn loading_old_state_persists_migration() {
         &path,
         serde_json::to_vec_pretty(&AutomationState {
             version: 1,
-            automations: HashMap::new(),
-            runs: Vec::new(),
-            stand_in_onboarding: HashMap::new(),
-            stand_in_memory_initialized: Default::default(),
+            ..AutomationState::default()
         })
         .unwrap(),
     )
@@ -435,6 +445,56 @@ fn update_fixture(store: &AutomationStore) -> Automation {
         "taskRequest":{"standInOwner":{"userId":7,"roleId":"@primary"},"standInCalendar":{}},
         "taskPayload":{}
     })).unwrap()).unwrap()
+}
+
+#[test]
+fn scheduler_retries_interrupted_run_recovery_when_storage_recovers() {
+    let root = tempdir().unwrap();
+    let path = root.path().join("automations.json");
+    let store = AutomationStore::new(path.clone());
+    let automation = store
+        .create(
+            serde_json::from_value(json!({
+                "id": "daily", "version": 0, "name": "Daily", "prompt": "Summarize",
+                "schedule": {"type": "interval", "value": 1, "unit": "hours"},
+                "taskPayload": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let (_, interrupted) = store.start_manual_run(&automation.id).unwrap();
+    store.mark_running(&interrupted.id, "task".into()).unwrap();
+    drop(store);
+
+    let store = AutomationStore::new(path.clone());
+    let temporary = path.with_extension("json.tmp");
+    fs::create_dir(&temporary).unwrap();
+    let scheduled_for = automation.next_run_at.unwrap();
+
+    assert!(store
+        .reconcile_interrupted_runs(&Default::default(), &Default::default())
+        .is_err());
+    assert!(store.due(scheduled_for).is_err());
+    assert_eq!(store.list_runs(Some(&automation.id)).len(), 1);
+    assert_eq!(
+        store.get_run(&interrupted.id).unwrap().status,
+        AutomationRunStatus::Running
+    );
+    fs::remove_dir(&temporary).unwrap();
+
+    let due = store.due(scheduled_for).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].1.status, AutomationRunStatus::Pending);
+    assert_eq!(due[0].1.trigger, "scheduled");
+    assert_eq!(
+        read_state(&path)
+            .runs
+            .into_iter()
+            .find(|run| run.id == interrupted.id)
+            .map(|run| run.status),
+        Some(AutomationRunStatus::NeedsAttention)
+    );
+    assert!(store.due(scheduled_for).unwrap().is_empty());
 }
 
 #[test]

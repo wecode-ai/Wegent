@@ -13,10 +13,7 @@ import {
   getRuntimeTaskLifecycleKey,
   type RuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import {
-  getRuntimeTaskReminderItemKey,
-  type RuntimeTaskReminderState,
-} from '@/features/workbench/runtimeTaskReminders'
+import { type RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
 import { createTrayTaskMenuId } from './trayTaskMenuId'
 
 export interface TrayMenuTaskItem {
@@ -63,7 +60,7 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
 
 export interface TrayMenuTaskGroupOptions {
   reminders?: Pick<RuntimeTaskReminderState, 'unreadTaskKeys' | 'unreadCount' | 'hasRunningTasks'>
-  lifecycle?: RuntimeTaskLifecycleStoreSnapshot
+  lifecycle?: Pick<RuntimeTaskLifecycleStoreSnapshot, 'runningTaskKeys'>
   showUnread?: boolean
   showRunning?: boolean
 }
@@ -143,11 +140,39 @@ function toTrayMenuTaskItem({
   }
 }
 
-function splitTrayMenuTasks(items: TrayRuntimeTaskItem[]) {
+function splitTrayMenuTasks(items: TrayMenuTaskItem[]) {
   return {
-    visible: items.slice(0, TRAY_MENU_TASK_LIMIT).map(toTrayMenuTaskItem),
-    more: items.slice(TRAY_MENU_TASK_LIMIT).map(toTrayMenuTaskItem),
+    visible: items.slice(0, TRAY_MENU_TASK_LIMIT),
+    more: items.slice(TRAY_MENU_TASK_LIMIT),
   }
+}
+
+function indexTrayMenuTasks(runtimeWork?: RuntimeWorkListResponse | null) {
+  const items = collectRuntimeTaskItems(runtimeWork).map((item, index) => ({
+    item: toTrayMenuTaskItem(item),
+    key: getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(item.workspace, item.task)),
+    taskId: item.task.taskId,
+    pinned: isPinnedRuntimeTask(item.task),
+    index,
+  }))
+  return {
+    byKey: new Map(items.map(item => [item.key, item])),
+    pinned: splitTrayMenuTasks(items.filter(item => item.pinned).map(item => item.item)),
+    recent: splitTrayMenuTasks(items.map(item => item.item)),
+  }
+}
+
+const emptyTrayIndex = indexTrayMenuTasks()
+const trayIndexes = new WeakMap<RuntimeWorkListResponse, ReturnType<typeof indexTrayMenuTasks>>()
+
+function trayIndex(runtimeWork: RuntimeWorkListResponse | null | undefined) {
+  if (!runtimeWork) return emptyTrayIndex
+  let index = trayIndexes.get(runtimeWork)
+  if (!index) {
+    index = indexTrayMenuTasks(runtimeWork)
+    trayIndexes.set(runtimeWork, index)
+  }
+  return index
 }
 
 export function buildTrayMenuTaskGroups(
@@ -155,26 +180,18 @@ export function buildTrayMenuTaskGroups(
   options: TrayMenuTaskGroupOptions = {}
 ): TrayMenuTaskGroups {
   const { reminders, showUnread = true, showRunning = true } = options
-  const items = collectRuntimeTaskItems(runtimeWork)
-  const activeTasks = options.lifecycle
-    ? items.filter(({ workspace, task }) =>
-        options.lifecycle?.runningTaskKeys.has(
-          getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-        )
-      )
-    : []
-  const running = showRunning ? activeTasks : []
-  const unread =
-    showUnread && reminders
-      ? items.filter(({ workspace, task }) =>
-          reminders.unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
-        )
+  const { byKey, pinned, recent } = trayIndex(runtimeWork)
+  const select = (keys: ReadonlySet<string> | undefined) =>
+    keys
+      ? [...keys]
+          .flatMap(key => byKey.get(key) ?? [])
+          .sort((left, right) => left.index - right.index)
       : []
-  const pinned = items.filter(({ task }) => isPinnedRuntimeTask(task))
-  const runningTasks = splitTrayMenuTasks(running)
-  const unreadTasks = splitTrayMenuTasks(unread)
-  const pinnedTasks = splitTrayMenuTasks(pinned)
-  const recentTasks = splitTrayMenuTasks(items)
+  const activeTasks = select(options.lifecycle?.runningTaskKeys)
+  const running = showRunning ? activeTasks : []
+  const unread = showUnread ? select(reminders?.unreadTaskKeys) : []
+  const runningTasks = splitTrayMenuTasks(running.map(entry => entry.item))
+  const unreadTasks = splitTrayMenuTasks(unread.map(entry => entry.item))
 
   return {
     running: runningTasks.visible,
@@ -184,11 +201,11 @@ export function buildTrayMenuTaskGroups(
     hasRunningTasks: showRunning && activeTasks.length > 0,
     showRunningStatus: showRunning,
     runningCount: running.length,
-    activeTaskIds: activeTasks.map(({ task }) => task.taskId),
+    activeTaskIds: activeTasks.map(({ taskId }) => taskId),
     unreadCount: showUnread ? (reminders?.unreadCount ?? unread.length) : 0,
-    pinned: pinnedTasks.visible,
-    pinnedMore: pinnedTasks.more,
-    recent: recentTasks.visible,
-    recentMore: recentTasks.more,
+    pinned: pinned.visible,
+    pinnedMore: pinned.more,
+    recent: recent.visible,
+    recentMore: recent.more,
   }
 }

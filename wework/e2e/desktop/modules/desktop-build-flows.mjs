@@ -1131,7 +1131,7 @@ export async function verifyDisabledRemoteSessionCapabilities(
   await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
 
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  control.setScenario('cloud_initial')
+  control.setPersonalRemoteCloudInitialScenario(cloudEnvironment.backendUrl, ownerId)
   await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, CLOUD_TASK_PROMPT)
   await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),

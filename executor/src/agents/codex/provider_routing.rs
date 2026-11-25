@@ -221,7 +221,7 @@ experimental_bearer_token="must-not-select"
         assert_eq!(profile["requires_openai_auth"], true);
         assert_eq!(profile["wire_api"], "responses");
         assert_eq!(profile["supports_websockets"], false);
-        assert_eq!(profile["supports_standalone_web_search"], false);
+        assert_eq!(profile["supports_standalone_web_search"], true);
         assert!(profile.get("auth").is_none());
         assert!(profile["base_url"]
             .as_str()

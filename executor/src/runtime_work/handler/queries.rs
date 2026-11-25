@@ -62,6 +62,7 @@ impl RuntimeWorkRpcHandler {
                         | "quotaWait"
                         | "connectionEventSubscriptions"
                         | "startupFailure"
+                        | super::stand_in_task_permissions::TASK_PERMISSIONS
                 )
             });
             // The serializer originally adds this authoritative identity after

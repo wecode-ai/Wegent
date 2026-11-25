@@ -1,6 +1,7 @@
 //! Specialist tasks share the existing stand-in task lifecycle.
 use super::stand_in_role_dependencies::with_prerequisite_results;
 use super::*;
+use crate::protocol::StandInTaskPermissions;
 use crate::task_runtime::{
     mcp::StandInMcpIdentity, personal_stand_in::stand_in_identities, TaskRuntimeError,
 };
@@ -33,6 +34,16 @@ pub(super) fn remote_role_intent_matches_link(link: &RuntimeTaskLink, intent: &V
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn has_current_stand_in_owner_request(&self, actor: &RuntimeTaskLink) -> bool {
+        let owner = &actor.runtime_handle["executionRequest"]
+            [super::stand_in_proposal_continuations::OWNER];
+        owner["cancelled"] == false
+            && self
+                .current_stand_in_owner_request(&actor.local_task_id)
+                .as_ref()
+                == Some(owner)
+    }
+
     pub(super) async fn request_role_retry(&self, payload: Value) -> Result<Value, AppIpcError> {
         let user = super::runtime_owner::runtime_user(&payload)?;
         let conversation = super::stand_in_tasks::required(&payload, "taskId")?;
@@ -111,17 +122,8 @@ impl RuntimeWorkRpcHandler {
         if name == "list_role_tasks" {
             return self.role_task_status(identity, &delegation_root(&actor)?);
         }
-        if identity_conversation {
-            let owner = &actor.runtime_handle["executionRequest"]
-                [super::stand_in_proposal_continuations::OWNER];
-            if owner["cancelled"] != false
-                || self
-                    .current_stand_in_owner_request(&identity.task_id)
-                    .as_ref()
-                    != Some(owner)
-            {
-                return Err(denied());
-            }
+        if identity_conversation && !self.has_current_stand_in_owner_request(&actor) {
+            return Err(denied());
         }
         let gate = self.task_send_gate(&format!("stand-in-processing:{}", identity.user));
         let _guard = if name == "delegate_role_task" {
@@ -258,6 +260,8 @@ impl RuntimeWorkRpcHandler {
                     "askBeforeAct": true, "readSources": [], "roleDelegation": metadata,
                     "roleDirectory": delegation["roleDirectory"],
                 }),
+                Some(StandInTaskPermissions::from_role(&role)),
+                identity_conversation.then_some(&actor),
             )
             .await;
         match &result {
@@ -453,7 +457,7 @@ impl RuntimeWorkRpcHandler {
             "userId":user,"sourceTaskId":intent["sourceTaskId"],"sourceDeviceId":intent["sourceDevice"],
             "sourceRoute":intent["sourceRoute"],"askBeforeAct":true,"readSources":[],
             "roleDelegation":intent["roleDelegation"],"roleDirectory":verified["roleDirectory"],"attempt":attempt,
-        })).await?;
+        }), Some(StandInTaskPermissions::from_role(&role)), None).await?;
         if result["accepted"] == true {
             store
                 .record_stand_in_role_task_address(id, user, target)

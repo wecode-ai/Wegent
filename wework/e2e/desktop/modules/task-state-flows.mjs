@@ -397,7 +397,16 @@ async function verifyRunningFollowUpFork({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
+    await control.command(
+      'scrollToRatioAsUser',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+      { value: '0' }
+    )
     await control.command('scrollIntoView', firstTurnForkButtonSelector)
+    await control.command('waitFor', firstTurnForkButtonSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
 
     await control.command(
