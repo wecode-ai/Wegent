@@ -8,6 +8,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   createSingleRootLocalProject,
   selectE2EModel,
+  waitForLogPattern,
 } from '../modules/shared.mjs'
 import {
   configureCatalogReasoning,
@@ -244,6 +245,8 @@ export function createCatalogContextVerification({
     },
     async verifyActiveRestartProtection(control) {
       active = true
+      const logPath = join(resultDir, 'executor.log')
+      let releaseLogOffset
       let release
       heldResponse = {
         promise: new Promise(resolve => {
@@ -261,7 +264,6 @@ export function createCatalogContextVerification({
           snapshot => requests === expected && snapshot.pane?.status?.isBusy === true,
           'The active Catalog confirmation fixture never entered a real model turn'
         )
-        const logPath = join(resultDir, 'executor.log')
         const before =
           (await readFile(logPath, 'utf8')).match(/codex shared app-server process starting /g)
             ?.length ?? 0
@@ -288,6 +290,7 @@ export function createCatalogContextVerification({
           )
         )
         await control.command('waitFor', '[data-testid="pause-response-button"]')
+        releaseLogOffset = (await readFile(logPath, 'utf8')).length
       } finally {
         release()
         heldResponse = null
@@ -300,6 +303,12 @@ export function createCatalogContextVerification({
         control,
         snapshot => snapshot.pane?.status?.isBusy === false,
         'The active Catalog task did not finish after declining an idle restart'
+      )
+      // The settled conversation starts a reply prediction on the same app-server.
+      await waitForLogPattern(
+        logPath,
+        /app IPC request finished .* method=runtime\.text\.predict_reply .* ok=true/,
+        { fromOffset: releaseLogOffset, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
       )
       active = false
     },
