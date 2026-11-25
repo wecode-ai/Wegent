@@ -336,6 +336,7 @@ export function TaskIssueShare({
         <IndependentIssueDialog
           key={`${cloud.apiBaseUrl ?? ''}:${cloud.user.id}`}
           api={apis.personal}
+          collaborationApi={apis.collaboration}
           userId={Number(cloud.user.id)}
           issueId={null}
           shareDraft={draft}

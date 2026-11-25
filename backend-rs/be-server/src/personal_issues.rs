@@ -452,11 +452,12 @@ async fn create_issue_record(
     body: Input,
     id: &str,
     project: Option<&ProjectInput>,
-    share: Option<&share::NewShare>,
+    upload: Option<&share::IssueUpload>,
 ) -> Result<(), FastApiError> {
     use crate::background_jobs::project::notifications;
     body.validate()?;
-    if share.is_some() && body.parent_id.is_some() {
+    let source = upload.and_then(|upload| upload.source.as_ref());
+    if source.is_some() && body.parent_id.is_some() {
         return Err(invalid("Use the parent Issue to create a child"));
     }
     if !assignee_is_invited(&body, user_id) {
@@ -470,7 +471,7 @@ async fn create_issue_record(
         i64::from(user_id),
         &chrono::Utc::now().to_rfc3339(),
     ));
-    metadata.share = share.map(|_| share::Share { files: Vec::new() });
+    metadata.share = source.map(|_| share::Share { files: Vec::new() });
     let created = state
         .mysql
         .with_transaction(async |tx| {
@@ -518,7 +519,7 @@ async fn create_issue_record(
             )
             .await;
             if let Err(error) = inserted {
-                if let Some(target) = project.filter(|_| share.is_none() && error.database_code() == Some(1062)) {
+                if let Some(target) = project.filter(|_| upload.is_none() && error.database_code() == Some(1062)) {
                     let previous: Option<(String, i32)> = tx.fetch_optional(
                         "SELECT cloud_project_id,created_by_user_id FROM loop_items WHERE id=? AND resource_type='task' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) FOR UPDATE",
                         (id,),
@@ -542,23 +543,25 @@ async fn create_issue_record(
                 return Err(error);
             }
             invitations::sync(tx, id, user_id, None, &metadata).await?;
-            if body.assignee_id.is_some() && (project.is_none() || share.is_none()) {
+            if body.assignee_id.is_some() && (project.is_none() || source.is_none()) {
                 update_human_assignment(tx, id, user_id, &body, &mut metadata, true).await?;
                 tx.execute("UPDATE loop_items SET metadata=? WHERE id=?", (Json(&metadata), id))
                     .await?;
             }
-            if let Some(share) = share {
+            if let Some(upload) = upload {
                 let required = crate::loop_node_storage::required_columns(tx).await?;
-                share::insert_source(tx, &required, id, user_id, &share.source).await?;
-                share::insert_attachment_records(tx, &required, id, user_id, &share.files).await?;
+                if let Some(source) = source {
+                    share::insert_source(tx, &required, id, user_id, source).await?;
+                }
+                share::insert_attachment_records(tx, &required, id, user_id, &upload.files).await?;
             }
             if let Some(target) = project {
-                let mode = if share.is_some() { AssociationMode::Share } else { AssociationMode::Create };
+                let mode = if source.is_some() { AssociationMode::Share } else { AssociationMode::Create };
                 let outcome = move_to_project(tx, user_id, id, target, mode).await?;
                 if outcome != Admission::Allowed {
                     return Err(share::association_error(outcome));
                 }
-                if let Some(assignee) = body.assignee_id.filter(|id| share.is_some() && *id != user_id) {
+                if let Some(assignee) = body.assignee_id.filter(|id| source.is_some() && *id != user_id) {
                     let issue = locked_issue_node(tx, id).await?;
                     crate::background_jobs::project::assignments::record_manual_human(
                         tx, &issue, user_id, assignee, true, true,
@@ -578,7 +581,7 @@ async fn create_issue_record(
                 if recipient_payload["personalIssueId"].is_string() {
                     recipient_payload["assigned"] = json!(body.assignee_id == Some(recipient));
                 }
-                if share.is_some() && recipient != user_id {
+                if source.is_some() && recipient != user_id {
                     notices.push(
                         notifications::create_on(
                             tx,

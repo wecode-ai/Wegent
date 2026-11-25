@@ -488,6 +488,7 @@ describe("shared conversation cards without Electron", () => {
         onSelect={setSelected}
         shareWholeMessage={whole}
         onShareWholeMessage={setWhole}
+        renderShareContent={(messages, actions) => <>{actions}{messages}</>}
       />;
     }
     render(<SharePreview />);
@@ -500,8 +501,14 @@ describe("shared conversation cards without Electron", () => {
     expect(rows.map(row => row.textContent)).toEqual([expect.stringContaining(other.content), expect.stringContaining(source.content), expect.stringContaining(last.content)]);
     expect(rows[1].getAttribute("aria-pressed")).toBe("mixed");
     expect(element("task-issue-share-excerpt-partial")).toBeTruthy();
+    const selectAll = element("task-issue-share-select-all");
+    act(() => selectAll.click());
+    expect(selectAll.getAttribute("aria-pressed")).toBe("true");
+    expect(rows[1].getAttribute("aria-pressed")).toBe("mixed");
+    expect(element("task-issue-share-highlight").textContent).toBe("repeat");
+    act(() => selectAll.click());
+    expect(rows[1].getAttribute("aria-pressed")).toBe("false");
     act(() => (rows[1] as HTMLElement).click());
-    expect(rows[1].getAttribute("aria-pressed")).toBe("true");
     act(() => (rows[1] as HTMLElement).click());
     expect(rows[1].getAttribute("aria-pressed")).toBe("false");
     act(() => (rows[1] as HTMLElement).click());
