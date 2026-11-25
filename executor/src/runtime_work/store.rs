@@ -81,6 +81,8 @@ struct RuntimeWorkIndex {
     tasks: HashMap<String, RuntimeTaskLink>,
     #[serde(skip)]
     workspace_tasks: BTreeMap<String, BTreeSet<String>>,
+    #[serde(skip)]
+    role_children: BTreeMap<RoleChildKey, BTreeSet<String>>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
     issue_conversations: HashMap<String, String>,
     deleted_issue_wakeups: HashMap<String, Vec<String>>,
@@ -101,20 +103,36 @@ impl RuntimeWorkIndex {
     fn insert_task(&mut self, task: RuntimeTaskLink) {
         let id = task.local_task_id.clone();
         let workspace = workspace_task_key(&task.workspace_path);
-        let previous = self
-            .tasks
-            .insert(id.clone(), task)
-            .map(|task| workspace_task_key(&task.workspace_path));
-        self.update_workspace_task(&id, previous, workspace);
+        let role_child = RoleChildKey::from_task(&task);
+        let previous = self.tasks.insert(id.clone(), task);
+        self.update_workspace_task(
+            &id,
+            previous
+                .as_ref()
+                .map(|task| workspace_task_key(&task.workspace_path)),
+            workspace,
+        );
+        self.update_role_child_task(
+            &id,
+            previous.as_ref().and_then(RoleChildKey::from_task),
+            role_child,
+        );
     }
 
-    fn rebuild_workspace_tasks(&mut self) {
+    fn rebuild_task_indexes(&mut self) {
         self.workspace_tasks.clear();
+        self.role_children.clear();
         for (id, task) in &self.tasks {
             self.workspace_tasks
                 .entry(workspace_task_key(&task.workspace_path))
                 .or_default()
                 .insert(id.clone());
+            if let Some(key) = RoleChildKey::from_task(task) {
+                self.role_children
+                    .entry(key)
+                    .or_default()
+                    .insert(id.clone());
+            }
         }
     }
 
@@ -715,6 +733,7 @@ impl RuntimeWorkStore {
             return Ok(None);
         };
         let previous_workspace = workspace_task_key(&task.workspace_path);
+        let previous_role_child = RoleChildKey::from_task(task);
         let before = MetadataSnapshot::capture(task);
         updater(task);
         before.advance(task);
@@ -723,6 +742,11 @@ impl RuntimeWorkStore {
             local_task_id,
             Some(previous_workspace),
             workspace_task_key(&updated.workspace_path),
+        );
+        next.update_role_child_task(
+            local_task_id,
+            previous_role_child,
+            RoleChildKey::from_task(&updated),
         );
         let payload = serialize_index(&next)?;
         atomic_write_file(&self.index_path, &payload)?;
@@ -746,6 +770,7 @@ impl RuntimeWorkStore {
         }
         let mut task = index.tasks.remove(local_task_id)?;
         index.remove_workspace_task(&workspace_task_key(&task.workspace_path), local_task_id);
+        index.update_role_child_task(local_task_id, RoleChildKey::from_task(&task), None);
         let before = MetadataSnapshot::capture(&task);
         updater(&mut task);
         task.local_task_id = new_local_task_id.to_owned();
@@ -768,6 +793,7 @@ impl RuntimeWorkStore {
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
         let previous_workspace = workspace_task_key(&task.workspace_path);
+        let previous_role_child = RoleChildKey::from_task(task);
         let before = MetadataSnapshot::capture(task);
         let revision_before = task
             .execution_state
@@ -811,7 +837,9 @@ impl RuntimeWorkStore {
         self.enqueue_stand_in(observation);
         let updated = snapshot(task);
         let workspace = workspace_task_key(&task.workspace_path);
+        let role_child = RoleChildKey::from_task(task);
         index.update_workspace_task(local_task_id, Some(previous_workspace), workspace);
+        index.update_role_child_task(local_task_id, previous_role_child, role_child);
         let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {
@@ -826,6 +854,7 @@ impl RuntimeWorkStore {
         let mut index = self.index.lock().ok()?;
         let removed = index.tasks.remove(local_task_id)?;
         index.remove_workspace_task(&workspace_task_key(&removed.workspace_path), local_task_id);
+        index.update_role_child_task(local_task_id, RoleChildKey::from_task(&removed), None);
         drop(index);
         self.persist_current_index();
         Some(removed)
@@ -935,6 +964,7 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
     let mut index = RuntimeWorkIndex {
         version: persisted.version,
         workspace_tasks: BTreeMap::new(),
+        role_children: BTreeMap::new(),
         tasks: persisted
             .tasks
             .into_iter()
@@ -945,7 +975,7 @@ fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> Runtime
         deleted_issue_wakeups: persisted.deleted_issue_wakeups,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     };
-    index.rebuild_workspace_tasks();
+    index.rebuild_task_indexes();
     index
 }
 
@@ -965,7 +995,7 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
     current.issue_conversations = persisted.issue_conversations;
     current.deleted_issue_wakeups = persisted.deleted_issue_wakeups;
     current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
-    current.rebuild_workspace_tasks();
+    current.rebuild_task_indexes();
 }
 
 fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Error> {
@@ -1063,8 +1093,10 @@ fn executor_home() -> PathBuf {
 mod tests;
 
 mod issue_conversations;
+mod role_children;
 mod task_materialization;
 use issue_conversations::snapshot_deleted_issue_wakeups;
+use role_children::RoleChildKey;
 
 mod telemetry;
 

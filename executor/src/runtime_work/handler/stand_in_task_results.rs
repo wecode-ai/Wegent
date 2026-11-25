@@ -17,6 +17,26 @@ pub(super) fn completion_generation(handle: &Value) -> Value {
         "delegation":request["standInDelegation"],"reportTo":request["standInReportTo"]})
 }
 
+pub(super) fn stand_in_result_command(
+    child: &RuntimeTaskLink,
+    completed: i64,
+    status: &str,
+) -> String {
+    format!(
+        "stand-in-result:{:x}",
+        Sha256::digest(
+            json!([
+                child.local_task_id,
+                completed,
+                status,
+                completion_generation(&child.runtime_handle)
+            ])
+            .to_string()
+            .as_bytes()
+        )
+    )
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn record_stand_in_completion_outbox(&self, id: &str, status: &str) {
         self.store.update_task(id, |link| {
@@ -186,19 +206,7 @@ impl RuntimeWorkRpcHandler {
             return None;
         }
         let completed = child.completed_at?;
-        let command = format!(
-            "stand-in-result:{:x}",
-            Sha256::digest(
-                json!([
-                    child.local_task_id,
-                    completed,
-                    child.status,
-                    completion_generation(&child.runtime_handle)
-                ])
-                .to_string()
-                .as_bytes()
-            )
-        );
+        let command = stand_in_result_command(child, completed, &child.status);
         // Delivered executions need no further source reads or authorization queries.
         if child.runtime_handle["standInResultReceipt"] == command {
             return None;

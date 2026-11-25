@@ -370,6 +370,25 @@ impl LocalTaskStore {
         device: &str,
         roots: &[&str],
     ) -> Result<Vec<(String, Value)>, TaskRuntimeError> {
+        self.stand_in_role_result_requests(user, device, roots, false)
+    }
+
+    pub fn role_completion_requests_for_roots(
+        &self,
+        user: i64,
+        device: &str,
+        roots: &[&str],
+    ) -> Result<Vec<(String, Value)>, TaskRuntimeError> {
+        self.stand_in_role_result_requests(user, device, roots, true)
+    }
+
+    fn stand_in_role_result_requests(
+        &self,
+        user: i64,
+        device: &str,
+        roots: &[&str],
+        include_local_retries: bool,
+    ) -> Result<Vec<(String, Value)>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id,metadata FROM loop_items WHERE resource_type='stand_in_role_request'
@@ -379,12 +398,20 @@ impl LocalTaskStore {
              AND (json_extract(metadata,'$.intent.sourceRoute') IS NOT NULL
                   OR (json_array_length(metadata,'$.intent.dependsOn')>0
                       AND json_extract(metadata,'$.taskAddress') IS NULL
+                      AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0)
+                  OR (?4 AND json_extract(metadata,'$.attempt')>0
                       AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0))
              ORDER BY created_at,id",
         )?;
-        let rows = statement.query_map(params![user, device, json!(roots).to_string()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
+        let rows = statement.query_map(
+            params![
+                user,
+                device,
+                json!(roots).to_string(),
+                include_local_retries
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
         rows.map(|row| {
             let (id, raw) = row?;
             let metadata = serde_json::from_str(&raw)
