@@ -171,27 +171,47 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
       page => normalize(page, false),
       readTool
     )
-    if (!mentions.some(row => row.id === trigger.id && !row.recalled))
+    if (!mentions.items.some(row => row.id === trigger.id && !row.recalled))
       throw invalid('The original message is no longer confirmed as a group mention')
   }
-  const records = await contextPages(
+  // Older history is evidence for an answer, not the authorization boundary.
+  // Keep it bounded so a busy conversation can still enter model evaluation.
+  const history = await contextPages(
     ctx,
     'searchMessages',
     {
       ...params,
       start: new Date(at - CONTEXT_LOOKBACK_MS).toISOString(),
+      end: new Date(at).toISOString(),
+      conversationIds: conversationId,
+      ...(!group && { senderIds: `${source.id},${ownId}` }),
+    },
+    page => normalize(page, true),
+    readTool,
+    { allowIncomplete: true }
+  )
+  // Messages after the question must be complete: an owner takeover in this
+  // window cancels the automatic reply.
+  const later = await contextPages(
+    ctx,
+    'searchMessages',
+    {
+      ...params,
+      start: new Date(at).toISOString(),
       conversationIds: conversationId,
       ...(!group && { senderIds: `${source.id},${ownId}` }),
     },
     page => normalize(page, true),
     readTool
   )
-  const target = records.find(row => row.id === trigger.id && !row.isOwn)
+  const target =
+    later.items.find(row => row.id === trigger.id && !row.isOwn) ??
+    history.items.find(row => row.id === trigger.id && !row.isOwn)
   if (!target || target.recalled || Date.parse(target.at) !== at)
     throw invalid('The original message is missing or changed')
-  const later = records.filter(row => row.id !== target.id && Date.parse(row.at) >= at)
-  const related = group ? relatedGroupMessages(target, later) : later
-  const messages = records.filter(row => Date.parse(row.at) < at)
+  const laterMessages = later.items.filter(row => row.id !== target.id && Date.parse(row.at) >= at)
+  const related = group ? relatedGroupMessages(target, laterMessages) : laterMessages
+  const messages = history.items.filter(row => Date.parse(row.at) < at)
   return {
     items: messages,
     hasMore: false,
@@ -203,7 +223,14 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
   }
 }
 
-async function contextPages(ctx, tool, query, normalize, readTool) {
+async function contextPages(
+  ctx,
+  tool,
+  query,
+  normalize,
+  readTool,
+  { allowIncomplete = false } = {}
+) {
   let cursor = '0'
   const seen = new Set([cursor])
   const items = new Map()
@@ -220,16 +247,27 @@ async function contextPages(ctx, tool, query, normalize, readTool) {
       items.set(item.id, item)
     }
     if (page.result?.hasMore === false)
-      return [...items.values()].sort(
-        (left, right) =>
-          Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
-      )
+      return {
+        items: [...items.values()].sort(
+          (left, right) =>
+            Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+        ),
+        complete: true,
+      }
     const next = nonEmptyString(page.result?.nextCursor)
     if (page.result?.hasMore !== true || !next || seen.has(next))
       throw invalid('Incomplete DingTalk context pagination')
     cursor = next
     seen.add(cursor)
   }
+  if (allowIncomplete)
+    return {
+      items: [...items.values()].sort(
+        (left, right) =>
+          Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+      ),
+      complete: false,
+    }
   throw invalid('The bounded DingTalk context is incomplete')
 }
 
