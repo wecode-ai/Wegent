@@ -72,10 +72,9 @@ export async function sendRuntimeQueuedMessage(
     let queued = false
     let queuePosition: number | null | undefined
     let guidanceTurnId: string | undefined
-    const runtime = address.runtime ?? lifecycleStore.getTask(address)?.task?.runtime
     const accepted = await sendRuntimePaneMessage(
       {
-        address: runtime && !address.runtime ? { ...address, runtime } : address,
+        address,
         message: message.content,
         clientUserMessageId: message.id,
         ...(message.requestUserInputResponse
