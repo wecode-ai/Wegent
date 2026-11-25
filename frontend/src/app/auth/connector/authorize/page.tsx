@@ -23,25 +23,38 @@ import { useTranslation } from '@/hooks/useTranslation'
 const STORAGE_KEY = 'externalConnectorAuthorization'
 const TRANSLATION_KEY = 'auth.connector_authorize'
 
+function serializeLink(slug: string, ticket: string) {
+  return new URLSearchParams({ slug, ticket }).toString()
+}
+
 function ConnectorAuthorizeContent() {
   const { t } = useTranslation('common')
   const { user, isLoading } = useUser()
   const [link, setLink] = useState<{ slug: string; ticket: string } | null>(null)
 
   useLayoutEffect(() => {
-    // Keep the ticket in this tab while Wegent sends the user through login.
-    const fragment = window.location.hash.slice(1)
-    const params = new URLSearchParams(fragment || sessionStorage.getItem(STORAGE_KEY) || '')
-    const slug = params.get('slug')
-    const ticket = params.get('ticket')
-    if (fragment) {
-      sessionStorage.removeItem(STORAGE_KEY)
-      const { pathname, search } = window.location
-      window.history.replaceState(window.history.state, '', pathname + search)
+    const updateLink = () => {
+      // Keep the ticket in this tab while Wegent sends the user through login.
+      const fragment = window.location.hash.slice(1)
+      const params = new URLSearchParams(fragment || sessionStorage.getItem(STORAGE_KEY) || '')
+      const slug = params.get('slug')
+      const ticket = params.get('ticket')
+      if (fragment) {
+        const { pathname, search } = window.location
+        window.history.replaceState(window.history.state, '', pathname + search)
+      }
+      if (!slug || !ticket) {
+        sessionStorage.removeItem(STORAGE_KEY)
+        setLink(null)
+        return
+      }
+      sessionStorage.setItem(STORAGE_KEY, serializeLink(slug, ticket))
+      setLink({ slug, ticket })
     }
-    if (!slug || !ticket) return
-    sessionStorage.setItem(STORAGE_KEY, params.toString())
-    setLink({ slug, ticket })
+
+    updateLink()
+    window.addEventListener('hashchange', updateLink)
+    return () => window.removeEventListener('hashchange', updateLink)
   }, [])
 
   if (isLoading) return <Spinner size="lg" center />
@@ -50,7 +63,7 @@ function ConnectorAuthorizeContent() {
 
   return (
     <ConnectorConsent
-      key={`${user.id}:${link.ticket}`}
+      key={`${user.id}:${link.slug}:${link.ticket}`}
       userName={user.user_name}
       slug={link.slug}
       ticket={link.ticket}
@@ -83,16 +96,15 @@ function ConnectorConsent({
   const authorize = async () => {
     setError('')
     setState('submitting')
+    const link = serializeLink(slug, ticket)
+    const isCurrent = () => active.current && sessionStorage.getItem(STORAGE_KEY) === link
     try {
-      await authorizeConnectorApp(slug, {
-        authorizationTicket: ticket,
-        isCurrent: () => active.current,
-      })
-      if (!active.current) return
+      await authorizeConnectorApp(slug, { authorizationTicket: ticket, isCurrent })
+      if (!isCurrent()) return
       sessionStorage.removeItem(STORAGE_KEY)
       setState('success')
     } catch (cause) {
-      if (!active.current) return
+      if (!isCurrent()) return
       if (cause instanceof ApiError && cause.errorCode === 'CONNECTOR_ALREADY_AUTHORIZED') {
         sessionStorage.removeItem(STORAGE_KEY)
         setState('success')

@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import {
   configureToolScenario,
@@ -160,7 +161,7 @@ test.describe('Connector app OAuth loop', () => {
   })
 
   test('prechecks and authorizes a custom connector from an external app', async ({
-    page,
+    browser,
     request,
   }) => {
     const regularToken = await loginToken(request, REGULAR_USER)
@@ -193,30 +194,34 @@ test.describe('Connector app OAuth loop', () => {
       })
       expect(wrongUser.status(), 'A different signed-in user cannot use the link').toBe(403)
 
-      await page.addInitScript(
-        ({ token, origin }) => {
-          if (window.location.origin !== origin) return
-          localStorage.setItem('auth_token', token)
-          localStorage.removeItem('auth_token_expire')
-        },
-        { token: regularToken, origin: link.origin }
+      const expiry = getJwtExpiryMs(regularToken)
+      expect(expiry, 'The target user has a valid Wegent browser session').toBeGreaterThan(
+        Date.now()
       )
-      await page.goto(authorizeUrl, { waitUntil: 'domcontentloaded' })
-      const authorize = page.getByTestId('authorize-external-connector')
-      await expect(authorize, 'Wegent shows the external connector consent page').toBeVisible({
-        timeout: 10_000,
+      const context = await browser.newContext({
+        storageState: buildStorageState(link.origin, regularToken, expiry),
       })
-      const popupPromise = page.waitForEvent('popup', { timeout: 10_000 })
-      await authorize.click()
-      const popup = await popupPromise
-      await expect(
-        popup.locator('body'),
-        'Wegent accepted the provider OAuth callback'
-      ).toContainText('Connector is connected', { timeout: 20_000 })
-      await expect(
-        page.getByTestId('external-connector-authorized'),
-        'The authorization page reports the stored grant'
-      ).toBeVisible({ timeout: 10_000 })
+      try {
+        const page = await context.newPage()
+        await page.goto(authorizeUrl, { waitUntil: 'domcontentloaded' })
+        const authorize = page.getByTestId('authorize-external-connector')
+        await expect(authorize, 'Wegent shows the external connector consent page').toBeVisible({
+          timeout: 10_000,
+        })
+        const popupPromise = page.waitForEvent('popup', { timeout: 10_000 })
+        await authorize.click()
+        const popup = await popupPromise
+        await expect(
+          popup.locator('body'),
+          'Wegent accepted the provider OAuth callback'
+        ).toContainText('Connector is connected', { timeout: 20_000 })
+        await expect(
+          page.getByTestId('external-connector-authorized'),
+          'The authorization page reports the stored grant'
+        ).toBeVisible({ timeout: 10_000 })
+      } finally {
+        await context.close()
+      }
       expect(await precheck()).toEqual({ slug: SLUG, status: 'authorized' })
     } finally {
       const disconnected = await request.delete(
