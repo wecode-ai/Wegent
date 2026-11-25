@@ -2,7 +2,11 @@ import { useCallback, useMemo, useState } from 'react'
 import { createDefaultPluginApi } from './workspace/marketplaceWorkspaceHelpers'
 import { PluginCreatorResultCard } from './PluginCreatorResultCard'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
-import { latestPluginWorkspaceResult, pluginWorkspaceManifestPath } from './pluginWorkspaceResult'
+import {
+  latestPluginWorkspaceResult,
+  pluginWorkspaceManifestPath,
+  type PluginWorkspaceResult,
+} from './pluginWorkspaceResult'
 import type { RuntimeAdditionalContext } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -28,14 +32,23 @@ function encodeBase64(value: unknown): string {
 
 export function PluginWorkspaceConversationResult({
   taskId,
-  workspacePath,
   messages,
+  ...actions
+}: PluginWorkspaceConversationResultProps) {
+  const result = useMemo(() => latestPluginWorkspaceResult(messages, taskId), [messages, taskId])
+  return result ? <ConversationResultActions {...actions} result={result} /> : null
+}
+
+function ConversationResultActions({
+  result,
+  workspacePath,
   waiting,
   onOpenFile,
   onSendAction,
-}: PluginWorkspaceConversationResultProps) {
+}: Omit<PluginWorkspaceConversationResultProps, 'messages' | 'taskId'> & {
+  result: PluginWorkspaceResult
+}) {
   const { t } = useTranslation('common')
-  const result = useMemo(() => latestPluginWorkspaceResult(messages, taskId), [messages, taskId])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +67,6 @@ export function PluginWorkspaceConversationResult({
     [pluginApi]
   )
 
-  if (!result) return null
   const published = result.status === 'published' || result.status === 'pending_review'
   const statusLabel =
     result.status === 'published'

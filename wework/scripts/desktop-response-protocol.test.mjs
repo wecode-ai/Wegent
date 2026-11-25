@@ -6,7 +6,7 @@ import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { runInNewContext } from 'node:vm'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { createMcpElicitationModel } from '../e2e/desktop/modules/mcp-elicitation-model.mjs'
-import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
+import { mcpToolRequestEvents, readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_COMPLETION_TEXT,
@@ -36,6 +36,57 @@ test('rejects malformed zstd instead of returning an empty request', async () =>
   const request = Readable.from([Buffer.from('invalid compressed request')])
   request.headers = { 'content-encoding': 'zstd' }
   await assert.rejects(readRequestBody(request))
+})
+
+test('rejects a same-named MCP tool outside the installed plugin in every catalog mode', () => {
+  const pluginDisplayName = 'Wework python-stdio-probe'
+  const step = {
+    toolName: 'report_python',
+    directToolName: 'mcp__python_stdio_probe__report_python',
+    argumentsValue: {},
+    searchCallId: 'search-python',
+    toolCallId: 'call-python',
+    pluginDisplayName,
+  }
+  const declaration = description => ({ type: 'function', name: step.toolName, description })
+  const namespace = description => ({
+    type: 'namespace',
+    name: 'python_stdio_probe',
+    tools: [declaration(description)],
+  })
+  const searchOutput = tool => [
+    { type: 'tool_search_call_output', call_id: step.searchCallId, tools: [tool] },
+  ]
+  const requests = [
+    description => ({
+      tools: [{ ...declaration(description), name: step.directToolName }],
+    }),
+    description => ({ tools: [namespace(description)] }),
+    description => ({
+      tools: [{ type: 'tool_search' }],
+      input: searchOutput(namespace(description)),
+    }),
+    description => ({
+      tools: [{ type: 'custom', name: 'exec' }],
+      input: searchOutput({
+        name: step.directToolName,
+        description: `exec tool declaration:\n${description}`,
+      }),
+    }),
+  ]
+  for (const request of requests) {
+    assert.throws(
+      () => mcpToolRequestEvents(request('Report plugin Python'), step),
+      /did not retain plugin provenance/
+    )
+    assert.equal(
+      mcpToolRequestEvents(
+        request(`Report plugin Python (from plugin \`${pluginDisplayName}\`)`),
+        step
+      ).mode,
+      'direct'
+    )
+  }
 })
 
 test('waits for a yielded MCP elicitation cell and uses its cancellation result', () => {

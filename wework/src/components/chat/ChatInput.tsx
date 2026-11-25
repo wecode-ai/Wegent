@@ -484,8 +484,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   const projectQuickPhrases =
     projectPhrases ??
     (isDeviceRuntimeProject(currentRuntimeProject)
-      ? (currentRuntimeProject?.aiSettings?.quickPhrases ?? [])
-      : [])
+      ? currentRuntimeProject?.aiSettings?.quickPhrases
+      : undefined)
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const editor = composerRef.current
     if (!editor) return

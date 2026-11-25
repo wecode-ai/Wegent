@@ -333,32 +333,21 @@ impl AuthorizedRequest {
         forked: bool,
     ) -> Result<request_policy::PreparedRequest, HttpError> {
         log_stale_requested_model(&self.upstream, body);
-        if self.upstream.uses_native_chatgpt_auth()
-            && self.upstream.codex_request_mode == CodexRequestMode::Passthrough
-            && self.upstream.model_id.is_none()
-            && !self.text_only
-            && !self.model_routing.model_switched
-            && self.foreign_history_keys.is_empty()
-            && !request_identity::request_contains_model_switch_marker(body)
-        {
-            return Ok(request_policy::PreparedRequest {
-                body: request_policy::strip_incompatible_responses_item_ids(body)?.into_owned(),
-                conversion: None,
-                expanded_browser_tools: HashSet::new(),
-                stripped_encrypted_content: 0,
-                normalized_reasoning_items: 0,
-                foreign_history_keys: HashSet::new(),
-            });
-        }
-        let body = if self.text_only {
-            text_only_request(body)?
+        let body = if self.upstream.codex_request_mode == CodexRequestMode::Passthrough {
+            std::borrow::Cow::Borrowed(body)
         } else {
-            body.to_vec()
+            let body = if self.text_only {
+                text_only_request(body)?
+            } else {
+                body.to_vec()
+            };
+            std::borrow::Cow::Owned(progressive_tools::prepare(&body).map_err(|error| {
+                HttpError {
+                    status: StatusCode::BAD_REQUEST,
+                    detail: format!("Invalid native Code Mode request: {error}"),
+                }
+            })?)
         };
-        let body = progressive_tools::prepare(&body).map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("Invalid native Code Mode request: {error}"),
-        })?;
         request_policy::prepare(
             &self.upstream,
             &body,
@@ -658,7 +647,10 @@ pub(super) async fn handle_for_token(
             )))
         }
         None if upstream.uses_native_chatgpt_auth()
-            && upstream.codex_request_mode == CodexRequestMode::Passthrough =>
+            && matches!(
+                upstream.codex_request_mode,
+                CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+            ) =>
         {
             Response::new(Body::from_stream(response_stream))
         }
