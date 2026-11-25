@@ -83,17 +83,6 @@ export function AssistantErrorCard({
             translate={translate}
             testId="assistant-error-configure-git"
           />
-          {continueInNewConversation && (
-            <ControlButton
-              variant="primary"
-              size="sm"
-              type="button"
-              data-testid="assistant-error-continue-in-new-conversation"
-              onClick={continueInNewConversation}
-            >
-              {t('assistant_error.actions.continue_in_new_conversation')}
-            </ControlButton>
-          )}
           {onSwitchModel && !parsedError.gitFailure ? (
             <ControlButton
               variant={recommendsNewConversation ? 'outline' : 'primary'}
@@ -126,6 +115,18 @@ export function AssistantErrorCard({
               )}
             </ControlButton>
           ) : null}
+          {continueInNewConversation && (
+            <ControlButton
+              variant="outline"
+              size="sm"
+              type="button"
+              data-testid="assistant-error-continue-in-new-conversation"
+              onClick={continueInNewConversation}
+              className={secondaryActionClass}
+            >
+              {t('assistant_error.actions.continue_in_new_conversation')}
+            </ControlButton>
+          )}
           {hasErrorDetails && (
             <ControlButton
               variant="outline"

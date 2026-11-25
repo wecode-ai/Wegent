@@ -188,13 +188,18 @@ describe("shared conversation cards without Electron", () => {
         />,
       );
       expect(element("assistant-error-title").textContent).toBe(title);
-      expect(element("assistant-error-retry").textContent).toBe("Retry");
+      const retry = element("assistant-error-retry");
+      expect(retry.textContent).toBe("Retry");
       const recovery = container.querySelector<HTMLButtonElement>(
         '[data-testid="assistant-error-continue-in-new-conversation"]',
       );
       if (type === "llm_error") {
-        expect(recovery?.textContent).toBe("Continue in a new conversation");
-        act(() => recovery?.click());
+        if (!recovery) throw new Error("Missing new conversation action");
+        expect(recovery.textContent).toBe("Continue in a new conversation");
+        expect(retry.compareDocumentPosition(recovery)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        act(() => recovery.click());
         expect(continueInNewConversation).toHaveBeenCalledOnce();
       } else {
         expect(recovery).toBeNull();
