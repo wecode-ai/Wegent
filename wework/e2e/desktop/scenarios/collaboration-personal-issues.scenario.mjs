@@ -368,9 +368,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, '[data-testid="independent-issue-search-people"]', { visible: true })
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="false"]')
       // User story: runtime setup is available without blocking a draft or starting work.
+      await click(control, 'independent-issue-options')
       await click(control, 'independent-issue-execution-settings')
       await control.command('waitFor', '[data-testid="settings-default-runner"]', { visible: true })
       await captureScreenshot(control, 'new-issue-optional-runtime.png')
+      await click(control, 'independent-issue-options')
+      const creationAttachmentName = 'issue-creation.txt'
+      const creationAttachmentContent = 'An attachment saved with the new Issue.'
+      await control.command('selectFile', '[data-testid="task-issue-share-file-input"]', {
+        filename: creationAttachmentName,
+        mimeType: 'text/plain',
+        value: Buffer.from(creationAttachmentContent).toString('base64'),
+      })
+      await wait(control, '[data-testid="task-issue-share-local-file-0"]', {
+        text: creationAttachmentName,
+      })
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-actions"]')
       await wait(
@@ -382,6 +394,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       issue = mine.items.find(item => item.title === title)
       assert.ok(issue)
       assert.deepEqual(issue.metadata.participants, [])
+      const [creationAttachment] = await request(`/api/v1/loop-items/${issue.id}/attachments`)
+      assert.equal(creationAttachment.display_name, creationAttachmentName)
+      const creationAttachmentPath = `/api/v1/loop-item-attachments/${creationAttachment.id}/content`
+      assert.equal(
+        await request(creationAttachmentPath, 'GET', undefined, cloud.authToken, 200, 'text'),
+        creationAttachmentContent
+      )
+      await request(creationAttachmentPath, 'GET', undefined, outsiderToken, 404)
       assert.equal(
         (await request('/api/v1/cloud-projects')).items.length,
         before.items.length,
@@ -482,8 +502,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, '[data-testid="independent-issue-activity-list"]', {
         text: attachmentName,
       })
-      const [attachment] = await request(`/api/v1/loop-items/${issue.id}/attachments`)
-      assert.equal(attachment.display_name, attachmentName)
+      const attachments = await request(`/api/v1/loop-items/${issue.id}/attachments`)
+      const attachment = attachments.find(file => file.display_name === attachmentName)
+      assert.ok(attachment)
       const attachmentPath = `/api/v1/loop-item-attachments/${attachment.id}/content`
       assert.equal(
         await request(attachmentPath, 'GET', undefined, participantToken, 200, 'text'),
@@ -654,6 +675,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         String(project.id),
         project.name
       )
+      await click(control, 'independent-issue-options')
       await click(control, 'independent-issue-execution-settings')
       await click(control, 'issue-environment-picker-trigger')
       await wait(control, '[data-testid="issue-environment-picker"]')
@@ -676,6 +698,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await captureScreenshot(control, 'new-issue-project-devices.png')
       await pressFocusedIssueKey(control, '[data-testid="issue-environment-picker"]', 'Escape')
       await wait(control, '[data-testid="issue-environment-picker"]', { visible: false })
+      await click(control, 'independent-issue-options')
       assert.equal(
         await control.command('getValue', '[data-testid="independent-issue-title"]'),
         `Project selection ${process.pid}`,
