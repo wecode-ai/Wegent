@@ -514,18 +514,21 @@ def renew_running_docker_callback_bindings() -> None:
         return
     repository = get_sandbox_repository()
     for offset in range(0, len(containers), 100):
-        for task_id, name, token in _inspect_docker_callback_bindings(
+        for task_id, name, token, sandbox in _inspect_docker_callback_bindings(
             containers[offset : offset + 100]
         ):
-            repository.renew_docker_callback_binding(task_id, name, token)
+            repository.renew_docker_callback_binding(
+                task_id, name, token, sandbox=sandbox
+            )
 
 
 def _inspect_docker_callback_bindings(
     containers: list[str],
-) -> list[tuple[int, str, str]]:
+) -> list[tuple[int, str, str, bool]]:
     template = (
         '{{.State.Running}} {{.Name}} {{index .Config.Labels "owner"}} '
-        '{{index .Config.Labels "task_id"}} {{json .Config.Env}}'
+        '{{index .Config.Labels "task_id"}} '
+        '{{json (index .Config.Labels "aigc.weibo.com/task-type")}} {{json .Config.Env}}'
     )
     try:
         result = subprocess.run(
@@ -543,10 +546,10 @@ def _inspect_docker_callback_bindings(
 
     bindings = []
     for line in result.stdout.splitlines():
-        fields = line.split(maxsplit=4)
-        if len(fields) != 5:
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6:
             continue
-        running, name, owner, task_id, environment = fields
+        running, name, owner, task_id, task_type, environment = fields
         if running != "true" or owner != CONTAINER_OWNER or not task_id.isdecimal():
             continue
         try:
@@ -558,7 +561,14 @@ def _inspect_docker_callback_bindings(
             if key == "EXECUTOR_CALLBACK_TOKEN" and re.fullmatch(
                 r"[0-9a-f]{64}", token
             ):
-                bindings.append((int(task_id), name.removeprefix("/"), token))
+                bindings.append(
+                    (
+                        int(task_id),
+                        name.removeprefix("/"),
+                        token,
+                        task_type == '"sandbox"',
+                    )
+                )
                 break
     return bindings
 

@@ -534,10 +534,12 @@ class TestDockerExecutor:
             assert expected_task.pop("executor_callback_token") == "callback-token"
             mock_dispatch.assert_called_once_with(expected_task, "new-executor", 8080)
 
+    @pytest.mark.parametrize("task_type", ["online", "sandbox"])
     def test_create_new_container_prepares_callback_token_before_creation(
-        self, executor, sample_task
+        self, executor, sample_task, task_type
     ):
         """The callback credential must be ready before the container command."""
+        sample_task["type"] = task_type
         status = {"executor_name": "new-executor"}
         task_info = executor._extract_task_info(sample_task)
 
@@ -553,12 +555,14 @@ class TestDockerExecutor:
         ):
             executor._create_new_container(sample_task, task_info, status)
 
-        mock_prepare.assert_called_once_with(123, "new-executor")
+        mock_prepare.assert_called_once_with(
+            123, "new-executor", sandbox=(task_type == "sandbox")
+        )
         created_task = mock_create.call_args.args[0]
         assert created_task["executor_callback_token"] == "callback-token"
         assert sample_task["executor_callback_token"] == "callback-token"
         assert mock_create.call_count == 1
-        assert mock_dispatch.call_count == 1
+        assert mock_dispatch.call_count == (0 if task_type == "sandbox" else 1)
 
     def test_create_new_container_first_command_includes_callback_token(
         self, executor, sample_task, mock_subprocess

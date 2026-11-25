@@ -234,10 +234,11 @@ def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
             mocker.Mock(
                 stdout="\n".join(
                     [
-                        f'true /active executor_manager 42 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
-                        f'false /exited executor_manager 43 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
-                        f'true /foreign other-owner 44 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
-                        'true /legacy executor_manager 45 ["OTHER=true"]',
+                        f'true /active executor_manager 42 "online" ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        f'true /sandbox executor_manager 42 "sandbox" ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        f'false /exited executor_manager 43 "online" ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        f'true /foreign other-owner 44 "online" ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        'true /legacy executor_manager 45 "" ["OTHER=true"]',
                     ]
                 )
             ),
@@ -247,6 +248,7 @@ def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
     utils.renew_running_docker_callback_bindings()
 
     assert "label=owner=executor_manager" in docker.call_args_list[0].args[0]
-    repository.renew_docker_callback_binding.assert_called_once_with(
-        42, "active", token
-    )
+    assert repository.renew_docker_callback_binding.call_args_list == [
+        mocker.call(42, "active", token, sandbox=False),
+        mocker.call(42, "sandbox", token, sandbox=True),
+    ]

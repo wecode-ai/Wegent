@@ -325,6 +325,12 @@ class SandboxRepository(metaclass=SingletonMeta):
                 e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
                 if e2b_sandbox_id:
                     self._delete_e2b_index(e2b_sandbox_id)
+                if sandbox.container_name:
+                    self.delete_executor_binding(
+                        task_id,
+                        expected_executor_name=sandbox.container_name,
+                        sandbox=True,
+                    )
 
             # Remove from both the scoped index and any legacy membership.
             self._remove_sandbox_from_active_indexes(str(task_id))
@@ -621,6 +627,11 @@ class SandboxRepository(metaclass=SingletonMeta):
     # Executor Binding Operations
     # =========================================================================
 
+    @staticmethod
+    def _executor_binding_key(task_id: int, sandbox: bool) -> str:
+        prefix = "sandbox_executor" if sandbox else "task_executor"
+        return f"{prefix}:{task_id}"
+
     def save_executor_binding(
         self,
         task_id: int,
@@ -678,13 +689,13 @@ class SandboxRepository(metaclass=SingletonMeta):
         return binding.get("executor_name") if binding else None
 
     def reserve_executor_callback_token(
-        self, task_id: int, executor_name: str, candidate: str
+        self, task_id: int, executor_name: str, candidate: str, *, sandbox: bool = False
     ) -> Optional[str]:
         """Reuse a runtime's credential across retries and rotate on replacement."""
         if self.redis_client is None:
             return None
 
-        key = f"task_executor:{task_id}"
+        key = self._executor_binding_key(task_id, sandbox)
         new_binding = {
             "executor_name": executor_name,
             "task_id": task_id,
@@ -724,7 +735,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return None
 
     def renew_docker_callback_binding(
-        self, task_id: int, executor_name: str, token: str
+        self, task_id: int, executor_name: str, token: str, *, sandbox: bool = False
     ) -> None:
         """Refresh a running Docker executor's lease without replacing another binding."""
         if self.redis_client is None:
@@ -750,7 +761,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 end
                 """,
                 1,
-                f"task_executor:{task_id}",
+                self._executor_binding_key(task_id, sandbox),
                 self._config.executor.executor_binding_ttl,
                 json.dumps(binding),
                 executor_name,
@@ -764,18 +775,23 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
 
     def load_executor_callback_token(
-        self, task_id: int, *, expected_executor_name: Optional[str] = None
+        self,
+        task_id: int,
+        *,
+        expected_executor_name: Optional[str] = None,
+        sandbox: bool = False,
     ) -> Optional[str]:
         """Load the callback credential issued for one task runtime.
 
         Args:
             task_id: Task ID
             expected_executor_name: Restrict lookup to the runtime being reused.
+            sandbox: Read the isolated sandbox lease for the task.
 
         Returns:
             Callback credential if found, None otherwise
         """
-        binding = self.load_executor_binding_full(task_id)
+        binding = self.load_executor_binding_full(task_id, sandbox=sandbox)
         if not binding or (
             expected_executor_name is not None
             and binding.get("executor_name") != expected_executor_name
@@ -783,11 +799,14 @@ class SandboxRepository(metaclass=SingletonMeta):
             return None
         return binding.get("callback_token")
 
-    def load_executor_binding_full(self, task_id: int) -> Optional[Dict[str, Any]]:
+    def load_executor_binding_full(
+        self, task_id: int, *, sandbox: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Load full executor binding info for task continuity.
 
         Args:
             task_id: Task ID
+            sandbox: Read the isolated sandbox binding for the task.
 
         Returns:
             Binding dict with executor_name, sandbox_claim_name, etc. if found
@@ -796,7 +815,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return None
 
         try:
-            binding_key = f"task_executor:{task_id}"
+            binding_key = self._executor_binding_key(task_id, sandbox)
             binding_json = self.redis_client.get(binding_key)
 
             if not binding_json:
@@ -808,14 +827,14 @@ class SandboxRepository(metaclass=SingletonMeta):
             return None
 
     def delete_executor_binding(
-        self, task_id: int, *, expected_executor_name: str = ""
+        self, task_id: int, *, expected_executor_name: str = "", sandbox: bool = False
     ) -> bool:
         """Delete a task-to-executor binding after runtime cleanup."""
         if self.redis_client is None:
             return False
 
         try:
-            binding_key = f"task_executor:{task_id}"
+            binding_key = self._executor_binding_key(task_id, sandbox)
             # An inventory pass may have inspected the container before deletion.
             # Retain no credential and prevent that pass from restoring the lease.
             revoked = self.redis_client.eval(

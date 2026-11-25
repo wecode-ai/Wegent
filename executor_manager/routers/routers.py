@@ -286,11 +286,23 @@ def verify_executor_callback(event_data: dict, http_request: Request) -> None:
     if type(task_id) is not int or task_id <= 0:
         raise HTTPException(status_code=401, detail="Executor callback task is invalid")
 
-    expected_token = get_sandbox_repository().load_executor_callback_token(task_id)
-    if not expected_token or not hmac.compare_digest(
+    repository = get_sandbox_repository()
+    expected_token = repository.load_executor_callback_token(task_id)
+    if expected_token and hmac.compare_digest(
         provided_token.encode(), expected_token.encode()
     ):
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
+        return
+
+    executor_name = event_data.get("executor_name")
+    if isinstance(executor_name, str) and executor_name:
+        sandbox_token = repository.load_executor_callback_token(
+            task_id, expected_executor_name=executor_name, sandbox=True
+        )
+        if sandbox_token and hmac.compare_digest(
+            provided_token.encode(), sandbox_token.encode()
+        ):
+            return
+    raise HTTPException(status_code=401, detail="Invalid authentication token")
 
 
 def verify_executor_callback_from_body(

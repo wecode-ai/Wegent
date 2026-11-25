@@ -344,3 +344,40 @@ def test_callback_route_accepts_task_scoped_token(client, mocker) -> None:
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("executor_name", "expected_status"),
+    [("archive-sandbox", 200), ("cloud-executor", 401)],
+)
+def test_sandbox_callback_is_bound_to_its_runtime(
+    client, mocker, executor_name, expected_status
+):
+    def load_token(task_id, *, expected_executor_name=None, sandbox=False):
+        assert task_id == 42
+        if not sandbox:
+            return "cloud-token"
+        return "sandbox-token" if expected_executor_name == "archive-sandbox" else None
+
+    repository = mocker.Mock(load_executor_callback_token=load_token)
+    mocker.patch.object(routers, "get_sandbox_repository", return_value=repository)
+    upstream_context = mocker.MagicMock()
+    upstream_post = mocker.AsyncMock(
+        return_value=httpx.Response(200, json={"status": "ok"})
+    )
+    upstream_context.__aenter__.return_value.post = upstream_post
+    mocker.patch.object(routers, "traced_async_client", return_value=upstream_context)
+
+    response = client.post(
+        f"{routers.ROUTE_PREFIX}/callback",
+        headers={"Authorization": "WegentExecutorBinding sandbox-token"},
+        json={
+            "event_type": "response.created",
+            "task_id": 42,
+            "subtask_id": 7,
+            "executor_name": executor_name,
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert upstream_post.await_count == (1 if expected_status == 200 else 0)

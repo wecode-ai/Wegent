@@ -427,7 +427,7 @@ class DockerExecutor(Executor):
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
         callback_token = prepare_callback_token(
-            int(task_info["task_id"]), executor_name
+            int(task_info["task_id"]), executor_name, sandbox=is_sandbox_task
         )
         metadata = task.get("metadata")
         if isinstance(metadata, dict) and "task_id" in metadata:
