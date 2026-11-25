@@ -5,7 +5,13 @@ import type {
   SharedIssueDetailUpdateInput,
 } from "./createSharedIssueDetailPort";
 
-type IssueFields = Omit<SharedIssueDetailUpdateInput, "version">;
+type IssueFields = Pick<
+  SharedIssueDetailUpdateInput,
+  Exclude<
+    keyof SharedIssueDetailUpdateInput & keyof CollaborationIssue,
+    "version"
+  >
+>;
 
 function equal(left: unknown, right: unknown): boolean {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);

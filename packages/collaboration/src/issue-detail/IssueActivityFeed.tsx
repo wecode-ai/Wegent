@@ -4,6 +4,40 @@ import type { CollaborationTranslate } from "../i18n";
 import { activityClassNames as cn } from "./activityClassNames";
 import { CompositedSpinner } from "./CompositedSpinner";
 import { useIssueComposerViewport } from "./useIssueComposerViewport";
+import { Button as ControlButton } from '../markdown/Button'
+
+export function IssueCollapsedActivity({
+  firstSequence,
+  lastSequence,
+  label,
+  onExpand,
+}: {
+  firstSequence?: number
+  lastSequence?: number
+  label: string
+  onExpand(): void
+}) {
+  return (
+    <div
+      className="my-3 flex items-center gap-3"
+      data-testid="issue-collapsed-activity"
+      data-activity-collapsed-first-sequence={firstSequence}
+      data-activity-collapsed-last-sequence={lastSequence}
+    >
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+      <ControlButton
+        variant="unstyled"
+        type="button"
+        data-testid="issue-expand-activity"
+        onClick={onExpand}
+        className="min-h-11 shrink-0 rounded-lg border border-border px-3 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
+      >
+        {label}
+      </ControlButton>
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+    </div>
+  )
+}
 
 /** Desktop activity layout; hosts supply records, execution controls and composers. */
 export function IssueActivityFeed({

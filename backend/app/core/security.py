@@ -945,6 +945,7 @@ def get_current_user_flexible_for_executor(
 
 
 def get_current_user_jwt_apikey_tasktoken(
+    request: Request,
     db: Session = Depends(get_db),
     oauth2_token: Optional[str] = Security(oauth2_scheme_optional),
     x_api_key_security: Optional[str] = Security(api_key_header_optional),
@@ -1061,6 +1062,8 @@ def get_current_user_jwt_apikey_tasktoken(
 
             user = verify_jwt_token_with_db(db, token)
             if user:
+                if oauth2_token == token:
+                    request.state.user_session_id = user.id
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))

@@ -35,7 +35,7 @@ export function PersonalIssuesView(
             api={independent.api}
             collaborationApi={independent.collaborationApi}
             userId={independent.userId}
-            presentation="drawer"
+            presentation="embedded"
           />
         ) : null
       }

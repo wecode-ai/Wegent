@@ -142,8 +142,8 @@ export function groupIssueActivityThreads<
 }
 
 export function IssueActivityThread({
-  message,
-  replies,
+  thread,
+  renderMessage,
   composer,
   variant = "card",
   events,
@@ -152,8 +152,8 @@ export function IssueActivityThread({
   repliesTestId,
   cardAttributes,
 }: {
-  message: ReactNode;
-  replies?: ReactNode;
+  thread: IssueActivityThreadModel<ProjectChatMessage>;
+  renderMessage(message: ProjectChatMessage, root: boolean): ReactNode;
   composer?: ReactNode;
   variant?: "card" | "timeline";
   events?: ReactNode;
@@ -162,6 +162,8 @@ export function IssueActivityThread({
   repliesTestId?: string;
   cardAttributes?: HTMLAttributes<HTMLElement> & { "data-testid"?: string };
 }) {
+  const replies = thread.displayReplies ?? thread.replies;
+  const rootId = thread.root.messageId;
   return (
     <div
       className={
@@ -170,14 +172,19 @@ export function IssueActivityThread({
           : "task-detail-thread"
       }
     >
-      <IssueActivityCard {...cardAttributes}>
-        {message}
-        {replies ? (
+      <IssueActivityCard
+        data-testid={`cloud-task-activity-card-${rootId}`}
+        {...cardAttributes}
+      >
+        {renderMessage(thread.root, true)}
+        {replies.length > 0 ? (
           <div
             className="task-detail-comment-replies"
-            data-testid={repliesTestId}
+            data-testid={
+              repliesTestId ?? `cloud-task-activity-replies-${rootId}`
+            }
           >
-            {replies}
+            {replies.map((reply) => renderMessage(reply, false))}
           </div>
         ) : null}
         {composer}
