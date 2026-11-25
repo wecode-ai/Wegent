@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef } from 'react'
-import type { QueuedMessageStatus } from './useMessageSendQueue'
+import type { QueuedMessageStatus } from '../../session/messageSendQueue'
 
 interface QueuedRuntimeMessage {
   id: string
@@ -12,7 +12,7 @@ interface QueuedRuntimeMessage {
 
 interface UseQueuedRuntimeHealthCheckOptions {
   taskId?: number | null
-  queuedMessages: QueuedRuntimeMessage[]
+  queuedMessages: readonly QueuedRuntimeMessage[]
   blocksQueuedDispatch: boolean
   isStreaming: boolean
   hasPendingUserMessage: boolean
