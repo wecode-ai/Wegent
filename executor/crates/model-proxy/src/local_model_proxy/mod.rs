@@ -184,7 +184,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
             registry
                 .routes
                 .get(*token)
-                .is_none_or(|route| route.gateway_credentials.is_none())
+                .map_or(true, |route| route.gateway_credentials.is_none())
         })
         .cloned()
         .unwrap_or_else(|| {
@@ -539,7 +539,7 @@ pub fn register_codex_route(
         .get(route_scope)
         .filter(|token| {
             // A route token cannot change the credential source of a concurrent turn.
-            registry.routes.get(*token).is_none_or(|route| {
+            registry.routes.get(*token).map_or(true, |route| {
                 match (&route.gateway_credentials, &gateway_credentials) {
                     (Some(previous), Some(current)) => previous.same_connection(current),
                     (None, None) => true,
