@@ -215,6 +215,8 @@ pub type CodexInputAdmission = Box<dyn Fn() -> Result<(), String> + Send + Sync 
 pub struct CodexAppServerTurnOptions {
     pub input_admission: Option<CodexInputAdmission>,
     #[doc(hidden)]
+    pub gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
+    #[doc(hidden)]
     pub event_goal: Option<EventGoalAdmission>,
     pub recover_usage_limits: bool,
     pub quota_resume: Option<CodexQuotaRecovery>,
@@ -2446,6 +2448,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let CodexAppServerTurnOptions {
         mut event_goal,
         input_admission,
+        gateway_credentials,
         recover_usage_limits,
         quota_resume,
         direct_thread_id,
@@ -2465,6 +2468,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    launch_config.bind_gateway_credentials(gateway_credentials);
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -2964,6 +2968,7 @@ async fn run_codex_app_server_turn_with_runtime(
     let CodexAppServerTurnOptions {
         mut event_goal,
         input_admission,
+        gateway_credentials,
         recover_usage_limits,
         quota_resume,
         direct_thread_id,
@@ -2983,6 +2988,7 @@ async fn run_codex_app_server_turn_with_runtime(
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
     let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    launch_config.bind_gateway_credentials(gateway_credentials);
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -4999,6 +5005,16 @@ fn configure_codex_router(
         official_chatgpt,
         official_websocket,
     );
+}
+
+impl CodexLaunchConfig {
+    fn bind_gateway_credentials(&self, credentials: Option<local_model_proxy::GatewayCredentials>) {
+        if let (Some(registration), Some(credentials)) =
+            (self.local_proxy_registration.as_deref(), credentials)
+        {
+            local_model_proxy::bind_gateway_credentials(&registration.0, credentials);
+        }
+    }
 }
 
 fn configure_codex_router_registration(

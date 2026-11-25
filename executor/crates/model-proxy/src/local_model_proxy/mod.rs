@@ -12,6 +12,7 @@
 mod anthropic;
 mod chat;
 mod fork;
+mod gateway_credentials;
 mod harness_protocol;
 mod history;
 mod image_budget;
@@ -51,6 +52,7 @@ use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
+pub use gateway_credentials::GatewayCredentials;
 pub use official_http::{official_http_route, OFFICIAL_HTTP_ROUTE};
 pub use request_policy::CodexRequestMode;
 
@@ -190,6 +192,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
         token.clone(),
         RegisteredUpstream {
             upstream,
+            gateway_credentials: None,
             vision_sidecar: None,
             text_only: false,
             history: Default::default(),
@@ -438,6 +441,7 @@ pub struct VisionSidecarUpstream {
 struct RegisteredUpstream {
     text_only: bool,
     upstream: LocalModelProxyUpstream,
+    gateway_credentials: Option<GatewayCredentials>,
     vision_sidecar: Option<VisionSidecarUpstream>,
     history: std::sync::Arc<history::CodexToolHistory>,
     thread_ids: HashSet<String>,
@@ -543,6 +547,7 @@ pub fn register_with_vision_sidecar(
         token.clone(),
         RegisteredUpstream {
             upstream,
+            gateway_credentials: None,
             vision_sidecar,
             text_only: false,
             history,
@@ -569,6 +574,21 @@ pub fn register_with_vision_sidecar(
         ],
     );
     token
+}
+
+pub fn bind_gateway_credentials(token: &str, credentials: GatewayCredentials) -> bool {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let Some(route) = registry.routes.get_mut(token) else {
+        return false;
+    };
+    if !credentials.matches(&route.upstream) {
+        return false;
+    }
+    route.upstream.api_key.clear();
+    route.gateway_credentials = Some(credentials);
+    true
 }
 
 pub fn mark_model_switch(token: &str) {
@@ -733,6 +753,9 @@ pub fn unregister(token: &str) {
     let (retained_idle, active_references) = match registry.routes.get_mut(token) {
         Some(registered) => {
             registered.active_references = registered.active_references.saturating_sub(1);
+            if registered.active_references == 0 {
+                registered.gateway_credentials = None;
+            }
             registered.last_used = Instant::now();
             (
                 registered.active_references == 0,

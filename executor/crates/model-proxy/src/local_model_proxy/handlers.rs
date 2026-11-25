@@ -84,6 +84,7 @@ pub(super) async fn handle_harness_messages(
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
+        None,
         &request_url,
         &request_body,
         &headers,
@@ -289,6 +290,7 @@ pub(super) fn token_route_token(token: String, body: &[u8]) -> Result<String, Ht
 
 pub(super) struct AuthorizedRequest {
     pub upstream: LocalModelProxyUpstream,
+    gateway_credentials: Option<GatewayCredentials>,
     pub history: std::sync::Arc<history::CodexToolHistory>,
     pub model_routing: ModelRequestRouting,
     vision_sidecar: Option<VisionSidecarUpstream>,
@@ -309,6 +311,7 @@ pub(super) fn authorize_request(token: &str, body: &[u8]) -> Result<AuthorizedRe
     route.last_used = Instant::now();
     Ok(AuthorizedRequest {
         upstream: route.upstream.clone(),
+        gateway_credentials: route.gateway_credentials.clone(),
         vision_sidecar: route.vision_sidecar.clone(),
         history: route.history.clone(),
         foreign_history_keys: route.foreign_history_keys.clone(),
@@ -383,6 +386,7 @@ pub(super) async fn handle_for_token(
         .await?;
     let AuthorizedRequest {
         upstream,
+        gateway_credentials,
         history,
         model_routing,
         foreign_history_keys: known_foreign_history_keys,
@@ -398,7 +402,19 @@ pub(super) async fn handle_for_token(
             upstream.codex_request_mode.label().to_owned(),
         ),
         ("upstream", safe_url(&request_url)),
-        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "credential_source",
+            if gateway_credentials.is_some() {
+                "device_connection"
+            } else {
+                "model_configuration"
+            }
+            .to_owned(),
+        ),
+        (
+            "auth_present",
+            (gateway_credentials.is_some() || !upstream.api_key.is_empty()).to_string(),
+        ),
         (
             "default_headers",
             upstream.default_headers.len().to_string(),
@@ -449,10 +465,15 @@ pub(super) async fn handle_for_token(
     }
     log_executor_event("local model proxy request started", &request_log_fields);
 
-    let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let client = if gateway_credentials.is_some() {
+        proxy_client_without_redirects(upstream.proxy_url.as_deref())?
+    } else {
+        proxy_client(upstream.proxy_url.as_deref())?
+    };
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
+        gateway_credentials.as_ref(),
         &request_url,
         &request_body,
         &headers,

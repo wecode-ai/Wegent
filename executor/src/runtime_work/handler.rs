@@ -150,6 +150,7 @@ mod conversation_sessions;
 mod creation;
 mod execution_control;
 mod fork_transfer;
+mod gateway_credentials;
 mod git_connections;
 mod git_source_workspace;
 mod git_webhook_setup;
