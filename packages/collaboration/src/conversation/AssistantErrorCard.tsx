@@ -93,7 +93,7 @@ export function AssistantErrorCard({
               {t('assistant_error.actions.switch_model_retry')}
             </ControlButton>
           ) : null}
-          {onRetry ? (
+          {onRetry && !recommendsNewConversation ? (
             <ControlButton
               variant="outline"
               size="sm"

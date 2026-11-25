@@ -155,26 +155,30 @@ describe("shared conversation cards without Electron", () => {
       "connection interrupted",
       "Model service is busy",
       "overloaded",
+      true,
     ],
     [
       "timeout_error",
       "codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted",
       "Timed out waiting for a response",
       "within 180 seconds",
+      true,
     ],
     [
       "llm_error",
       "No tool output found for tool call call_1.",
       "The model could not process the conversation history",
       "Type @ followed by a word from the original title",
+      false,
     ],
   ])(
     "shows localized terminal %s separately from diagnostics",
-    (type, error, title, guidance) => {
+    (type, error, title, guidance, canRetry) => {
       render(
         <AssistantErrorCard
           error={error}
           errorType={type}
+          onRetry={vi.fn()}
           message={{
             id: "failed",
             role: "assistant",
@@ -185,6 +189,9 @@ describe("shared conversation cards without Electron", () => {
         />,
       );
       expect(element("assistant-error-title").textContent).toBe(title);
+      expect(
+        container.querySelector('[data-testid="assistant-error-retry"]') !== null,
+      ).toBe(canRetry);
       expect(
         document.querySelector('[data-testid="assistant-error-details"]'),
       ).toBeNull();
