@@ -52,7 +52,6 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
     };
     let selected = &preferences["wework_notification_preferences"][category];
     let im_only = kind == "issue_participation";
-    let assistant_share = matches!(kind, "assistant_share" | "assistant_share_update");
     Channels {
         in_app: !im_only && selected["in_app"].as_bool().unwrap_or(true),
         system: if collaboration && !im_only {
@@ -60,7 +59,7 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
         } else {
             false
         },
-        im: !assistant_share && selected["im"].as_bool().unwrap_or(true),
+        im: selected["im"].as_bool().unwrap_or(true),
     }
 }
 

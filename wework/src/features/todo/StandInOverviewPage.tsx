@@ -1,8 +1,7 @@
 import {
+  roleSelectsProject,
   standInConversationTaskId,
   standInRoleName,
-  type StandInShareEntry,
-  type StandInTeam,
 } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -15,10 +14,11 @@ import { navigateTo, WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { useDOMEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { PanelRight, SlidersHorizontal } from 'lucide-react'
+import { Check, PanelRight, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
 import type { ComponentProps, ReactNode, Ref } from 'react'
 import {
   useCallback,
@@ -43,11 +43,9 @@ import { standInProcessingFailure } from './standInProcessingFailure'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInNavigation } from './StandInRoleSelector'
 import type { StandInSettingsShortcut } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
-import { StandInTeamAndShareControls } from './StandInTeamAndShareControls'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { StandInWorkList } from './StandInWorkList'
 import { usePersonalStandIn } from './usePersonalStandIn'
@@ -56,6 +54,10 @@ import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
+
+function roleTabClass(selected: boolean) {
+  return `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
+}
 
 /** Hosts personal conversations, work and settings on the selected Executor. */
 export function StandInOverviewPage({
@@ -154,27 +156,6 @@ export function StandInOverviewPage({
   }))
   const deviceId = state.loadedDeviceId ?? props.initialDeviceId ?? saved?.executionDeviceId
   const api = props.services.standInApi
-  const [selectedTeam, setSelectedTeam] = useState<{ owner: string; id: string } | null>(null)
-  const teamOwner = JSON.stringify([props.userId, deviceId])
-  const [selectedShare, setSelectedShare] = useState<{
-    owner: string
-    entry: StandInShareEntry
-  } | null>(null)
-  const shared = selectedShare?.owner === teamOwner ? selectedShare.entry : undefined
-  const sharedScope = shared
-    ? (`shared:${shared.owner_user_id}:${shared.resource_kind}:${shared.source_id}` as const)
-    : undefined
-  const team =
-    selectedTeam?.owner === teamOwner
-      ? saved?.teams?.find(team => team.id === selectedTeam.id)
-      : undefined
-  const teamScope = team ? (`team:${team.id}` as const) : undefined
-  const teamLead = team?.leadId === '@primary' ? undefined : team?.leadId
-  const openTeam = (team: StandInTeam) => {
-    setSelectedShare(null)
-    setSelectedTeam({ owner: teamOwner, id: team.id })
-    setDetailsTarget(null)
-  }
   const processing = useStandInProcessingStatus(
     api,
     props.userId,
@@ -230,8 +211,6 @@ export function StandInOverviewPage({
   )
   const view = useSyncExternalStore(subscribe, overview.getSnapshot, overview.getSnapshot)
   const { roleId, profile, calendarRequest, exampleDraft } = view
-  const conversationRole = shared ? undefined : team ? teamLead : roleId
-  const conversationScope = sharedScope ?? teamScope
   const sameOwner = view.api === api && view.userId === props.userId && view.deviceId === deviceId
   const proposal = sameOwner ? view.proposal : null
   const resolvedProposal = sameOwner ? view.resolvedProposal : null
@@ -266,22 +245,9 @@ export function StandInOverviewPage({
     if (panelRef.current) panelRef.current.requestLeave(action)
     else action()
   }
-  const openAssistantDialog = (open: () => void) =>
-    leavePanel(() => {
-      setReview(null)
-      setProfile(null)
-      setDetailsAnchor(null)
-      open()
-    })
   const openMemory = useStableEvent(() => leavePanel(() => openProfile('memory')))
   const [delegationPanelScope, setDelegationPanelScope] = useState<string | null>(null)
-  const detailsScope = JSON.stringify([
-    props.userId,
-    deviceId,
-    conversationRole,
-    conversationScope,
-    active,
-  ])
+  const detailsScope = JSON.stringify([props.userId, deviceId, roleId, active])
   const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
@@ -315,8 +281,6 @@ export function StandInOverviewPage({
   })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
-      setSelectedTeam(null)
-      setSelectedShare(null)
       const target =
         executionDevice ??
         (id
@@ -335,10 +299,6 @@ export function StandInOverviewPage({
     })
   const currentProposal = proposal && (proposal.roleId ?? undefined) === roleId ? proposal : null
   const viewedProposalId = typeof review === 'object' ? review?.proposalId : undefined
-  const closeReview = () => {
-    setReview(null)
-    detailsTrigger.current?.focus()
-  }
   const openProposal = (proposalId: string) => {
     setDetailsAnchor(null)
     setReview({ proposalId })
@@ -549,38 +509,86 @@ export function StandInOverviewPage({
     >
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
-          <StandInNavigation
-            conversationName={shared ? `${shared.name} · ${shared.owner_name}` : team?.name}
-            roles={roles}
-            projects={props.projects}
-            roleId={roleId}
-            deviceId={deviceId}
-            matchDevice={!!roleLocations}
-            chooseRole={chooseRole}
-            onCreate={trigger =>
-              leavePanel(() => {
-                setCalendarRequest(0)
-                openProfile('create', trigger)
-              })
-            }
-          />
-          {api && saved && (
-            <StandInTeamAndShareControls
-              key={teamOwner}
-              active={active}
-              api={api}
-              settings={saved}
-              roles={roles}
-              selected={team}
-              beforeOpen={openAssistantDialog}
-              onOpenTeam={openTeam}
-              onOpenShare={entry => {
-                setSelectedTeam(null)
-                setSelectedShare({ owner: teamOwner, entry })
-              }}
-            />
-          )}
-          {!shared && api && deviceId && saved && (
+          <nav
+            className="min-w-0 flex-1 overflow-x-auto"
+            aria-label={t('standIn.workspace.switch_role')}
+            data-testid="stand-in-role-selector"
+          >
+            <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-primary-open"
+                aria-current={!roleId ? 'page' : undefined}
+                onClick={() => chooseRole()}
+                className={roleTabClass(!roleId)}
+              >
+                <UserRound aria-hidden="true" className="h-4 w-4" />
+                {t('standIn.personal.default_role')}
+                {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+              </ControlButton>
+              {roles.map((value, index) => {
+                const projects = props.projects.filter(project =>
+                  roleSelectsProject(value, {
+                    id: project.id,
+                    store: project.project_store === 'local' ? 'local' : 'cloud',
+                  })
+                )
+                const scope = [
+                  ...projects.map(project => project.name),
+                  ...(value.connections ?? []).map(source => source.name),
+                ].join(' · ')
+                const selected =
+                  roleId === value.id && (!roleLocations || value.executionDeviceId === deviceId)
+                return (
+                  <ControlButton
+                    variant="unstyled"
+                    key={`${value.migrationSource ?? value.executionDeviceId}:${value.id}`}
+                    type="button"
+                    data-testid={`stand-in-overview-role-${value.id}${roles.filter(role => role.id === value.id).length > 1 ? `-${value.executionDeviceId}` : ''}`}
+                    aria-current={selected ? 'page' : undefined}
+                    title={
+                      scope ||
+                      t(value.enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
+                    }
+                    onClick={() => chooseRole(value.id, value.executionDeviceId)}
+                    className={roleTabClass(selected)}
+                  >
+                    <StandInIcon
+                      enabled={value.enabled}
+                      className={`h-4 w-4 ${selected ? '[&_g]:text-background' : ''}`}
+                    />
+                    <span className="max-w-40 truncate">
+                      {standInRoleName(value, index, t('standIn.personal.unnamed_assistant'))}
+                    </span>
+                    {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+                    <span className="sr-only">{scope}</span>
+                    <span className="sr-only">
+                      {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
+                      {t('standIn.personal.connected_selected', { count: projects.length })}
+                    </span>
+                  </ControlButton>
+                )
+              })}
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-create-role"
+                onClick={event => {
+                  const trigger = event.currentTarget
+                  leavePanel(() => {
+                    setCalendarRequest(0)
+                    openProfile('create', trigger)
+                  })
+                }}
+                className="flex h-11 shrink-0 items-center gap-1 rounded-md px-2 text-text-secondary hover:bg-muted md:h-8"
+              >
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                {t('standIn.personal.create_title')}
+              </ControlButton>
+            </div>
+          </nav>
+          {api && deviceId && saved && (
             <Tooltip label={t('standIn.delegation.panel')} side="bottom" align="end">
               <ControlButton
                 variant="unstyled"
@@ -590,39 +598,34 @@ export function StandInOverviewPage({
                 aria-expanded={delegationPanelOpen}
                 aria-controls={delegationPanelOpen ? 'stand-in-delegation-panel' : undefined}
                 onClick={() => setDelegationPanelScope(delegationPanelOpen ? null : detailsScope)}
-                className={`flex h-11 shrink-0 items-center justify-center gap-1 rounded-md hover:bg-muted md:h-8 ${team ? 'px-2' : 'w-11 md:w-8'} ${delegationPanelOpen ? 'bg-muted' : ''}`}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8 ${delegationPanelOpen ? 'bg-muted' : ''}`}
               >
                 <PanelRight aria-hidden="true" className="size-4" />
-                {team && t('standIn.delegation.title')}
               </ControlButton>
             </Tooltip>
           )}
-          {!team && !shared && (
-            <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="stand-in-details-open"
-                ref={detailsTrigger}
-                aria-label={t('standIn.workspace.details_title')}
-                aria-haspopup="dialog"
-                aria-expanded={!!detailsAnchor}
-                disabled={(!state.saved && state.loading) || state.saving}
-                onClick={event => {
-                  const anchor = event.currentTarget
-                  setDetailsTarget(detailsAnchor ? null : { anchor, scope: detailsScope })
-                }}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
-              >
-                <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
-              </ControlButton>
-            </Tooltip>
-          )}
-          {!team && !shared && (
-            <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
-              {t('standIn.workspace.role_help')}
-            </p>
-          )}
+          <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="stand-in-details-open"
+              ref={detailsTrigger}
+              aria-label={t('standIn.workspace.details_title')}
+              aria-haspopup="dialog"
+              aria-expanded={!!detailsAnchor}
+              disabled={(!state.saved && state.loading) || state.saving}
+              onClick={event => {
+                const anchor = event.currentTarget
+                setDetailsTarget(detailsAnchor ? null : { anchor, scope: detailsScope })
+              }}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
+            >
+              <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+            </ControlButton>
+          </Tooltip>
+          <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
+            {t('standIn.workspace.role_help')}
+          </p>
         </header>
         {state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-secondary">
@@ -646,40 +649,31 @@ export function StandInOverviewPage({
             {api && deviceId ? (
               <StandInConversation
                 delegationPanelOpen={delegationPanelOpen}
-                sidebarTasks={
-                  team || shared
-                    ? undefined
-                    : {
-                        items: roleItems,
-                        inbox: visibleInbox,
-                        onAllActivity: () => setReview('work'),
-                      }
-                }
-                renderDetails={team || shared ? undefined : renderDetails}
+                sidebarTasks={{
+                  items: roleItems,
+                  inbox: visibleInbox,
+                  onAllActivity: () => setReview('work'),
+                }}
+                renderDetails={renderDetails}
                 contentFooter={
-                  !team && !shared && !viewedProposalId && (proposalCard || proposalFailure) ? (
+                  !viewedProposalId && (proposalCard || proposalFailure) ? (
                     <>
                       {proposalCard}
                       {proposalFailure}
                     </>
                   ) : null
                 }
-                draftRequest={!team && !shared && !roleId ? exampleDraft : undefined}
+                draftRequest={!roleId ? exampleDraft : undefined}
                 onDraftRequestConsumed={id =>
                   setExampleDraft(current => (current?.id === id ? undefined : current))
                 }
                 active={active}
-                key={standInConversationTaskId(props.userId, conversationRole, conversationScope)}
+                key={`${deviceId}:${props.userId}:${roleId ? `role:${roleId}` : 'primary'}`}
                 api={api}
                 userId={props.userId}
                 deviceId={deviceId}
-                roleId={conversationRole}
-                scope={conversationScope}
-                settings={
-                  conversationRole
-                    ? saved?.roles.find(role => role.id === conversationRole)
-                    : saved?.primary
-                }
+                roleId={roleId}
+                settings={roleId ? saved?.roles.find(role => role.id === roleId) : saved?.primary}
                 services={props.services}
                 onOpenTask={onOpenTask}
               />
@@ -691,7 +685,10 @@ export function StandInOverviewPage({
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
           testId="stand-in-work-dialog"
-          onClose={closeReview}
+          onClose={() => {
+            setReview(null)
+            detailsTrigger.current?.focus()
+          }}
         >
           <StandInWorkList
             active={active && review === 'work'}
@@ -720,7 +717,10 @@ export function StandInOverviewPage({
           title={t('standIn.workspace.pending_configuration')}
           testId="stand-in-proposal-dialog"
           busy={resolving}
-          onClose={closeReview}
+          onClose={() => {
+            setReview(null)
+            detailsTrigger.current?.focus()
+          }}
         >
           {currentProposal?.id === viewedProposalId && saved ? (
             <>
@@ -737,7 +737,10 @@ export function StandInOverviewPage({
           open={active && review === 'status'}
           title={t('standIn.workspace.status_details')}
           testId="stand-in-status-dialog"
-          onClose={closeReview}
+          onClose={() => {
+            setReview(null)
+            detailsTrigger.current?.focus()
+          }}
         >
           {deviceId && processingError && (
             <StandInProcessingNotice

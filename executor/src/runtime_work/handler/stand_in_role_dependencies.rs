@@ -1,8 +1,6 @@
 //! Release a specialist only after its declared prerequisites finish successfully.
 use super::stand_in::settings_error;
-use super::stand_in_role_delegation::{
-    actor_role_directory, denied, owned_role_task, role_attempt,
-};
+use super::stand_in_role_delegation::{denied, owned_role_task, role_attempt};
 use super::*;
 use crate::protocol::StandInTaskPermissions;
 use crate::task_runtime::personal_stand_in::stand_in_identities;
@@ -86,15 +84,6 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?;
         if !settings["lifecycle"]["status"].is_null() {
             return Ok(());
-        }
-        if intent["roleDelegation"]["team"] == true
-            && !actor_role_directory(&actor, &settings, &Value::Null)
-                .iter()
-                .any(|role| role["id"] == intent["roleId"])
-        {
-            return store
-                .record_stand_in_role_route_failure(id, user, "role_unavailable", false)
-                .map_err(settings_error);
         }
         let evidence = match request["dependencyEvidence"].as_array() {
             Some(_) => request["dependencyEvidence"].clone(),

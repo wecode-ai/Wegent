@@ -177,7 +177,6 @@ test.each(['right-click', 'more button'])(
     }
 
     expect(await screen.findByTestId(menuId)).toBeVisible()
-    expect(screen.getByTestId('remove-project-7')).toBeVisible()
     await waitFor(() => expect(screen.queryByTestId(cardId)).not.toBeInTheDocument())
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByTestId(menuId)).not.toBeInTheDocument())
