@@ -12,6 +12,7 @@ export { createRuntimeTaskLifecycleStream } from './runtimeTaskLifecycleStream'
 export {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleResolver,
+  useRuntimeTaskLifecycleSelection,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
   useRuntimeTaskSidebarSnapshot,

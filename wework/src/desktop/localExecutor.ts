@@ -479,6 +479,14 @@ export function getKnownLocalExecutorDeviceId(): string | null {
   )
 }
 
+export function getKnownLocalExecutorRuntimeInstanceId(): string | null {
+  return (
+    initializedLocalExecutorStatus?.runtimeInstanceId ||
+    availableLocalExecutorStatus?.runtimeInstanceId ||
+    null
+  )
+}
+
 export function ensureLocalExecutorAvailable(
   options: { refresh?: boolean } = {}
 ): Promise<LocalExecutorStatus> {

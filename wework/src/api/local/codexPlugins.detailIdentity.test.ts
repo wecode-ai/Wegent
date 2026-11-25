@@ -32,6 +32,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   getInitializedBundledPluginMarketplace: () =>
     mocks.personalPath ? { id: 'wework-personal', path: mocks.personalPath } : null,
   getKnownLocalExecutorDeviceId: () => 'device',
+  getKnownLocalExecutorRuntimeInstanceId: () => 'test-runtime',
   requestLocalExecutor: (...args: unknown[]) => mocks.request(...args),
 }))
 

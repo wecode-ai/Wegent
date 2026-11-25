@@ -139,6 +139,14 @@ export function getConfiguredSocketBaseUrl(): string {
   )
 }
 
+function resolveDesktopHost(overrides: RuntimeConfigOverrides): RuntimeConfig['desktopHost'] {
+  return overrides.desktopHost === 'electron' ? 'electron' : 'browser'
+}
+
+export function getRuntimeDesktopHost(): RuntimeConfig['desktopHost'] {
+  return resolveDesktopHost(runtimeOverrides())
+}
+
 export function getRuntimeConfig(): RuntimeConfig {
   const overrides = runtimeOverrides()
   const appBasePath = normalizeBasePath(
@@ -168,7 +176,7 @@ export function getRuntimeConfig(): RuntimeConfig {
         import.meta.env.VITE_COLLAB_PROJECT_SURFACES_V1 === 'true',
     },
     desktopWindowLabel: runtimeString(overrides, 'desktopWindowLabel') || 'main',
-    desktopHost: runtimeString(overrides, 'desktopHost') === 'electron' ? 'electron' : 'browser',
+    desktopHost: resolveDesktopHost(overrides),
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     feedbackUrl: trimTrailingSlash(import.meta.env.VITE_WEWORK_FEEDBACK_URL?.trim() || ''),
     plantumlServerUrl: trimTrailingSlash(

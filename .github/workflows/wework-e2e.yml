@@ -1063,6 +1063,11 @@ jobs:
         if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile') || contains(matrix.segments, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/setup-minio-e2e
 
+      - name: Prepare Chat Shell tokenizers for Responses API gateway E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws')
+        working-directory: ./backend
+        run: uv run --locked bash ../.github/scripts/prepare-chat-shell-tokenizers.sh
+
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
         run: |
@@ -1434,15 +1439,9 @@ jobs:
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
       - name: Enforce renderer performance budgets
-        id: renderer-budgets
         if: needs.changes.outputs.wework_desktop_renderer_profile == 'true'
         timeout-minutes: 8
         run: node wework/scripts/profile-renderer.mjs --check
-
-      - name: Capture renderer workload after a budget failure
-        if: failure() && steps.renderer-budgets.conclusion == 'failure'
-        timeout-minutes: 8
-        run: node wework/scripts/profile-renderer.mjs --capture
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1491,6 +1490,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/*/failure.txt
             wework/test-results/desktop-e2e/*/renderer-threshold-measurements.json
+            wework/test-results/desktop-e2e/*/renderer-turn-long-task-profile.json
             wework/test-results/desktop-e2e/*/scenario-state.json
             wework/test-results/desktop-e2e/*/model-requests.json
             wework/test-results/desktop-e2e/*/*.log

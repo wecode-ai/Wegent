@@ -32,8 +32,46 @@ describe('workbenchRuntimeHelpers', () => {
       { supervisor: null }
     )
 
-    expect(updated).toEqual(runtimeWork)
+    expect(updated).toBe(runtimeWork)
   })
+
+  test.each(['project-device', 'chat-host'])(
+    'keeps unrelated task-list branches stable when updating %s',
+    deviceId => {
+      const workspace = (id: string) => ({
+        deviceId: id,
+        workspacePath: `/workspace/${id}`,
+        available: true,
+        tasks: [{ taskId: 'task', title: 'Original', runtime: 'codex' }],
+      })
+      const runtimeWork: RuntimeWorkListResponse = {
+        projects: ['project-device', 'other-device'].map(id => ({
+          project: { key: id, name: id },
+          deviceWorkspaces: [workspace(id)],
+          totalTasks: 1,
+        })),
+        chats: [{ ...workspace('chat-device'), remoteHostId: 'chat-host' }],
+        totalTasks: 3,
+      }
+
+      const updated = updateRuntimeWorkTask(
+        runtimeWork,
+        { deviceId, taskId: 'task' },
+        { title: 'Updated' }
+      )
+
+      const projectChanged = deviceId === 'project-device'
+      expect(updated.projects[0].deviceWorkspaces[0].tasks[0].title).toBe(
+        projectChanged ? 'Updated' : 'Original'
+      )
+      expect(updated.chats[0].tasks[0].title).toBe(projectChanged ? 'Original' : 'Updated')
+      expect(updated.projects[1]).toBe(runtimeWork.projects[1])
+      if (projectChanged) expect(updated.chats).toBe(runtimeWork.chats)
+      else expect(updated.projects).toBe(runtimeWork.projects)
+      expect(runtimeWork.projects[0].deviceWorkspaces[0].tasks[0].title).toBe('Original')
+      expect(runtimeWork.chats[0].tasks[0].title).toBe('Original')
+    }
+  )
 
   test.each([null])('does not create a runtime list from %s', runtimeWork => {
     expect(
