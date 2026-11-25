@@ -17,7 +17,7 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (mut settings, _) = personal_snapshot(&transaction, user, device)?;
-        if apply_share_copy(&mut settings, snapshot, update)? {
+        if apply_share_copy(&mut settings, backend, snapshot, update)? {
             settings = self.save_personal_stand_in_on(
                 &transaction,
                 user,
@@ -28,9 +28,13 @@ impl LocalTaskStore {
         }
         for entry in std::iter::once(&snapshot.root).chain(&snapshot.assistants) {
             let (kind, source) = entry.definition.key();
-            if let Some(revision) =
-                assistant_share_copy_revision(&settings, snapshot.owner_user_id, kind, source)
-            {
+            if let Some(revision) = assistant_share_copy_revision(
+                &settings,
+                backend,
+                snapshot.owner_user_id,
+                kind,
+                source,
+            ) {
                 super::share_sync::queue_assistant_share_copy_receipt(
                     &transaction,
                     user,
@@ -49,11 +53,12 @@ impl LocalTaskStore {
 
 pub fn assistant_share_copy_revision(
     settings: &Value,
+    backend: &str,
     owner: i32,
     kind: &str,
     source: &str,
 ) -> Option<u64> {
-    let id = copy_id(owner, kind, source);
+    let id = copy_id(backend, owner, kind, source);
     let rows = match kind {
         "assistant" => &settings["roles"],
         "team" => &settings["teams"],
@@ -66,8 +71,9 @@ pub fn assistant_share_copy_revision(
 }
 
 /// A copy kept on the same device is reused even after the recipient renames it.
-fn copy_id(owner: i32, kind: &str, source: &str) -> String {
-    let digest = Sha256::digest(json!([owner, kind, source]).to_string());
+fn copy_id(backend: &str, owner: i32, kind: &str, source: &str) -> String {
+    let digest =
+        Sha256::digest(json!([backend.trim_end_matches('/'), owner, kind, source]).to_string());
     let mut id = [0_u8; 16];
     id.copy_from_slice(&digest[..16]);
     uuid::Uuid::from_bytes(id).to_string()
@@ -75,12 +81,13 @@ fn copy_id(owner: i32, kind: &str, source: &str) -> String {
 
 fn import_assistant(
     settings: &mut Value,
+    backend: &str,
     owner: i32,
     definition: &AssistantDefinition,
     revision: u64,
     update: bool,
 ) -> Result<bool, TaskRuntimeError> {
-    let id = copy_id(owner, "assistant", &definition.id);
+    let id = copy_id(backend, owner, "assistant", &definition.id);
     let device = settings["executionDeviceId"]
         .as_str()
         .unwrap_or_default()
@@ -111,16 +118,22 @@ fn import_assistant(
 
 fn apply_share_copy(
     settings: &mut Value,
+    backend: &str,
     snapshot: &AssistantShareSnapshot,
     update: bool,
 ) -> Result<bool, TaskRuntimeError> {
     let owner = snapshot.owner_user_id;
     match &snapshot.root.definition {
-        AssistantShareDefinition::Assistant(definition) => {
-            import_assistant(settings, owner, definition, snapshot.root.revision, update)
-        }
+        AssistantShareDefinition::Assistant(definition) => import_assistant(
+            settings,
+            backend,
+            owner,
+            definition,
+            snapshot.root.revision,
+            update,
+        ),
         AssistantShareDefinition::Team(team) => {
-            let id = copy_id(owner, "team", &team.id);
+            let id = copy_id(backend, owner, "team", &team.id);
             let existing = settings["teams"]
                 .as_array()
                 .and_then(|teams| teams.iter().position(|team| team["id"] == id));
@@ -139,10 +152,17 @@ fn apply_share_copy(
                     return Err(invalid_copy());
                 };
                 let duty = team.members.get(&assistant.id).ok_or_else(invalid_copy)?;
-                import_assistant(settings, owner, assistant, versioned.revision, false)?;
-                members.insert(copy_id(owner, "assistant", &assistant.id), duty);
+                import_assistant(
+                    settings,
+                    backend,
+                    owner,
+                    assistant,
+                    versioned.revision,
+                    false,
+                )?;
+                members.insert(copy_id(backend, owner, "assistant", &assistant.id), duty);
             }
-            let lead_id = copy_id(owner, "assistant", &team.lead_id);
+            let lead_id = copy_id(backend, owner, "assistant", &team.lead_id);
             if !members.contains_key(&lead_id) || members.len() != team.members.len() {
                 return Err(invalid_copy());
             }
@@ -193,6 +213,7 @@ mod tests {
         let mut settings = empty_personal(7, "recipient-device");
         assert!(apply_share_copy(
             &mut settings,
+            "https://example.test",
             &snapshot("weekly", "Summarize", "First"),
             false
         )
@@ -201,6 +222,7 @@ mod tests {
         settings["roles"][0]["prompt"] = json!("My prompt");
         assert!(apply_share_copy(
             &mut settings,
+            "https://example.test",
             &snapshot("release", "Validate", "New"),
             false
         )
@@ -213,9 +235,13 @@ mod tests {
             "recipient-device"
         );
         assert!(settings["roles"][0].get("connections").is_none());
-        assert!(
-            apply_share_copy(&mut settings, &snapshot("weekly", "Audit", "New"), true).unwrap()
-        );
+        assert!(apply_share_copy(
+            &mut settings,
+            "https://example.test",
+            &snapshot("weekly", "Audit", "New"),
+            true
+        )
+        .unwrap());
         super::super::teams::validate_teams(&settings).unwrap();
         let member = settings["roles"][0]["id"].as_str().unwrap();
         assert_eq!(settings["teams"][0]["members"][member], "Audit");

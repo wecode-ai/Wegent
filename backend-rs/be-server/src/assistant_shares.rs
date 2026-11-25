@@ -149,78 +149,74 @@ async fn list_shares(
     let id = user.0.id;
     let select = share_list_select();
     let team_copy_access = storage::team_copy_access("c.entity_id", true);
-    let mut received: Vec<ShareListEntry> = state
-        .mysql
-        .fetch_all(
-            format!("{select} WHERE g.entity_id=? ORDER BY g.updated_at DESC"),
-            (id.to_string(),),
-        )
-        .await
-        .map_err(internal)?;
-    let derived: Vec<ShareListEntry> = state
-        .mysql
-        .fetch_all(
-            format!(
-                "SELECT d.owner_user_id,owner.user_name AS owner_name,c.recipient_user_id,recipient.user_name AS recipient_name,d.resource_kind,d.source_id,CAST(JSON_UNQUOTE(JSON_EXTRACT(d.definition,'$.definition.name')) AS CHAR) AS name,d.revision,TRUE AS allow_copy,FALSE AS direct_enabled,FALSE AS revoked,TRUE AS derived
-                FROM {RECEIPTS} c JOIN {PUBLICATIONS} d ON d.id=c.resource_id
-                JOIN users owner ON owner.id=d.owner_user_id JOIN users recipient ON recipient.id=c.recipient_user_id
-                WHERE c.entity_id=? AND d.resource_kind='assistant' AND {team_copy_access}"
-            ),
-            (id.to_string(),),
-        )
-        .await
-        .map_err(internal)?;
-    let mut indexed = received
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
-            (
-                (
-                    row.owner_user_id,
-                    row.resource_kind.clone(),
-                    row.source_id.clone(),
-                ),
-                index,
+    state.mysql.with_transaction(async |tx| {
+        let mut received: Vec<ShareListEntry> = tx
+            .fetch_all(
+                format!("{select} WHERE g.entity_id=? ORDER BY g.updated_at DESC"),
+                (id.to_string(),),
             )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    for row in derived {
-        let key = (
-            row.owner_user_id,
-            row.resource_kind.clone(),
-            row.source_id.clone(),
-        );
-        if let Some(index) = indexed.get(&key).copied() {
-            if received[index].revoked {
-                received[index] = row;
+             .await?;
+        let derived: Vec<ShareListEntry> = tx
+            .fetch_all(
+                format!(
+                    "SELECT d.owner_user_id,owner.user_name AS owner_name,c.recipient_user_id,recipient.user_name AS recipient_name,d.resource_kind,d.source_id,CAST(JSON_UNQUOTE(JSON_EXTRACT(d.definition,'$.definition.name')) AS CHAR) AS name,d.revision,TRUE AS allow_copy,FALSE AS direct_enabled,FALSE AS revoked,TRUE AS derived
+                    FROM {RECEIPTS} c JOIN {PUBLICATIONS} d ON d.id=c.resource_id
+                    JOIN users owner ON owner.id=d.owner_user_id JOIN users recipient ON recipient.id=c.recipient_user_id
+                    WHERE c.entity_id=? AND d.resource_kind='assistant' AND {team_copy_access}"
+                ),
+                (id.to_string(),),
+            )
+             .await?;
+        let mut indexed = received
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                (
+                    (
+                        row.owner_user_id,
+                        row.resource_kind.clone(),
+                        row.source_id.clone(),
+                    ),
+                    index,
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for row in derived {
+            let key = (
+                row.owner_user_id,
+                row.resource_kind.clone(),
+                row.source_id.clone(),
+            );
+            if let Some(index) = indexed.get(&key).copied() {
+                if received[index].revoked {
+                    received[index] = row;
+                } else {
+                    received[index].allow_copy = true;
+                }
             } else {
-                received[index].allow_copy = true;
+                indexed.insert(key, received.len());
+                received.push(row);
             }
-        } else {
-            indexed.insert(key, received.len());
-            received.push(row);
         }
-    }
-    let sent = state
-        .mysql
-        .fetch_all(
-            format!("{select} WHERE d.owner_user_id=? ORDER BY g.updated_at DESC"),
-            (id,),
-        )
-        .await
-        .map_err(internal)?;
-    let sources: Vec<ShareSource> = state.mysql.fetch_all(
-        format!("SELECT d.resource_kind AS kind,d.source_id AS source,d.revision FROM {PUBLICATIONS} d WHERE d.owner_user_id=?"), (id,)
-    ).await.map_err(internal)?;
-    let publication_revisions = sources
-        .into_iter()
-        .map(|row| (format!("{}:{}", row.kind, row.source), row.revision))
-        .collect();
-    Ok(ShareList {
-        received,
-        sent,
-        publication_revisions,
-    })
+        let sent = tx
+            .fetch_all(
+                format!("{select} WHERE d.owner_user_id=? ORDER BY g.updated_at DESC"),
+                (id,),
+            )
+             .await?;
+        let sources: Vec<ShareSource> = tx.fetch_all(
+            format!("SELECT d.resource_kind AS kind,d.source_id AS source,d.revision FROM {PUBLICATIONS} d WHERE d.owner_user_id=?"), (id,)
+        ) .await?;
+        let publication_revisions = sources
+            .into_iter()
+            .map(|row| (format!("{}:{}", row.kind, row.source), row.revision))
+            .collect();
+        Ok(ShareList {
+            received,
+            sent,
+            publication_revisions,
+        })
+    }).await.map_err(internal)
 }
 
 #[brz_http_server::post("/api/v1/assistant-shares")]
@@ -580,6 +576,19 @@ async fn sync_definition(
         }
         let mut notices = Vec::new();
         for member in &body.assistants {
+            // Active assistants have their own revision-checked sync source.
+            // A team payload can only seed a new or currently inactive publication.
+            let (_, source) = member.key();
+            let active: Option<(i32,)> = tx.fetch_optional(
+                format!(
+                    "SELECT d.id FROM {PUBLICATIONS} d WHERE d.owner_user_id=? AND d.resource_kind='assistant' AND d.source_id=? AND BINARY d.source_id=BINARY ? AND {}",
+                    storage::active_definition()
+                ),
+                (owner, source, source),
+            ).await?;
+            if active.is_some() {
+                continue;
+            }
             publish_definition(tx, owner, member, &mut notices).await?;
         }
         storage::update_publication(tx, &old, &body.root).await?;

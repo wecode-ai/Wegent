@@ -271,31 +271,34 @@ function StandInTeamsDialog({
                             <span className="text-text-secondary">{t('standIn.teams.lead')}</span>
                           )}
                         </label>
-                        {included && !isLead && locations && locations.size > 1 && (
-                          <SelectField
-                            accessibleLabel={name}
-                            testId={`stand-in-team-member-device-${id}`}
-                            value={currentDevice}
-                            disabled={busy}
-                            options={[...new Set([currentDevice, ...locations.keys()])].map(
-                              device => ({
-                                value: device,
-                                label: device,
-                              })
-                            )}
-                            onChange={device => {
-                              const memberRoutes = { ...draft.memberRoutes }
-                              if (device === settings.executionDeviceId) delete memberRoutes[id]
-                              else {
-                                memberRoutes[id] = {
-                                  executionDeviceId: device,
-                                  name: locations.get(device)?.name ?? name,
+                        {included &&
+                          !isLead &&
+                          locations &&
+                          (locations.size > 1 || !locations.has(currentDevice)) && (
+                            <SelectField
+                              accessibleLabel={name}
+                              testId={`stand-in-team-member-device-${id}`}
+                              value={currentDevice}
+                              disabled={busy}
+                              options={[...new Set([currentDevice, ...locations.keys()])].map(
+                                device => ({
+                                  value: device,
+                                  label: device,
+                                })
+                              )}
+                              onChange={device => {
+                                const memberRoutes = { ...draft.memberRoutes }
+                                if (device === settings.executionDeviceId) delete memberRoutes[id]
+                                else {
+                                  memberRoutes[id] = {
+                                    executionDeviceId: device,
+                                    name: locations.get(device)?.name ?? name,
+                                  }
                                 }
-                              }
-                              setDraft({ ...draft, memberRoutes })
-                            }}
-                          />
-                        )}
+                                setDraft({ ...draft, memberRoutes })
+                              }}
+                            />
+                          )}
                         {included && (
                           <label className="grid gap-1 pl-6 text-text-secondary">
                             {t('standIn.teams.duty')}

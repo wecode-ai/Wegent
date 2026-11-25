@@ -430,8 +430,8 @@ function ShareContents({
           const entry = revoking
           void perform(async () => {
             await api.revoke(userId, device, entry)
-            onPublished(await api.list(userId, device))
             setRevoking(null)
+            onPublished(await api.list(userId, device))
           })
         }}
       />

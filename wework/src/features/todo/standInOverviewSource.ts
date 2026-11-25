@@ -251,14 +251,17 @@ export function createStandInOverviewSource(initial: {
       if (settingsRequest) {
         const roleId = owner.initialProfileId === '@primary' ? undefined : owner.initialProfileId
         const profile = owner.initialProfileId === '@primary' ? 'primary' : 'role'
-        owner.requestLeave(() => {
-          if (!ownsScope(owner)) return
-          observation!.clearConversationSelection()
-          if (snapshot.profile === profile && snapshot.roleId === roleId) return
-          setRoleId(roleId)
-          observation!.rememberProfileTrigger()
-          setProfile(profile)
-        })
+        if (snapshot.profile === profile && snapshot.roleId === roleId) {
+          owner.clearConversationSelection()
+        } else {
+          owner.requestLeave(() => {
+            if (!ownsScope(owner)) return
+            observation!.clearConversationSelection()
+            setRoleId(roleId)
+            observation!.rememberProfileTrigger()
+            setProfile(profile)
+          })
+        }
       }
     }
     if (owner.active && entryRequest !== owner.entryRequestKey) {

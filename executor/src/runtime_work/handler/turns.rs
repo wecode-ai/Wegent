@@ -1783,7 +1783,18 @@ impl RuntimeWorkRpcHandler {
                 .refresh_shared_conversation_request(&mut request)
                 .await
             {
-                handler.retain_failed_runtime_task(&turn_local_task_id, &error);
+                handler.store.update_task(&turn_local_task_id, |link| {
+                    let active = handler
+                        .active_local_executions
+                        .lock()
+                        .expect("active local execution map lock should not be poisoned");
+                    if active
+                        .get(&turn_local_task_id)
+                        .is_some_and(|control| control.execution_id == execution_id)
+                    {
+                        apply_local_task_failure(link, &error);
+                    }
+                });
                 scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
                 return;
             }

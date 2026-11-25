@@ -378,6 +378,7 @@ impl RuntimeWorkRpcHandler {
                         .and_then(|owner| {
                             crate::task_runtime::personal_stand_in::assistant_share_copy_revision(
                                 &settings,
+                                &connection.backend_url,
                                 owner,
                                 entry["resource_kind"].as_str()?,
                                 entry["source_id"].as_str()?,
