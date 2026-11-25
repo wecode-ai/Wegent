@@ -10,7 +10,6 @@ import {
 import { createWorkbenchNotificationProducer } from './workbenchNotificationProducer'
 import type { NotificationTaskRegistry } from '@/features/notifications/notificationTaskRegistry'
 import { EMPTY_RUNTIME_TASK_REMINDERS, type RuntimeTaskReminderState } from './runtimeTaskReminders'
-import type { RuntimeTaskLifecycleStoreSnapshot } from './runtimeTaskLifecycle'
 import { createCoreDshModelPublisher } from '@/features/dsh-models/coreDshModelPublisher'
 import { createWorkbenchTelemetry } from './workbenchTelemetry'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -86,7 +85,6 @@ export function createWorkbenchSession(
   let accountOwner: TabAccountOwner | null = null
   let input: WorkbenchSessionInput | null = null
   let taskReminders = EMPTY_RUNTIME_TASK_REMINDERS
-  let reminderLifecycle: RuntimeTaskLifecycleStoreSnapshot | undefined
   let releaseAppshots: (() => void) | undefined
   const suspendAppshots = () => {
     releaseAppshots?.()
@@ -155,7 +153,7 @@ export function createWorkbenchSession(
   }
   const routeNavigation = createWorkbenchRouteNavigation(state, operations.stableOpenRuntimeTask)
   const harnessLauncher = createHarnessAppLaunchActor()
-  const diagnostics = createWorkbenchDebugPublisher()
+  const diagnostics = createWorkbenchDebugPublisher(state.lifecycleStore.subscribe)
   const coreDshModels = createCoreDshModelPublisher()
   const workbenchTelemetry = createWorkbenchTelemetry(state)
   const ownerObservations = createWorkbenchOwnerObservations(state, tabId)
@@ -312,9 +310,8 @@ export function createWorkbenchSession(
   function startRequestedChat() {
     if (canNavigate() && consumeWorkbenchNewChatRequest()) operations.stableStartNewChat()
   }
-  function publishReminderConsumers() {
+  function updateNotificationSource() {
     if (!input || !isHeld()) return
-    diagnostics.update(input.debugSnapshot)
     notifications.update(
       input.notificationRegistry ?? null,
       taskReminders,
@@ -339,8 +336,8 @@ export function createWorkbenchSession(
       state.resources.localAppsInflightRef.current = null
     }
     reconcile()
-    if (isHeld()) publishReminderConsumers()
-    else diagnostics.suspend()
+    diagnostics.update(isHeld() ? next.debugSnapshot : null)
+    updateNotificationSource()
     let released = false
     return () => {
       if (released) return
@@ -372,22 +369,16 @@ export function createWorkbenchSession(
     canNavigate,
     canSyncLifecycle,
     isHeld,
-    getTaskReminders: () => taskReminders,
-    publishTaskReminders(
-      reminders: RuntimeTaskReminderState,
-      lifecycle: RuntimeTaskLifecycleStoreSnapshot
-    ) {
-      const remindersChanged = taskReminders !== reminders
-      if (!remindersChanged && reminderLifecycle === lifecycle) return
-      taskReminders = reminders
-      reminderLifecycle = lifecycle
-      if (!observers || !isHeld()) return
-      if (remindersChanged) {
-        routeNavigation.update(canNavigate() && input?.taskRouteActive === true, reminders)
-        publishReminderConsumers()
-      } else if (input) diagnostics.update(input.debugSnapshot)
-    },
     startRequestedChat,
+    getTaskReminders: () => taskReminders,
+    publishTaskReminders(next: RuntimeTaskReminderState) {
+      if (taskReminders === next) return
+      taskReminders = next
+      if (!input || !observers || !isHeld()) return
+      routeNavigation.update(canNavigate() && input.taskRouteActive === true, taskReminders)
+      diagnostics.update(input.debugSnapshot)
+      updateNotificationSource()
+    },
     consumeQueuedPluginTrial: () => {
       if (canNavigate() && input?.consumePluginTrials) operations.stableConsumeQueuedPluginTrial()
     },

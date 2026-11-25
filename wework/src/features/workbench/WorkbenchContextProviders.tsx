@@ -2,6 +2,7 @@ import {
   RuntimeTaskRemindersContext,
   WorkbenchOwnerLeaseContext,
   WorkbenchQueueActionsContext,
+  WorkbenchSidebarRemindersContext,
 } from './workbenchContexts'
 import { useRuntimeTaskReminders, type RuntimeTaskReminderState } from './runtimeTaskReminders'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
@@ -13,47 +14,44 @@ import {
   RuntimeTaskLifecycleProvider,
   useRuntimeTaskLifecycleStoreSnapshot,
   type RuntimeTaskLifecycleStore,
-  type RuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type { WorkbenchContextValue, WorkbenchPaneContextValue } from './workbenchContextTypes'
 import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
-import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 
-type PublishTaskReminders = (
-  reminders: RuntimeTaskReminderState,
-  lifecycle: RuntimeTaskLifecycleStoreSnapshot
-) => void
-
-function TaskRemindersProvider({
+function WorkbenchReminderProvider({
   runtimeWork,
-  services,
   lifecycleStore,
+  services,
   publish,
   children,
 }: {
   runtimeWork: WorkbenchContextValue['state']['runtimeWork']
-  services: WorkbenchPaneContextValue['services']
   lifecycleStore: RuntimeTaskLifecycleStore
-  publish: PublishTaskReminders
+  services: WorkbenchPaneContextValue['services']
+  publish: (reminders: RuntimeTaskReminderState) => void
   children: ReactNode
 }) {
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  const reminders = useRuntimeTaskReminders({
+  const runtimeTaskReminders = useRuntimeTaskReminders({
     runtimeWork,
     lifecycleStore,
     lifecycleSnapshot,
     standInApi: services.standInApi,
     runtimeApi: services.runtimeWorkApi,
+    publish,
   })
-  const subscribe = useCallback(() => {
-    publish(reminders, lifecycleSnapshot)
-    return () => {}
-  }, [publish, reminders, lifecycleSnapshot])
-  useSyncExternalStore(subscribe, () => null)
+  const { unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead } = runtimeTaskReminders
+  const sidebarReminders = useMemo(
+    () => ({ unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead }),
+    [unreadTaskKeys, unreadMessageCounts, markRuntimeTaskRead]
+  )
   return (
-    <RuntimeTaskRemindersContext.Provider value={reminders}>
-      {children}
+    <RuntimeTaskRemindersContext.Provider value={runtimeTaskReminders}>
+      <WorkbenchSidebarRemindersContext.Provider value={sidebarReminders}>
+        {children}
+      </WorkbenchSidebarRemindersContext.Provider>
     </RuntimeTaskRemindersContext.Provider>
   )
 }
@@ -74,7 +72,7 @@ export function WorkbenchContextProviders({
   lifecycleStore: RuntimeTaskLifecycleStore
   refreshDevicesAfterRestart: WorkbenchSessionOperations['refreshDevicesAfterRestart']
   retainOwner: () => () => void
-  publishTaskReminders: PublishTaskReminders
+  publishTaskReminders: (reminders: RuntimeTaskReminderState) => void
   children: ReactNode
 }) {
   const { forceStartRuntimeTask, reorderQueuedRuntimeTask, setWorkbenchError } = value
@@ -99,14 +97,14 @@ export function WorkbenchContextProviders({
                     refreshDevices={refreshDevicesAfterRestart}
                   >
                     <WorkbenchQueueActionsContext.Provider value={queueActions}>
-                      <TaskRemindersProvider
+                      <WorkbenchReminderProvider
                         runtimeWork={value.state.runtimeWork}
-                        services={paneValue.services}
                         lifecycleStore={lifecycleStore}
+                        services={paneValue.services}
                         publish={publishTaskReminders}
                       >
                         <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
-                      </TaskRemindersProvider>
+                      </WorkbenchReminderProvider>
                     </WorkbenchQueueActionsContext.Provider>
                   </WorkbenchCloudDeviceRestarts>
                 </DesktopGitAccountConfigurationProvider>

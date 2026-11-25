@@ -62,6 +62,7 @@ vi.mock('@/desktop/localExecutor', () => ({
     return { deviceId: mocks.deviceId }
   },
   getKnownLocalExecutorDeviceId: () => mocks.deviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => mocks.runtimeInstanceId,
 }))
 
 describe('OpenAI official catalog persistence', () => {
