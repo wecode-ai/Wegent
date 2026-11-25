@@ -223,13 +223,19 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
   const description = scope('[data-testid="cloud-todo-detail-description"]')
   const title = scope('[data-testid="cloud-todo-detail-title"]')
   const save = scope('[data-testid="cloud-todo-save"]')
+  const editDescription = scope('[data-testid="issue-description-edit"]')
   const boardTab = '[data-testid="workspace-tab-select-fixed-board"]'
   const taskTab = '[data-testid="workspace-tab-select-fixed-task"]'
-  const originalDescription = await control.command('getValue', description)
+  const originalDescription = await control.command('getText', description)
   const originalTitle = await control.command('getValue', title)
   const draft = `Unsaved Issue draft ${process.pid}`
+  assert.ok(originalDescription, 'The Issue description fixture must not be empty')
 
-  await control.command('fill', description, { value: draft })
+  await control.command('scrollIntoViewAsUser', editDescription)
+  await control.command('click', editDescription)
+  await control.command('waitFor', `${description}[contenteditable="true"]`, { visible: true })
+  await control.command('selectText', description, { value: originalDescription })
+  await control.command('pasteText', description, { value: draft })
   await control.command('waitFor', save, { visible: true, timeoutMs })
 
   await clickWithNativeMouse(control, taskTab, timeoutMs)
@@ -251,7 +257,8 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
     JSON.stringify({ boardTab, draft, originalTitle, taskTab }, null, 2)
   )
 
-  await control.command('fill', description, { value: originalDescription })
+  await control.command('selectText', description, { value: draft })
+  await control.command('pasteText', description, { value: originalDescription })
   await control.command('waitFor', save, { visible: false, timeoutMs })
 }
 
