@@ -460,7 +460,7 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
     rendererCapture.if,
     `failure() && steps.${rendererGate.id}.conclusion == 'failure'`,
   );
-  assert.equal(rendererCapture.run, "node wework/scripts/profile-renderer.mjs --capture");
+  assert.equal(rendererCapture.run, "node wework/scripts/profile-renderer.mjs --capture --processes");
   assert(job.steps.indexOf(rendererGate) < job.steps.indexOf(rendererCapture));
   assert.equal(describe.if, "env.MACOS_COMPLETE_BUILD == 'true'");
   assert.equal(describe["continue-on-error"], undefined);

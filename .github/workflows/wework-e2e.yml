@@ -1435,7 +1435,7 @@ jobs:
       - name: Capture renderer workload after a budget failure
         if: failure() && steps.renderer-budgets.conclusion == 'failure'
         timeout-minutes: 8
-        run: node wework/scripts/profile-renderer.mjs --capture
+        run: node wework/scripts/profile-renderer.mjs --capture --processes
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
