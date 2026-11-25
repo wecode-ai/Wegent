@@ -51,7 +51,7 @@ interface QueryParamAutoSendProps {
   /** Callback to change the selected team */
   onTeamChange: (team: Team) => void
   /** Callback to send a message (same as manual send) */
-  onSendMessage: (message: string) => Promise<void>
+  onSendMessage: (message: string, onFailure: () => void) => Promise<void>
   /** Whether there is an existing task selected (taskId in URL) */
   hasTaskId: boolean
   /** Callback to prefill the input box when a new query prompt arrives */
@@ -298,12 +298,12 @@ export default function QueryParamAutoSend({
       // Task creation pushes a history entry, leaving the original link behind it.
       completedAutoSendKeys.current.add(action.key)
       action.awaitingTaskNavigation = true
-      onSendMessageRef.current(message).catch(() => {
+      const onFailure = () => {
         if (cancelled || actionRef.current !== action || !action.awaitingTaskNavigation) return
         action.awaitingTaskNavigation = false
         clearQueryParams(action.key, true)
-        // Error handling is done inside onSendMessage (toast etc.)
-      })
+      }
+      void onSendMessageRef.current(message, onFailure).catch(onFailure)
     }
 
     // Start the readiness polling

@@ -53,6 +53,8 @@ import {
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
   artifactContext?: ArtifactNodeContext
+  /** Notify the caller if the message cannot be dispatched. */
+  onFailure?: () => void
   /** Previous tasks referenced as background context for this message. */
   conversationRefs?: Array<{
     task_id: number
@@ -1088,17 +1090,24 @@ export function useChatStreamHandlers({
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string, sendOptions?: SendMessageOptions) => {
-      if (!selectedTeam) return
+      if (!selectedTeam) {
+        sendOptions?.onFailure?.()
+        return
+      }
       const message =
         overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
       const hasAttachments = attachments.length > 0
-      if (!message && !hasAttachments && !shouldHideChatInput) return
+      if (!message && !hasAttachments && !shouldHideChatInput) {
+        sendOptions?.onFailure?.()
+        return
+      }
 
       if (!sendOptions?.artifactContext && !isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
           title: '请等待文件上传完成',
         })
+        sendOptions?.onFailure?.()
         return
       }
 
@@ -1123,6 +1132,7 @@ export function useChatStreamHandlers({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
         })
+        sendOptions?.onFailure?.()
         return
       }
 
@@ -1186,6 +1196,7 @@ export function useChatStreamHandlers({
         await sendPreparedChatMessage(prepared)
       } catch (err) {
         handleSendError(err as Error, message, sendOptions)
+        sendOptions?.onFailure?.()
       }
     },
     [

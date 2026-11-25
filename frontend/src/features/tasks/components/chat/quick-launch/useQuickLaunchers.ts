@@ -8,6 +8,7 @@ import {
   getTeamDisplayName,
   type TeamModeFilter,
 } from '../../selector/team-selector-utils'
+import { LINKED_AGENT_LAUNCHER_PREFIX } from './launch-intent'
 import type { QuickInputPreset, QuickLauncher } from './types'
 
 interface UseQuickLaunchersOptions {
@@ -93,7 +94,7 @@ export function useQuickLaunchers({
     const recommendedLauncher = launchers.find(
       launcher => launcher.team.id === recommendedTeam.id
     ) ?? {
-      key: `linked-agent:${recommendedTeam.id}`,
+      key: `${LINKED_AGENT_LAUNCHER_PREFIX}${recommendedTeam.id}`,
       type: 'system_function',
       title: getTeamDisplayName(recommendedTeam),
       description: recommendedTeam.description,

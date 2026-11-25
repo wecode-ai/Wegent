@@ -1,6 +1,8 @@
 import { buildTeamTargetHref, type TeamTargetPage } from '../../selector/team-selector-utils'
 import type { QuickLauncher } from './types'
 
+export const LINKED_AGENT_LAUNCHER_PREFIX = 'linked-agent:'
+
 export const QUICK_LAUNCH_QUERY = {
   teamId: 'teamId',
   launcher: 'quickLauncher',
@@ -24,9 +26,14 @@ export function buildQuickLaunchHref(
 ): string {
   const params = new URLSearchParams({
     [QUICK_LAUNCH_QUERY.teamId]: String(launcher.team.id),
-    [QUICK_LAUNCH_QUERY.launcher]: launcher.key,
   })
 
+  if (launcher.key.startsWith(LINKED_AGENT_LAUNCHER_PREFIX)) {
+    params.set('recommend', '1')
+    return buildTeamTargetHref(launcher.targetPage, params)
+  }
+
+  params.set(QUICK_LAUNCH_QUERY.launcher, launcher.key)
   if (options.presetId) {
     params.set(QUICK_LAUNCH_QUERY.preset, options.presetId)
   }

@@ -49,6 +49,7 @@ let mockChatAreaTeam = mockSelectedTeam
 let mockNewChatTeam: Team | null = null
 let mockNewChat = false
 let mockNewChatParams = new URLSearchParams()
+let mockRouteParamsOverride: URLSearchParams | null = null
 let mockUserId = 1
 let mockTaskType: TaskType = 'chat'
 let mockRecentTeamIds: number[] = []
@@ -111,7 +112,8 @@ const mockStageInfo = {
 }
 
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => (mockNewChat ? mockNewChatParams : new URLSearchParams('taskId=42')),
+  useSearchParams: () =>
+    mockRouteParamsOverride ?? (mockNewChat ? mockNewChatParams : new URLSearchParams('taskId=42')),
   useRouter: () => mockRouter,
   usePathname: () => '/chat',
 }))
@@ -313,13 +315,16 @@ jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
   QuickAccessCards: ({
     onTeamSelect,
     recommendedTeam,
+    launchIntent,
   }: {
     onTeamSelect: (team: Team) => void
     recommendedTeam?: Team | null
+    launchIntent?: { teamId: number } | null
   }) => (
     <button
       data-testid="quick-access-cards"
       data-recommended-team={recommendedTeam?.id}
+      data-launch-intent-team={launchIntent?.teamId}
       onClick={() => onTeamSelect(mockQuickAccessSelectedTeam)}
     >
       Select agent
@@ -481,6 +486,7 @@ describe('ChatArea pipeline next-step dialog', () => {
     mockChatAreaTeam = mockSelectedTeam
     mockNewChat = false
     mockNewChatParams = new URLSearchParams()
+    mockRouteParamsOverride = null
     mockUserId = 1
     mockTaskType = 'chat'
     mockRecentTeamIds = []
@@ -789,6 +795,7 @@ describe('ChatArea selection while the catalog loads', () => {
   beforeEach(() => {
     mockNewChat = true
     mockNewChatParams = new URLSearchParams()
+    mockRouteParamsOverride = null
     mockUserId = 1
     mockTaskType = 'chat'
     mockRecentTeamIds = []
@@ -935,6 +942,47 @@ describe('ChatArea selection while the catalog loads', () => {
     rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
     expect(mockHandleTeamChange).not.toHaveBeenCalled()
     expect(mockNewChatTeam?.id).toBe(manualTeam.id)
+  })
+
+  it('drops a pending quick-launch intent when the link is replaced', () => {
+    mockNewChatParams = new URLSearchParams('teamId=65&quickLauncher=system%3Aremoved')
+    mockUrlTeam = { ...defaultTeam, id: 65 }
+    const props = { teams: [defaultTeam], isTeamsLoading: false, taskType: 'chat' as const }
+    const view = render(<ChatArea {...props} />)
+    const shortcuts = screen.getByTestId('quick-access-cards')
+    expect(shortcuts).toHaveAttribute('data-launch-intent-team', '65')
+
+    mockNewChatParams = new URLSearchParams('recommend=1')
+    mockUrlTeam = null
+    view.rerender(<ChatArea {...props} />)
+    expect(shortcuts).not.toHaveAttribute('data-launch-intent-team')
+
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    mockUrlTeam = { ...defaultTeam, id: 65 }
+    view.rerender(<ChatArea {...props} />)
+    expect(shortcuts).not.toHaveAttribute('data-launch-intent-team')
+  })
+
+  it('does not auto-send during the transition away from an existing task', () => {
+    jest.useFakeTimers()
+    try {
+      mockUseStatefulSelection = true
+      const props = { teams: [defaultTeam], isTeamsLoading: false, taskType: 'chat' as const }
+      const view = render(<ChatArea {...props} />)
+
+      mockNewChat = false
+      mockRouteParamsOverride = new URLSearchParams('q=hello&autoSend=true')
+      view.rerender(<ChatArea {...props} />)
+      act(() => jest.advanceTimersByTime(400))
+      expect(mockHandleSendMessage).not.toHaveBeenCalled()
+
+      mockNewChat = true
+      view.rerender(<ChatArea {...props} />)
+      act(() => jest.advanceTimersByTime(400))
+      expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('waits for the URL agent even if concurrent deletions make the catalog omit it', () => {
@@ -1124,7 +1172,9 @@ describe('ChatArea selection while the catalog loads', () => {
         jest.advanceTimersByTime(400)
       })
       expect(mockAutoSentTeamIds).toEqual([requested.id])
-      expect(mockHandleSendMessage).toHaveBeenCalledWith('hello')
+      expect(mockHandleSendMessage).toHaveBeenCalledWith('hello', {
+        onFailure: expect.any(Function),
+      })
       await act(async () => {
         jest.advanceTimersByTime(1000)
       })
@@ -1206,7 +1256,9 @@ describe('ChatArea selection while the catalog loads', () => {
         })
 
         expect(mockAutoSentTeamIds).toEqual([recentTeam.id])
-        expect(mockHandleSendMessage).toHaveBeenCalledWith('hello')
+        expect(mockHandleSendMessage).toHaveBeenCalledWith('hello', {
+          onFailure: expect.any(Function),
+        })
         await act(async () => {
           jest.advanceTimersByTime(1000)
         })

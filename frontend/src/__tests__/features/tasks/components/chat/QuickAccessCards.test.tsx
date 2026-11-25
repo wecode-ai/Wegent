@@ -534,6 +534,22 @@ describe('QuickAccessCards', () => {
     )
   })
 
+  test('carries a linked agent recommendation across modes without a preset intent', async () => {
+    const linked = makeTeam({ id: 65, name: 'Linked code agent', bind_mode: ['code'] })
+    render(
+      <QuickAccessCards
+        teams={[linked]}
+        selectedTeam={null}
+        onTeamSelect={jest.fn()}
+        currentMode="chat"
+        recommendedTeam={linked}
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Linked code agent'))
+    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=65&recommend=1&agent=code')
+  })
+
   test('routes code-only system functions to code mode with the target team selected', async () => {
     const onTeamSelect = jest.fn()
     mockGetQuickLaunch.mockResolvedValueOnce({

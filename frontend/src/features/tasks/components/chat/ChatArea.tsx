@@ -368,8 +368,9 @@ function ChatAreaContent({
   const searchParams = useSearchParams()
   const searchParamsString = stringifySearchParams(searchParams)
   const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
-  const explicitTeamId = getSearchParam(searchParams, 'teamId')
-  const teamIdFromUrl = explicitTeamId ?? quickLaunchIntent?.teamId.toString() ?? null
+  const teamIdFromUrl = getSearchParam(searchParams, 'teamId')
+  const activeQuickLaunchIntent =
+    quickLaunchIntent?.teamId === Number(teamIdFromUrl) ? quickLaunchIntent : null
   const { recentTeamIds, isLoading: isRecentTeamsLoading } = useRecentTaskTeams(
     taskType,
     !effectiveTaskId && !taskIdFromUrl && !teamIdFromUrl && !selectedTeamForNewTask
@@ -389,7 +390,7 @@ function ChatAreaContent({
     retry: retryUrlTeam,
   } = useUrlTeam(teamIdFromUrl, isNewChat)
   const recommendedTeam =
-    explicitTeamId && getSearchParam(searchParams, 'recommend') === '1' ? urlTeam : null
+    teamIdFromUrl && getSearchParam(searchParams, 'recommend') === '1' ? urlTeam : null
   // Explicit navigation is resolved by ID; offset pages can omit existing agents.
   const resolvedTeam = urlTeam ?? earlyDefaultTeam
   const teams = useMemo(
@@ -1169,6 +1170,7 @@ function ChatAreaContent({
   useEffect(() => {
     const intent = parseQuickLaunchIntent(new URLSearchParams(searchParamsString))
     if (!intent) {
+      setQuickLaunchIntent(current => (current?.teamId === Number(teamIdFromUrl) ? current : null))
       return
     }
 
@@ -1176,7 +1178,7 @@ function ChatAreaContent({
     const nextParams = removeQuickLaunchQueryParams(new URLSearchParams(searchParamsString))
     const nextSearch = nextParams.toString()
     router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname)
-  }, [pathname, router, searchParamsString])
+  }, [pathname, router, searchParamsString, teamIdFromUrl])
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
@@ -2743,10 +2745,12 @@ function ChatAreaContent({
       <QueryParamAutoSend
         teams={teams}
         isTeamsLoading={isTeamsLoading}
-        isTeamSelectionReady={isTeamSelectionReady}
+        isTeamSelectionReady={isNewChat && isTeamSelectionReady}
         selectedTeam={chatState.selectedTeam}
         onTeamChange={handleUserTeamChange}
-        onSendMessage={streamHandlers.handleSendMessage}
+        onSendMessage={(message, onFailure) =>
+          streamHandlers.handleSendMessage(message, { onFailure })
+        }
         hasTaskId={!!taskIdFromUrl}
         onPrefillMessage={chatState.setTaskInputMessage}
       />
@@ -2878,7 +2882,7 @@ function ChatAreaContent({
                   showWizardButton={effectiveTaskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
                   recommendedTeam={recommendedTeam}
-                  launchIntent={quickLaunchIntent}
+                  launchIntent={activeQuickLaunchIntent}
                   onLaunchIntentConsumed={() => setQuickLaunchIntent(null)}
                 />
               )}

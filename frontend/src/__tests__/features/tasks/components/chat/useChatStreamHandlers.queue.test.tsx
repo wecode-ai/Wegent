@@ -206,6 +206,20 @@ describe('useChatStreamHandlers queue integration', () => {
     }
   )
 
+  it('notifies a linked send when the transport error is handled locally', async () => {
+    isMachineStreamingMock = false
+    currentTaskIdMock = null
+    selectedTaskDetailMock = null
+    mockContextSendMessage.mockRejectedValueOnce(new Error('Send failed'))
+    const onFailure = jest.fn()
+    const { result } = renderQueueableHook()
+
+    await act(() => result.current.handleSendMessage('Linked prompt', { onFailure }))
+
+    expect(mockContextSendMessage).toHaveBeenCalledTimes(1)
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+
   it('repairs a stale task id in the URL after a message is accepted', async () => {
     isMachineStreamingMock = false
     currentTaskIdMock = 42
