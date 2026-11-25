@@ -4,6 +4,8 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { dequal } from 'dequal'
 
+export class PersonalAssistantSavePreflightError extends Error {}
+
 export class PersonalAssistantDefinitionSaveError extends Error {
   readonly code = 'cloud_definition_save_unconfirmed'
   readonly saved: PersonalStandInSettings
@@ -125,11 +127,19 @@ export function personalAssistantDeviceSettings(
           return executor.personalSave(userId, deviceSettings, deviceId, transferRoleId)
         }
         if (cloudDefinitionRevision !== account.revision) {
-          throw Object.assign(new Error('Cloud assistant definition changed'), {
-            code: 'cloud_definition_version_conflict',
-          })
+          throw Object.assign(
+            new PersonalAssistantSavePreflightError('Cloud assistant definition changed'),
+            {
+              code: 'cloud_definition_version_conflict',
+            }
+          )
         }
-        const device = await executor.personalGet(userId, deviceId)
+        const device = await executor.personalGet(userId, deviceId).catch(cause => {
+          if (!transferRoleId) throw cause
+          throw new PersonalAssistantSavePreflightError('Unable to read the target assistant', {
+            cause,
+          })
+        })
         const configured = new Set(device.roles.map(role => role.id))
         const projectedSettings = applyDefinitions(device, account)
         const projected = new Map(projectedSettings.roles.map(role => [role.id, role]))

@@ -514,6 +514,10 @@ export function createDesktopScenario({
         migrated,
         'Successful migration must retain portable responsibilities on the target'
       )
+      const migratedDefinition = (await readInitialAssistant()).assistant.definitions.find(
+        definition => definition.roleId === migrated.id
+      )
+      assert.equal(migratedDefinition?.bot.metadata.displayName, LOCAL_NAME)
       assert.equal(migrated.enabled, false, 'Migration must not enable unconfigured device grants')
       assert.equal(migrated.workspace, undefined)
       assert.equal(migrated.connections, undefined)

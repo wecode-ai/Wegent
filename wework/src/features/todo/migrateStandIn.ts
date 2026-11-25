@@ -21,17 +21,19 @@ export async function migrateStandIn(
     roleId?: string
     targetUser: number
     targetDevice: string
+    targetApi?: StandInExecutorApi
     primaryName: string
     assertOwnership?(): void
   }
 ): Promise<StandInRole> {
   input.assertOwnership?.()
   const { sourceUser, sourceDevice, roleId, targetUser, targetDevice } = input
+  const targetApi = input.targetApi ?? api
   if (sourceDevice === targetDevice) throw new StandInMigrationError('same_device')
   const [source, memories, target] = await Promise.all([
     api.personalGet(sourceUser, sourceDevice),
     api.memories(sourceUser, sourceDevice),
-    api.personalGet(targetUser, targetDevice),
+    targetApi.personalGet(targetUser, targetDevice, { deviceSettingsOnly: true }),
   ])
   if (source.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
   const original = roleId ? source.roles.find(role => role.id === roleId) : source.primary
@@ -44,9 +46,7 @@ export async function migrateStandIn(
     .join('')
     .slice(0, 48)}`
   const role = roleId ? source.roles.find(role => role.id === roleId)! : undefined
-  const prompt = [source.primary?.prompt, source.primary?.preferences, role?.prompt]
-    .filter(Boolean)
-    .join('\n\n')
+  const prompt = [source.primary?.prompt, role?.prompt].filter(Boolean).join('\n\n')
   const migrated: StandInRole = {
     ...newStandInRole(targetDevice, id),
     name: role?.name || input.primaryName,
@@ -89,10 +89,14 @@ export async function migrateStandIn(
       migrated.connections = original.connections.map(transferredConnection)
     }
     input.assertOwnership?.()
-    await api.personalSave(
+  }
+  if (!existing || targetApi !== api) {
+    await targetApi.personalSave(
       targetUser,
-      { ...target, roles: [...target.roles, migrated] },
-      targetDevice
+      { ...target, roles: existing ? target.roles : [...target.roles, migrated] },
+      targetDevice,
+      undefined,
+      { kind: 'create', roleId: id }
     )
   }
   input.assertOwnership?.()

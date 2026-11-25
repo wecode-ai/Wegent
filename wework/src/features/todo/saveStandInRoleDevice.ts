@@ -1,3 +1,4 @@
+import { PersonalAssistantSavePreflightError } from './personalAssistantDeviceSettings'
 import { dequal } from 'dequal'
 import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -140,17 +141,28 @@ export async function saveStandInRoleDevice(
   } catch (cause) {
     if (redirected) {
       try {
-        const observed = await api.personalGet(userId, targetDevice)
-        if (
-          connections?.some(connection => connection.pendingTakeover) ||
-          observed.roles.some(row => row.id === role.id && row.enabled)
-        ) {
-          // An activation can commit before its response is lost. Never restore two receivers.
-          throw new Error('Target activation is not known to have failed', { cause })
+        if (!(cause instanceof PersonalAssistantSavePreflightError)) {
+          const observed = await api.personalGet(userId, targetDevice)
+          if (
+            connections?.some(connection => connection.pendingTakeover) ||
+            observed.roles.some(row => row.id === role.id && row.enabled)
+          ) {
+            // An activation can commit before its response is lost. Never restore two receivers.
+            throw new Error('Target activation is not known to have failed', { cause })
+          }
         }
         // Use the committed version so compensation cannot overwrite another edit.
         if (previous) {
-          await api.personalSave(userId, { ...source, version: redirected.version }, sourceDevice)
+          const latest = await api.personalGet(userId, sourceDevice)
+          await api.personalSave(
+            userId,
+            {
+              ...latest,
+              version: redirected.version,
+              roles: latest.roles.map(row => (row.id === role.id ? previous : row)),
+            },
+            sourceDevice
+          )
         } else {
           const priorRoute = source.delegationRoutes?.find(row => row.id === role.id)
           await api.saveDelegationRoute(

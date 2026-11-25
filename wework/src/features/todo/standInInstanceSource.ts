@@ -228,6 +228,7 @@ export function createStandInInstanceSource({
       target?: StandInBindingTarget
       roleId?: string
       primaryName?: string
+      targetApi?: StandInExecutorApi
     }
   ) => {
     if (!listeners.size || !observation?.active || snapshot.busy) return
@@ -284,6 +285,7 @@ export function createStandInInstanceSource({
               targetUser: target.userId,
               targetDevice: target.deviceId,
               primaryName: input.primaryName!,
+              targetApi: input.targetApi,
               assertOwnership: () => assertObserved(revision, localDeviceId),
             })
           : undefined
@@ -339,8 +341,12 @@ export function createStandInInstanceSource({
     bind: async (target: StandInBindingTarget) => {
       await mutate('bind', { target })
     },
-    migrate: (target: StandInBindingTarget, roleId: string | undefined, primaryName: string) =>
-      mutate('migrate', { target, roleId, primaryName }),
+    migrate: (
+      target: StandInBindingTarget,
+      roleId: string | undefined,
+      primaryName: string,
+      targetApi?: StandInExecutorApi
+    ) => mutate('migrate', { target, roleId, primaryName, targetApi }),
     reload: () => {
       void read()
     },

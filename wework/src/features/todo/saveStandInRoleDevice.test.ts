@@ -2,6 +2,7 @@ import { newStandInRole, type StandInSourceConnection } from '@/api/personalStan
 import type { StandInExecutorApi } from '@/api/standIn'
 import { describe, expect, it, vi } from 'vitest'
 import { standInProfile } from './personalStandInSettings.testFixtures'
+import { PersonalAssistantSavePreflightError } from './personalAssistantDeviceSettings'
 import { saveStandInRoleDevice } from './saveStandInRoleDevice'
 
 const connection: StandInSourceConnection = {
@@ -52,6 +53,20 @@ describe('moving a role with a bound webhook', () => {
       policy: connection.policy,
     })
     expect(moved.connections?.[0].boundary).toBeUndefined()
+  })
+
+  it('restores source intake after a webhook activation fails before writing', async () => {
+    const { move, save } = fixture('ready')
+    save.mockImplementationOnce(async (_user, profile) => profile)
+    save.mockImplementationOnce(async (_user, profile) => profile)
+    save.mockRejectedValueOnce(new PersonalAssistantSavePreflightError('Target read failed'))
+    await expect(move()).rejects.toThrow('Target read failed')
+    expect(save.mock.calls.map(call => call[2])).toEqual(['target', 'source', 'target', 'source'])
+    expect(save.mock.calls.at(-1)?.[1].roles[0]).toMatchObject({
+      enabled: true,
+      executionDeviceId: 'source',
+      connections: [connection],
+    })
   })
 
   it('keeps the source receiver when the destination requires authorization', async () => {

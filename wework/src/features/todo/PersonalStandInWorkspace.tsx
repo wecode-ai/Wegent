@@ -135,13 +135,14 @@ function AccountStandInWorkspace({
   const account = ownerId === userId ? connectedAccount : undefined
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
-  const assistantServices = useMemo(
+  const cloudAssistantServices = useMemo(
     () =>
-      ownerId === userId && readAccount && publishAccount
+      readAccount && publishAccount
         ? personalAssistantDeviceSettings(services, readAccount, publishAccount)
         : services,
-    [services, ownerId, userId, readAccount, publishAccount]
+    [services, readAccount, publishAccount]
   )
+  const assistantServices = ownerId === userId ? cloudAssistantServices : services
   const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
   const ownerAvailable =
     notificationOwnerMatches &&
@@ -380,7 +381,8 @@ function AccountStandInWorkspace({
                 const role = await instance.migrate(
                   { userId, backendUrl, deviceId },
                   roleId,
-                  t('standIn.title')
+                  t('standIn.title'),
+                  cloudAssistantServices.standInApi
                 )
                 if (!role) throw new Error(t('standIn.migration.not_stopped'))
                 navigateTo(
