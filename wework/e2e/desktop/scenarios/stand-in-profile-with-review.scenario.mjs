@@ -5,6 +5,8 @@ import {
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createProfile } from './stand-in-profile.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { focusLayers, readFocusPaint } from '../modules/focus-paint.mjs'
+import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { ensureExperimentalFeaturesDisabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
@@ -98,6 +100,46 @@ async function verifyGuideExamples(control, completed = false) {
     completed ? '0' : '1',
     'Only first-run onboarding has a completion action; reopened examples do not repeat setup'
   )
+}
+
+async function verifyGuideExampleFocus(control) {
+  const example = '[data-testid="stand-in-onboarding-example-daily_brief"]'
+  await withProjectRenderer(async (client, target) => {
+    const capture = async () => {
+      const response = await client({
+        action: 'command',
+        target,
+        method: 'Runtime.evaluate',
+        params: {
+          returnByValue: true,
+          awaitPromise: true,
+          expression: `(async () => {
+            const button = document.querySelector(${JSON.stringify(example)})
+            const nodes = [button, button.parentElement]
+            await Promise.allSettled(nodes.flatMap(node => node.getAnimations().map(a => a.finished)))
+            return { focused: button.matches(':focus'), layers: nodes.map(${readFocusPaint}) }
+          })()`,
+        },
+      })
+      return response.result.value
+    }
+    const unfocused = await capture()
+    assert.equal(unfocused.focused, false, 'The guide example must start unfocused')
+    await control.command('nativePress', '[data-testid="stand-in-onboarding-close"]', {
+      key: 'Tab',
+    })
+    await control.command('waitFor', `${example}:focus-visible`)
+    const focused = await capture()
+    assert.equal(focused.focused, true)
+    assert.equal(
+      focused.layers.reduce(
+        (count, paint, index) => count + focusLayers(paint, unfocused.layers[index]),
+        0
+      ),
+      1,
+      'The first guide example should have a single keyboard focus indicator'
+    )
+  })
 }
 
 async function openCalendarReviewTemplate(control) {
@@ -360,6 +402,7 @@ export function createDesktopScenario(options) {
       assert.equal(connectedLater.primary.collaboration.policy.immediate, false)
       await openStandInExamples(control)
       await verifyGuideExamples(control, true)
+      await verifyGuideExampleFocus(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-close"]')
       await control.command('waitFor', GUIDE, { visible: false })
       assert.equal(

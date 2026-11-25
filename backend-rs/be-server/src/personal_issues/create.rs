@@ -70,11 +70,13 @@ async fn create_board_issue(
     api_key: Option<&str>,
     trace_id: Option<&str>,
 ) -> Result<Response, FastApiError> {
+    const PROVIDER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
     static CLIENT: OnceLock<Result<brz_http::Client, brz_http::reqwest::Error>> = OnceLock::new();
     let client = CLIENT.get_or_init(|| {
         brz_http::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .read_timeout(Duration::from_secs(60))
+            .timeout(PROVIDER_REQUEST_TIMEOUT)
+            // Breeze's default read timeout is 400ms, shorter than the provider request budget.
+            .read_timeout(PROVIDER_REQUEST_TIMEOUT)
             .configure(|builder| {
                 builder
                     .no_proxy()
@@ -119,47 +121,49 @@ fn upstream_error() -> FastApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use http_body_util::{BodyExt, Full};
-    use hyper::{body::Bytes, service::service_fn};
-    use serde_json::json;
-    use std::{
-        convert::Infallible,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+    use std::convert::Infallible;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
     };
-    use tokio::{net::TcpListener, sync::oneshot};
+
+    use http_body_util::{BodyExt, Full};
+    use hyper::{
+        body::{Bytes, Incoming},
+        service::service_fn,
+    };
+    use serde_json::json;
+    use tokio::net::TcpListener;
+
+    use super::*;
 
     #[tokio::test]
-    async fn project_issue_create_awaits_provider_response_beyond_default_read_timeout() {
+    async fn board_issue_waits_for_slow_provider_without_retrying_creation() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let requests = Arc::new(AtomicUsize::new(0));
-        let received = requests.clone();
-        let (stop, shutdown) = oneshot::channel();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let received_calls = calls.clone();
         let server = tokio::spawn(brz_http_server::hyper::serve(
             listener,
             move |_| {
-                let received = received.clone();
-                service_fn(move |request: http::Request<hyper::body::Incoming>| {
-                    let received = received.clone();
+                let calls = received_calls.clone();
+                service_fn(move |request: http::Request<Incoming>| {
+                    let calls = calls.clone();
                     async move {
-                        received.fetch_add(1, Ordering::Relaxed);
+                        calls.fetch_add(1, Ordering::SeqCst);
                         assert_eq!(request.method(), http::Method::POST);
-                        assert_eq!(request.uri().path(), "/api/v1/cloud-projects/42/loop-items");
-                        assert_eq!(request.headers()["authorization"], "Bearer test-session");
-                        assert_eq!(request.headers()["x-api-key"], "test-task-key");
-                        assert_eq!(request.headers()["x-request-id"], "test-trace");
+                        assert_eq!(
+                            request.uri().path(),
+                            "/api/v1/cloud-projects/1001/loop-items"
+                        );
+                        assert_eq!(request.headers()["authorization"], "Bearer fixture-token");
+                        assert_eq!(request.headers()["x-request-id"], "fixture-trace");
                         let body = request.into_body().collect().await.unwrap().to_bytes();
                         assert_eq!(
                             serde_json::from_slice::<Value>(&body).unwrap(),
-                            json!({"title": "New Issue"})
+                            json!({"title": "Slow Issue"})
                         );
-
-                        // The board provider must be allowed to finish a write after
-                        // the generic client's 400 ms per-read deadline.
+                        // The provider responds after Breeze's default socket read deadline.
                         tokio::time::sleep(
                             brz_http::DEFAULT_READ_TIMEOUT + Duration::from_millis(100),
                         )
@@ -167,46 +171,41 @@ mod tests {
                         Ok::<_, Infallible>(
                             http::Response::builder()
                                 .status(StatusCode::CREATED)
-                                .header("content-type", "application/json")
-                                .body(Full::new(Bytes::from_static(br#"{"id":"created"}"#)))
+                                .body(Full::new(Bytes::from_static(br#"{"id":"created-issue"}"#)))
                                 .unwrap(),
                         )
                     }
                 })
             },
-            async {
-                let _ = shutdown.await;
-            },
-            brz_http_server::hyper::Config {
-                shutdown_grace: Duration::ZERO,
-                ..Default::default()
-            },
+            std::future::pending(),
+            Default::default(),
         ));
 
-        let response = tokio::time::timeout(
+        let issue = json!({"title": "Slow Issue"}).as_object().unwrap().clone();
+        let result = tokio::time::timeout(
             Duration::from_secs(5),
             create_board_issue(
-                &format!("http://{address}"),
-                42,
-                json!({"title": "New Issue"}).as_object().unwrap().clone(),
-                Some("Bearer test-session"),
-                Some("test-task-key"),
-                Some("test-trace"),
+                &upstream,
+                1001,
+                issue,
+                Some("Bearer fixture-token"),
+                None,
+                Some("fixture-trace"),
             ),
         )
         .await;
-        let _ = stop.send(());
-        server.await.unwrap().unwrap();
-
-        let response = response.unwrap().unwrap();
+        server.abort();
+        let response = result
+            .expect("The test provider must respond promptly")
+            .expect("The provider must complete within the configured request deadline");
         assert_eq!(response.status(), StatusCode::CREATED);
         let brz_http_server::ResponseBody::Owned(body) = response.body() else {
-            panic!("expected the provider's response body");
+            panic!("Expected the provider's response body");
         };
         assert_eq!(
             serde_json::from_slice::<Value>(body).unwrap(),
-            json!({"id": "created"})
+            json!({"id": "created-issue"})
         );
-        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

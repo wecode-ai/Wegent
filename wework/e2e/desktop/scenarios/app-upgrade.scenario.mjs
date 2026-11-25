@@ -55,7 +55,10 @@ import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
 import { upgradeUserEnvironment } from '../modules/upgrade-user-environment.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
-import { openAboutSettings } from '../modules/app-update-navigation.mjs'
+import {
+  dismissPreparedUpdateDialog,
+  openAboutSettings,
+} from '../modules/app-update-navigation.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -746,6 +749,12 @@ export async function createDesktopScenario(options) {
         }
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
+        if (checkpoint === 'app-rollback') {
+          await dismissPreparedUpdateDialog(control, 'app-update-rollback-confirm')
+          assert.equal(await installedVersion(), pair.to.version)
+          await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
+          await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
+        }
         const beforeRollback = control.readyCount
         await goalContinuity.arm()
         await control.command('click', '[data-testid="app-update-rollback-confirm"]')

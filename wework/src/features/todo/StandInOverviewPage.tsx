@@ -13,6 +13,7 @@ import type { WorkspaceNavigationDetail } from '@/lib/navigation'
 import { navigateTo, WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
@@ -56,7 +57,7 @@ import type { StandInRoleLocation } from './useStandInRoleDirectory'
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 
 function roleTabClass(selected: boolean) {
-  return `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
+  return `inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`
 }
 
 /** Hosts personal conversations, work and settings on the selected Executor. */
@@ -339,9 +340,7 @@ export function StandInOverviewPage({
       {proposalFailureMessage}
     </p>
   )
-  const device = props.devices.find(
-    device => device.device_id === deviceId || device.app_device_id === deviceId
-  )
+  const device = findWorkbenchDevice(props.devices, deviceId) ?? undefined
   const processingFailure = standInProcessingFailure(
     processing.status,
     processing.error,
@@ -389,8 +388,7 @@ export function StandInOverviewPage({
       onClick: openMemory,
     })
     const savedRole = roleId ? saved.roles.find(item => item.id === roleId) : undefined
-    const savedIdentity = roleId ? savedRole : saved.primary
-    if (savedIdentity?.selfLearningEnabled !== undefined) {
+    if (!roleId || savedRole) {
       const reportDeviceId = savedRole?.executionDeviceId || saved.executionDeviceId
       shortcuts.push({
         id: 'revision',

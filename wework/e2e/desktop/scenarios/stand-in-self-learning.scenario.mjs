@@ -207,6 +207,11 @@ export function createDesktopScenario(options) {
           },
           { keepOpen: true }
         )
+        await control.command('clickWhenEnabled', testId('stand-in-learning-run-now'))
+        await control.command('waitFor', testId('stand-in-learning-run-status'), {
+          text: '当前助理还没有足够的独立案例可供评估',
+          timeoutMs: 10_000,
+        })
         await publishHistory(history, true)
         arrangement = await until(
           async () =>

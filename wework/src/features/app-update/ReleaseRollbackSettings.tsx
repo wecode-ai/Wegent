@@ -58,6 +58,7 @@ export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
         confirmLabel={t('workbench.app_update_rollback_confirm')}
         cancelLabel={t('common.cancel')}
         confirmTestId="app-update-rollback-confirm"
+        focusCancel
         onClose={source.close}
         onConfirm={() => void source.confirm()}
       />
