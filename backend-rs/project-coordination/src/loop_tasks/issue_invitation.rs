@@ -3,9 +3,39 @@
 
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 
+pub const TEAM_INVITATION_SOURCE: &str = "team_invitation";
+
+pub fn collaborator_exists(issue_sql: &str, user_sql: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM loop_items invitation WHERE invitation.resource_type='collaborator'
+         AND invitation.loop_item_id={issue_sql} AND invitation.user_id={user_sql})"
+    )
+}
+
+pub fn collaborator_people(issue_sql: &str, direct_only: bool) -> String {
+    let source = if direct_only {
+        format!("AND COALESCE(invitation.source,'')<>'{TEAM_INVITATION_SOURCE}'")
+    } else {
+        String::new()
+    };
+    format!(
+        "(SELECT JSON_ARRAYAGG(invitation.user_id) FROM loop_items invitation
+          WHERE invitation.resource_type='collaborator' AND invitation.loop_item_id={issue_sql}
+            AND invitation.user_id>0 {source})"
+    )
+}
+
 /// Current explicit invitations grant only native Issue reads, never project access.
 pub async fn permits_read<M: Mysql>(mysql: &M, item_id: &str, user_id: i32) -> MysqlResult<bool> {
-    let row: Option<Invitation> = mysql
+    permits_read_on(&mut &*mysql, item_id, user_id).await
+}
+
+pub async fn permits_read_on(
+    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
+    item_id: &str,
+    user_id: i32,
+) -> MysqlResult<bool> {
+    let row: Option<Invitation> = query
         .fetch_optional(INVITATION_SQL, (user_id, item_id, user_id, user_id))
         .await?;
     Ok(row.is_some())

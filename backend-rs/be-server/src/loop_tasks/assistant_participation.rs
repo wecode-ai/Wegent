@@ -23,7 +23,11 @@ impl ParticipationSupport for GatewayParticipation {
     }
 
     async fn require_issue_read(&self, item_id: &str, user_id: i32) -> Result<(), FastApiError> {
-        super::assignments::require_issue_read_for_user(&self.0, item_id, user_id).await
+        let issue =
+            super::assignments::require_issue_read_for_user(&self.0, item_id, user_id).await?;
+        issue.project_id.map(|_| ()).ok_or_else(|| {
+            FastApiError::detail(brz_http_server::StatusCode::NOT_FOUND, "Project not found")
+        })
     }
 }
 

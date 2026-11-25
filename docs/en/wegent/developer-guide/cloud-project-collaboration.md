@@ -105,6 +105,8 @@ A local Codex project may store one `{ projectStore, projectId }` default projec
 
 The existing `loop_items` table stores cloud TODOs. `cloud_project_id` references `cloud_projects`, and `sequence_number` produces display identifiers such as `WEG-18`.
 
+Cloud Issue creation uses `POST /api/v1/loop-items`. Send Issue fields in `issue` and optionally set `project_id`. Board creation uses the target project's provider, permissions, and automation rules. If a user selects a project in the standalone creation dialog, the Issue and its project association commit in the same transaction.
+
 The initial fixed workflow is:
 
 ```text

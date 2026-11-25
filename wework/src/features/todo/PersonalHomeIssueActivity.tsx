@@ -130,7 +130,7 @@ export function PersonalHomeIssueActivity({
           }}
         >
           <SquareTerminal aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-          <span className="min-w-0 max-w-sm truncate">{names}</span>
+          <span className="collaboration-issue-task-names min-w-0 max-w-sm truncate">{names}</span>
           <span className="shrink-0">{countLabel}</span>
           {counts
             .filter(([status]) => status !== 'unknown')

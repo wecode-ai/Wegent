@@ -13,6 +13,6 @@ pub(crate) use wegent_project_coordination::loop_tasks::{issue_invitation, item_
 mod external_shadow;
 
 mod assistant_participation;
-mod handler;
+pub(crate) mod handler;
 pub(crate) use wegent_project_coordination::loop_tasks::{assignment_repository, loop_repository};
 pub(crate) use wegent_project_coordination::loop_tasks::{http_error, item_response};

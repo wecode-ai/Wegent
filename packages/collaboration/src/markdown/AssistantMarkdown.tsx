@@ -194,6 +194,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       }))
     })
   }, [displayContent, windowMarkdown, variant, renderVisualization])
+  // A single streamed chunk has no sibling to window. Keep its mounted layout
+  // through completion and let the conversation row own offscreen virtualization.
+  const keepSingleStreamedChunk = hasStreamed && contentParts.length === 1
   const headingClasses = MARKDOWN_HEADING_CLASSES[variant === 'user' ? 'default' : variant]
   const components = useMemo(
     () => ({
@@ -421,7 +424,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                 key={key}
                 chunkIndex={index}
                 content={part.content}
-                eager={isStreaming && (index === 0 || isLastPart)}
+                eager={keepSingleStreamedChunk || (isStreaming && (index === 0 || isLastPart))}
               >
                 {markdown}
               </WindowedMarkdownChunk>
