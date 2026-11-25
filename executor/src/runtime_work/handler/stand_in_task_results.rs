@@ -37,7 +37,7 @@ pub(super) fn stand_in_result_command(
     )
 }
 
-fn stand_in_result_completion(child: &RuntimeTaskLink) -> Option<(&str, i64)> {
+pub(super) fn stand_in_result_completion(child: &RuntimeTaskLink) -> Option<(&str, i64)> {
     let recorded = &child.runtime_handle["standInResult"];
     let (status, completed) = if let Some(status) = recorded["status"].as_str() {
         // A newer command can exist before Codex publishes its next native turn ID.

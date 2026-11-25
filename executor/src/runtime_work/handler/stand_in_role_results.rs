@@ -2,7 +2,9 @@
 use super::stand_in_role_delegation::{
     denied, owned_role_task, remote_role_intent_matches_link, role_attempt, validate_remote_intent,
 };
-use super::stand_in_task_results::{completion_generation, stand_in_result_command};
+use super::stand_in_task_results::{
+    completion_generation, stand_in_result_command, stand_in_result_completion,
+};
 use super::*;
 use crate::runtime_work::reader::RuntimeReader;
 use crate::task_runtime::TaskRuntimeError;
@@ -20,15 +22,11 @@ impl LocalChildReceipt {
     fn from_link(link: &RuntimeTaskLink) -> Self {
         let attempt = role_attempt(link);
         let receipt = link.runtime_handle["standInResultReceipt"].clone();
-        let recorded = &link.runtime_handle["standInResult"];
-        let valid = attempt == 0
-            || (recorded["generation"] == completion_generation(&link.runtime_handle)
-                && recorded["status"].as_str().is_some_and(|status| {
-                    matches!(status, "done" | "failed" | "cancelled")
-                        && recorded["completedAt"].as_i64().is_some_and(|completed| {
-                            receipt == stand_in_result_command(link, completed, status)
-                        })
-                }));
+        let valid = receipt.is_string()
+            && link.interaction_status.is_none()
+            && stand_in_result_completion(link).is_some_and(|(status, completed)| {
+                receipt == stand_in_result_command(link, completed, status)
+            });
         Self {
             attempt,
             receipt: if valid { receipt } else { Value::Null },
@@ -86,6 +84,13 @@ impl<'a> RoleChildrenIndex<'a> {
             )
             .into_iter()
             .collect();
+        // Queued continuations retain the preceding generation until admission.
+        // Check scheduler ownership outside the store's role-child index lock.
+        for (id, child) in &mut local {
+            if child.receipt.is_string() && self.handler.is_busy_local_task(id) {
+                child.receipt = Value::Null;
+            }
+        }
         let requests = self.requests.get_or_insert_with(|| {
             read_requests(root).map(|requests| {
                 let mut index = RequestsByRoot::new();
@@ -537,7 +542,6 @@ mod tests {
         };
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
-        let receipt = "stand-in-result:database";
         let parent = RuntimeTaskLink {
             local_task_id: "engineering".into(),
             runtime_handle: json!({
@@ -546,7 +550,7 @@ mod tests {
             ..Default::default()
         };
         handler.upsert_local_task(parent.clone());
-        handler.upsert_local_task(RuntimeTaskLink {
+        let mut child = RuntimeTaskLink {
             local_task_id: "database".into(),
             status: "failed".into(),
             completed_at: Some(123),
@@ -555,10 +559,12 @@ mod tests {
                 "origin":{"type":"stand_in_task","userId":7,"deviceId":"desktop",
                     "sourceTaskId":"engineering","roleDelegation":{"root":"release"}},
                 "executionRequest":{"user_id":7},
-                "lastTurnId":"first-child-turn",
-                "standInResultReceipt":receipt}),
+                "lastTurnId":"first-child-turn"}),
             ..Default::default()
-        });
+        };
+        let receipt = stand_in_result_command(&child, 123, "failed");
+        child.runtime_handle["standInResultReceipt"] = json!(receipt);
+        handler.upsert_local_task(child);
         assert!(handler.role_task_has_unprocessed_children(&parent, 7));
         handler.store.update_task("engineering", |link| {
             link.runtime_handle["executionRequest"]["runtime_command_id"] = json!(receipt);
@@ -679,17 +685,20 @@ mod tests {
 
         // A cancellation latch cannot settle a queued retry until the stop is recorded.
         let cancelled_child = "cancel-retry";
-        let cancelled_child_receipt = "stand-in-result:cancel-retry";
-        handler.upsert_local_task(RuntimeTaskLink {
+        let mut child = RuntimeTaskLink {
             local_task_id: cancelled_child.into(),
             status: "failed".into(),
+            completed_at: Some(123),
             runtime_handle: json!({
                 "origin":{"type":"stand_in_task","userId":7,"deviceId":"desktop",
                     "sourceTaskId":"engineering","roleDelegation":{"root":"release"}},
                 "executionRequest":{"user_id":7},
-                "standInResultReceipt":cancelled_child_receipt}),
+                "lastTurnId":"cancelled-child-turn"}),
             ..Default::default()
-        });
+        };
+        let cancelled_child_receipt = stand_in_result_command(&child, 123, "failed");
+        child.runtime_handle["standInResultReceipt"] = json!(cancelled_child_receipt);
+        handler.upsert_local_task(child);
         store
             .reserve_stand_in_role_request(
                 cancelled_child,

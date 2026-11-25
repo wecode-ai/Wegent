@@ -108,6 +108,9 @@ impl RuntimeWorkRpcHandler {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::stand_in_task_results::{
+        stand_in_result_command, stand_in_result_completion,
+    };
     use super::*;
 
     #[tokio::test]
@@ -198,13 +201,19 @@ mod tests {
         handler.record_stand_in_completion_outbox("specialist", "done");
         assert_eq!(row(&handler)["status"], "done");
 
-        handler.upsert_local_task(RuntimeTaskLink {
+        let mut child = RuntimeTaskLink {
             local_task_id: "child".into(),
+            thread_id: Some("child-thread".into()),
+            status: "done".into(),
+            completed_at: Some(124),
             runtime_handle: json!({"origin":{"type":"stand_in_task","deviceId":"desktop","userId":user,
                 "sourceTaskId":"specialist","roleDelegation":{"root":"request"}},
-                "executionRequest":{"user_id":user},"standInResultReceipt":"child-result"}),
+                "executionRequest":{"user_id":user},"lastTurnId":"child-turn"}),
             ..Default::default()
-        });
+        };
+        let child_result = stand_in_result_command(&child, 124, "done");
+        child.runtime_handle["standInResultReceipt"] = json!(child_result);
+        handler.upsert_local_task(child);
         let waiting = row(&handler);
         assert_eq!(waiting["status"], "running");
         assert_eq!(waiting["waitingForChildren"], true);
@@ -238,7 +247,43 @@ mod tests {
         handler.record_stand_in_completion_outbox("specialist", "done");
         assert_eq!(row(&handler)["status"], "running");
         handler.store.update_task("specialist", |link| {
-            link.runtime_handle["standInRoleConsumedResults"] = json!(["child-result"]);
+            link.runtime_handle["standInRoleConsumedResults"] = json!([child_result]);
+        });
+        assert_eq!(row(&handler)["status"], "done");
+
+        // A manual continuation advances the execution without incrementing the role retry.
+        handler.record_stand_in_completion_outbox("child", "done");
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        let execution = handler.start_local_task_execution("child".into(), cancel, stopped);
+        assert_eq!(row(&handler)["waitingForChildren"], true);
+        let mut request =
+            runtime_event_request_from_link(&handler.local_task_link("child").unwrap());
+        request
+            .extra
+            .insert("runtime_command_id".into(), json!("continue-child"));
+        handler.store.update_task("child", |link| {
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
+        assert!(handler.finish_local_task("child", execution, None, "failed"));
+        let continued = handler.local_task_link("child").unwrap();
+        assert_eq!(role_attempt(&continued), 0);
+        assert_eq!(
+            continued.runtime_handle["standInResultReceipt"],
+            child_result
+        );
+        assert_eq!(row(&handler)["waitingForChildren"], true);
+        let (status, completed) = stand_in_result_completion(&continued).unwrap();
+        let continued_receipt = stand_in_result_command(&continued, completed, status);
+        handler.store.update_task("child", |link| {
+            link.runtime_handle["standInResultReceipt"] = json!(continued_receipt);
+        });
+        assert_eq!(row(&handler)["waitingForChildren"], true);
+        handler.store.update_task("specialist", |link| {
+            link.runtime_handle["standInRoleConsumedResults"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(continued_receipt));
         });
         assert_eq!(row(&handler)["status"], "done");
 
