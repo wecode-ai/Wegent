@@ -644,7 +644,9 @@ pub async fn commit_subtask_running<M: Mysql>(
             {
                 return Ok(None);
             }
-            let now = local_datetime();
+            // The subtask column has second precision. Binding fractions can
+            // round RUNNING forward past the first stream activity.
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
             match subtask_column::<String>(&row, "status").as_deref() {
                 Some("RUNNING") => {}
                 Some("PENDING") => {
@@ -945,14 +947,6 @@ fn member_stage(members: &[Value], bot_name: &str, bot_namespace: &str) -> Optio
                 .unwrap_or("default")
                 == bot_namespace
     })
-}
-
-/// `datetime.now()` in the `DATETIME(6)` form the source binds to its columns.
-fn local_datetime() -> String {
-    chrono::Local::now()
-        .naive_local()
-        .format("%Y-%m-%d %H:%M:%S%.6f")
-        .to_string()
 }
 
 /// `datetime.now().isoformat()`: microsecond precision, no offset.
