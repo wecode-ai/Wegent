@@ -53,6 +53,8 @@ import {
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
   artifactContext?: ArtifactNodeContext
+  /** URL actions finalize their query parameters after dispatch. */
+  urlAutoSend?: { onFailure: () => void }
   /** Previous tasks referenced as background context for this message. */
   conversationRefs?: Array<{
     task_id: number
@@ -439,7 +441,11 @@ export function useChatStreamHandlers({
 
       resetStreamingState()
       const parsedError = parseError(error)
-      lastFailedMessageRef.current = { message, options }
+      // A user-initiated retry is independent of the original URL action.
+      lastFailedMessageRef.current = {
+        message,
+        options: options?.urlAutoSend ? { ...options, urlAutoSend: undefined } : options,
+      }
 
       // Use getErrorDisplayMessage for consistent error display logic
       const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
@@ -793,7 +799,8 @@ export function useChatStreamHandlers({
               router.push(`/devices/chat?${params.toString()}`)
             } else {
               const params = new URLSearchParams(Array.from(searchParams.entries()))
-              params.delete('conversationGroupId')
+              // Keep the origin scope until the URL action matches and clears the new task URL.
+              if (!sendOptions?.urlAutoSend) params.delete('conversationGroupId')
               params.set('taskId', String(completedTaskId))
               router.push(`?${params.toString()}`)
             }
@@ -1088,17 +1095,24 @@ export function useChatStreamHandlers({
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string, sendOptions?: SendMessageOptions) => {
-      if (!selectedTeam) return
+      if (!selectedTeam) {
+        sendOptions?.urlAutoSend?.onFailure()
+        return
+      }
       const message =
         overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
       const hasAttachments = attachments.length > 0
-      if (!message && !hasAttachments && !shouldHideChatInput) return
+      if (!message && !hasAttachments && !shouldHideChatInput) {
+        sendOptions?.urlAutoSend?.onFailure()
+        return
+      }
 
       if (!sendOptions?.artifactContext && !isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
           title: '请等待文件上传完成',
         })
+        sendOptions?.urlAutoSend?.onFailure()
         return
       }
 
@@ -1123,6 +1137,7 @@ export function useChatStreamHandlers({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
         })
+        sendOptions?.urlAutoSend?.onFailure()
         return
       }
 
@@ -1186,6 +1201,7 @@ export function useChatStreamHandlers({
         await sendPreparedChatMessage(prepared)
       } catch (err) {
         handleSendError(err as Error, message, sendOptions)
+        sendOptions?.urlAutoSend?.onFailure()
       }
     },
     [

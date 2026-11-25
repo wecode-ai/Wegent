@@ -27,6 +27,7 @@ const copy: Record<ChatErrorType, readonly [string, string]> = {
   provider_error: ['模型服务异常', '请稍后重试，或切换其他模型。'],
   image_too_large: ['图片超出大小限制', '请压缩图片或减少图片数量后重试。'],
   model_protocol_error: ['模型与运行协议不匹配', '请切换兼容的模型后重试。'],
+  invalid_message_history: ['模型无法读取历史消息', '请新建对话后继续。'],
   invalid_role: ['消息格式不兼容', '请切换其他模型后重试。'],
   permission_denied: ['访问权限不足', '请确认访问权限，或选择有权限的模型。'],
   authentication_expired: [

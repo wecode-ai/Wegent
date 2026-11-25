@@ -73,9 +73,27 @@ export function assertProgressiveHi(body, model, budget = countModelRequest(body
     'hi',
     'The budget must measure the real default hi, not a title or prediction request'
   )
-  if (budget.tokens >= INITIAL_CONTEXT_TOKEN_LIMIT)
+  // Passthrough carries Codex's own exec manual, including its nested tool catalog.
+  // Measure the remaining payload separately and still check the full body for canaries.
+  let progressiveBody = body
+  let progressiveBudget = budget
+  if (model.requestMode === 'passthrough') {
+    progressiveBody = structuredClone(body)
+    const exec = execSelection(progressiveBody, model.protocol)
+    assert.equal(exec.type, 'custom')
+    for (const name of MATRIX_REQUIRED_TOOLS) {
+      assert.ok(
+        exec.description.includes('### `' + name + '`'),
+        'Missing native exec entry: ' + name
+      )
+    }
+    const nativeExec = progressiveBody.tools.find(tool => tool.name === 'exec')
+    delete nativeExec.description
+    progressiveBudget = countModelRequest(progressiveBody)
+  }
+  if (progressiveBudget.tokens >= INITIAL_CONTEXT_TOKEN_LIMIT)
     failures.push(
-      `complete request uses ${budget.tokens} ${budget.encoding} tokens (must be < ${INITIAL_CONTEXT_TOKEN_LIMIT})`
+      `complete request uses ${progressiveBudget.tokens} ${budget.encoding} tokens (must be < ${INITIAL_CONTEXT_TOKEN_LIMIT})`
     )
   const text = strings(body).join('\n')
   if (model.source === 'codex') {
@@ -94,13 +112,16 @@ export function assertProgressiveHi(body, model, budget = countModelRequest(body
     'Read [workflow.md](workflow.md)',
     "You are Codex, Wework's coding assistant.",
     'Run JavaScript in the persistent Node REPL.',
-    '### `get_goal`',
-    '### `create_goal`',
-    '### `update_goal`',
   ]) {
     if (text.includes(marker)) failures.push(`unloaded capability body leaked: ${marker}`)
   }
-  const declarations = wireDeclarations(body, model.protocol)
+  const progressiveText = strings(progressiveBody).join('\n')
+  for (const name of ['get_goal', 'create_goal', 'update_goal']) {
+    const marker = '### `' + name + '`'
+    if (progressiveText.includes(marker))
+      failures.push('unloaded capability body leaked: ' + marker)
+  }
+  const declarations = wireDeclarations(progressiveBody, model.protocol)
   const bootstrap = new Set([
     'exec',
     'wait',

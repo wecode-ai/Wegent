@@ -4,7 +4,10 @@
   "scenarioOnly": true,
   "paths": [
     "executor/crates/model-proxy/src/local_model_proxy/sse.rs",
-    "wework/e2e/desktop/modules/sse-regression-response.mjs"
+    "wework/e2e/desktop/modules/sse-regression-response.mjs",
+    "packages/collaboration/src/conversation/AssistantErrorCard.tsx",
+    "wework/src/components/layout/DesktopWorkbenchConversationView.tsx",
+    "wework/src/features/workbench/useWorkbenchNavigationCallbacks.ts"
   ],
   "ci": {
     "core": { "order": 125500, "shard": 6, "position": 11500 }

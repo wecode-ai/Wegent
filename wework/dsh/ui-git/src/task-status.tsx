@@ -1,6 +1,7 @@
 import { useContext, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 
+import type { TaskChangeRequestTarget } from '@/api/changeRequests'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import {
@@ -26,19 +27,24 @@ interface GitTaskStatusProps {
   workspace: RuntimeDeviceWorkspace
 }
 
-export default function GitTaskStatus({
+export default function GitTaskStatus(props: GitTaskStatusProps) {
+  const target = runtimeTaskChangeRequestTarget(props.workspace, props.task)
+  return target ? <GitTaskChangeRequestStatus {...props} target={target} /> : null
+}
+
+function GitTaskChangeRequestStatus({
   priorityLayout = false,
   statusInIndent = false,
   task,
   workspace,
-}: GitTaskStatusProps) {
+  target,
+}: GitTaskStatusProps & { target: TaskChangeRequestTarget }) {
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
   const enabled = preferences?.preferences.changeRequestStatusEnabled ?? true
   const workbench = useContext(WorkbenchContext)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const [repairing, setRepairing] = useState(false)
-  const target = useMemo(() => runtimeTaskChangeRequestTarget(workspace, task), [task, workspace])
   const monitor = useMemo(
     () =>
       enabled && workbench?.services?.deviceApi

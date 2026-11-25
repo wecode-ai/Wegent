@@ -1245,6 +1245,27 @@ path = "/api/plugins/native-auth/exchange"
 methods = ["POST"]
 path = "/api/v1/loop-items"
 
+# Assistant sharing uses explicit recipient grants.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/assistant-shares"
+[[routes]]
+methods = ["GET", "PATCH"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source"
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/assistant-shares/:kind/:source/recipients/:recipient"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source/snapshot/:mode"
+
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/assistant-shares/owner-sync"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source/copied"
+
 # First-class independent Issues have no project or space.
 [[routes]]
 methods = ["GET", "POST"]
