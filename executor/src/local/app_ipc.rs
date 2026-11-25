@@ -2,16 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(unix)]
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-#[cfg(unix)]
-use tokio::net::UnixListener;
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     sync::{broadcast, mpsc, watch, Mutex},
@@ -23,6 +19,8 @@ use super::event_stream::{event_sequence, ExecutorEventHub};
 mod connection_read_scope;
 mod project_listing;
 mod read_requests;
+#[cfg(unix)]
+mod unix_endpoint;
 use crate::{
     agents::resolve_codex_binary,
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
@@ -1066,18 +1064,7 @@ impl AppIpcServer {
         token: &str,
         owner_token: &str,
     ) -> Result<(), String> {
-        let path = Path::new(endpoint);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create app IPC socket directory: {error}"))?;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-                .map_err(|error| format!("failed to secure app IPC socket directory: {error}"))?;
-        }
-        remove_stale_unix_socket(path).await?;
-        let listener = UnixListener::bind(path)
-            .map_err(|error| format!("failed to bind app IPC Unix socket: {error}"))?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("failed to secure app IPC Unix socket: {error}"))?;
+        let (_lease, listener) = unix_endpoint::bind(Path::new(endpoint))?;
         write_executor_log_line(&format_executor_log(
             "app IPC local endpoint listening",
             &[("transport", "unix".to_owned())],
@@ -2004,20 +1991,6 @@ fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
         );
     }
     difference == 0
-}
-
-#[cfg(unix)]
-async fn remove_stale_unix_socket(path: &Path) -> Result<(), String> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("failed to inspect app IPC Unix socket: {error}")),
-    };
-    if !metadata.file_type().is_socket() {
-        return Err("refusing to replace a non-socket app IPC endpoint".to_owned());
-    }
-    std::fs::remove_file(path)
-        .map_err(|error| format!("failed to remove stale app IPC Unix socket: {error}"))
 }
 
 #[cfg(windows)]
