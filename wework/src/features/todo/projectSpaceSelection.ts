@@ -8,7 +8,7 @@ import {
 import { canEditCollaborationIssue } from '@wegent/collaboration'
 import { ApiError } from '@/api/http'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
-import { ProjectSpaceTaskContextChangedError } from '@/features/workbench/projectTaskTracking'
+import { ProjectSpaceTaskContextIncompleteError } from '@/features/workbench/projectTaskTracking'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
@@ -123,6 +123,15 @@ export class ProjectSpaceTaskContextLookupTimeoutError extends Error {
     super(`Project-space context lookup timed out after ${timeoutMs}ms`)
     this.name = 'ProjectSpaceTaskContextLookupTimeoutError'
   }
+}
+
+export function isIncompleteProjectSpaceTaskContextLookup(error: unknown): boolean {
+  return (
+    error instanceof ProjectSpaceTaskContextIncompleteError ||
+    error instanceof ProjectSpaceTaskContextLookupTimeoutError ||
+    (error instanceof AggregateError &&
+      error.errors.some(isIncompleteProjectSpaceTaskContextLookup))
+  )
 }
 
 function isMissingProjectTaskContext(error: unknown): boolean {
@@ -336,16 +345,17 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
   const errors = settledResults.flatMap(result =>
     result.status === 'rejected' ? [result.reason] : []
   )
-  if (
-    settledResults.length === apis.length &&
-    sources[0] &&
-    !errors.some(error => error instanceof ProjectSpaceTaskContextChangedError)
-  )
-    return sources[0]
   if (settledResults.length < apis.length) {
     errors.push(new ProjectSpaceTaskContextLookupTimeoutError(timeoutMs))
   }
-  throw new AggregateError(errors, 'Task is not linked to a project space')
+  const incomplete = errors.some(isIncompleteProjectSpaceTaskContextLookup)
+  if (sources[0] && !incomplete) return sources[0]
+  throw new AggregateError(
+    errors,
+    incomplete
+      ? 'Project-space task context lookup incomplete'
+      : 'Task is not linked to a project space'
+  )
 }
 
 export async function findProjectSpaceContextForTask(

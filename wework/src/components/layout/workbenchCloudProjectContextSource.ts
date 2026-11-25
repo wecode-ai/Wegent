@@ -10,15 +10,14 @@ import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeH
 import { hydrateLocalWorkItems, type LocalWorkItem } from '@/features/todo/todoModel'
 import {
   createCloudProjectTaskRuntimeApi,
-  ProjectSpaceTaskContextChangedError,
   projectTaskRuntimeApiForProject,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
 import {
   findProjectSpaceContextForTaskInStores,
   isDefaultWorkItemProject,
+  isIncompleteProjectSpaceTaskContextLookup,
   ProjectSpaceTaskContextUnavailableError,
-  ProjectSpaceTaskContextLookupTimeoutError,
   projectSpaceForRuntimeTask,
   projectSpaceTaskContextApisForTask,
   publishProjectSpaceTaskBindingChanged,
@@ -227,6 +226,7 @@ export function createWorkbenchCloudProjectContextSource(
     const revision = ++lookupRevision
     const valid = () => current(scope) && revision === lookupRevision && input.active
     if (!address || !input.active || input.runtimeTaskCreationPending) return
+    publish({ contextAvailabilityError: null })
     if (!contextApis().length && !address.projectSession && !projectSpaceForRuntimeTask(address)) {
       try {
         const items = await hydrateLocalWorkItems(input.userId)
@@ -257,15 +257,7 @@ export function createWorkbenchCloudProjectContextSource(
             attempt === 50 ||
             error instanceof ProjectSpaceTaskContextUnavailableError ||
             !valid() ||
-            (!registry.has(address) &&
-              !(
-                error instanceof AggregateError &&
-                error.errors.some(
-                  cause =>
-                    cause instanceof ProjectSpaceTaskContextLookupTimeoutError ||
-                    cause instanceof ProjectSpaceTaskContextChangedError
-                )
-              ))
+            (!registry.has(address) && !isIncompleteProjectSpaceTaskContextLookup(error))
           )
             throw error
           await new Promise(done => setTimeout(done, 100))
@@ -290,16 +282,16 @@ export function createWorkbenchCloudProjectContextSource(
       if (registry.has(address)) clearPending(address)
     } catch (error) {
       if (!valid()) return
-      if (error instanceof ProjectSpaceTaskContextUnavailableError)
+      if (
+        error instanceof ProjectSpaceTaskContextUnavailableError ||
+        isIncompleteProjectSpaceTaskContextLookup(error)
+      )
         publish({
           boundCloudProject: null,
           boundCloudItem: null,
           boundRuntimeTaskAddress: null,
           deliveryItem: null,
-          contextAvailabilityError: input.t(
-            'workbench.cloud_project_bind_failed',
-            '关联项目空间失败'
-          ),
+          contextAvailabilityError: input.t('workbench.cloud_project_context_load_failed'),
         })
       logRuntimeTaskCreateStage(
         'project-space-context-failed',
@@ -643,7 +635,19 @@ export function createWorkbenchCloudProjectContextSource(
       publish({ cloudActionNotice: null })
     },
     clearTodoBindingError() {
-      publish({ todoBindingError: null, contextAvailabilityError: null })
+      publish({ todoBindingError: null })
+    },
+    clearContextAvailabilityError() {
+      publish({ contextAvailabilityError: null })
+    },
+    retryProjectSpaceContext() {
+      if (
+        snapshot.contextAvailabilityError &&
+        current(snapshot.taskScope) &&
+        input.active &&
+        !input.runtimeTaskCreationPending
+      )
+        void resolve()
     },
     clearPendingProjectContext() {
       pendingAutoJoin = null

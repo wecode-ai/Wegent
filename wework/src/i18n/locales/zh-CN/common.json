@@ -4151,6 +4151,7 @@
     "cloud_todo_status_in_review": "待评审",
     "cloud_todo_status_completed": "已完成",
     "cloud_project_bind_failed": "关联项目空间失败",
+    "cloud_project_context_load_failed": "读取项目空间关联失败",
     "task_board_change": "更改看板关联",
     "task_board_association_title": "加入「{{name}}」",
     "task_board_association_description": "将当前任务加入项目，集中跟进工作进展",
