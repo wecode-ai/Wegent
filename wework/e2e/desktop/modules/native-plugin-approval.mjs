@@ -32,10 +32,14 @@ export async function withNativePluginDecision(
   )
   try {
     const outcome = Promise.resolve().then(operation)
+    if (process.platform !== 'darwin') {
+      const [result] = await Promise.all([outcome, decision])
+      return result
+    }
     // The operation settles after the native response. On macOS the AX click can remain
     // blocked after the sheet closes, so stop the driver when the application has acted.
     const driverFinished = decision.catch(error => {
-      if (process.platform !== 'darwin' || !error.cause?.killed) throw error
+      if (!error.cause?.killed) throw error
       console.warn(
         '[native-plugin-decision] Waiting for the application after AX timeout',
         error.message
