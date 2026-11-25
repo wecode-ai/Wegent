@@ -363,13 +363,38 @@ function connectDshExecutorEventStream(
     delivery.port2.postMessage(null)
   }
   delivery.port1.onmessage = () => {
-    const deadline = performance.now() + EVENT_DELIVERY_SLICE_MS
+    const startedAt = performance.now()
+    const deadline = startedAt + EVENT_DELIVERY_SLICE_MS
+    let deliveredAt = startedAt
+    let eventCount = 0
+    let slowestEvent: DshExecutorEventEnvelope | undefined
+    let slowestMs = 0
     while (head) {
       const { event, throughSubscriber, next } = head
       head = next
       if (!head) tail = undefined
       listener(event, throughSubscriber)
-      if (performance.now() >= deadline) break
+      const now = performance.now()
+      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        eventCount++
+        const elapsedMs = now - deliveredAt
+        if (elapsedMs > slowestMs) {
+          slowestEvent = event
+          slowestMs = elapsedMs
+        }
+        deliveredAt = now
+      }
+      if (now >= deadline) break
+    }
+    if (import.meta.env.VITE_WEWORK_E2E === 'true' && deliveredAt - startedAt >= 50) {
+      logRuntimeTaskCreateStage('executor-slow-event-delivery', {
+        startedAt,
+        durationMs: deliveredAt - startedAt,
+        eventCount,
+        slowestEvent: slowestEvent?.event,
+        slowestSequence: slowestEvent?.sequence,
+        slowestMs,
+      })
     }
     deliveryScheduled = false
     if (head) scheduleDelivery()
