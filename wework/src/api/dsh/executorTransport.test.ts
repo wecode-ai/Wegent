@@ -320,6 +320,37 @@ describe('DSH executor transport', () => {
     }
   })
 
+  test('only emits success diagnostics for slow task-state polls', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const clock = vi.spyOn(Date, 'now')
+    let duration = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        clock.mockReturnValue(100 + duration)
+        return new Response('{"ok":true,"result":{}}')
+      })
+    )
+    const logs = () =>
+      info.mock.calls.filter(([line]) =>
+        String(line).startsWith('[Wework] Executor transport diagnostic ')
+      )
+
+    try {
+      clock.mockReturnValue(100)
+      await requestDshExecutor('runtime.tasks.get', { taskId: 'task-1' })
+      expect(logs()).toHaveLength(0)
+
+      duration = 1_100
+      clock.mockReturnValue(100)
+      await requestDshExecutor('runtime.tasks.get', { taskId: 'task-1' })
+      expect(logs()).toEqual([[expect.stringContaining('"stage":"response_done"')]])
+    } finally {
+      info.mockRestore()
+      clock.mockRestore()
+    }
+  })
+
   test('preserves explicit fetch cancellation', async () => {
     const error = new DOMException('Request cancelled', 'AbortError')
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(error))
@@ -440,6 +471,36 @@ describe('DSH executor transport', () => {
     unsubscribeLate()
     unsubscribe()
     time.mockRestore()
+  })
+
+  test('delivers turn snapshots separately from adjacent stream events and their microtasks', async () => {
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const time = vi.spyOn(performance, 'now').mockReturnValue(0)
+    const observed: string[] = []
+    const unsubscribe = subscribeDshExecutorEvents(({ sequence }) => {
+      observed.push(String(sequence))
+      queueMicrotask(() => observed.push(`flushed:${sequence}`))
+    })
+
+    try {
+      emitExecutorEvent(sources[0].onmessage, eventEnvelope(1, 'response.output_text.delta', 'a'))
+      emitExecutorEvent(sources[0].onmessage, eventEnvelope(2, 'runtime.turn.updated', ''))
+      emitExecutorEvent(sources[0].onmessage, eventEnvelope(3, 'response.output_text.delta', 'b'))
+      await vi.waitFor(() => expect(observed).toHaveLength(6))
+      expect(observed).toEqual(['1', 'flushed:1', '2', 'flushed:2', '3', 'flushed:3'])
+    } finally {
+      unsubscribe()
+      time.mockRestore()
+    }
   })
 
   test('shares one stream across subscribers and closes it after the last unsubscribe', async () => {

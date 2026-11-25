@@ -19,6 +19,7 @@ let disconnectExecutorEventStream: (() => void) | null = null
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
 const EVENT_DELIVERY_SLICE_MS = 8
+const SLOW_TASK_READ_MS = 1_000
 const modelDiagnosticsDeadline = performance.now() + 30_000
 const modelDiagnosticMethods = new Set([
   'runtime.tasks.list',
@@ -183,15 +184,17 @@ async function performDshExecutorRequest<T>(
     })
   }
   const requestBody = JSON.stringify({ id: requestId, method, params })
-  const bodyBytes = new TextEncoder().encode(requestBody).byteLength
+  // Lifecycle reconciliation polls this read while a turn is active.
+  const pollsTaskState = method === 'runtime.tasks.get'
+  const bodySize = () => new TextEncoder().encode(requestBody).byteLength
   const timeoutFailure = (phase: string) => {
-    transportDiagnostic('deadline_exceeded', { phase, bodyBytes })
+    transportDiagnostic('deadline_exceeded', { phase, bodyBytes: bodySize() })
     return new DshExecutorTransportError(
       'transport_timeout',
       `Executor request ${method} timed out`
     )
   }
-  transportDiagnostic('dispatch', { bodyBytes })
+  if (!pollsTaskState) transportDiagnostic('dispatch', { bodyBytes: bodySize() })
   const callerSignal = isCancellableRuntimeRead(method) ? options.signal : undefined
   const deadline = AbortSignal.timeout(dshRpcTimeoutMs(method))
   const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline
@@ -270,7 +273,9 @@ async function performDshExecutorRequest<T>(
     })
     throw error
   }
-  transportDiagnostic('response_done', { status: response.status })
+  if (!pollsTaskState || Date.now() - startedAt >= SLOW_TASK_READ_MS) {
+    transportDiagnostic('response_done', { status: response.status })
+  }
   return body.result
 }
 
@@ -369,7 +374,15 @@ function connectDshExecutorEventStream(
       head = next
       if (!head) tail = undefined
       listener(event, throughSubscriber)
-      if (performance.now() >= deadline) break
+      // A turn snapshot can commit broader lifecycle changes in React's
+      // microtasks. Give it its own browser task, separate from stream deltas.
+      if (
+        event.event === 'runtime.turn.updated' ||
+        head?.event.event === 'runtime.turn.updated' ||
+        performance.now() >= deadline
+      ) {
+        break
+      }
     }
     deliveryScheduled = false
     if (head) scheduleDelivery()
