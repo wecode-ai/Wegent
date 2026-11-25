@@ -133,7 +133,8 @@ mod tests {
         super::super::unregister(&mismatched);
 
         let scope = "cloud-gateway-rotation-test";
-        let credentials = GatewayCredentials::new(Arc::clone(&snapshot), backend_url, request_url, 7);
+        let credentials =
+            GatewayCredentials::new(Arc::clone(&snapshot), backend_url, request_url, 7);
         let token = super::super::register_codex_route(
             scope,
             upstream.clone(),
