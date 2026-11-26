@@ -1462,7 +1462,10 @@ class SandboxManager(metaclass=SingletonMeta):
                 raise SandboxExecutionStorageError(
                     f"Could not refresh Sandbox {sandbox_id}"
                 )
-            if not self._repository.save_execution(execution, update_activity=True):
+            # The sandbox save already refreshed the session TTL and activity index.
+            if not self._repository.save_execution(
+                execution, refresh_session_ttl=False
+            ):
                 raise SandboxExecutionStorageError(
                     f"Could not record execution for Sandbox {sandbox_id}"
                 )

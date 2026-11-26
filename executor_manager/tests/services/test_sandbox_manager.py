@@ -1614,6 +1614,11 @@ class TestSandboxManager:
             mock_redis_client.hget.side_effect = [sample_sandbox_redis_data, None]
         elif condition == "storage_failed":
             mock_redis_client.hset.side_effect = OSError("Redis unavailable")
+        else:
+            mock_redis_client.expire.side_effect = [
+                True,
+                OSError("Redis unavailable after sandbox refresh"),
+            ]
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
@@ -1639,6 +1644,9 @@ class TestSandboxManager:
             assert error is None
             assert execution is not None
             assert execution.prompt == "Test prompt"
+            run.assert_called_once()
+            mock_redis_client.expire.assert_called_once()
+            mock_redis_client.zadd.assert_called_once()
         else:
             assert execution is None
             assert error
@@ -1875,54 +1883,24 @@ class TestSandboxManager:
         assert result is True
         mock_redis_client.hset.assert_called()
 
-    def test_save_execution_without_update_activity_does_not_update_zset(
+    def test_save_execution_does_not_update_zset(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_execution,
         mocker,
     ):
-        """Test save_execution with update_activity=False does NOT update ZSet timestamp.
-
-        This is the default behavior for execution status updates (running, failed, completed).
-        GC timestamp should only be refreshed for new executions.
-        """
+        """Execution status updates refresh the hash TTL without extending GC activity."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.reset_mock()
 
-        result = manager._repository.save_execution(
-            sample_execution, update_activity=False
-        )
+        result = manager._repository.save_execution(sample_execution)
 
         assert result is True
         mock_redis_client.hset.assert_called()
         mock_redis_client.expire.assert_called()
         # ZSet should NOT be updated for status updates
         mock_redis_client.zadd.assert_not_called()
-
-    def test_save_execution_with_update_activity_updates_zset(
-        self,
-        sandbox_manager_with_mock_redis,
-        mock_redis_client,
-        sample_execution,
-        mocker,
-    ):
-        """Test save_execution with update_activity=True DOES update ZSet timestamp.
-
-        This should be used when creating new executions or on callback to keep sandbox alive.
-        """
-        manager = sandbox_manager_with_mock_redis
-        mock_redis_client.reset_mock()
-
-        result = manager._repository.save_execution(
-            sample_execution, update_activity=True
-        )
-
-        assert result is True
-        mock_redis_client.hset.assert_called()
-        mock_redis_client.expire.assert_called()
-        # ZSet SHOULD be updated for new executions
-        mock_redis_client.zadd.assert_called_once()
 
     def test_load_execution_success(
         self, sandbox_manager_with_mock_redis, mock_redis_client, sample_execution

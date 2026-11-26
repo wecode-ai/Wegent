@@ -484,13 +484,13 @@ class SandboxRepository(metaclass=SingletonMeta):
     # =========================================================================
 
     def save_execution(
-        self, execution: Execution, update_activity: bool = False
+        self, execution: Execution, *, refresh_session_ttl: bool = True
     ) -> bool:
         """Save execution to session Hash with field {subtask_id}.
 
         Args:
             execution: Execution to save
-            update_activity: If True, update the ZSet timestamp (only for new executions)
+            refresh_session_ttl: Refresh the TTL unless the sandbox save just did so
 
         Returns:
             True if successful, False otherwise
@@ -515,13 +515,10 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
 
             self.redis_client.hset(hash_key, field, data)
-            # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
-            self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
-
-            # Only update ZSet timestamp for new executions (not status updates)
-            # This ensures GC only considers "last new task time" for expiration
-            if update_activity:
-                self._mark_sandbox_active(str(task_id), time.time())
+            if refresh_session_ttl:
+                self.redis_client.expire(
+                    hash_key, self._config.timeout.session_hash_ttl
+                )
 
             logger.info(
                 f"[SandboxRepository] Execution saved successfully: task_id={task_id}, subtask_id={subtask_id}"
