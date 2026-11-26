@@ -775,11 +775,18 @@ fn validate_work_accounts(
         let messages = store
             .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
             .map_err(settings_error)?;
-        if project_visible_work(&settings, work, messages).is_none() {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "This work has no source events visible to the current account",
-            ));
+        let has_messages = !messages.is_empty();
+        if project_visible_work(&settings, work.clone(), messages).is_none() {
+            // Empty works remain valid organization targets after their messages move.
+            // Their stored source still has to match the active delegation account.
+            if has_messages
+                || !matches_delegation_account(&settings, &work["roleId"], &work["source"])
+            {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "This work has no source events visible to the current account",
+                ));
+            }
         }
     }
     Ok(())
@@ -1027,6 +1034,57 @@ mod tests {
         assert!(task["runtimeHandle"].get("executionRequest").is_none());
         assert!(task.get("executionState").is_none());
         assert!(!result.to_string().contains("old-account"));
+    }
+
+    #[test]
+    fn organization_allows_a_current_account_target_after_its_messages_move() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = json!({
+            "providerId":"connection/email",
+            "profile":"mailbox",
+            "kind":"mailbox",
+            "id":"mailbox",
+            "name":"Mailbox"
+        });
+        let empty = store
+            .ingest_stand_in_message(
+                7,
+                "@primary",
+                &source,
+                &json!({"id":"first","text":"First message"}),
+                None,
+            )
+            .unwrap();
+        let target = store
+            .ingest_stand_in_message(
+                7,
+                "@primary",
+                &source,
+                &json!({"id":"second","text":"Second message"}),
+                None,
+            )
+            .unwrap();
+        let record_ids = store
+            .stand_in_messages(7, empty["id"].as_str().unwrap())
+            .unwrap()
+            .into_iter()
+            .filter_map(|message| message["recordId"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
+        store
+            .organize_stand_in_messages(
+                7,
+                empty["id"].as_str().unwrap(),
+                &record_ids,
+                target["id"].as_str(),
+            )
+            .unwrap();
+        assert!(store
+            .stand_in_messages(7, empty["id"].as_str().unwrap())
+            .unwrap()
+            .is_empty());
+
+        validate_work_accounts(&store, 7, "mac", empty["id"].as_str().unwrap(), None).unwrap();
     }
 
     #[test]

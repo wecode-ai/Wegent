@@ -177,16 +177,13 @@ pub(crate) fn message_visible_to_account(
 pub(crate) fn source_bindings_visible(bindings: Option<&Value>, messages: &[Value]) -> bool {
     match bindings {
         None => true,
-        Some(Value::Array(bindings)) => {
-            !bindings.is_empty()
-                && bindings.iter().all(|binding| {
-                    binding["recordId"].as_str().is_some_and(|record_id| {
-                        messages
-                            .iter()
-                            .any(|message| message["recordId"] == record_id)
-                    })
-                })
-        }
+        Some(Value::Array(bindings)) => bindings.iter().all(|binding| {
+            binding["recordId"].as_str().is_some_and(|record_id| {
+                messages
+                    .iter()
+                    .any(|message| message["recordId"] == record_id)
+            })
+        }),
         Some(_) => false,
     }
 }
@@ -457,7 +454,7 @@ mod tests {
             Some(&json!([{"recordId":"mail-record"},{"recordId":"old-record"}])),
             &visible
         ));
-        assert!(!source_bindings_visible(Some(&json!([])), &visible));
+        assert!(source_bindings_visible(Some(&json!([])), &visible));
         assert!(!source_bindings_visible(Some(&json!({})), &visible));
     }
 }
