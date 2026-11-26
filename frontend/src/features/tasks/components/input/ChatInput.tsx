@@ -27,6 +27,12 @@ interface SkillCommand {
   position: { top: number; left: number }
 }
 
+function getEditorCaret(input: HTMLElement): Range | null {
+  const selection = window.getSelection()
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+  return range?.collapsed && input.contains(range.startContainer) ? range : null
+}
+
 function placeCaretInPlainText(element: HTMLElement, offset: number) {
   const selection = window.getSelection()
   if (!selection) return
@@ -282,6 +288,26 @@ export default function ChatInput({
     return text
   }, [])
 
+  const getTextBeforeCaret = useCallback(
+    (input: HTMLElement, caret: Range) => {
+      const prefix = caret.cloneRange()
+      prefix.selectNodeContents(input)
+      prefix.setEnd(caret.startContainer, caret.startOffset)
+      return getTextWithNewlines(prefix.cloneContents())
+    },
+    [getTextWithNewlines]
+  )
+
+  const caretIsInSkillCommand = useCallback(
+    (input: HTMLElement, command: SkillCommand) => {
+      const caret = getEditorCaret(input)
+      if (!caret) return false
+      const offset = getTextBeforeCaret(input, caret).length
+      return offset > command.start && offset <= command.end
+    },
+    [getTextBeforeCaret]
+  )
+
   // Helper function to set innerHTML with newlines converted to <br> tags
   const setContentWithNewlines = useCallback((element: HTMLElement, text: string) => {
     // Convert newlines to <br> tags for proper display in contentEditable
@@ -428,30 +454,27 @@ export default function ChatInput({
   }
 
   const updateSkillCommand = useCallback(
-    (input: HTMLDivElement, text: string) => {
+    (input: HTMLDivElement, text: string, allowInitialQuery = false) => {
       if (!onSkillSelect) return
 
-      const selection = window.getSelection()
-      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
-      if (!range?.collapsed || !input.contains(range.startContainer)) {
+      const range = getEditorCaret(input)
+      if (!range) {
         closeSkillMenu()
         return
       }
 
       if (
         !skillCommand &&
+        !allowInitialQuery &&
         range.startContainer.nodeType === Node.TEXT_NODE &&
         range.startContainer.textContent?.[range.startOffset - 1] !== '/'
       ) {
         return
       }
 
-      const prefixRange = range.cloneRange()
-      prefixRange.selectNodeContents(input)
-      prefixRange.setEnd(range.startContainer, range.startOffset)
-      const prefix = getTextWithNewlines(prefixRange.cloneContents())
+      const prefix = getTextBeforeCaret(input, range)
       const match = /(?:^|\s)\/(\S*)$/.exec(prefix)
-      if (!match || (match[1] && !skillCommand)) {
+      if (!match || (match[1] && !skillCommand && !allowInitialQuery)) {
         closeSkillMenu()
         return
       }
@@ -466,8 +489,27 @@ export default function ChatInput({
       }
       setSkillCommand({ draft: text, start, end, query: match[1], position })
     },
-    [onSkillSelect, skillCommand, closeSkillMenu, getTextWithNewlines]
+    [onSkillSelect, skillCommand, closeSkillMenu, getTextBeforeCaret]
   )
+
+  useEffect(() => {
+    if (!skillCommand) return
+
+    const handleSelectionChange = () => {
+      const input = editableRef.current
+      // Input and paste own changes to the draft. Menu options can take focus from the editor.
+      if (
+        !input ||
+        document.activeElement !== input ||
+        getTextWithNewlines(input) !== skillCommand.draft
+      )
+        return
+      if (!caretIsInSkillCommand(input, skillCommand)) closeSkillMenu()
+    }
+
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => document.removeEventListener('selectionchange', handleSelectionChange)
+  }, [skillCommand, caretIsInSkillCommand, closeSkillMenu, getTextWithNewlines])
 
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLDivElement>) => {
@@ -593,6 +635,7 @@ export default function ChatInput({
 
       const { draft, start, end } = skillCommand
       if (getTextWithNewlines(input) !== draft) return
+      if (document.activeElement === input && !caretIsInSkillCommand(input, skillCommand)) return
 
       const newText = draft.slice(0, start) + draft.slice(end)
       setMessage(newText)
@@ -609,6 +652,7 @@ export default function ChatInput({
       onSkillSelect,
       skillCommand,
       closeSkillMenu,
+      caretIsInSkillCommand,
     ]
   )
 
@@ -723,7 +767,7 @@ export default function ChatInput({
         const newText = getTextWithNewlines(editableRef.current)
         setMessage(newText)
         setShowPlaceholder(!newText)
-        updateSkillCommand(editableRef.current, newText)
+        updateSkillCommand(editableRef.current, newText, true)
       }
     },
     [

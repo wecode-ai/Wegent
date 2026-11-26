@@ -185,12 +185,15 @@ describe('ChatInput external focus', () => {
 })
 
 test.each([
-  { pendingCatalog: false, pasteQuery: false },
-  { pendingCatalog: true, pasteQuery: false },
-  { pendingCatalog: false, pasteQuery: true },
+  { pendingCatalog: false, method: 'type', action: 'click' },
+  { pendingCatalog: true, method: 'type', action: 'click' },
+  { pendingCatalog: false, method: 'paste query', action: 'click' },
+  { pendingCatalog: false, method: 'paste command', action: 'click' },
+  { pendingCatalog: false, method: 'type', action: 'move caret' },
+  { pendingCatalog: false, method: 'type', action: 'keyboard' },
 ])(
-  'preserves the draft when selecting a skill (pending catalog: $pendingCatalog, paste: $pasteQuery)',
-  async ({ pendingCatalog, pasteQuery }) => {
+  'preserves the draft for slash $method followed by $action (pending catalog: $pendingCatalog)',
+  async ({ pendingCatalog, method, action }) => {
     const user = userEvent.setup()
     const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
@@ -213,7 +216,7 @@ test.each([
         onSkillSelect: jest.fn(),
         isLoading: false,
       }
-      const suffix = pendingCatalog || pasteQuery ? ' and keep this path /tmp' : ''
+      const suffix = ' and keep this path /tmp'
       const draft = 'Check /docs/pdf' + suffix
       const { rerender } = render(
         <ChatInput
@@ -229,15 +232,34 @@ test.each([
         window.getSelection()?.collapse(input.firstChild, 'Check '.length + value.length)
         fireEvent.input(input)
       }
-      typeCommand('/')
-      if (pasteQuery) {
-        await user.paste('docs/pdf')
+      if (method === 'paste command') {
+        window.getSelection()?.collapse(input.firstChild, 'Check '.length)
+        await user.paste('/docs/pdf')
       } else {
-        typeCommand('/docs/pdf')
+        typeCommand('/')
+        if (method === 'paste query') await user.paste('docs/pdf')
+        else typeCommand('/docs/pdf')
       }
       rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
 
-      await user.click(await screen.findByTestId('slash-skill-option'))
+      const option = await screen.findByTestId('slash-skill-option')
+      if (action === 'move caret') {
+        window.getSelection()?.collapse(input.firstChild, 0)
+        fireEvent(document, new Event('selectionchange'))
+        expect(option).not.toBeInTheDocument()
+        expect(input.textContent).toBe(draft)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        return
+      }
+
+      if (action === 'keyboard') {
+        await user.tab({ shift: true })
+        expect(option).toHaveFocus()
+        fireEvent(document, new Event('selectionchange'))
+        await user.keyboard('{Enter}')
+      } else {
+        await user.click(option)
+      }
       expect(props.onSkillSelect).toHaveBeenCalledWith(skill)
       expect(props.setMessage).toHaveBeenLastCalledWith('Check ' + suffix)
       expect(window.getSelection()?.anchorOffset).toBe('Check '.length)
