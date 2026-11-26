@@ -125,18 +125,32 @@ export function personalAssistantDeviceSettings(
     standInApi: {
       ...executor,
       async personalGet(userId, deviceId, options) {
-        const settings = await executor.personalGet(userId, deviceId)
+        const settings = await executor.personalGet(userId, deviceId, options)
         const account = readAccount()
         if (!account) return settings
         return options?.deviceSettingsOnly
           ? { ...settings, cloudDefinitionRevision: account.revision }
           : applyDefinitions(settings, account)
       },
-      async personalSave(userId, settings, deviceId, transferRoleId, definitionChange) {
+      async personalSave(
+        userId,
+        settings,
+        deviceId,
+        transferRoleId,
+        definitionChange,
+        portableTeam
+      ) {
         const { cloudDefinitionRevision, ...deviceSettings } = settings
         const account = readAccount()
         if (!account || (transferRoleId && !definitionChange)) {
-          return executor.personalSave(userId, deviceSettings, deviceId, transferRoleId)
+          return executor.personalSave(
+            userId,
+            deviceSettings,
+            deviceId,
+            transferRoleId,
+            undefined,
+            portableTeam
+          )
         }
         if (cloudDefinitionRevision !== account.revision) {
           throw Object.assign(
@@ -177,7 +191,9 @@ export function personalAssistantDeviceSettings(
             roles: localRoles,
           },
           deviceId,
-          transferRoleId
+          transferRoleId,
+          undefined,
+          portableTeam
         )
         const definitions = updateDefinitionInputs(account, settings, definitionChange)
         if (matchesDefinitions(account, definitions)) return applyDefinitions(saved, account)

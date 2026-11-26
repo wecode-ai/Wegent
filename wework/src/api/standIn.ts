@@ -598,14 +598,15 @@ export interface StandInExecutorApi {
   personalGet(
     userId: number,
     deviceId: string,
-    options?: { deviceSettingsOnly?: boolean }
+    options?: { deviceSettingsOnly?: boolean; includeTeams?: boolean; exportTeamRoleId?: string }
   ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
     deviceId: string,
     transferRoleId?: string,
-    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string }
+    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string },
+    portableTeam?: PersonalStandInSettings['portableTeam']
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,
@@ -979,13 +980,22 @@ export function createStandInExecutorApi(
       },
     },
     deviceIdentity: deviceId => request('runtime.stand_in.device_identity', {}, deviceId),
-    personalGet: (userId, deviceId) => {
-      const key = JSON.stringify([userId, deviceId])
+    personalGet: (userId, deviceId, options) => {
+      const key = JSON.stringify([
+        userId,
+        deviceId,
+        Boolean(options?.includeTeams),
+        options?.exportTeamRoleId,
+      ])
       const pending = personalReads.get(key)
       if (pending) return pending
       const result = request<PersonalStandInSettings>(
         'runtime.stand_in.personal.get',
-        { userId },
+        {
+          userId,
+          ...(options?.includeTeams ? { includeTeams: true } : {}),
+          ...(options?.exportTeamRoleId ? { exportTeamRoleId: options.exportTeamRoleId } : {}),
+        },
         deviceId
       )
       personalReads.set(key, result)
@@ -1006,10 +1016,24 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    personalSave: async (userId, settings, deviceId, transferRoleId) => {
+    personalSave: async (userId, settings, deviceId, transferRoleId, _change, portableTeam) => {
+      const configuration = { ...settings }
+      delete configuration.bindableTeams
+      delete configuration.portableTeam
+      delete configuration.teamImportVersion
+      if (portableTeam && !settings.teamImportVersion) {
+        throw Object.assign(new Error('The target Executor cannot import this Team'), {
+          code: 'stand_in_team_import_unsupported',
+        })
+      }
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
-        { userId, settings, ...(transferRoleId !== undefined ? { transferRoleId } : {}) },
+        {
+          userId,
+          settings: configuration,
+          ...(transferRoleId !== undefined ? { transferRoleId } : {}),
+          ...(portableTeam ? { portableTeam } : {}),
+        },
         deviceId
       )
       publishPersonalStandIn(saved)

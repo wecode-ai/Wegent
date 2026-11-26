@@ -39,6 +39,7 @@ import { saveStandInRoleDevice } from './saveStandInRoleDevice'
 import { StandInComposer } from './StandInComposer'
 import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
+import { StandInTeamBinding } from './StandInTeamBinding'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
@@ -700,6 +701,17 @@ function StandInSettingsEditor({
             )}
             {view === 'advanced' && (
               <>
+                {services.standInApi && executionDeviceId && (
+                  <StandInTeamBinding
+                    key={JSON.stringify([userId, executionDeviceId, role.id])}
+                    api={services.standInApi}
+                    userId={userId}
+                    deviceId={executionDeviceId}
+                    value={role.teamRef}
+                    disabled={saving}
+                    onChange={teamRef => updateRole(role.id, current => ({ ...current, teamRef }))}
+                  />
+                )}
                 <StandInComposer
                   key={role.id}
                   draft={role}

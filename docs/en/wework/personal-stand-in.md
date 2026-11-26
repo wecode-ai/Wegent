@@ -44,6 +44,8 @@ The number beside **My assistants** counts unread AI messages in primary and rol
 
 <a id="assistant-teams"></a>
 
+In **My assistants → select an assistant → Manage assistant → Execution environment**, choose **Agent for this assistant** and save. Keep the assistant’s own configuration or select an authorized Agent on the execution device to reuse its Team and Bots.
+
 ## Organize assistant teams
 
 Open **My assistants → Teams → Create team**, enter a name, choose a lead and members, and add team duties as needed. A specialist can join multiple teams, with duties configured separately for each team. Use the primary assistant or a specialist on the current device as lead. Other members can run on their configured devices.

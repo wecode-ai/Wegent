@@ -66,7 +66,12 @@ export async function saveStandInRoleDevice(
       }
     )
   }
-  const current = await api.personalGet(userId, sourceDevice)
+  const carryTeam = previous && previous.teamRef === role.teamRef
+  const current = await api.personalGet(
+    userId,
+    sourceDevice,
+    carryTeam ? { exportTeamRoleId: role.id } : undefined
+  )
   if (current.version !== source.version || !dequal(current.roles, source.roles)) {
     throw Object.assign(new Error('The source profile changed'), { code: 'version_conflict' })
   }
@@ -78,6 +83,7 @@ export async function saveStandInRoleDevice(
     ].filter(device => device !== targetDevice),
   }
   delete transferred.taskPermissions
+  if (current.portableTeam) transferred.teamRef = null
   await checkTargetConnectionProviders(api, targetDevice, role.connections)
   const staged = await api.personalSave(
     userId,
@@ -89,7 +95,9 @@ export async function saveStandInRoleDevice(
       ],
     },
     targetDevice,
-    role.id
+    role.id,
+    undefined,
+    current.portableTeam
   )
   // Webhook subscriptions are addressed to one Executor. Transfer ownership only
   // after redirecting the source, using the generation checked by the cloud.
