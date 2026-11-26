@@ -178,15 +178,16 @@ async fn wait_for_envd_process(
     let pid = child.id();
     let output = child.wait_with_output();
     tokio::pin!(output);
+    #[cfg(unix)]
+    let mut process_group = ProcessGroupGuard(pid);
     if let Ok(result) = timeout(deadline, &mut output).await {
+        #[cfg(unix)]
+        if result.is_ok() {
+            process_group.0 = None;
+        }
         return Ok(result);
     }
     if let Some(pid) = pid {
-        #[cfg(unix)]
-        // The child owns this group. Stop foreground descendants as well as the shell.
-        unsafe {
-            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-        }
         #[cfg(windows)]
         wegent_subprocess::kill_windows_process_tree(pid);
         log_executor_event(
@@ -198,6 +199,22 @@ async fn wait_for_envd_process(
         );
     }
     Err(deadline)
+}
+
+#[cfg(unix)]
+struct ProcessGroupGuard(Option<u32>);
+
+#[cfg(unix)]
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0 {
+            // The child owns this group. Stop its foreground descendants even if
+            // shutdown cancels the wait before the command deadline fires.
+            unsafe {
+                libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
 }
 
 fn parse_connect_timeout(header: &HeaderValue) -> Option<Duration> {
@@ -301,6 +318,43 @@ const CONNECT_FLAG_END_STREAM: u8 = 0b0000_0010;
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    #[tokio::test]
+    async fn cancelling_envd_process_stops_foreground_descendants() {
+        let mut child = Command::new("/bin/bash")
+            .args(["-c", "sleep 30 & printf 'ready\\n'; wait"])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let step_timeout = Duration::from_secs(5);
+
+        {
+            let wait = wait_for_envd_process(child, Some(Duration::from_secs(60)));
+            tokio::pin!(wait);
+            let ready = timeout(step_timeout, async {
+                tokio::select! {
+                    biased;
+                    _ = &mut wait => panic!("command exited before cancellation"),
+                    line = lines.next_line() => line.unwrap(),
+                }
+            })
+            .await
+            .expect("shell did not confirm that its descendant had started");
+            assert_eq!(ready.as_deref(), Some("ready"));
+        }
+
+        assert_eq!(
+            timeout(step_timeout, lines.next_line())
+                .await
+                .expect("descendant kept stdout open after cancellation")
+                .unwrap(),
+            None
+        );
+    }
 
     #[tokio::test]
     async fn envd_process_filters_exported_bash_functions() {
