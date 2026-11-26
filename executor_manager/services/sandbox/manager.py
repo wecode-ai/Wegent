@@ -1455,18 +1455,17 @@ class SandboxManager(metaclass=SingletonMeta):
             timeout: Timeout in seconds
         """
 
-        def on_running(exec: Execution):
-            self._repository.save_execution(exec)
-
-        def on_error(exec: Execution):
-            self._repository.save_execution(exec)
+        async def persist_status(state: Execution) -> bool:
+            async with self._lock_current_sandbox(sandbox) as (current, _):
+                if current is None:
+                    return False
+                return self._repository.save_execution(state)
 
         success = await self._execution_runner.run_with_timeout(
             sandbox=sandbox,
             execution=execution,
             timeout=timeout,
-            on_running=on_running,
-            on_error=on_error,
+            persist_status=persist_status,
         )
 
         if success:

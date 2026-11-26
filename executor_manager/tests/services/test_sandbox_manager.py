@@ -1624,6 +1624,37 @@ class TestSandboxManager:
     # ----- get_execution Tests -----
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("removed_before_dispatch", [True, False])
+    async def test_background_execution_does_not_write_after_sandbox_removal(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        sample_execution,
+        mocker,
+        removed_before_dispatch,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        records = [None] if removed_before_dispatch else [sample_sandbox, None]
+        mocker.patch.object(manager._repository, "load_sandbox", side_effect=records)
+        save = mocker.patch.object(
+            manager._repository, "save_execution", return_value=True
+        )
+        send = mocker.patch.object(
+            manager._execution_runner,
+            "send_execution_request",
+            return_value=(False, "Connection closed"),
+        )
+
+        await manager._run_execution(sample_sandbox, sample_execution, 30)
+
+        if removed_before_dispatch:
+            send.assert_not_awaited()
+            save.assert_not_called()
+        else:
+            send.assert_awaited_once()
+            save.assert_called_once_with(sample_execution)
+
+    @pytest.mark.asyncio
     async def test_get_execution_found(
         self, sandbox_manager_with_mock_redis, mock_redis_client, sample_execution
     ):

@@ -12,6 +12,7 @@ This module handles execution lifecycle including:
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
@@ -199,9 +200,7 @@ class ExecutionRunner(metaclass=SingletonMeta):
         sandbox: Sandbox,
         execution: Execution,
         timeout: int,
-        on_running: Optional[callable] = None,
-        on_complete: Optional[callable] = None,
-        on_error: Optional[callable] = None,
+        persist_status: Callable[[Execution], Awaitable[bool]],
     ) -> bool:
         """Run execution with timeout control.
 
@@ -212,32 +211,28 @@ class ExecutionRunner(metaclass=SingletonMeta):
             sandbox: Parent sandbox
             execution: Execution to run
             timeout: Timeout in seconds
-            on_running: Callback when execution starts running
-            on_complete: Callback when execution is accepted
-            on_error: Callback when execution fails
+            persist_status: Save state only for the current sandbox runtime
 
         Returns:
             True if execution was accepted, False if failed
         """
         # Set running status
         execution.set_running()
-        if on_running:
-            on_running(execution)
+        if not await persist_status(execution):
+            execution.set_failed(
+                "Could not record running state for the current sandbox"
+            )
+            return False
 
         # Send request with timeout
         success, error_message = await self.send_execution_request(
             sandbox, execution, timeout
         )
 
-        if success:
-            if on_complete:
-                on_complete(execution)
-            return True
-        else:
+        if not success:
             execution.set_failed(error_message or "Unknown error")
-            if on_error:
-                on_error(execution)
-            return False
+            await persist_status(execution)
+        return success
 
 
 def get_execution_runner() -> ExecutionRunner:
