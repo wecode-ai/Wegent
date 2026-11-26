@@ -40,6 +40,7 @@ import {
 } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import { getConversationVirtualMeasurements } from './conversationViewportCache'
+import type { ConversationLayoutChangeReason } from './scrollableMessageTypes'
 import { SelectionActionsPopover } from './SelectionActionsPopover'
 import {
   useConversationVirtualizer,
@@ -70,7 +71,7 @@ export interface MessageListProps {
   scrollTailHeight?: number
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
-  onVirtualLayoutChange?: (reason?: 'resize') => void
+  onVirtualLayoutChange?: (reason?: ConversationLayoutChangeReason) => void
   layoutRevision?: string
   className?: string
   conversationKey?: string | number | null
@@ -435,7 +436,7 @@ export const MessageList = memo(function MessageList({
   const markdownWindowingState = useMemo(() => {
     const scope = createMarkdownWindowingScope(
       scrollElementRef,
-      element => viewportPort.chunkLayout(scope, element),
+      (element, materialized) => viewportPort.chunkLayout(scope, element, materialized),
       layout.typography.rootFontSize,
       onNativeScrollRange
     )

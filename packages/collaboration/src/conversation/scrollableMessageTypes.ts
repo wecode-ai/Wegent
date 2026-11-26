@@ -23,6 +23,7 @@ import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 export const BOTTOM_THRESHOLD = 48
 export const SCROLLED_TO_BOTTOM_THRESHOLD = 8
 export const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
+export type ConversationLayoutChangeReason = 'resize' | { materializedChunk: HTMLElement }
 export interface RuntimeTranscriptGap {
   start: number
   end: number

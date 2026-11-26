@@ -28,8 +28,8 @@ it('restores the bottom as soon as Markdown restores the native range', () => {
 
   const port = createMessageListViewportPort()
   const scrollElementRef = { current: viewport }
-  const scope = createMarkdownWindowingScope(scrollElementRef, element =>
-    port.chunkLayout(scope, element)
+  const scope = createMarkdownWindowingScope(scrollElementRef, (element, materialized) =>
+    port.chunkLayout(scope, element, materialized)
   )
   const virtualizer = { options: { enabled: true } } as ConversationVirtualizer
   port.attach(list)
@@ -156,8 +156,8 @@ it('retains live geometry on resize but persists only heights measured for the c
   } as unknown as ConversationVirtualizer
   const port = createMessageListViewportPort()
   const scrollElementRef = { current: viewport }
-  const scope = createMarkdownWindowingScope(scrollElementRef, element =>
-    port.chunkLayout(scope, element)
+  const scope = createMarkdownWindowingScope(scrollElementRef, (element, materialized) =>
+    port.chunkLayout(scope, element, materialized)
   )
   const onLayoutChange = vi.fn()
   let complete: (() => void) | undefined
@@ -202,7 +202,7 @@ it('retains live geometry on resize but persists only heights measured for the c
     port.recordMeasurement(rows[0], 320, 150, 320, narrow)
     port.recordMeasurement(rows[3], 320, 100, 320, narrow)
     snapshot = [{ ...snapshot[0], size: 150, end: 150 }, ...snapshot.slice(1)]
-    scope.onChunkLayout(rows[0].firstElementChild as HTMLElement)
+    scope.onChunkLayout(rows[0].firstElementChild as HTMLElement, true)
     port.update({ ...resized, rows: snapshot, totalSize: 450 })
     expect(onLayoutChange).not.toHaveBeenCalled()
 

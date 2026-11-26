@@ -9,6 +9,8 @@ import {
   evictConversationViewport,
   getConversationScrollSnapshot,
 } from './conversationViewportCache'
+import { createMarkdownWindowingScope } from '../markdown/MarkdownWindowingScope'
+import { createMessageListViewportPort } from './messageListViewportPort'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -40,14 +42,14 @@ it('offers to jump to latest after restoring a reading position without a native
   evictConversationViewport(key)
 })
 
-it('seeks the saved Markdown placeholder after reopening and restores its text when rendered', () => {
+it.each(['message-item', null] as const)('restores same-height anchor for %s', itemId => {
   const key = 'restore-windowed-reader'
   const snapshot = {
     pinnedToBottom: false,
     distanceFromBottomPx: 600,
     anchor: {
       messageId: 'reply',
-      itemId: 'message-item',
+      itemId,
       chunkIndex: '3',
       anchorIndex: 0,
       text: 'Saved paragraph',
@@ -58,10 +60,16 @@ it('seeks the saved Markdown placeholder after reopening and restores its text w
   cacheConversationScrollSnapshot(key, snapshot)
   const viewport = document.createElement('div')
   viewport.innerHTML = `
-    <div data-message-id="reply">
-      <div data-runtime-item-id="message-item">
-        <div data-markdown-chunk-index="3">
-          <div data-markdown-window-placeholder>Saved paragraph</div>
+    <div data-message-row data-index="0">
+      <div data-message-id="reply">
+        <div data-runtime-item-id="message-item">
+          <div data-markdown-chunk-index="2"><p data-scroll-anchor>Other paragraph</p></div>
+          <div data-markdown-chunk-index="3">
+            <div data-markdown-window-placeholder>Saved paragraph</div>
+          </div>
+        </div>
+        <div data-runtime-item-id="other-item">
+          <div data-markdown-chunk-index="3"><p data-scroll-anchor>Other item</p></div>
         </div>
       </div>
     </div>`
@@ -69,8 +77,15 @@ it('seeks the saved Markdown placeholder after reopening and restores its text w
     clientHeight: { value: 400 },
     scrollHeight: { value: 3200 },
   })
-  viewport.getBoundingClientRect = () => new DOMRect(0, 50, 600, 400)
-  const chunk = viewport.querySelector<HTMLElement>('[data-markdown-chunk-index]')!
+  const readViewport = vi.fn(() => new DOMRect(0, 50, 600, 400))
+  viewport.getBoundingClientRect = readViewport
+  const chunk = viewport.querySelector<HTMLElement>(
+    '[data-runtime-item-id="message-item"] [data-markdown-chunk-index="3"]'
+  )!
+  const precedingChunk = viewport.querySelector<HTMLElement>('[data-markdown-chunk-index="2"]')!
+  const otherItemChunk = viewport.querySelector<HTMLElement>(
+    '[data-runtime-item-id="other-item"] [data-markdown-chunk-index="3"]'
+  )!
   chunk.getBoundingClientRect = () => new DOMRect(0, 50 + 1800 - viewport.scrollTop, 600, 800)
   const input: ConversationScrollInput = {
     messages: [
@@ -95,22 +110,68 @@ it('seeks the saved Markdown placeholder after reopening and restores its text w
   })
   expect(viewport.scrollTop).toBe(1800)
 
-  // The estimated placeholder cannot provide a semantic anchor yet. Native
-  // scrollend must not replace the saved one with an unrelated visible position.
-  state.endInput()
-  expect(getConversationScrollSnapshot(key)).toEqual(snapshot)
+  const port = createMessageListViewportPort()
+  const scope = createMarkdownWindowingScope(input.scrollRef, (element, materialized) =>
+    port.chunkLayout(scope, element, materialized)
+  )
+  const onLayoutChange = vi.fn(state.handleVirtualLayoutChange)
+  const release = port.attach(viewport)
+  try {
+    port.update({
+      scope,
+      virtual: true,
+      ready: true,
+      layoutKey: 'layout',
+      layoutWidth: 600,
+      layoutPropertiesKey: 'properties',
+      measurementKey: null,
+      measurementLayout: { key: 'layout', messages: new Map() },
+      virtualizer: { options: { enabled: true } } as ConversationVirtualizer,
+      rows: [{ key: 'reply', index: 0, start: 0, end: 3200, size: 3200, lane: 0 }],
+      totalSize: 3200,
+      scrollElementRef: input.scrollRef,
+      measureRow: vi.fn(),
+      measureRows: vi.fn(),
+      onLayoutChange,
+    })
+    // An earlier Markdown commit already reconciled this native scroll height.
+    scope.onChunkLayout(precedingChunk)
+    expect(viewport.scrollTop).toBe(1800)
+    // The placeholder cannot provide a semantic anchor yet. Native scrollend
+    // must not replace the saved one with an unrelated visible position.
+    state.endInput()
+    expect(getConversationScrollSnapshot(key)).toEqual(snapshot)
 
-  chunk.innerHTML = '<p data-scroll-anchor>Saved paragraph</p>'
-  const paragraph = chunk.querySelector<HTMLElement>('[data-scroll-anchor]')!
-  paragraph.getBoundingClientRect = () => new DOMRect(0, 50 + 1880 - viewport.scrollTop, 600, 24)
-  state.handleVirtualLayoutChange()
-  expect(viewport.scrollTop).toBe(1868)
-  expect(paragraph.getBoundingClientRect().top - viewport.getBoundingClientRect().top).toBe(12)
-  state.endInput()
-  expect(getConversationScrollSnapshot(key)).toEqual(snapshot)
+    // A queued materialization that is no longer rendered must not be replayed.
+    onLayoutChange.mockClear()
+    scope.onChunkLayout(chunk, true)
+    expect(onLayoutChange).not.toHaveBeenCalled()
 
-  dispose()
-  evictConversationViewport(key)
+    chunk.innerHTML = '<p data-scroll-anchor>Saved paragraph</p>'
+    const paragraph = chunk.querySelector<HTMLElement>('[data-scroll-anchor]')!
+    paragraph.getBoundingClientRect = () => new DOMRect(0, 50 + 1880 - viewport.scrollTop, 600, 24)
+    // Materialization of a different chunk cannot own this reading anchor.
+    readViewport.mockClear()
+    scope.onChunkLayout(precedingChunk, true)
+    scope.onChunkLayout(otherItemChunk, true)
+    expect(viewport.scrollTop).toBe(1800)
+    expect(readViewport).not.toHaveBeenCalled()
+    scope.onChunkLayout(chunk, true)
+    expect(viewport.scrollHeight).toBe(3200)
+    expect(viewport.scrollTop).toBe(1868)
+    expect(paragraph.getBoundingClientRect().top - viewport.getBoundingClientRect().top).toBe(12)
+    state.endInput()
+    expect(getConversationScrollSnapshot(key)).toEqual(snapshot)
+
+    onLayoutChange.mockClear()
+    // Ordinary same-height chunks still use the range deduplication.
+    scope.onChunkLayout(chunk)
+    expect(onLayoutChange).not.toHaveBeenCalled()
+  } finally {
+    release()
+    dispose()
+    evictConversationViewport(key)
+  }
 })
 
 it.each(['done', 'streaming'] as const)('restores the visible %s tail in the same commit', status => {
@@ -132,9 +193,10 @@ it.each(['done', 'streaming'] as const)('restores the visible %s tail in the sam
   )
   let scrollHeight = 1603
   let virtualSize = 1602
+  const readScrollHeight = vi.fn(() => scrollHeight)
   Object.defineProperties(viewport, {
     clientHeight: { value: 643 },
-    scrollHeight: { get: () => scrollHeight },
+    scrollHeight: { get: readScrollHeight },
   })
   viewport.scrollTop = 960
   const range = { endIndex: 0 }
@@ -180,6 +242,9 @@ it.each(['done', 'streaming'] as const)('restores the visible %s tail in the sam
   virtualSize = 1690
   notifyResize()
   expect(viewport.scrollTop).toBe(1048)
+  readScrollHeight.mockClear()
+  state.handleVirtualLayoutChange({ materializedChunk: content })
+  expect(readScrollHeight).not.toHaveBeenCalled()
   releaseContent()
   expect(disconnect).toHaveBeenCalledOnce()
   dispose()

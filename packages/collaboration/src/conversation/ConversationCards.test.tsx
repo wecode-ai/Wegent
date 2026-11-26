@@ -510,19 +510,24 @@ describe("shared conversation cards without Electron", () => {
       },
     );
     const scrollRef = { current: container };
-    const first = createMarkdownWindowingScope(scrollRef, vi.fn());
-    const second = createMarkdownWindowingScope(scrollRef, vi.fn());
-    const mount = (scope: ReturnType<typeof createMarkdownWindowingScope>) =>
+    const firstLayout = vi.fn();
+    const secondLayout = vi.fn();
+    const first = createMarkdownWindowingScope(scrollRef, firstLayout);
+    const second = createMarkdownWindowingScope(scrollRef, secondLayout);
+    const mount = (
+      scope: ReturnType<typeof createMarkdownWindowingScope>,
+      content = "Measured prose",
+    ) =>
       act(() =>
         root.render(
           <MarkdownWindowingContext.Provider value={scope}>
             <div data-message-row>
               <WindowedMarkdownChunk
                 chunkIndex={0}
-                content="Measured prose"
+                content={content}
                 eager={false}
               >
-                <p>Measured prose</p>
+                <p>{content}</p>
               </WindowedMarkdownChunk>
             </div>
           </MarkdownWindowingContext.Provider>,
@@ -548,6 +553,10 @@ describe("shared conversation cards without Electron", () => {
     try {
       mount(first);
       expect(placeholder()).toBeNull();
+      const chunk = container.querySelector("[data-markdown-window-chunk]")!;
+      expect(firstLayout.mock.calls.filter(([, materialized]) => materialized)).toEqual([
+        [chunk, true],
+      ]);
       move(3000);
       expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
       resize(320);
@@ -560,6 +569,12 @@ describe("shared conversation cards without Electron", () => {
       ).toBeUndefined();
       move(0);
       expect(placeholder()).toBeNull();
+      expect(secondLayout.mock.calls.filter(([, materialized]) => materialized)).toEqual([
+        [chunk, true],
+      ]);
+      secondLayout.mockClear();
+      mount(second, "Updated prose");
+      expect(secondLayout).toHaveBeenCalledExactlyOnceWith(chunk, false);
       move(3000);
       expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
     } finally {

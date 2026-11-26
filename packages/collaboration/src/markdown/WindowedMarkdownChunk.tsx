@@ -60,6 +60,7 @@ export function WindowedMarkdownChunk({
   } | null>(null)
   const diagnosticDetailsRef = useRef<Record<string, number | boolean>>({})
   const shouldRender = effectiveEager || nearViewport
+  const previouslyRenderedRef = useRef(shouldRender)
   const currentRef = useRef({
     content,
     rendered: shouldRender,
@@ -178,15 +179,17 @@ export function WindowedMarkdownChunk({
     if (!chunk) return
     const wasEager = previousEagerRef.current
     previousEagerRef.current = effectiveEager
+    const materialized = shouldRender && !previouslyRenderedRef.current
+    previouslyRenderedRef.current = shouldRender
     if (effectiveEager && !diagnosticsEnabled) {
       // The row owner measures visible content. An eager chunk has no placeholder to size.
-      scope?.onChunkLayout(chunk)
+      scope?.onChunkLayout(chunk, materialized)
       return
     }
     const rect = chunk.getBoundingClientRect()
     if (shouldRender) {
       saveRenderedLayout(rect)
-      scope?.onChunkLayout(chunk)
+      scope?.onChunkLayout(chunk, materialized)
     } else {
       const layout = renderedLayoutRef.current
       // Completion can replace a far eager chunk directly with a placeholder.

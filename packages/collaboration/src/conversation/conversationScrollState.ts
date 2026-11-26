@@ -12,6 +12,7 @@ import {
 import {
   BOTTOM_THRESHOLD,
   SCROLLED_TO_BOTTOM_THRESHOLD,
+  type ConversationLayoutChangeReason,
   type UserViewportAnchor,
   type RuntimeTranscriptGap,
 } from './scrollableMessageTypes'
@@ -19,6 +20,7 @@ import {
   createScrollSnapshot,
   findLatestGuidanceMessageId,
   findLatestUserMessageId,
+  isConversationAnchorChunk,
   restoreConversationAnchor,
   setConversationScrollSnapshot,
 } from './conversationScrollGeometry'
@@ -362,9 +364,20 @@ export function createConversationScrollState(
     if (state.mode === 'read') publishScrollButton(getDistanceFromBottom(viewport))
     traceHistoryLayout('layout')
   }
-  const handleVirtualLayoutChange = (reason?: 'resize') => {
+  const handleVirtualLayoutChange = (reason?: ConversationLayoutChangeReason) => {
     if (!owned()) return
     if (autoScrollSuspended) return
+    if (typeof reason === 'object') {
+      // A same-height materialization only affects a reader anchored in this chunk.
+      const anchor = restoring?.anchor ?? readerState.anchor
+      if (
+        state.mode === 'read' &&
+        anchor &&
+        isConversationAnchorChunk(reason.materializedChunk, anchor)
+      )
+        handleContentLayoutChange()
+      return
+    }
     if (
       reason === 'resize' ||
       state.mode !== 'follow' ||

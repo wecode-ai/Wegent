@@ -20,6 +20,7 @@
     "packages/collaboration/src/conversation/MessageList.tsx",
     "packages/collaboration/src/dom-events.ts",
     "packages/collaboration/src/markdown/WindowedMarkdownChunk.tsx",
+    "wework/src/components/layout/DesktopWorkbenchConversationView.tsx",
     "wework/e2e/desktop/modules/streaming-conversation-switching.mjs",
     "wework/e2e/desktop/modules/background-window-refresh.mjs",
     "wework/src/desktop/workbenchWindowActivity.ts",

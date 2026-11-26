@@ -719,7 +719,7 @@ importers:
         specifier: 2.0.3
         version: 2.0.3(@modelcontextprotocol/client@2.4.0)(@modelcontextprotocol/core@2.4.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(zod@4.4.3)
       '@pierre/diffs':
-        specifier: ^1.6.4
+        specifier: 1.6.4
         version: 1.6.4(patch_hash=3e8a3fb82e97674300d125dc6879cccfaf56eacb049c3ddc30c116122b37c9d6)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@pierre/trees':
         specifier: 1.0.0-beta.6

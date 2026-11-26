@@ -114,9 +114,32 @@ function findConversationAnchorScope(
 ): HTMLElement | null {
   const item = findMessageItem(content, anchor.messageId, anchor.itemId)
   if (anchor.chunkIndex === null) return item
+  return findMarkdownChunk(item, anchor.chunkIndex)
+}
+
+export function isConversationAnchorChunk(
+  chunk: HTMLElement,
+  anchor: ConversationViewportAnchor
+): boolean {
+  const message = chunk.closest<HTMLElement>('[data-message-id]')
+  if (
+    anchor.chunkIndex === null ||
+    chunk.dataset.markdownChunkIndex !== anchor.chunkIndex ||
+    message?.dataset.messageId !== anchor.messageId
+  )
+    return false
+  if (anchor.itemId === null) return findMarkdownChunk(message, anchor.chunkIndex) === chunk
+  const item = chunk.closest<HTMLElement>('[data-runtime-item-id], [data-processing-block-id]')
   return (
-    Array.from(item?.querySelectorAll<HTMLElement>('[data-markdown-chunk-index]') ?? []).find(
-      chunk => chunk.dataset.markdownChunkIndex === anchor.chunkIndex
+    (item?.dataset.runtimeItemId ?? item?.dataset.processingBlockId) === anchor.itemId &&
+    findMarkdownChunk(item, anchor.chunkIndex) === chunk
+  )
+}
+
+function findMarkdownChunk(scope: HTMLElement | null, chunkIndex: string): HTMLElement | null {
+  return (
+    Array.from(scope?.querySelectorAll<HTMLElement>('[data-markdown-chunk-index]') ?? []).find(
+      chunk => chunk.dataset.markdownChunkIndex === chunkIndex
     ) ?? null
   )
 }

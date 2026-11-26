@@ -7,6 +7,7 @@ import {
   type VirtualMeasurementLayout,
 } from './conversationViewportCache'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
+import type { ConversationLayoutChangeReason } from './scrollableMessageTypes'
 import {
   getConversationDiagnosticContext,
   isConversationDiagnosticsEnabled,
@@ -29,7 +30,7 @@ interface ViewportInput {
   scrollElementRef?: RefObject<HTMLDivElement | null>
   measureRow(row: HTMLElement): void
   measureRows(rows: HTMLElement[], onComplete?: () => void): void
-  onLayoutChange?(reason?: 'resize'): void
+  onLayoutChange?(reason?: ConversationLayoutChangeReason): void
 }
 interface MeasurementSnapshot {
   key: string
@@ -73,7 +74,7 @@ export function createMessageListViewportPort() {
   let measurements: MeasurementSnapshot | null = null
   const recordedRows = new Map<string, RowMeasurement>()
   const uncacheable = new Set<string>()
-  const pending = new Map<MarkdownWindowingScope, Set<HTMLElement>>()
+  const pending = new Map<MarkdownWindowingScope, Map<HTMLElement, boolean>>()
   const attached = () => lease !== null && element !== null
   function persist() {
     if (!measurements) return
@@ -134,10 +135,10 @@ export function createMessageListViewportPort() {
       rows: virtualizer.takeSnapshot(),
     }
   }
-  function chunkLayout(scope: MarkdownWindowingScope, chunk: HTMLElement) {
+  function chunkLayout(scope: MarkdownWindowingScope, chunk: HTMLElement, materialized = false) {
     if (!attached() || input?.scope !== scope) {
-      const chunks = pending.get(scope) ?? new Set<HTMLElement>()
-      chunks.add(chunk)
+      const chunks = pending.get(scope) ?? new Map<HTMLElement, boolean>()
+      chunks.set(chunk, materialized || chunks.get(chunk) === true)
       pending.set(scope, chunks)
       return
     }
@@ -151,7 +152,13 @@ export function createMessageListViewportPort() {
     input.measureRow(row)
     if (!input.ready || !input.onLayoutChange || pendingResize !== null) return
     const scrollHeight = input.scrollElementRef?.current?.scrollHeight
-    if (scrollHeight === undefined || scrollHeight === previousScrollHeight) return
+    if (scrollHeight === undefined) return
+    if (scrollHeight === previousScrollHeight) {
+      // A placeholder can reveal the saved paragraph without changing the native range.
+      if (materialized && !chunk.firstElementChild?.matches('[data-markdown-window-placeholder]'))
+        input.onLayoutChange({ materializedChunk: chunk })
+      return
+    }
     // Markdown can restore a clamped native range without changing the cached
     // virtual row sizes. Reconcile the viewport in this DOM commit as well.
     previousScrollHeight = scrollHeight
@@ -260,9 +267,9 @@ export function createMessageListViewportPort() {
       if (!input || ownerChanged || (next.ready && !input.ready)) restoreMeasurements(next)
       input = next
       if (!next.virtual || next.ready) {
-        const chunks = [...(pending.get(next.scope) ?? [])]
+        const chunks = pending.get(next.scope)
         pending.clear()
-        chunks.forEach(chunk => chunkLayout(next.scope, chunk))
+        chunks?.forEach((materialized, chunk) => chunkLayout(next.scope, chunk, materialized))
       }
       if (nextLayout) {
         const previous = previousLayout
