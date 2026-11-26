@@ -33,10 +33,24 @@ class TestDockerUtils:
         url = build_callback_url(task)
         assert url == "http://env.callback.url"
 
-    @patch.dict(
-        "os.environ", {"EXECUTOR_MANAGER_CALLBACK_URL": "http://manager/callback"}
+    @pytest.mark.parametrize(
+        ("docker_env", "expected"),
+        [
+            ({}, "http://localhost:8001/executor-manager/callback"),
+            (
+                {"CALLBACK_HOST": "http://192.168.1.100:8001"},
+                "http://192.168.1.100:8001/executor-manager/callback",
+            ),
+            (
+                {
+                    "CALLBACK_HOST": "http://192.168.1.100:8001",
+                    "CALLBACK_URL": "http://docker-manager/executor-manager/callback",
+                },
+                "http://docker-manager/executor-manager/callback",
+            ),
+        ],
     )
-    def test_credentialed_callback_uses_the_configured_manager(self):
+    def test_credentialed_callback_uses_docker_address(self, docker_env, expected):
         task = {
             "metadata": {
                 "task_id": 42,
@@ -44,7 +58,13 @@ class TestDockerUtils:
                 "executor_callback_token": "test-credential",
             }
         }
-        assert build_callback_url(task) == "http://manager/callback"
+        manager_url = "http://localhost:8001/executor-manager/callback"
+        with patch.dict(
+            "os.environ",
+            {"EXECUTOR_MANAGER_CALLBACK_URL": manager_url, **docker_env},
+            clear=True,
+        ):
+            assert build_callback_url(task) == expected
 
     @patch.dict(
         "os.environ",

@@ -39,7 +39,10 @@ def build_callback_url(task: dict) -> str:
     """
     callback_url = os.getenv("CALLBACK_URL", "")
     if get_metadata_field(task, CALLBACK_TOKEN):
-        callback_url = os.getenv("EXECUTOR_MANAGER_CALLBACK_URL") or callback_url
+        # The Docker-facing address takes precedence over the Manager's URL,
+        # which may only be reachable from its own host.
+        if not callback_url and not os.getenv("CALLBACK_HOST"):
+            callback_url = os.getenv("EXECUTOR_MANAGER_CALLBACK_URL", "")
     else:
         callback_url = get_metadata_field(task, "callback_url", callback_url)
     if not callback_url:
