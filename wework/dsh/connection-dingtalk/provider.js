@@ -18,6 +18,7 @@ const DELEGATION_CATCH_UP_MESSAGES = 50
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
 const READINESS_ERRORS = new Map([
   ['connector_auth_required', 'auth_required'],
+  ['dingtalk_credentials_unavailable', 'auth_required'],
   ['dingtalk_account_changed', 'identity_required'],
   ['dingtalk_permissions_required', 'permissions_required'],
 ])

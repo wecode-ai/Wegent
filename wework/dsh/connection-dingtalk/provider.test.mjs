@@ -347,6 +347,13 @@ function readinessFixture() {
         if (input.tool === 'authStatus') {
           const selected = accounts.find(account => account.profile === input.arguments.profile)
           assert.ok(selected)
+          if (state.credentialFailure) {
+            return {
+              authenticated: false,
+              token_valid: false,
+              reason: state.credentialFailure,
+            }
+          }
           return {
             authenticated: true,
             token_valid: true,
@@ -409,6 +416,23 @@ test('reuses the W90 account fingerprint and only selects an unambiguous current
     ['componentInfo', 'listProfiles']
   )
 })
+
+for (const reason of ['dek_missing', 'ciphertext_key_mismatch', 'keychain_unavailable']) {
+  test(`offers reauthorization when DingTalk credentials cannot be read (${reason})`, async () => {
+    const { ctx, provider, calls, authTarget, state } = readinessFixture()
+    state.credentialFailure = reason
+
+    const result = await provider.check(ctx, { readiness: true })
+
+    assert.equal(result.status, 'auth_required')
+    assert.equal(result.code, 'dingtalk_credentials_unavailable')
+    assert.deepEqual(result.authTarget, authTarget)
+    assert.deepEqual(
+      calls.map(call => call.tool),
+      ['componentInfo', 'listProfiles', 'authStatus']
+    )
+  })
+}
 
 test('probes only selected conversations and reports denied reads and mismatched profile tokens', async () => {
   const { ctx, provider, calls, state } = readinessFixture()
