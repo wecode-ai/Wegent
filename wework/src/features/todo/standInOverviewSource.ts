@@ -5,7 +5,7 @@ import {
   type StandInSourceConnection,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 export type StandInOverviewProfile = 'primary' | 'role' | 'create' | 'memory' | null
@@ -25,7 +25,6 @@ interface OverviewObservation {
   requestLeave(action: () => void): void
   reload(): void
   refreshInbox(): void
-  setDraft(value: PersonalStandInSettings): void
   rememberProfileTrigger(): void
   closeReview(): void
   closeDetails(): void
@@ -182,8 +181,12 @@ export function createStandInOverviewSource(initial: {
             proposalError: null,
           })
       } catch (cause) {
-        if (generation === revision && listeners.size)
-          publish({ proposalError: getStandInErrorMessage(cause) })
+        if (generation === revision && listeners.size) {
+          reportStandInError('load_proposal', cause, next.deviceId)
+          publish({
+            proposalError: getStandInErrorMessage(cause, 'load_assistant_proposal_failed'),
+          })
+        }
       } finally {
         if (generation === revision && listeners.size) timer = setTimeout(poll, 3000)
       }
@@ -327,7 +330,6 @@ export function createStandInOverviewSource(initial: {
             value.userId === current.userId &&
             value.executionDeviceId === current.deviceId
           ) {
-            current.setDraft(value)
             current.reload()
           }
         })

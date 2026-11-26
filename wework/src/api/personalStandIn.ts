@@ -185,6 +185,7 @@ export type StandInConversationScope =
   | `shared:${number}:${StandInShareDefinition['kind']}:${string}`
 
 export interface PersonalStandInSettings {
+  cloudDefinitionRevision?: string
   userId: number
   executionDeviceId: string
   version: number

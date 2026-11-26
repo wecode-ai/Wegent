@@ -29,8 +29,18 @@ impl RuntimeWorkRpcHandler {
         let settings = store
             .configured_personal_stand_in(user, &self.device_id)
             .map_err(super::stand_in::settings_error)?;
-        let device = self.local_stand_in_role_device(&settings, role.unwrap_or("@primary"));
+        let role_id = role.unwrap_or("@primary");
+        let device = self.local_stand_in_role_device(&settings, role_id);
         if learning_report {
+            // The default assistant can chat before its profile is saved.
+            if role_id == "@primary"
+                && settings["primary"].is_null()
+                && settings["executionDeviceId"]
+                    .as_str()
+                    .is_some_and(|device| self.stand_in_device_runs_here(device))
+            {
+                return Ok(json!({"iterations":0,"latest":null,"revision":null}));
+            }
             let device = device.ok_or_else(|| {
                 AppIpcError::new(
                     "permission_denied",

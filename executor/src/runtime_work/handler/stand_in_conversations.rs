@@ -5,6 +5,32 @@ use super::stand_in_shared_conversation::{
 };
 use super::*;
 use crate::task_runtime::personal_stand_in::{stand_in_team, team_scope_id};
+use sha2::{Digest, Sha256};
+
+const IDENTITY_INSTRUCTIONS: &str = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. When specialist delegation tools are available, use them for explicit owner requests that fit the specialist's responsibilities. Follow any role the user names, assign a clear match automatically, and ask when choosing between roles would change the outcome. Coordinate branches and report the final result here after they finish. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
+
+fn identity_system_prompt(
+    base: &str,
+    prompt: Option<&str>,
+    preferences: Option<&str>,
+    collaboration: bool,
+) -> String {
+    let mut system = format!("{base}\n\n{IDENTITY_INSTRUCTIONS}");
+    for value in [prompt, preferences]
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.trim().is_empty())
+    {
+        system.push_str("\n\n");
+        system.push_str(value);
+    }
+    append_connection_instructions(&mut system);
+    append_conversation_instructions(&mut system, false);
+    if collaboration {
+        append_collaboration_instructions(&mut system);
+    }
+    system
+}
 
 const CONNECTION_INSTRUCTIONS: &str = "Before acting on mail, calendars or project updates, inspect available sources with get_profile and list_connection_providers (list_projects for projects). Attempt missing data-source connections with connect_source. A provider being ready or a subscription existing does not prove you have read its contents. When login is required, request native Wework authorization using only the exact pluginKey and connectorSlug returned by the provider; resume discovery after authorization. For account setup, guide the user to the secure native Connections form; never request passwords or tokens in chat. Clarify the required resource scope, propose subscriptions with propose_profile, and wait for explicit native confirmation before proceeding. When that configuration blocks the current explicit business request, set continueCurrentRequest=true and check willContinueCurrentRequest in the tool result so the host can resume this same owner request after acceptance. Omit it for ordinary configuration edits. Existing worker grants never expand; select exact current sources for any new execution. If a source cannot be read, explain what is missing and wait; do not invent content or create an aggregation task that cannot access its inputs. Keep the user's business request intact rather than asking them to write these setup instructions.";
 
@@ -122,6 +148,44 @@ fn conversation_client_message_id(payload: &Value) -> Option<String> {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn apply_shared_stand_in_prompt(
+        &self,
+        request: &mut ExecutionRequest,
+        prompt: Option<&str>,
+    ) -> Result<(), AppIpcError> {
+        let Some(prompt) = prompt else { return Ok(()) };
+        let Some(origin) = request
+            .extra
+            .get_mut("origin")
+            .filter(|origin| origin["type"] == "stand_in_identity")
+        else {
+            return Ok(());
+        };
+        let Some(user) = origin["userId"].as_i64() else {
+            return Ok(());
+        };
+        let preferences = if origin["standInId"].is_null() {
+            let store =
+                LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+            store
+                .configured_personal_stand_in(user, &self.device_id)
+                .map_err(settings_error)?["primary"]["preferences"]
+                .as_str()
+                .map(str::to_owned)
+        } else {
+            None
+        };
+        request.system_prompt = identity_system_prompt(
+            "",
+            Some(prompt),
+            preferences.as_deref(),
+            origin["conversationScope"] == "collaboration",
+        );
+        origin["assistantDefinitionDigest"] =
+            json!(format!("{:x}", Sha256::digest(prompt.as_bytes())));
+        Ok(())
+    }
+
     pub(super) async fn dispatch_stand_in_conversation(
         &self,
         mut prepared: Value,
@@ -315,14 +379,34 @@ impl RuntimeWorkRpcHandler {
         let personal = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
-        let role = role_id
-            .map(|id| {
-                personal["roles"]
-                    .as_array()
-                    .and_then(|roles| roles.iter().find(|role| role["id"] == id))
-                    .ok_or_else(|| AppIpcError::new("not_found", "Stand-in role no longer exists"))
-            })
-            .transpose()?;
+        let mut shared_prompt = payload["options"]["assistantPrompt"].as_str();
+        let role = role_id.and_then(|id| {
+            personal["roles"]
+                .as_array()
+                .and_then(|roles| roles.iter().find(|role| role["id"] == id))
+        });
+        let cloud_role;
+        if let Some(id) = role_id.filter(|_| role.is_none()) {
+            let missing = || AppIpcError::new("not_found", "Stand-in role no longer exists");
+            if shared_prompt.is_none() {
+                return Err(missing());
+            }
+            self.verify_local_stand_in_owner(user)?;
+            cloud_role = self
+                .runtime_http(reqwest::Method::GET, "/v1/personal-assistant", None)
+                .await?;
+            shared_prompt = cloud_role["assistant"]["definitions"]
+                .as_array()
+                .and_then(|definitions| {
+                    definitions
+                        .iter()
+                        .find(|definition| definition["roleId"] == id)
+                })
+                .and_then(|definition| definition["ghost"]["spec"]["systemPrompt"].as_str());
+            if shared_prompt.is_none() {
+                return Err(missing());
+            }
+        }
         let scope = &payload["options"]["conversationScope"];
         let team = team_scope_id(scope)
             .map(|id| validate_team_lead(&personal, id, role_id, &self.device_id))
@@ -347,14 +431,20 @@ impl RuntimeWorkRpcHandler {
                     .filter(|name| !name.is_empty())
             })
             .unwrap_or("我的助理");
-        let instructions = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. When specialist delegation tools are available, use them for explicit owner requests that fit a specialist's responsibilities. Follow any role the user names, assign a clear match automatically, and ask when choosing between roles would change the outcome. Coordinate branches and report the final result here after they finish. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
         let mut origin = json!({"runtimeTaskId":task_id,"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
+        if let Some(prompt) = shared_prompt {
+            origin["assistantDefinitionDigest"] =
+                json!(format!("{:x}", Sha256::digest(prompt.as_bytes())));
+        }
         if !scope.is_null() {
             origin["conversationScope"] = scope.clone();
         }
         let mut config = role
             .cloned()
             .or_else(|| {
+                if role_id.is_some() {
+                    return None;
+                }
                 personal
                     .get("primary")
                     .filter(|value| value.is_object())
@@ -362,6 +452,9 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or_else(|| json!({}));
         config["userId"] = json!(user);
+        if let Some(prompt) = shared_prompt {
+            config["prompt"] = json!(prompt);
+        }
         config["handlingPolicy"] = json!({"automatic":false,"askBeforeAct":true});
         config = self.conversation_model(config, &payload["options"]).await?;
         let client_user_message_id = conversation_client_message_id(&payload);
@@ -391,27 +484,20 @@ impl RuntimeWorkRpcHandler {
         let system = prepared["executionRequest"]["system_prompt"]
             .as_str()
             .unwrap_or_default();
-        let mut system = format!("{system}\n\n{instructions}");
-        for field in ["prompt", "preferences"] {
-            if let Some(value) = config[field]
-                .as_str()
-                .filter(|value| !value.trim().is_empty())
-            {
-                system.push_str("\n\n");
-                system.push_str(value);
+        let system = if let Some(snapshot) = &shared {
+            shared_conversation_instructions(snapshot)?
+        } else {
+            let mut system = identity_system_prompt(
+                system,
+                config["prompt"].as_str(),
+                config["preferences"].as_str(),
+                scope == "collaboration",
+            );
+            if team.is_some() {
+                system.push_str("\n\nYou are coordinating an assistant team. Use list_delegate_roles to read your current duty and the other members’ duties, then delegate to the team.");
             }
-        }
-        if team.is_some() {
-            system.push_str("\n\nYou are coordinating an assistant team. Use list_delegate_roles to read your current duty and the other members’ duties, then delegate to the team.");
-        }
-        append_connection_instructions(&mut system);
-        append_conversation_instructions(&mut system, false);
-        if scope == "collaboration" {
-            append_collaboration_instructions(&mut system);
-        }
-        if let Some(snapshot) = &shared {
-            system = shared_conversation_instructions(snapshot)?;
-        }
+            system
+        };
         prepared["executionRequest"]["system_prompt"] = json!(system);
         self.dispatch_stand_in_conversation(prepared, activity)
             .await?;

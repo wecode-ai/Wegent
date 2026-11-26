@@ -21,7 +21,11 @@ import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 import { verifyProjectMenuPointerInput } from './sidebar-hover.mjs'
-import { prepareStandInOnboardingFixture } from './stand-in-onboarding-fixture.mjs'
+import {
+  createStandInFixtureSession,
+  initializeFixtureAssistant,
+  prepareStandInOnboardingFixture,
+} from './stand-in-onboarding-fixture.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -1287,11 +1291,17 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     let executorBinary
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
+    const assistantCheckpoint =
+      DESKTOP_SEGMENT?.startsWith('stand-in-') ||
+      ['stand-in', 'coordination-runtime', 'dots-closed-loops'].includes(DESKTOP_SEGMENT)
+    const localAssistantStory = assistantCheckpoint && !scenarioRequiresCloudEnvironment
+    let assistantFixtureToken
     if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
       DESKTOP_SEGMENT === 'remote-device-onboarding' ||
+      assistantCheckpoint ||
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
@@ -1311,6 +1321,19 @@ async function main() {
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
       executorBinary = builtExecutor
+      if (localAssistantStory)
+        assistantFixtureToken = await createStandInFixtureSession(cloudEnvironment)
+      if (
+        assistantCheckpoint &&
+        !['stand-in-cloud-device', 'stand-in-role-delegation-cross-device'].includes(
+          DESKTOP_SEGMENT
+        )
+      ) {
+        await initializeFixtureAssistant(
+          cloudEnvironment.backendUrl,
+          assistantFixtureToken ?? cloudEnvironment.authToken
+        )
+      }
       if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT === 'conversation-state') {
         cloudHistorySearch = createCloudHistorySearchVerification()
         await cloudHistorySearch.prepareCloud(cloudEnvironment)
@@ -1332,7 +1355,7 @@ async function main() {
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
     const desktopApp =
-      cloudEnvironment && desktopScenario?.requiresRemoteExecutor !== false
+      cloudEnvironment && !localAssistantStory && desktopScenario?.requiresRemoteExecutor !== false
         ? (
             await Promise.all([
               desktopAppPromise,
@@ -1450,6 +1473,7 @@ async function main() {
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
+        assistantFixtureToken ??
         cloudEnvironment?.authToken ??
         desktopScenario?.authToken ??
         'wework-desktop-e2e-cloud-token',
@@ -1837,7 +1861,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           DESKTOP_SEGMENT === 'application-menu' ||
           DESKTOP_SEGMENT.startsWith('coordination-'))
       ) {
-        await prepareStandInOnboardingFixture(control, cloudEnvironment, WORKBENCH_READY_TIMEOUT_MS)
+        await prepareStandInOnboardingFixture(
+          control,
+          cloudEnvironment,
+          WORKBENCH_READY_TIMEOUT_MS,
+          assistantFixtureToken
+        )
       }
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {

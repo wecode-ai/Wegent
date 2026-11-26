@@ -1883,6 +1883,7 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    personalAssistantAccountApi: cloudServices.personalAssistantAccountApi,
     standInApi: {
       async binding(deviceId, operation, version, target) {
         return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)

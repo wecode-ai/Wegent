@@ -1,4 +1,4 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { useMemo, useSyncExternalStore } from 'react'
 import {
   createAsyncResource,
@@ -59,11 +59,22 @@ export function useStandInInbox(
   const resourceScope = JSON.stringify([connectionScope, userId, deviceId])
   const resource = useMemo(
     () =>
-      createAsyncResource(resourceScope, () => api!.inbox(userId, deviceId!), {
-        refreshIntervalMs: 3000,
-        refreshIntervalMode: 'after-settle',
-        refreshOnSubscribe: true,
-      }),
+      createAsyncResource(
+        resourceScope,
+        async () => {
+          try {
+            return await api!.inbox(userId, deviceId!)
+          } catch (error) {
+            reportStandInError('load_inbox', error, deviceId)
+            throw error
+          }
+        },
+        {
+          refreshIntervalMs: 3000,
+          refreshIntervalMode: 'after-settle',
+          refreshOnSubscribe: true,
+        }
+      ),
     [api, userId, deviceId, resourceScope]
   )
   const query = useSyncExternalStore(
@@ -87,7 +98,10 @@ export function useStandInInbox(
             : work.status === 'pending')
       ) ?? [],
     sourceErrors: query.data?.sourceErrors ?? [],
-    error: query.status === 'error' ? getStandInErrorMessage(query.error) : null,
+    error:
+      query.status === 'error'
+        ? getStandInErrorMessage(query.error, 'load_assistant_inbox_failed')
+        : null,
     refresh,
   }
 }
