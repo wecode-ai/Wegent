@@ -2300,6 +2300,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'closeProcessExplorerWindow':
       await invokeDesktopHost('e2e.closeProcessExplorerWindow')
       return ''
+    case 'setProcessExplorerWindowHidden':
+      await invokeDesktopHost('e2e.setProcessExplorerWindowHidden', {
+        hidden: command.value === 'true',
+      })
+      return ''
+    case 'spawnProcessExplorerFixture':
+      return JSON.stringify(await invokeDesktopHost('e2e.spawnProcessExplorerFixture'))
+    case 'stopProcessExplorerFixture':
+      return JSON.stringify(await invokeDesktopHost('e2e.stopProcessExplorerFixture'))
     case 'activateApplicationMenu': {
       const request = JSON.parse(command.value ?? '{}') as { id?: string; windowLabel?: string }
       return JSON.stringify(

@@ -1,0 +1,17 @@
+{
+  "order": 172500,
+  "scenario": "./scenarios/process-explorer-lifecycle.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 118500,
+      "shard": 2,
+      "position": 16500
+    }
+  },
+  "paths": [
+    "packages/process-explorer/src/**",
+    "wework/src/features/process-explorer/*",
+    "wework/electron/src/host/process-explorer-*"
+  ]
+}
