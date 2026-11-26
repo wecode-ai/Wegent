@@ -1699,8 +1699,6 @@ class SandboxManager(metaclass=SingletonMeta):
         if sandbox:
             sandbox.set_failed("Sandbox crashed")
             self._repository.save_sandbox(sandbox)
-            # Remove from active set to prevent repeated heartbeat checks
-            self._repository.remove_from_active_set(sandbox_id)
             logger.info(
                 f"[SandboxManager] Marked sandbox {sandbox_id} as failed, "
                 "data preserved for client polling"
@@ -1715,6 +1713,12 @@ class SandboxManager(metaclass=SingletonMeta):
                     logger.warning(
                         f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
                     )
+                elif self._repository.delete_executor_binding(
+                    int(sandbox_id),
+                    expected_executor_name=sandbox.container_name,
+                    sandbox=True,
+                ):
+                    self._repository.remove_from_active_set(sandbox_id)
             except Exception as e:
                 logger.warning(f"[SandboxManager] Error deleting container: {e}")
 

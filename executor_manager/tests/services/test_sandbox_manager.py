@@ -2245,12 +2245,18 @@ class TestSandboxManager:
         load.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("delete_status", "revoked"),
+        [("success", True), ("success", False), ("failed", False)],
+    )
     async def test_handle_executor_dead_terminates_sandbox(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
+        delete_status,
+        revoked,
     ):
         """Test marks sandbox as failed and cleans up when executor dies."""
         manager = sandbox_manager_with_mock_redis
@@ -2267,11 +2273,15 @@ class TestSandboxManager:
 
         # Mock ExecutorDispatcher to avoid actual Docker calls
         mock_executor = MagicMock()
-        mock_executor.delete_executor.return_value = {"status": "success"}
+        mock_executor.delete_executor.return_value = {"status": delete_status}
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
         )
+        revoke = mocker.patch.object(
+            manager._repository, "delete_executor_binding", return_value=revoked
+        )
+        untrack = mocker.patch.object(manager._repository, "remove_from_active_set")
 
         await manager._handle_executor_dead("12345", 1704067000.0)
 
@@ -2279,6 +2289,16 @@ class TestSandboxManager:
         mock_heartbeat.delete_heartbeat.assert_called_once()
         # Verify container deletion was attempted
         mock_executor.delete_executor.assert_called_once()
+        if delete_status == "success":
+            revoke.assert_called_once_with(
+                12345, expected_executor_name="wegent-task-testuser-12345", sandbox=True
+            )
+        else:
+            revoke.assert_not_called()
+        if revoked:
+            untrack.assert_called_once_with("12345")
+        else:
+            untrack.assert_not_called()
 
     async def test_collect_expired_sandboxes_terminates_old(
         self,
