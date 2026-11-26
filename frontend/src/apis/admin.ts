@@ -1763,8 +1763,18 @@ export const adminApis = {
     )
   },
 
-  async createConnectorOAuthSession(slug: string): Promise<ConnectorOAuthSession> {
-    return apiClient.post(`/connector-apps/${encodeURIComponent(slug)}/oauth/sessions`, {})
+  async createConnectorOAuthSession(
+    slug: string,
+    authorizationTicket?: string
+  ): Promise<ConnectorOAuthSession> {
+    const url = `/connector-apps/${encodeURIComponent(slug)}/oauth/sessions`
+    return authorizationTicket
+      ? apiClient.post(
+          url,
+          { authorization_ticket: authorizationTicket },
+          { redirectOnUnauthorized: false }
+        )
+      : apiClient.post(url, {})
   },
 
   async disconnectConnectorApp(slug: string): Promise<void> {

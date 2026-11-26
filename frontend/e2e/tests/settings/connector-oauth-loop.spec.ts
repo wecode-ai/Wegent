@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import {
   configureToolScenario,
@@ -157,6 +158,192 @@ test.describe('Connector app OAuth loop', () => {
       })
     }
     await providerControl(request, { rejectRefresh: false, revokeAll: true })
+  })
+
+  test('prechecks and authorizes a custom connector from an external app', async ({
+    browser,
+    request,
+  }) => {
+    const regularToken = await loginToken(request, REGULAR_USER)
+    const createdKey = await request.post(`${API_URL}/api/api-keys`, {
+      headers: authHeaders(regularToken),
+      data: { name: 'External connector OAuth E2E' },
+    })
+    expect(createdKey.status()).toBe(201)
+    const key = (await createdKey.json()) as { id: number; key: string }
+    const path = `${API_URL}/api/external/connector-apps/${SLUG}`
+    const headers = { 'X-API-Key': key.key }
+    const precheck = async () => {
+      const response = await request.get(`${path}/authorization`, { headers, timeout: 10_000 })
+      expect(response.status(), 'Connector precheck returns a status').toBe(200)
+      return response.json()
+    }
+
+    try {
+      expect(await precheck()).toEqual({ slug: SLUG, status: 'authorization_required' })
+      const started = await request.post(`${path}/oauth/start`, { headers, timeout: 10_000 })
+      expect(started.status()).toBe(200)
+      const { authorize_url: authorizeUrl } = (await started.json()) as { authorize_url: string }
+      const link = new URL(authorizeUrl)
+      const ticket = new URLSearchParams(link.hash.slice(1)).get('ticket')
+      expect(ticket).toBeTruthy()
+      const wrongUser = await request.post(`${API_URL}/api/connector-apps/${SLUG}/oauth/sessions`, {
+        headers: authHeaders(adminToken),
+        data: { authorization_ticket: ticket },
+        timeout: 10_000,
+      })
+      expect(wrongUser.status(), 'A different signed-in user cannot use the link').toBe(403)
+
+      const expiry = getJwtExpiryMs(regularToken)
+      expect(expiry, 'The target user has a valid Wegent browser session').toBeGreaterThan(
+        Date.now()
+      )
+      const context = await browser.newContext({
+        storageState: buildStorageState(link.origin, regularToken, expiry),
+      })
+      try {
+        const page = await context.newPage()
+        await page.goto(authorizeUrl, { waitUntil: 'domcontentloaded' })
+        const authorize = page.getByTestId('authorize-external-connector')
+        await expect(authorize, 'Wegent shows the external connector consent page').toBeVisible({
+          timeout: 10_000,
+        })
+        const popupPromise = page.waitForEvent('popup', { timeout: 10_000 })
+        await authorize.click()
+        const popup = await popupPromise
+        await expect(
+          popup.locator('body'),
+          'Wegent accepted the provider OAuth callback'
+        ).toContainText('Connector is connected', { timeout: 20_000 })
+        await expect(
+          page.getByTestId('external-connector-authorized'),
+          'The authorization page reports the stored grant'
+        ).toBeVisible({ timeout: 10_000 })
+      } finally {
+        await context.close()
+      }
+      expect(await precheck()).toEqual({ slug: SLUG, status: 'authorized' })
+    } finally {
+      const disconnected = await request.delete(
+        `${API_URL}/api/connector-apps/${SLUG}/connection`,
+        {
+          headers: authHeaders(regularToken),
+        }
+      )
+      expect(disconnected.status()).toBe(204)
+      const removed = await request.delete(`${API_URL}/api/api-keys/${key.id}`, {
+        headers: authHeaders(regularToken),
+      })
+      expect(removed.status()).toBe(204)
+    }
+  })
+
+  test('distinguishes unsupported Bearer credentials from no authorization', async ({
+    request,
+  }) => {
+    const slug = `${SLUG}-auth-types`
+    const adminHeaders = authHeaders(adminToken)
+    const created = await request.post(`${API_URL}/api/admin/connector-apps`, {
+      headers: adminHeaders,
+      data: {
+        slug,
+        name: 'E2E Connector authentication types',
+        mcp_url: `${MOCK_URL}/connector-oauth/mcp`,
+        auth_type: 'bearer',
+      },
+      timeout: 10_000,
+    })
+    expect(created.status(), 'The Connector catalog supports Bearer credentials').toBe(201)
+    const { id } = (await created.json()) as { id: number }
+    const appUrl = `${API_URL}/api/admin/connector-apps/${id}`
+    const keyUrl = `${API_URL}/api/api-keys`
+    const externalUrl = `${API_URL}/api/external/connector-apps/${slug}`
+    try {
+      const keyResponse = await request.post(keyUrl, {
+        headers: adminHeaders,
+        data: { name: 'External connector authentication types E2E' },
+        timeout: 10_000,
+      })
+      expect(keyResponse.status()).toBe(201)
+      const key = (await keyResponse.json()) as { id: number; key: string }
+      const options = { headers: { 'X-API-Key': key.key }, timeout: 10_000 }
+      try {
+        const precheck = await request.get(`${externalUrl}/authorization`, options)
+        expect(precheck.status(), 'Bearer cannot be checked as an OAuth grant').toBe(422)
+        const start = await request.post(`${externalUrl}/oauth/start`, options)
+        expect(start.status(), 'Bearer must not receive an OAuth consent link').toBe(422)
+        expect(await start.json()).toEqual({ detail: 'Connector app does not use OAuth' })
+
+        const updated = await request.patch(appUrl, {
+          headers: adminHeaders,
+          data: { auth_type: 'none' },
+          timeout: 10_000,
+        })
+        expect(updated.status()).toBe(200)
+        const openPrecheck = await request.get(`${externalUrl}/authorization`, options)
+        const openStart = await request.post(`${externalUrl}/oauth/start`, options)
+        for (const response of [openPrecheck, openStart]) {
+          expect(response.status()).toBe(200)
+          expect(await response.json()).toEqual({ slug, status: 'not_required' })
+        }
+      } finally {
+        await request.delete(`${keyUrl}/${key.id}`, { headers: adminHeaders, timeout: 10_000 })
+      }
+    } finally {
+      await request.delete(appUrl, { headers: adminHeaders, timeout: 10_000 })
+    }
+  })
+
+  test('keeps a connector disconnected when an older external consent returns', async ({
+    request,
+  }) => {
+    const token = await loginToken(request, REGULAR_USER)
+    const headers = authHeaders(token)
+    const createdKey = await request.post(`${API_URL}/api/api-keys`, {
+      headers,
+      data: { name: 'External connector disconnect E2E' },
+    })
+    expect(createdKey.status()).toBe(201)
+    const key = (await createdKey.json()) as { id: number; key: string }
+    const externalHeaders = { 'X-API-Key': key.key }
+    const externalPath = `${API_URL}/api/external/connector-apps/${SLUG}`
+    const connectionPath = `${API_URL}/api/connector-apps/${SLUG}/connection`
+    try {
+      const started = await request.post(`${externalPath}/oauth/start`, {
+        headers: externalHeaders,
+        timeout: 10_000,
+      })
+      expect(started.status()).toBe(200)
+      const { authorize_url: link } = (await started.json()) as { authorize_url: string }
+      const ticket = new URLSearchParams(new URL(link).hash.slice(1)).get('ticket')
+      expect(ticket).toBeTruthy()
+      const pending = await request.post(`${API_URL}/api/connector-apps/${SLUG}/oauth/sessions`, {
+        headers,
+        data: { authorization_ticket: ticket },
+        timeout: 10_000,
+      })
+      expect(pending.status()).toBe(200)
+      const { authorize_url: providerUrl } = (await pending.json()) as { authorize_url: string }
+      const consent = await request.get(providerUrl, { maxRedirects: 0, timeout: 10_000 })
+      expect(consent.status()).toBe(302)
+
+      await authorizeViaApi(request, token, SLUG)
+      const disconnected = await request.delete(connectionPath, { headers, timeout: 10_000 })
+      expect(disconnected.status()).toBe(204)
+
+      const late = await request.get(consent.headers().location, { timeout: 10_000 })
+      expect(late.status(), 'An older callback must respect the disconnect').toBe(409)
+      const status = await request.get(`${externalPath}/authorization`, {
+        headers: externalHeaders,
+        timeout: 10_000,
+      })
+      expect(status.status()).toBe(200)
+      expect(await status.json()).toEqual({ slug: SLUG, status: 'authorization_required' })
+    } finally {
+      await request.delete(connectionPath, { headers, timeout: 10_000 })
+      const removed = await request.delete(`${API_URL}/api/api-keys/${key.id}`, { headers })
+      expect(removed.status()).toBe(204)
+    }
   })
 
   test('authorizes through the provider and exposes only allowlisted tools', async ({
