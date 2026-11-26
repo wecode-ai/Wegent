@@ -182,10 +182,12 @@ export function ProcessExplorerView({
     )
   }
 
+  // This desktop-only window can be narrower than the shared button's
+  // touch-target breakpoint; keep its dense controls one size.
   return (
     <div
       data-testid="process-explorer-window"
-      className="flex h-screen flex-col bg-background text-text-primary"
+      className="flex h-screen flex-col bg-background text-text-primary max-md:[&_button]:min-h-0 max-md:[&_button]:min-w-0"
     >
       <title>{t('process_explorer.title')}</title>
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
@@ -241,7 +243,7 @@ export function ProcessExplorerView({
             onClick={() => void load()}
             aria-label={t('process_explorer.refresh')}
             title={t('process_explorer.refresh')}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted md:min-h-7"
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </ControlButton>
