@@ -10,7 +10,6 @@ import type { MessageListProps } from './MessageList'
 type MessageListMessageProps = Pick<
   MessageListProps,
   | 'userMessageServices'
-  | 'assistantMessageStyle'
   | 'showProcessingStatus'
   | 'renderVisualization'
   | 'conversationKey'
@@ -57,7 +56,6 @@ export const MessageListMessage = memo(function MessageListMessage({
   isHistoricalTurn,
   userMessageServices,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   conversationKey,
   devices,
@@ -114,7 +112,6 @@ export const MessageListMessage = memo(function MessageListMessage({
     />
   ) : (
     <AssistantMessage
-      assistantMessageStyle={assistantMessageStyle}
       showProcessingStatus={showProcessingStatus}
       forceExpanded={forceExpanded}
       imageServices={userMessageServices.images}

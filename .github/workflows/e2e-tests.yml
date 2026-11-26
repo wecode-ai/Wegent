@@ -2142,9 +2142,17 @@ jobs:
           E2E_EXECUTOR_RECOVERY_URL: http://localhost:8191
           CI: true
         run: |
+          # Exercise the SDK against the same Manager and envd image while browser tests run.
+          sandbox_probe_pid=
+          if [[ "${{ matrix.suite }}" == sandbox ]]; then
+            (cd backend && uv run --no-sync python -m tests.e2e.sandbox_command_deadline) &
+            sandbox_probe_pid=$!
+          fi
+
           # Sandbox veth changes must not invalidate the browser's network stack.
           repository_name="${GITHUB_REPOSITORY##*/}"
           container_workspace="/__w/$repository_name/$repository_name"
+          playwright_status=0
           docker run --rm \
             --network bridge \
             --add-host wegent-e2e-runner:host-gateway \
@@ -2178,7 +2186,13 @@ jobs:
             --env GITHUB_RUN_ATTEMPT \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            node ./node_modules/@playwright/test/cli.js test --project="$E2E_EXECUTOR_PROJECT"
+            node ./node_modules/@playwright/test/cli.js test --project="$E2E_EXECUTOR_PROJECT" || playwright_status=$?
+
+          sandbox_probe_status=0
+          if [[ -n "$sandbox_probe_pid" ]]; then
+            wait "$sandbox_probe_pid" || sandbox_probe_status=$?
+          fi
+          [[ "$playwright_status" == 0 && "$sandbox_probe_status" == 0 ]]
 
       - name: Run Responses device cancellation E2E
         if: matrix.suite == 'device'

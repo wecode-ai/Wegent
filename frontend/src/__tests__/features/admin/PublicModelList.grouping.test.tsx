@@ -18,6 +18,13 @@ jest.mock('@/hooks/use-toast', () => {
   return { useToast: () => ({ toast }) }
 })
 
+const mockReplace = jest.fn()
+
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ replace: mockReplace }),
+  useSearchParams: () => new URLSearchParams(),
+}))
+
 jest.mock('@/apis/admin', () => ({
   adminApis: {
     getPublicModels: jest.fn(),

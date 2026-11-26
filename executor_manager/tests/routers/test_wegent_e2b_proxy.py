@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 
 from executor_manager.routers import wegent_e2b_proxy
 from executor_manager.services.sandbox import SandboxExecutionStorageError
@@ -42,7 +42,9 @@ async def test_proxy_retries_when_the_selected_sandbox_cannot_be_confirmed(mocke
     refresh = AsyncMock(return_value=False)
     manager = SimpleNamespace(refresh_sandbox_activity=refresh)
     sandbox = SimpleNamespace(sandbox_id="1385")
-    request = SimpleNamespace(method="POST", body=AsyncMock(return_value=b""))
+    request = SimpleNamespace(
+        method="POST", headers={}, body=AsyncMock(return_value=b"")
+    )
 
     mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
     mocker.patch.object(
@@ -54,6 +56,83 @@ async def test_proxy_retries_when_the_selected_sandbox_cannot_be_confirmed(mocke
 
     assert error.value.status_code == 503
     refresh.assert_awaited_once_with(sandbox)
+
+
+def test_legacy_process_start_keeps_default_read_timeout():
+    timeout = wegent_e2b_proxy._sandbox_proxy_timeout("process.Process/Start")
+
+    assert timeout.read == 1800.0
+    assert timeout.connect == 10.0
+
+
+def test_regular_sandbox_request_keeps_short_timeout():
+    timeout = wegent_e2b_proxy._sandbox_proxy_timeout(
+        "filesystem.Filesystem/Stat", "90000"
+    )
+
+    assert timeout.read == 60.0
+    assert timeout.connect == 10.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("upstream_error", "phase", "seconds"),
+    [
+        (httpx.ConnectTimeout, "connect", 10),
+        (httpx.ReadTimeout, "read", 95),
+        (httpx.WriteTimeout, "write", 60),
+        (httpx.PoolTimeout, "pool", 10),
+    ],
+)
+async def test_process_start_returns_connect_error(
+    mocker, upstream_error, phase, seconds
+):
+    """The SDK reads the error code and message from the HTTP response root."""
+    app = FastAPI()
+    app.include_router(wegent_e2b_proxy.router)
+    sandbox = SimpleNamespace(metadata={"task_type": "sandbox"})
+    upstream_client = mocker.AsyncMock()
+    upstream_client.__aenter__.return_value = upstream_client
+    upstream_client.request.side_effect = upstream_error("")
+
+    mocker.patch.object(
+        wegent_e2b_proxy,
+        "_get_sandbox_info",
+        new=mocker.AsyncMock(return_value=("http://sandbox:8080", sandbox)),
+    )
+    mocker.patch.object(
+        wegent_e2b_proxy,
+        "get_sandbox_manager",
+        return_value=SimpleNamespace(
+            refresh_sandbox_activity=AsyncMock(return_value=True)
+        ),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://manager"
+    ) as client:
+        upstream = mocker.patch.object(
+            wegent_e2b_proxy.httpx, "AsyncClient", return_value=upstream_client
+        )
+        response = await client.post(
+            "/sandbox-1/49983/process.Process/Start",
+            headers={"connect-timeout-ms": "90000"},
+        )
+
+    assert response.status_code == 504
+    assert response.json() == {
+        "code": "deadline_exceeded",
+        "phase": phase,
+        "timeout_seconds": seconds,
+        "message": (
+            "Sandbox request POST process.Process/Start timed out "
+            f"after {seconds} seconds during the {phase} phase"
+        ),
+    }
+    assert upstream.call_args.kwargs["timeout"].read == 95
+    assert (
+        upstream_client.request.call_args.kwargs["headers"]["connect-timeout-ms"]
+        == "90000"
+    )
 
 
 @pytest.mark.asyncio

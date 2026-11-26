@@ -54,7 +54,8 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     excluding: null,
     newPolicy: { automatic: true, askBeforeAct: true, immediate: initial.role.id !== '@primary' },
     kind: initial.provider.resourceKinds[0] ?? '',
-    scope: !initial.delegatedDingTalk && initial.provider.allResourceKinds?.length ? 'all' : 'selected',
+    scope:
+      !initial.delegatedDingTalk && initial.provider.allResourceKinds?.length ? 'all' : 'selected',
     selection: [],
     query: '',
     results: [],
@@ -136,13 +137,13 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
         cursor
       )
       if (!isCurrent(sequence)) return
-      const items = result.items
-        .filter(row =>
-          input.delegatedDingTalk
-            ? isDingTalkDelegationSource(row) && matchesDingTalkAccount(input.provider.availability, row)
-            : !state.excluding ||
-              (row.profile === state.excluding.profile && row.kind === state.excluding.kind)
-        )
+      const items = result.items.filter(row =>
+        input.delegatedDingTalk
+          ? isDingTalkDelegationSource(row) &&
+            matchesDingTalkAccount(input.provider.availability, row)
+          : !state.excluding ||
+            (row.profile === state.excluding.profile && row.kind === state.excluding.kind)
+      )
       setResults(previous => {
         const merged = new Map<string, Connection>()
         for (const row of cursor ? [...previous, ...items] : items) {
@@ -193,7 +194,8 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     if (current.delegatedDingTalk) {
       const selected = items.filter(
         row =>
-          isDingTalkDelegationSource(row) && matchesDingTalkAccount(current.provider.availability, row)
+          isDingTalkDelegationSource(row) &&
+          matchesDingTalkAccount(current.provider.availability, row)
       )
       if (!selected.length) return
       const retained = (current.role.connections ?? []).filter(
