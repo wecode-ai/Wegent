@@ -252,19 +252,23 @@ def test_custom_card_hides_missing_assignment_detail_and_links() -> None:
     assert params["secondaryUrl"] == ""
 
 
-@pytest.mark.parametrize(
-    ("kind", "kind_label"),
-    [("issue_dispatch_assignment", "任务分配")],
-)
-def test_custom_card_labels_known_task_notification_kinds(
-    kind: str, kind_label: str
-) -> None:
-    params = card_param_map(
-        push=push_copy(kind=kind, title="通知标题", body="通知正文"),
-        card_template_id="wegent-custom-template",
+def test_assignment_card_uses_the_existing_item_title_when_assigner_is_unknown() -> (
+    None
+):
+    push = push_copy(
+        kind="issue_dispatch_assignment",
+        title="新任务：修复登录",
+        payload={**TARGET.payload(), "actorName": " "},
     )
 
-    assert params["kindLabel"] == kind_label
+    custom = card_param_map(push=push, card_template_id="wegent-custom-template")
+    builtin = card_param_map(push=push)
+
+    assert custom["kindLabel"] == "任务分配"
+    assert custom["headline"] == "你收到一项任务"
+    assert custom["itemTitle"] == "修复登录"
+    assert builtin[TITLE_KEY] == custom["headline"]
+    assert builtin[MARKDOWN_KEY].startswith("**任务标题**：修复登录\n")
 
 
 @pytest.mark.parametrize(
