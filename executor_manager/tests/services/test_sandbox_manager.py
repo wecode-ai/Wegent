@@ -1625,17 +1625,27 @@ class TestSandboxManager:
     # ----- get_execution Tests -----
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("removed_before_dispatch", [True, False])
-    async def test_background_execution_does_not_write_after_sandbox_removal(
+    @pytest.mark.parametrize("change", ["removed_before", "removed_during", "paused"])
+    async def test_background_execution_rechecks_sandbox_before_dispatch_and_write(
         self,
         sandbox_manager_with_mock_redis,
         sample_sandbox,
         sample_execution,
         mocker,
-        removed_before_dispatch,
+        change,
     ):
+        from executor_manager.models.sandbox import ExecutionStatus, SandboxStatus
+
         manager = sandbox_manager_with_mock_redis
-        records = [None] if removed_before_dispatch else [sample_sandbox, None]
+        sample_sandbox.expires_at = None
+        current = copy.copy(sample_sandbox)
+        if change == "paused":
+            current.status = SandboxStatus.PENDING
+            records = [current, current]
+        elif change == "removed_before":
+            records = [None, None]
+        else:
+            records = [current, None]
         mocker.patch.object(manager._repository, "load_sandbox", side_effect=records)
         save = mocker.patch.object(
             manager._repository, "save_execution", return_value=True
@@ -1648,12 +1658,35 @@ class TestSandboxManager:
 
         await manager._run_execution(sample_sandbox, sample_execution, 30)
 
-        if removed_before_dispatch:
+        if change == "removed_before":
             send.assert_not_awaited()
             save.assert_not_called()
+        elif change == "paused":
+            send.assert_not_awaited()
+            save.assert_called_once_with(sample_execution)
+            assert sample_execution.status == ExecutionStatus.FAILED
         else:
             send.assert_awaited_once()
             save.assert_called_once_with(sample_execution)
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_lease_uses_canonical_numeric_task_id(
+        self, sandbox_manager_with_mock_redis, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        acquire = mocker.patch.object(
+            manager._lifecycle_lock, "acquire_owned", return_value="owner-token"
+        )
+        dispatch_lease, error = await manager._acquire_task_lifecycle_lease("0012345")
+        assert error is None
+        await manager._release_task_lifecycle_lease(dispatch_lease)
+        cleanup_lease = await manager._try_acquire_task_lifecycle_lease("12345")
+        await manager._release_task_lifecycle_lease(cleanup_lease)
+
+        assert [call.args[0] for call in acquire.call_args_list] == [
+            "task-lifecycle:12345",
+            "task-lifecycle:12345",
+        ]
 
     @pytest.mark.asyncio
     async def test_get_execution_found(

@@ -219,9 +219,8 @@ class ExecutionRunner(metaclass=SingletonMeta):
         # Set running status
         execution.set_running()
         if not await persist_status(execution):
-            execution.set_failed(
-                "Could not record running state for the current sandbox"
-            )
+            execution.set_failed("Could not start execution in the current sandbox")
+            await persist_status(execution)
             return False
 
         # Send request with timeout

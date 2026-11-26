@@ -188,11 +188,21 @@ class SandboxManager(metaclass=SingletonMeta):
             metadata=sandbox_metadata,
         )
 
+    @staticmethod
+    def _task_lifecycle_lock_name(task_key: str) -> Optional[str]:
+        """Use the same numeric task identity as the sandbox session hash."""
+        try:
+            return f"task-lifecycle:{int(task_key)}"
+        except ValueError:
+            return None
+
     async def _acquire_task_lifecycle_lease(
         self, task_key: str
     ) -> Tuple[Optional[_TaskLifecycleLease], Optional[str]]:
         """Acquire the cross-replica lifecycle lease for a task."""
-        lock_name = f"task-lifecycle:{task_key}"
+        lock_name = self._task_lifecycle_lock_name(task_key)
+        if lock_name is None:
+            return None, "Invalid sandbox task ID"
         deadline = time.monotonic() + SANDBOX_TASK_LOCK_WAIT_TIMEOUT
         while True:
             try:
@@ -232,7 +242,9 @@ class SandboxManager(metaclass=SingletonMeta):
         self, task_key: str
     ) -> Optional[_TaskLifecycleLease]:
         """Acquire a lifecycle lease without waiting for another owner."""
-        lock_name = f"task-lifecycle:{task_key}"
+        lock_name = self._task_lifecycle_lock_name(task_key)
+        if lock_name is None:
+            return None
         try:
             owner_token = await asyncio.to_thread(
                 self._lifecycle_lock.acquire_owned,
@@ -1466,6 +1478,8 @@ class SandboxManager(metaclass=SingletonMeta):
         async def persist_status(state: Execution) -> bool:
             async with self._lock_current_sandbox(sandbox) as (current, _):
                 if current is None:
+                    return False
+                if state.status == ExecutionStatus.RUNNING and not current.is_active():
                     return False
                 return self._repository.save_execution(state)
 
