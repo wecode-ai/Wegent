@@ -3385,6 +3385,7 @@ impl RuntimeWorkRpcHandler {
                     presentation,
                 );
             }
+            apply_guidance_correction_presentation(&mut link.runtime_handle, payload);
             link.workspace_path = workspace_path.to_owned();
             link.ephemeral = link.ephemeral || request.ephemeral;
             if request.runtime_project_key.is_some() {

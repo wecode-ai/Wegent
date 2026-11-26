@@ -59,6 +59,80 @@ fn explicit_activity_presentation_rejects_unbound_or_empty_overrides() {
 }
 
 #[test]
+fn guidance_correction_updates_the_guidance_row_without_adding_a_prompt_row() {
+    let mut handle = json!({});
+    append_runtime_handle_user_message_presentation(
+        &mut handle,
+        user_message_presentation(&json!({
+            "clientUserMessageId": "guidance-1",
+            "message": "Original guidance"
+        }))
+        .expect("guidance presentation"),
+    );
+    bind_runtime_handle_user_message_presentation_to_turn(&mut handle, "guidance-1", "turn-1");
+
+    let payload = json!({
+        "message": "Wrapped correction prompt",
+        "clientUserMessageId": "correction-1",
+        "guidanceCorrection": {"clientGuidanceId": "guidance-1", "content": "Revised guidance"}
+    });
+    apply_guidance_correction_presentation(&mut handle, &payload);
+    let presentations = user_message_presentations(&RuntimeTaskLink {
+        runtime_handle: handle.clone(),
+        ..RuntimeTaskLink::default()
+    });
+    let guidance = presentations
+        .iter()
+        .find(|presentation| presentation["clientUserMessageId"] == "guidance-1")
+        .expect("guidance presentation");
+    assert_eq!(guidance["content"], "Revised guidance");
+    assert_eq!(guidance["turnId"], "turn-1");
+    assert_eq!(guidance["runtimeGuidance"], true);
+
+    let mut correction = user_message_presentation(&payload).expect("correction presentation");
+    assert_eq!(correction["suppressUserMessage"], true);
+    correction["turnId"] = json!("turn-2");
+    let mut messages = vec![
+        json!({"id":"guidance-native","role":"user","turnId":"turn-1","content":"Original guidance"}),
+        json!({"id":"correction-native","role":"user","turnId":"turn-2","content":"Wrapped correction prompt"}),
+        json!({"id":"correction-answer","role":"assistant","turnId":"turn-2","content":"Done"}),
+    ];
+    attach_user_message_presentations_for_page(
+        &mut messages,
+        vec![correction],
+        &[],
+        &[],
+        false,
+        false,
+    );
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[1]["suppressedUserMessage"], true);
+    assert_eq!(messages[2]["suppressedUserMessage"], serde_json::Value::Null);
+}
+
+#[test]
+fn suppressed_presentation_without_a_matching_prompt_adds_no_synthetic_row() {
+    let presentation = user_message_presentation(&json!({
+        "message": "Wrapped correction prompt",
+        "clientUserMessageId": "correction-1",
+        "guidanceCorrection": {"clientGuidanceId": "guidance-1", "content": ""}
+    }))
+    .expect("correction presentation");
+    assert_eq!(presentation["suppressUserMessage"], true);
+    let mut messages = vec![json!({"id":"answer","role":"assistant","turnId":"turn-2","content":"Done"})];
+    attach_user_message_presentations_for_page(
+        &mut messages,
+        vec![presentation],
+        &[],
+        &[],
+        false,
+        false,
+    );
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "assistant");
+}
+
+#[test]
 fn explicit_activity_presentation_continuation_persists_and_binds_preview() {
     let root = tempfile::tempdir().unwrap();
     let (event_tx, mut event_rx) = broadcast::channel(32);

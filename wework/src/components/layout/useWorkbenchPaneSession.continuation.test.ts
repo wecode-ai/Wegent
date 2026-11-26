@@ -695,6 +695,10 @@ test('updates a guidance correction in place before transport and never appends 
   })
   expect(mocks.send.mock.calls[0][0].message).toContain('Revised guidance')
   expect(mocks.send.mock.calls[0][0].clientUserMessageId).not.toBe('guidance-message')
+  expect(mocks.send.mock.calls[0][0].guidanceCorrection).toEqual({
+    clientGuidanceId: 'guidance-message',
+    content: 'Revised guidance',
+  })
 
   await act(async () => {
     finish(true)

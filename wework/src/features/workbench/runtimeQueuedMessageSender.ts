@@ -78,6 +78,7 @@ export async function sendRuntimeQueuedMessage(
         address,
         message: message.content,
         clientUserMessageId: message.id,
+        ...(message.guidanceCorrection ? { guidanceCorrection: message.guidanceCorrection } : {}),
         ...(message.requestUserInputResponse
           ? { requestUserInputResponse: message.requestUserInputResponse }
           : {}),

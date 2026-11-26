@@ -858,15 +858,23 @@ async function verifyGuidanceCorrection(control) {
   await control.command('fill', editor, { value: GUIDANCE_CORRECTION_PROMPT })
   const submit = '[data-testid="submit-edit-user-message-button"]'
   assert.match(await control.command('getText', submit), /Send correction|发送修正/)
+  const userMessagesBeforeCorrection = await runtimeUserMessageCount(control)
   await control.command('clickWhenEnabled', submit)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: GUIDANCE_CORRECTION_COMPLETION,
   })
-  await control.command('scrollIntoViewAsUser', marked, {
+  // Correcting a guidance row re-renders it in place, so the earlier anchor no
+  // longer identifies the node. Re-anchor by the corrected text itself.
+  await control.command('markElementWithText', guidance, {
+    text: GUIDANCE_CORRECTION_PROMPT,
+    value: 'guidance-corrected',
+  })
+  const corrected = `${guidance}[data-e2e-anchor-id="guidance-corrected"]`
+  await control.command('scrollIntoViewAsUser', corrected, {
     text: GUIDANCE_CORRECTION_PROMPT,
   })
-  await control.command('waitFor', marked, { text: GUIDANCE_CORRECTION_PROMPT })
-  const correctedGuidanceText = await control.command('getText', marked)
+  await control.command('waitFor', corrected, { text: GUIDANCE_CORRECTION_PROMPT })
+  const correctedGuidanceText = await control.command('getText', corrected)
   assert.equal(
     countTextOccurrences(correctedGuidanceText, GUIDANCE_CORRECTION_PROMPT),
     1,
@@ -877,16 +885,10 @@ async function verifyGuidanceCorrection(control) {
     0,
     'The original guidance text remained after correction'
   )
-  const correctedUserMessagesText = await control.command('getText', guidance)
   assert.equal(
-    countTextOccurrences(correctedUserMessagesText, GUIDANCE_SCROLL_MESSAGE),
-    0,
-    'The correction appended a duplicate guidance message'
-  )
-  assert.equal(
-    countTextOccurrences(correctedUserMessagesText, GUIDANCE_CORRECTION_PROMPT),
-    1,
-    'The corrected guidance was not rendered exactly once'
+    await runtimeUserMessageCount(control),
+    userMessagesBeforeCorrection,
+    'The correction appended a duplicate user message'
   )
   await control.command('scrollIntoViewAsUser', '[data-testid="message-assistant"]', {
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
@@ -894,6 +896,13 @@ async function verifyGuidanceCorrection(control) {
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
   })
+}
+
+async function runtimeUserMessageCount(control) {
+  const snapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', undefined, { value: 'state-only' })
+  )
+  return snapshot.pane?.messageSummary?.byRole?.user ?? 0
 }
 
 async function verifyTurnNavigationTracksVisibleTurnMessages(

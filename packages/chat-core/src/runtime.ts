@@ -63,6 +63,8 @@ export interface NormalizedRuntimeMessage {
   stopped_notice?: boolean | null;
   runtimeGuidance?: boolean | null;
   runtime_guidance?: boolean | null;
+  suppressedUserMessage?: boolean | null;
+  suppressed_user_message?: boolean | null;
   runtimeGoalRequest?: boolean | null;
   runtime_goal_request?: boolean | null;
   source?: RuntimeMessageSource | null;

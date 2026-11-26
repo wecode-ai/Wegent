@@ -31,6 +31,7 @@ import {
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   replaceRuntimeConversationSnapshot,
+  replaceRuntimeConversationGuidance,
   runtimeConversationSnapshotSettlesLatestTurn,
   subscribeRuntimeConversation,
   settleRuntimeConversationAcceptedMessage,
@@ -1257,6 +1258,89 @@ describe('runtimeConversationCache', () => {
         },
       ])
     ).toBe(true)
+  })
+
+  test('keeps a corrected guidance in place without a continuation user row', () => {
+    const guidanceTurn = {
+      id: 'turn-1',
+      status: 'done' as const,
+      items: [
+        {
+          id: 'active-prompt',
+          type: 'user_message' as const,
+          message: {
+            id: 'active-prompt',
+            role: 'user' as const,
+            content: 'active prompt',
+            status: 'done' as const,
+            createdAt: '2026-11-25T00:00:00.000Z',
+          },
+        },
+        {
+          id: 'guidance-message',
+          type: 'user_message' as const,
+          message: {
+            id: 'guidance-message',
+            role: 'user' as const,
+            content: 'original guidance',
+            status: 'done' as const,
+            createdAt: '2026-11-25T00:00:02.000Z',
+            runtimeGuidance: true as const,
+          },
+        },
+        {
+          id: 'guidance-done',
+          type: 'assistant_text' as const,
+          content: 'completed guidance',
+          createdAt: '2026-11-25T00:00:03.000Z',
+        },
+      ],
+    }
+    reconcileRuntimeConversationSnapshot(address, [guidanceTurn as never])
+    replaceRuntimeConversationGuidance(address, {
+      id: 'guidance-message',
+      role: 'user',
+      content: 'corrected guidance',
+      status: 'done',
+      createdAt: '2026-11-25T00:00:02.000Z',
+      turnId: 'turn-1',
+      runtimeGuidance: true,
+    })
+
+    // The runtime echoes the continuation as its own turn. Its prompt is
+    // suppressed, so the corrected guidance remains the only user row.
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        ...guidanceTurn,
+        items: guidanceTurn.items.map(item =>
+          item.id === 'guidance-message'
+            ? {
+                ...item,
+                message: { ...item.message, content: 'corrected guidance' },
+              }
+            : item
+        ),
+      } as never,
+      {
+        id: 'turn-2',
+        clientUserMessageId: 'correction-message',
+        status: 'done' as const,
+        items: [
+          {
+            id: 'correction-done',
+            type: 'assistant_text' as const,
+            content: 'correction completed',
+            createdAt: '2026-11-25T00:00:05.000Z',
+          },
+        ],
+      } as never,
+    ])
+
+    const users = getRuntimeConversationMessages(address).filter(message => message.role === 'user')
+    expect(users.map(message => [message.id, message.content])).toEqual([
+      ['active-prompt', 'active prompt'],
+      ['guidance-message', 'corrected guidance'],
+    ])
   })
 
   test('settles a bound turn only when the same real turn id is complete', () => {

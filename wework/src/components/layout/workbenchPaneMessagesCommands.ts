@@ -93,6 +93,7 @@ import type { PaneCommandContext } from './workbenchPaneCommandContext'
 
 type ContinuationOptions = Pick<RuntimePaneQueuedMessage, 'displayContent' | 'attachments'> & {
   appendAcceptedMessage?: boolean
+  guidanceCorrection?: RuntimePaneQueuedMessage['guidanceCorrection']
 }
 
 export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
@@ -501,6 +502,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
           attachments: targetMessage.attachments,
           displayContent: submittedContent || undefined,
           appendAcceptedMessage: false,
+          guidanceCorrection: {
+            clientGuidanceId: targetMessage.id,
+            content: submittedContent,
+          },
         }
       )
       if (!sent) replaceRuntimeConversationGuidance(currentRuntimeTask, originalGuidance)
