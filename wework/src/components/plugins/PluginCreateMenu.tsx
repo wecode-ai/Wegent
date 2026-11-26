@@ -54,6 +54,9 @@ export function PluginCreateMenu({
       onOpenChange={onOpenChange}
       testId={buttonTestId}
       menuTestId="plugins-create-menu"
+      placement="bottom-end"
+      triggerClassName="electron-titlebar-interactive-region"
+      itemClassName="electron-titlebar-interactive-region"
       ariaLabel={t('workbench.plugins_create', '创建')}
       triggerLabel={compact ? undefined : t('workbench.plugins_create', '创建')}
       icon={Plus}

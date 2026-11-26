@@ -2,6 +2,17 @@ use super::*;
 
 const QUESTION_AT: i64 = 1_795_507_200_000;
 
+fn enable_dingtalk_delegation(store: &LocalTaskStore, device: &str) -> Value {
+    let mut settings = store.personal_stand_in(7, device).unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+    settings["primary"]["connections"] = json!([{
+        "providerId":DINGTALK_PROVIDER,"kind":"direct","id":"peer","name":"Peer",
+        "profile":"current","accountId":"account","policy":{"automatic":false,"askBeforeAct":true}
+    }]);
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    store.save_personal_stand_in(7, device, settings).unwrap()
+}
+
 #[tokio::test(start_paused = true)]
 async fn automatic_receipt_check_stops_on_confirmation_or_when_only_uncertainty_remains() {
     for (confirmation, expected_checks) in [(Some(2), 2), (None, 3)] {
@@ -35,14 +46,7 @@ async fn interrupted_dingtalk_submission_reopens_as_unknown_without_replaying() 
     };
     let handler = make_handler();
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-    let mut settings = store.personal_stand_in(7, device).unwrap();
-    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
-    settings["primary"]["connections"] = json!([{
-        "providerId":DINGTALK_PROVIDER,"kind":"direct","id":"peer","name":"Peer",
-        "profile":"current","accountId":"account","policy":{"automatic":false,"askBeforeAct":true}
-    }]);
-    settings["primary"]["delegation"] = json!({"action":"enable"});
-    let settings = store.save_personal_stand_in(7, device, settings).unwrap();
+    let settings = enable_dingtalk_delegation(&store, device);
     let source = &settings["primary"]["connections"][0];
     let event = json!({"id":"question","text":"Where is the guide?","at":"2099-01-01T00:00:00Z"});
     let work = store
@@ -96,6 +100,85 @@ async fn interrupted_dingtalk_submission_reopens_as_unknown_without_replaying() 
         .unwrap();
     let replayed = restarted.list_connection_stand_in_work(list()).unwrap();
     assert_eq!(replayed["items"][0]["delegationResult"], *result);
+}
+
+#[tokio::test]
+async fn dingtalk_receipt_and_takeover_require_the_current_delegated_account() {
+    let root = tempfile::tempdir().unwrap();
+    let device = "desktop";
+    let handler = RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime.json")),
+        task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+        ..RuntimeWorkRpcHandler::new(device, "unused")
+    };
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let settings = enable_dingtalk_delegation(&store, device);
+    let source = &settings["primary"]["connections"][0];
+    let mut old_source = source.clone();
+    old_source["accountId"] = json!("previous-account");
+    let event =
+        |id: &str| json!({"id":id,"text":"Where is the guide?","at":"2099-01-01T00:00:00Z"});
+    let old_work = store
+        .ingest_stand_in_message(7, "@primary", &old_source, &event("old-question"), None)
+        .unwrap();
+    let moved_work = store
+        .ingest_stand_in_message(7, "@primary", source, &event("moved-question"), None)
+        .unwrap();
+    let old_id = old_work["id"].as_str().unwrap();
+    let old_record = old_work["latestMessage"]["recordId"].as_str().unwrap();
+    let moved_record = moved_work["latestMessage"]["recordId"].as_str().unwrap();
+    let db = rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap();
+    // A historical mixed work is readable through its current visible message.
+    assert_eq!(
+        db.execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.workId',?1) WHERE id=?2",
+            (old_id, moved_record),
+        )
+        .unwrap(),
+        1
+    );
+    let save_receipt = |record_id: &str, receipt_id: &str| {
+        let result = json!({"action":"reply","status":"sent","receiptId":receipt_id});
+        assert_eq!(
+            db.execute(
+                "UPDATE loop_items SET metadata=json_set(metadata,'$.delegationResult',json(?1),'$.dispatchStatus','sent') WHERE id=?2",
+                (result.to_string(), record_id),
+            )
+            .unwrap(),
+            1
+        );
+    };
+    save_receipt(old_record, "old-receipt");
+    super::super::stand_in_work::validate_work_accounts(&store, 7, device, old_id, None).unwrap();
+    let request = |work: &str, record: &str| json!({"userId":7,"workId":work,"recordId":record});
+    let receipt_error = handler
+        .verify_delegated_dingtalk_delivery(request(old_id, old_record))
+        .await
+        .unwrap_err();
+    assert_eq!(receipt_error.code, "permission_denied");
+    let takeover_error = handler
+        .take_over_delegated_dingtalk_work(request(old_id, old_record))
+        .unwrap_err();
+    assert_eq!(takeover_error.code, "permission_denied");
+    assert!(store.stand_in_work(7, old_id).unwrap()["takenOverAt"].is_null());
+
+    let work = store
+        .ingest_stand_in_message(7, "@primary", source, &event("current-question"), None)
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let record_id = work["latestMessage"]["recordId"].as_str().unwrap();
+    save_receipt(record_id, "visible-receipt");
+    let receipt = handler
+        .verify_delegated_dingtalk_delivery(request(work_id, record_id))
+        .await
+        .unwrap();
+    assert_eq!(receipt["delegationResult"]["receiptId"], "visible-receipt");
+    let takeover = handler
+        .take_over_delegated_dingtalk_work(request(work_id, record_id))
+        .unwrap();
+    let result = &takeover["work"]["delegationResult"];
+    assert_eq!(result["receiptId"], "visible-receipt");
+    assert_eq!(result["takenOver"], true);
 }
 
 fn conversation(question: &str, history: &[(&str, &str)]) -> Value {

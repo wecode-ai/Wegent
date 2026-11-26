@@ -2444,21 +2444,71 @@ impl RuntimeWorkRpcHandler {
             }) != Some(true);
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
-            .map(|value| value.trim().to_owned())
             .unwrap_or_default();
-        let steer_input = guidance_input_items(&message, payload.get("attachments"));
-        if steer_input.is_empty() {
+        let attachments: Vec<Value> = payload["attachments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|attachment| {
+                id_field(attachment, "id").is_some_and(|id| id.parse::<i64>().is_ok())
+                    && string_field(attachment, "local_path")
+                        .or_else(|| string_field(attachment, "localPath"))
+                        .is_some()
+            })
+            .cloned()
+            .collect();
+        if message.is_empty() && attachments.is_empty() {
             return Err(AppIpcError::new(
                 "bad_request",
-                "message or image attachment is required",
+                "message or local attachment is required",
             ));
         }
+        let has_attachments = !attachments.is_empty();
+        let mut payload = payload;
+        let steer_input = if has_attachments {
+            payload["message"] = json!(message);
+            payload["attachments"] = Value::Array(attachments);
+            let mut request = ExecutionRequest {
+                task_id: local_task_id.clone(),
+                prompt: Value::String(message),
+                ..Default::default()
+            };
+            request
+                .extra
+                .insert("attachments".into(), payload["attachments"].clone());
+            crate::agents::codex_guidance_input(request).await
+        } else {
+            vec![json!({ "type": "text", "text": message })]
+        };
         log_executor_event(
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
-        self.deliver_guidance(payload, event_operation, owner_input, false, steer_input)
-            .await
+        let result = self
+            .deliver_guidance(
+                payload.clone(),
+                event_operation,
+                owner_input,
+                false,
+                steer_input,
+            )
+            .await?;
+        if has_attachments && result["accepted"] == true {
+            payload["clientUserMessageId"] = result["guidanceId"].clone();
+            if let Some(mut presentation) = user_message_presentation(&payload) {
+                presentation["turnId"] = result["turnId"].clone();
+                presentation["guidance"] = json!(true);
+                presentation["ensureVisible"] = json!(false);
+                self.store
+                    .update_task_without_snapshot(&local_task_id, |link| {
+                        append_runtime_handle_user_message_presentation(
+                            &mut link.runtime_handle,
+                            presentation,
+                        );
+                    });
+            }
+        }
+        Ok(result)
     }
 
     pub(super) async fn deliver_guidance(
@@ -2736,8 +2786,17 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
+        let gateway_credentials = crate::agents::model_gateway::credentials(
+            &self.backend_connection,
+            &mut request,
+            link.gateway_binding.as_ref(),
+            false,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("model_route_failed", error))?
+        .map(|(credentials, _)| credentials);
         self.register_thread_event_route(
             thread_id,
             link.local_task_id.clone(),
@@ -2754,6 +2813,7 @@ impl RuntimeWorkRpcHandler {
             client
                 .resume_thread_for_model_action(
                     &request,
+                    gateway_credentials,
                     thread_id,
                     thread_path.as_deref(),
                     |prepared| {

@@ -50,6 +50,15 @@ export function StandInWorkMessages({
 }) {
   const { t } = useTranslation('common')
   const { id: workId, roleId, messageCount, updatedAt } = work
+  const refreshVersion =
+    work.refreshVersion ??
+    [
+      updatedAt,
+      messageCount,
+      work.status,
+      work.delegationResult?.action ?? '',
+      work.delegationResult?.status ?? '',
+    ].join(':')
   const resource = useMemo(
     () =>
       createAsyncResource(
@@ -59,8 +68,8 @@ export function StandInWorkMessages({
     [api, userId, deviceId, roleId, workId]
   )
   const subscribe = useCallback(
-    (listener: () => void) => resource.subscribe(listener, `${messageCount}:${updatedAt}`),
-    [resource, messageCount, updatedAt]
+    (listener: () => void) => resource.subscribe(listener, refreshVersion),
+    [resource, refreshVersion]
   )
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const messages =

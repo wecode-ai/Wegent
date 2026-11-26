@@ -1,14 +1,21 @@
 //! Decide within the selected DingTalk conversation and recheck before submitting a reply.
 use super::runtime_owner::runtime_user;
 use super::stand_in::settings_error;
-use super::stand_in_work::validate_work_accounts;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    active_delegated_source, permits_delegated_message, permits_delegated_reply,
-    stand_in_identities, DINGTALK_PROVIDER,
+    active_delegated_source, matches_delegation_account, permits_delegated_message,
+    permits_delegated_reply, stand_in_identities, DINGTALK_PROVIDER,
 };
+use crate::task_runtime::stand_in_projection::{message_visible_to_account, project_visible_work};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
+
+fn delegated_work_account_denied() -> AppIpcError {
+    AppIpcError::new(
+        "permission_denied",
+        "This DingTalk work belongs to a different account",
+    )
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn take_over_delegated_dingtalk_work(
@@ -17,14 +24,33 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let user = runtime_user(&payload)?;
         self.verify_local_stand_in_owner(user)?;
-        let work = string_field(&payload, "workId")
+        let work_id = string_field(&payload, "workId")
             .ok_or_else(|| AppIpcError::new("bad_request", "workId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        validate_work_accounts(&store, user, &self.device_id, &work, None)?;
-        let work = store
-            .take_over_delegated_work(user, &work)
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
-        Ok(json!({"success":true,"work":work}))
+        let work = store
+            .stand_in_work(user, &work_id)
+            .map_err(settings_error)?;
+        if !matches_delegation_account(&settings, &work["roleId"], &work["source"]) {
+            return Err(delegated_work_account_denied());
+        }
+        let messages = store
+            .stand_in_messages(user, &work_id)
+            .map_err(settings_error)?;
+        if !messages.iter().any(|message| {
+            message["source"]["delegated"] == true
+                && message_visible_to_account(&settings, &work["roleId"], message)
+        }) {
+            return Err(delegated_work_account_denied());
+        }
+        let work = store
+            .take_over_delegated_work(user, &work_id)
+            .map_err(settings_error)?;
+        let visible = project_visible_work(&settings, work, messages)
+            .ok_or_else(delegated_work_account_denied)?;
+        Ok(json!({"success":true,"work":visible.work}))
     }
 
     pub(super) async fn verify_delegated_dingtalk_delivery(
@@ -50,11 +76,7 @@ impl RuntimeWorkRpcHandler {
         work: &str,
         record: &str,
     ) -> Result<Value, AppIpcError> {
-        self.verify_local_stand_in_owner(user)?;
-        validate_work_accounts(store, user, &self.device_id, work, None)?;
-        let message = store
-            .delegated_work_message(user, work, record)
-            .map_err(settings_error)?;
+        let message = self.visible_delegated_dingtalk_message(store, user, work, record)?;
         let result = &message["delegationResult"];
         if result["status"] != "unknown" || !result["channelTaskId"].is_string() {
             return Ok(result.clone());
@@ -70,17 +92,34 @@ impl RuntimeWorkRpcHandler {
         super::personal_stand_in::verified_dingtalk_readiness(&readiness, source, false)?;
         let outcome =
             crate::runtime_work::dingtalk::verify_delegated_reply(source, &message, result).await?;
-        self.verify_local_stand_in_owner(user)?;
-        validate_work_accounts(store, user, &self.device_id, work, None)?;
+        let mut message = self.visible_delegated_dingtalk_message(store, user, work, record)?;
         if matches!(outcome["status"].as_str(), Some("sent" | "failed")) {
             store
                 .reconcile_delegated_receipt(user, work, record, &outcome)
                 .map_err(settings_error)?;
+            message = self.visible_delegated_dingtalk_message(store, user, work, record)?;
         }
+        Ok(message["delegationResult"].clone())
+    }
+
+    fn visible_delegated_dingtalk_message(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        work: &str,
+        record: &str,
+    ) -> Result<Value, AppIpcError> {
+        self.verify_local_stand_in_owner(user)?;
         let message = store
             .delegated_work_message(user, work, record)
             .map_err(settings_error)?;
-        Ok(message["delegationResult"].clone())
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        if !message_visible_to_account(&settings, &message["roleId"], &message) {
+            return Err(delegated_work_account_denied());
+        }
+        Ok(message)
     }
 
     pub(super) fn store_delegated_event(
@@ -114,10 +153,19 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         self.verify_local_stand_in_owner(user)?;
         let work_id = work["id"].as_str().unwrap_or_default();
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
         let messages = store
             .stand_in_messages(user, work_id)
             .map_err(settings_error)?;
-        for message in &messages {
+        let visible = project_visible_work(&settings, work.clone(), messages).ok_or_else(|| {
+            AppIpcError::new(
+                "permission_denied",
+                "This work has no source events visible to the current account",
+            )
+        })?;
+        for message in &visible.messages {
             let record_id = message["recordId"].as_str().unwrap_or_default();
             if message["delegationResult"]["status"] == "submitting" {
                 // The dispatch gate is held. An interrupted submission cannot be retried safely.

@@ -29,11 +29,18 @@ pub(super) fn mark_delegation_taken_over(result: &mut Value) {
     result["takenOver"] = json!(true);
 }
 
-pub(super) fn project_delegation_result(work: &Value, messages: &[Value]) -> Value {
+/// Project a grouped DingTalk outcome from messages ordered newest first.
+/// Callers showing account-scoped results must supply only visible work and messages.
+pub fn project_dingtalk_delegation_result<'a>(
+    work: &Value,
+    messages: impl IntoIterator<Item = &'a Value>,
+) -> Value {
+    let mut latest = None;
     let mut needs_user = None;
     let mut owner_intervention = None;
-    let mut all_skipped = !messages.is_empty();
+    let mut all_skipped = true;
     for message in messages {
+        latest.get_or_insert(message);
         let result = &message["delegationResult"];
         match result["action"].as_str() {
             Some("reply") => return projected_message_result(work, Some(message)),
@@ -52,10 +59,8 @@ pub(super) fn project_delegation_result(work: &Value, messages: &[Value]) -> Val
             _ => all_skipped = false,
         }
     }
-    projected_message_result(
-        work,
-        needs_user.or_else(|| all_skipped.then(|| owner_intervention.unwrap_or(&messages[0]))),
-    )
+    let skipped = owner_intervention.or(latest).filter(|_| all_skipped);
+    projected_message_result(work, needs_user.or(skipped))
 }
 
 fn projected_message_result(work: &Value, message: Option<&Value>) -> Value {

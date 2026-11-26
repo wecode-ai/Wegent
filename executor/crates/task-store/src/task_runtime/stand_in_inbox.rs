@@ -17,6 +17,7 @@ fn stand_in_source_key(user: i64, source: &Value) -> String {
 
 #[path = "stand_in_dots_inbox.rs"]
 mod dots_inbox;
+pub use dots_inbox::project_dingtalk_delegation_result;
 
 enum MessageGrouping<'a> {
     Known(Option<&'a str>),
@@ -329,7 +330,7 @@ fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRun
     work["messageCount"] = json!(messages.len());
     work["latestMessage"] = messages.first().cloned().unwrap_or(Value::Null);
     if work["source"]["delegated"] == true {
-        work["delegationResult"] = dots_inbox::project_delegation_result(work, &messages);
+        work["delegationResult"] = project_dingtalk_delegation_result(work, &messages);
     }
     let status = ["sending", "needs_grouping", "pending", "failed"]
         .into_iter()

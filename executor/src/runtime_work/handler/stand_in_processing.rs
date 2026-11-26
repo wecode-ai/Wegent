@@ -5,6 +5,7 @@ use super::*;
 use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
+use crate::task_runtime::stand_in_projection::{project_visible_work, source_bindings_visible};
 
 const MAX_INTAKE_WORKERS: usize = 8;
 const INTAKE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -941,6 +942,14 @@ impl RuntimeWorkRpcHandler {
                     "Only the owning primary stand-in can follow this work",
                 ));
             }
+            if link.runtime_handle["executionRequest"]["standInDelegation"].is_object() {
+                self.source_task_parent(link).map_err(|_| {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "Source task evidence is no longer visible to the current account",
+                    )
+                })?;
+            }
             return Ok(());
         }
         if origin["type"] == "stand_in_schedule" {
@@ -963,10 +972,32 @@ impl RuntimeWorkRpcHandler {
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work")
         ) {
-            let work = store
-                .stand_in_work(user, &link.local_task_id)
+            let work_id = origin["workId"].as_str().unwrap_or(&link.local_task_id);
+            let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+            let settings = store
+                .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
-            if !stand_in_connection(role, &work["source"])
+            let messages = store
+                .stand_in_messages(user, work_id)
+                .map_err(settings_error)?;
+            let Some(visible) = project_visible_work(&settings, work, messages) else {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Work has no source events visible to the current account",
+                ));
+            };
+            if !source_bindings_visible(
+                &settings,
+                &visible.work["roleId"],
+                link.runtime_handle["executionRequest"].get("standInSourceBindings"),
+                &visible.messages,
+            ) {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Work source bindings include a message outside the current account",
+                ));
+            }
+            if !stand_in_connection(role, &visible.work["source"])
                 .is_some_and(|source| source["policy"]["automatic"] == true)
             {
                 return Err(AppIpcError::new(
@@ -974,10 +1005,7 @@ impl RuntimeWorkRpcHandler {
                     "Work source is no longer connected",
                 ));
             }
-            for message in store
-                .stand_in_messages(user, &link.local_task_id)
-                .map_err(settings_error)?
-            {
+            for message in visible.messages {
                 if !stand_in_connection(role, &message["source"])
                     .is_some_and(|source| source["policy"]["automatic"] == true)
                 {

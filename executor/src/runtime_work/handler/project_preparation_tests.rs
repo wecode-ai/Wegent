@@ -228,18 +228,32 @@ fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
         let payload = json!({"runtime":"codex", "taskId":"cancel-preparation", "message":"test",
             "executionRequest": {"task_id":"cancel-preparation", "subtask_id":"first", "prompt":"test"},
             "execution":{"environment":{"environmentId":"cancel-project", "repositories":[],
-                "setupSteps":[{"command":"printf started > started; while :; do sleep 1; done", "workingDirectory":""}]}}
+                "setupSteps":[{"command":"printf started > started && while :; do sleep 1; done", "workingDirectory":""}]}}
         });
         let response = tokio::time::timeout(Duration::from_secs(5), handler.create_task(payload)).await.unwrap().unwrap();
         assert_eq!(response["accepted"], true);
         assert_eq!(response["workspacePending"], true);
         assert_eq!(response["workspacePath"], "");
         let path = handler.local_task_link("cancel-preparation").unwrap().workspace_path;
+        let started = Path::new(&path).join("started");
         tokio::time::timeout(Duration::from_secs(5), async {
-            while !Path::new(&path).join("started").is_file() {
+            while !started.is_file() {
+                let link = handler.local_task_link("cancel-preparation").unwrap();
+                assert_ne!(
+                    link.status, "failed",
+                    "Setup failed before writing {}: {:?}",
+                    started.display(), link.runtime_handle.get("startupFailure")
+                );
                 sleep(Duration::from_millis(10)).await;
             }
-        }).await.unwrap();
+        }).await.unwrap_or_else(|_| {
+            let link = handler.local_task_link("cancel-preparation").unwrap();
+            panic!(
+                "Setup did not write {} within 5 seconds (status={}, workspace={}, busy={}, marker={:?})",
+                started.display(), link.status, link.workspace_path,
+                handler.is_busy_local_task("cancel-preparation"), fs::metadata(&started)
+            );
+        });
         assert!(handler.is_busy_local_task("cancel-preparation"));
         assert!(handler.cancel_preparing_turn("cancel-preparation"));
         assert!(handler.wait_for_worktree_preparation_to_finish("cancel-preparation").await);

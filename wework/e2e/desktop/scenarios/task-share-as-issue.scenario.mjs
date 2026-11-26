@@ -263,7 +263,10 @@ export function createDesktopScenario({
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="false"]')
       await verifyIssueCreationColumns(control)
       await wait(control, selector('issue-participant-self'), { visible: true })
-      assert.match(await control.command('getText', dialog), /仅邀请用户可见|invitees only/)
+      assert.match(
+        await control.command('getText', selector('task-issue-share-visibility')),
+        /仅自己可见|Only you can see this issue/
+      )
       await captureScreenshot(control, '02-task-share-dialog.png')
       await click(control, selector('independent-issue-options'))
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="true"]')
@@ -312,7 +315,10 @@ export function createDesktopScenario({
       await click(control, selector('share-selection-as-issue-button'))
       await wait(control, dialog, { visible: true })
       await click(control, selector('task-issue-share-whole-message'))
-      await click(control, selector('task-issue-share-select-first'))
+      await click(
+        control,
+        `${selector('task-issue-share-excerpt')}:has(${selector('task-issue-share-excerpt-content-0')})`
+      )
       await control.command('fill', title, { value: 'Whole message with context' })
       await click(control, save)
       await wait(control, selector('independent-issue-actions'), { visible: true })
@@ -355,7 +361,7 @@ export function createDesktopScenario({
       })
       const excerpt = '[data-e2e-anchor-id="share-selected-reply"]'
       const userExcerpt = `${dialog} ${selector('task-issue-share-excerpt')}:not(${excerpt})`
-      await click(control, selector('task-issue-share-select-last'))
+      await click(control, excerpt)
       await wait(
         control,
         `${excerpt}[aria-pressed="true"] ${selector('task-issue-share-excerpt-check')}`
@@ -378,7 +384,7 @@ export function createDesktopScenario({
       await click(control, expand)
       await wait(control, `${expand}[aria-expanded="false"]`)
       assert.equal((await metrics(replyContent)).height, collapsedHeight)
-      await click(control, selector('task-issue-share-select-first'))
+      await click(control, userExcerpt)
       await wait(control, `${userExcerpt}[aria-pressed="false"]`)
       await click(control, excerpt)
       await wait(control, `${excerpt}[aria-pressed="false"]`)
@@ -400,7 +406,14 @@ export function createDesktopScenario({
       try {
         await control.command('scrollIntoView', gallery)
         const [narrowGallery] = JSON.parse(await control.command('getElementMetrics', gallery))
-        assert.ok(narrowGallery.scrollWidth <= narrowGallery.clientWidth + 1)
+        assert.ok(narrowGallery.scrollWidth > narrowGallery.clientWidth)
+        const localPreview = selector('task-issue-share-preview-local-file-0')
+        await control.command('scrollIntoView', localPreview)
+        const [scrolledGallery] = JSON.parse(await control.command('getElementMetrics', gallery))
+        assert.ok(scrolledGallery.scrollLeft > 0, 'Last attachment must be reachable in the row')
+        const previewBounds = await metrics(localPreview)
+        const removeBounds = await metrics(selector('task-issue-share-remove-file-0'))
+        assert.ok(removeBounds.right <= previewBounds.left, 'Attachment actions must not overlap')
         await captureScreenshot(control, '03f-task-share-narrow-gallery.png')
       } finally {
         await control.command('setMainWindowSize', 'body', { value: previousSize })
@@ -729,7 +742,10 @@ export function createDesktopScenario({
       const lastMessage = await metrics(selector('task-issue-share-excerpt-content-1'))
       const loadGap = await metrics(earlierMessages)
       assert.ok(firstMessage.bottom <= loadGap.top && loadGap.bottom <= lastMessage.top)
-      await click(control, selector('task-issue-share-select-last'))
+      await click(
+        control,
+        `${historyExcerpt}:has(${selector('task-issue-share-excerpt-content-1')})`
+      )
       await captureScreenshot(control, '10a-task-share-real-history-start.png')
       await click(control, selector('task-issue-share-all-excerpts'))
       await wait(control, '[data-testid="task-issue-share-all-excerpts"][aria-expanded="true"]')
@@ -959,7 +975,7 @@ export function createDesktopScenario({
         'The range toggle must stay visible beside a long selected message'
       )
       await captureScreenshot(control, '13-selection-story-partial.png')
-      await click(control, partialRow)
+      await click(control, selector('task-issue-share-whole-message'))
       await wait(control, '[data-testid="task-issue-share-excerpt"][aria-pressed="true"]', {
         text: 'End of the original source message.',
       })
@@ -972,7 +988,11 @@ export function createDesktopScenario({
       await wait(control, `${sourcePreview}[aria-pressed="false"]`)
       await click(control, sourcePreview)
       await wait(control, `${sourcePreview}[aria-pressed="mixed"]`)
-      await click(control, selector('task-issue-share-select-last'))
+      await control.command('markElementWithText', selector('task-issue-share-excerpt'), {
+        text: selectionStoryLast,
+        value: 'selection-story-last-message',
+      })
+      await click(control, '[data-e2e-anchor-id="selection-story-last-message"]')
       await control.command('fill', title, { value: 'Middle-message fragment with later context' })
       await click(control, save)
       await wait(control, selector('independent-issue-actions'), { visible: true })

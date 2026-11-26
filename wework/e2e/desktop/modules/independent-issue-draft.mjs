@@ -58,16 +58,18 @@ export async function verifyEnglishLinkedIssueLayout(
       await control.command('getText', testId('issue-project-selected-name')),
       project.name
     )
+    const picker = await control.command('getText', testId('independent-issue-project'))
+    assert.ok(!picker.includes(project.project_key), 'Hide the project key in the closed picker')
     assert.equal(
-      await control.command('getText', testId('issue-project-selected-key')),
-      project.project_key
+      await control.command('getText', testId('issue-project-scope')),
+      'Follows project access rules'
     )
-    const key = await metric(testId('issue-project-selected-key'))
+    const scope = await metric(testId('issue-project-scope'))
     assert.ok(
-      key.scrollWidth <= key.clientWidth + 1 &&
-        key.visibleIntersection?.width >= key.width - 1 &&
-        key.visibleIntersection?.height >= key.height - 1,
-      'The selected project key must remain fully readable in the closed narrow-window picker'
+      scope.scrollWidth <= scope.clientWidth + 1 &&
+        scope.visibleIntersection?.width >= scope.width - 1 &&
+        scope.visibleIntersection?.height >= scope.height - 1,
+      'The short permission text must remain fully readable in the closed narrow-window picker'
     )
     assert.ok(
       scroll.scrollWidth <= scroll.clientWidth + 1,

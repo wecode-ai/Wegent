@@ -113,6 +113,21 @@ export function StandInProcessingSettings({
                   ) : undefined
                 }
               />
+              {sessionScope === 'schedule' && (
+                <SettingsRow
+                  className="px-0"
+                  label={t('standIn.workspace.schedule_ask_before_act')}
+                  description={t('standIn.workspace.schedule_ask_before_act_help')}
+                >
+                  <SettingsSwitch
+                    data-testid={`${row.testId}-ask-before-act`}
+                    aria-label={t('standIn.workspace.schedule_ask_before_act')}
+                    disabled={disabled}
+                    checked={row.policy.askBeforeAct}
+                    onCheckedChange={askBeforeAct => row.onChange({ ...row.policy, askBeforeAct })}
+                  />
+                </SettingsRow>
+              )}
               {row.outbound && (
                 <StandInReplyAuthorization
                   name={row.name}
