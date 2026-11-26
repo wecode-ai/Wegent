@@ -329,6 +329,10 @@ export function createDesktopScenario(options) {
         )
         phase = 'pause-response'
         await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
+        )
+        await control.command(
           'click',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
         )
