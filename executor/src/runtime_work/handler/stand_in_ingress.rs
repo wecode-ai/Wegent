@@ -275,7 +275,7 @@ impl RuntimeWorkRpcHandler {
         settings_version: &Value,
     ) -> Result<Value, AppIpcError> {
         let _stage = super::stand_in_diagnostics::CoordinationStage::start(user, "collect_source");
-        let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
+        let mut checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
             if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
                 && state["after"].is_string()
             {
@@ -288,6 +288,14 @@ impl RuntimeWorkRpcHandler {
                 Value::Null
             }
         });
+        if source["delegated"] == true
+            && state["error"].is_object()
+            && state["error"]["code"] != "dingtalk_delegation_gap"
+        {
+            if let Some(checkpoint) = checkpoint.as_object_mut() {
+                checkpoint.insert("recover".into(), json!(true));
+            }
+        }
         let page = self
             .connection_call(
                 "collectObservation",
@@ -322,7 +330,10 @@ impl RuntimeWorkRpcHandler {
                 || page["hasMore"] != false
                 || next["checkpoint"]["cursor"] != "0"
                 || next["checkpoint"]["after"] != gap["until"]
-                || !matches!(gap["reason"].as_str(), Some("duration" | "volume"))
+                || !matches!(
+                    gap["reason"].as_str(),
+                    Some("duration" | "volume" | "coverage")
+                )
                 || !from.zip(until).is_some_and(|(from, until)| from < until)
             {
                 return Err(AppIpcError::new(

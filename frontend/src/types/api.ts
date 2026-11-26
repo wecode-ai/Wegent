@@ -80,7 +80,7 @@ export interface SkillRefMeta {
 
 /** Skill reference with full identification info for backend */
 export interface SkillRef {
-  skill_id?: number
+  skill_id?: number | null
   name: string
   namespace: string
   is_public: boolean

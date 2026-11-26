@@ -75,12 +75,20 @@
                 "json"
               ],
               "operations": {
+                "componentInfo": {
+                  "command": [
+                    "version"
+                  ],
+                  "parameters": {}
+                },
                 "authStatus": {
                   "command": [
                     "auth",
                     "status"
                   ],
-                  "parameters": {}
+                  "parameters": {
+                    "profile": "--profile"
+                  }
                 },
                 "listProfiles": {
                   "command": [
@@ -108,6 +116,16 @@
                   ],
                   "parameters": {
                     "query": "--query",
+                    "profile": "--profile"
+                  }
+                },
+                "conversationInfo": {
+                  "command": [
+                    "chat",
+                    "conversation-info"
+                  ],
+                  "parameters": {
+                    "peer": "--open-dingtalk-id",
                     "profile": "--profile"
                   }
                 },

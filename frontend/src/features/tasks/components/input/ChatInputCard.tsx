@@ -809,15 +809,12 @@ export function ChatInputCard({
               hasNoTeams={hasNoTeams}
               disabledReason={disabledReason}
               // Skill selector props for slash command
-              showSkillSelector={availableSkills && availableSkills.length > 0}
               availableSkills={availableSkills}
               teamSkillNames={teamSkillNames}
               preloadedSkillNames={preloadedSkillNames}
               selectedSkillIds={selectedSkillIds}
               onSkillSelect={onToggleSkill}
               isChatShell={selectedTeam?.agent_type === 'chat'}
-              // Skill selection is read-only after task creation (hasMessages)
-              skillSelectorReadOnly={hasMessages}
               // Pass skill button ref for fly animation
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>

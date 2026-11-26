@@ -2028,6 +2028,17 @@ export function createHybridWorkbenchServices(
       async workMessages(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
       },
+      async takeOverWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).takeOverWork(userId, deviceId, workId)
+      },
+      async verifyWorkDelivery(userId, deviceId, workId, recordId) {
+        return (await standInApiForDevice(deviceId)).verifyWorkDelivery(
+          userId,
+          deviceId,
+          workId,
+          recordId
+        )
+      },
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },
@@ -2056,6 +2067,14 @@ export function createHybridWorkbenchServices(
       async connectionProviders(deviceId) {
         return (await standInApiForDevice(deviceId)).connectionProviders(deviceId)
       },
+      async connectionReadiness(deviceId, providerId, profile, sources) {
+        return (await standInApiForDevice(deviceId)).connectionReadiness(
+          deviceId,
+          providerId,
+          profile,
+          sources
+        )
+      },
       async installConnectionDependencies(deviceId, providerId, aliases) {
         return (await standInApiForDevice(deviceId)).installConnectionDependencies(
           deviceId,
@@ -2063,14 +2082,15 @@ export function createHybridWorkbenchServices(
           aliases
         )
       },
-      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope) {
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope, profile) {
         return (await standInApiForDevice(deviceId)).searchConnectionResources(
           deviceId,
           providerId,
           kind,
           query,
           cursor,
-          ...(scope ? ([scope] as const) : [])
+          scope,
+          profile
         )
       },
       async conversation(userId, deviceId, message, roleId, options) {

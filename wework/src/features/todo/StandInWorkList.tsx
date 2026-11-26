@@ -1,5 +1,8 @@
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
-import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import {
+  delegationReceipt,
+  delegationResultLabel,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -13,7 +16,8 @@ import {
 } from '@wegent/collaboration/controls/Collapsible'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
-import { useCallback, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { StandInDelegationReceipt } from './StandInDelegationReceipt'
 import { StandInWorkMessages } from './StandInWorkMessages'
 import { createStandInWorkSelectionSource } from './standInWorkSelectionSource'
 import { inboxRuntimeItem } from './useStandInInbox'
@@ -72,7 +76,17 @@ export function StandInWorkList({
   })
   const selected = items.find(item => item.key === selectedKey)
   const selectedState = selected && standInState(selected)
-  const selectedWork = inbox.find(work => work.taskId === selected?.task.taskId)
+  const workByTask = useMemo(() => new Map(inbox.map(work => [work.taskId, work])), [inbox])
+  const selectedWork = selected && workByTask.get(selected.task.taskId)
+  const selectedResult = selectedWork?.delegationResult
+  const selectedRecordId = selectedResult?.recordId
+  const takenOver = selectedWork?.takenOverAt || selectedResult?.takenOver
+  const canTakeOver =
+    selectedWork?.source.delegated &&
+    selectedWork.messageCount > 0 &&
+    !takenOver &&
+    selectedResult?.action !== 'skip' &&
+    !delegationReceipt(selectedResult)
   const needsRestore = selected?.task.status === 'archived'
   const needsStart =
     !needsRestore &&
@@ -82,26 +96,35 @@ export function StandInWorkList({
     ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     if (item.task.status === 'archived') return t('workbench.settings_category_archived')
-    const work = inbox.find(value => value.taskId === item.task.taskId)
+    const work = workByTask.get(item.task.taskId)
     return t(
       delegationResultLabel(work?.delegationResult) ??
-        (work && work.status !== 'sent'
-          ? `standIn.workspace.inbox_${work.status}`
-          : `standIn.personal.activity_${standInState(item).status}`)
+        (work?.takenOverAt
+          ? 'standIn.dingtalk_delegation.result_taken_over'
+          : work && work.status !== 'sent'
+            ? `standIn.workspace.inbox_${work.status}`
+            : `standIn.personal.activity_${standInState(item).status}`)
     )
   }
   const filterStatus = (item: RuntimeTaskReminderItem) => {
-    const work = inbox.find(value => value.taskId === item.task.taskId)
+    const work = workByTask.get(item.task.taskId)
+    const result = work?.delegationResult
+    if (
+      result?.action === 'reply' &&
+      !delegationReceipt(result) &&
+      result.status !== 'submitting'
+    ) {
+      return result.status === 'failed' ? 'failed' : 'waiting'
+    }
     return work && ['pending', 'needs_grouping'].includes(work.status)
       ? 'waiting'
       : standInState(item).status
   }
-  const available = items.filter(
-    item => !inbox.some(work => work.taskId === item.task.taskId && work.messageCount === 0)
-  )
-  const history = items.filter(item =>
-    inbox.some(work => work.taskId === item.task.taskId && work.messageCount === 0 && !!work.task)
-  )
+  const available = items.filter(item => workByTask.get(item.task.taskId)?.messageCount !== 0)
+  const history = items.filter(item => {
+    const work = workByTask.get(item.task.taskId)
+    return work?.messageCount === 0 && !!work.task
+  })
   const visible = available.filter(item => filter === 'all' || filterStatus(item) === filter)
   return (
     <div className="flex min-h-0 flex-1" data-testid="stand-in-activity">
@@ -185,7 +208,7 @@ export function StandInWorkList({
         <div className="space-y-2" data-testid="stand-in-activity-project">
           {visible.map(item => {
             const status = standInState(item)
-            const work = inbox.find(work => work.taskId === item.task.taskId)
+            const work = workByTask.get(item.task.taskId)
             const canOrganize =
               !!api &&
               userId !== undefined &&
@@ -277,7 +300,15 @@ export function StandInWorkList({
                     </span>
                   )}
                 </span>
-                <span className="text-sm text-text-secondary">{statusLabel(item)}</span>
+                <span className="text-right text-sm text-text-secondary">
+                  {statusLabel(item)}
+                  {(work?.takenOverAt || work?.delegationResult?.takenOver) &&
+                    delegationResultLabel(work?.delegationResult) && (
+                      <span className="block text-xs">
+                        {t('standIn.dingtalk_delegation.result_taken_over')}
+                      </span>
+                    )}
+                </span>
                 <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
               </ControlButton>
             )
@@ -369,6 +400,11 @@ export function StandInWorkList({
               t('standIn.workspace.preview_no_summary')}
           </p>
           <p className="mt-4 text-sm text-text-secondary">{statusLabel(selected)}</p>
+          {takenOver && delegationResultLabel(selectedResult) && (
+            <p className="text-sm text-text-secondary">
+              {t('standIn.dingtalk_delegation.result_taken_over')}
+            </p>
+          )}
           {selectedWork?.delegationResult?.reason && (
             <p
               className="mt-2 whitespace-pre-wrap break-words text-sm"
@@ -377,8 +413,51 @@ export function StandInWorkList({
               {selectedWork.delegationResult.reason}
             </p>
           )}
+          {selectedWork && selectedResult && (
+            <StandInDelegationReceipt
+              key={selectedRecordId ?? selectedWork.id}
+              result={selectedResult}
+              onVerify={
+                api && userId !== undefined && deviceId && selectedRecordId
+                  ? async () => {
+                      await api.verifyWorkDelivery(
+                        userId,
+                        deviceId,
+                        selectedWork.id,
+                        selectedRecordId
+                      )
+                      onRefresh?.()
+                    }
+                  : undefined
+              }
+            />
+          )}
           {selectedWork && selectedWork.messageCount > 0 && api && (
             <div className="mt-4 flex flex-wrap gap-2">
+              {canTakeOver && !needsRestore && userId !== undefined && deviceId && (
+                <ControlButton
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  data-testid="stand-in-delegation-takeover"
+                  disabled={busy}
+                  className="min-h-11 md:min-h-9"
+                  onClick={async () => {
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      await api.takeOverWork(userId, deviceId, selectedWork.id)
+                      onRefresh?.()
+                    } catch (cause) {
+                      setError(getStandInErrorMessage(cause))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  {t('standIn.dingtalk_delegation.take_over_work')}
+                </ControlButton>
+              )}
               {inbox.some(
                 work =>
                   work.id !== selectedWork.id &&
@@ -468,6 +547,7 @@ export function StandInWorkList({
                 organization.setChoosing(true)
               }}
               onOrganize={value => organization.organize(value)}
+              onRefresh={onRefresh}
             />
           )}
           {error && (
@@ -523,6 +603,7 @@ export function StandInWorkList({
                 <ArrowUpRight className="h-4 w-4" />
               </ControlButton>
               {selectedWork?.task &&
+                !selectedWork.source.delegated &&
                 ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
                 selectedState.status !== 'running' &&
                 selectedState.status !== 'waiting' &&

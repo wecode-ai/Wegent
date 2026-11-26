@@ -298,24 +298,36 @@ async function verifySearchOverlay(
     'The restored guest must own the former close-button hit target',
     5_000
   )
-  // Chromium can route the first motion to the host after the DOM hit target
-  // has recovered. Probe with distinct positions until the guest receives motion.
+  // Move from the former close button into the restored surface, then back
+  // to verify native input at the exact point where the dialog intercepted it.
+  const moveInGuest = async (point, previousMoves) => {
+    // Chromium can route the first motion after the DOM hit target recovers to the
+    // host, and it reports no motion when the pointer does not move. Nudge across
+    // the restored boundary until the guest observes motion, then settle on the
+    // exact point so the native click lands where the dialog intercepted it.
+    let offset = 1
+    const primed = await waitForValue(
+      async () => {
+        await movePointer({ x: point.x + offset, y: point.y })
+        offset = 3 - offset
+        return readGuestInput()
+      },
+      state => state.moves > previousMoves,
+      `Native pointer movement near ${point.x},${point.y} must reach the restored guest`,
+      5_000
+    )
+    await movePointer(point)
+    return waitForValue(
+      readGuestInput,
+      state => state.moves > primed.moves,
+      `Native pointer movement at ${point.x},${point.y} must reach the restored guest`,
+      5_000
+    )
+  }
   const beforeMove = await readGuestInput()
-  let offset = 1
-  const {
-    point: clickTarget,
-    input: { moves: readyMoves, ...readyInput },
-  } = await waitForValue(
-    async () => {
-      const point = { x: overlap.close.x + offset, y: overlap.close.y }
-      offset = 3 - offset
-      await movePointer(point)
-      return { point, input: await readGuestInput() }
-    },
-    state => state.input.moves > beforeMove.moves,
-    'Native pointer movement must reach the restored guest',
-    5_000
-  )
+  const approached = await moveInGuest(overlap.sample, beforeMove.moves)
+  const clickTarget = overlap.close
+  const { moves: readyMoves, ...readyInput } = await moveInGuest(clickTarget, approached.moves)
   assert.deepEqual(readyInput, closedInput, 'Moving into the guest must not click it')
   await pressAndRelease(clickTarget)
   const pageClicked = await bridgeCall({

@@ -14,9 +14,12 @@ export interface StandInDingTalkDelegation {
   paused: boolean
   profile?: string
   accountId?: string
+  accountName?: string
+  organizationId?: string
+  organizationName?: string
   accountInvalidated?: boolean
   templates: Record<StandInDelegationTemplate, boolean>
-  action?: 'enable' | 'pause' | 'resume'
+  action?: 'prepare' | 'enable' | 'pause' | 'resume'
 }
 
 export interface StandInProjectRef {
@@ -75,8 +78,8 @@ export interface StandInIdentity extends Partial<
   selfLearningEnabled?: boolean
   prompt: string
   preferences: string
-  taskPermissions?: StandInTaskPermissions
   delegation?: StandInDingTalkDelegation
+  taskPermissions?: StandInTaskPermissions
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
