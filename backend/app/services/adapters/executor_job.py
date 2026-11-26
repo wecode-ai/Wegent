@@ -17,7 +17,7 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
-from app.schemas.kind import Task
+from app.schemas.kind import ArchiveInfo, Task
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.base import BaseService
 from app.services.executor_cleanup_cursor_service import (
@@ -1213,7 +1213,7 @@ class JobService(BaseService[Kind, None, None]):
         finally:
             sync_db.close()
 
-        if archive_info:
+        if isinstance(archive_info, ArchiveInfo):
             logger.info(
                 f"[executor_job] Workspace archived "
                 f"task_id={task.id} "

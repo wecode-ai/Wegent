@@ -730,9 +730,7 @@ fn zip_download_semaphore() -> &'static Semaphore {
     SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
 }
 
-async fn archive_workspace(
-    Json(request): Json<ArchiveRequest>,
-) -> Result<Json<ArchiveResponse>, HttpError> {
+async fn archive_workspace(Json(request): Json<ArchiveRequest>) -> Result<Response, HttpError> {
     let started = std::time::Instant::now();
     let mode = parse_archive_mode(&request.runtime_type)?;
     let roots =
@@ -780,6 +778,14 @@ async fn archive_workspace(
     .await
     .map_err(|error| archive_error_to_http(std::io::Error::other(error).into()))?
     .map_err(archive_error_to_http)?;
+
+    if mode == ArchiveMode::Sandbox && archive.is_empty {
+        log_executor_event(
+            "sandbox archive empty",
+            &[("task_id", request.task_id.to_string())],
+        );
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
 
     let size_bytes = archive.bytes.len() as u64;
     let session_file_included = archive.session_file_included;
@@ -831,7 +837,8 @@ async fn archive_workspace(
         size_bytes,
         session_file_included,
         git_included,
-    }))
+    })
+    .into_response())
 }
 
 #[derive(Deserialize)]

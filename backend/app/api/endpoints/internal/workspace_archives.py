@@ -14,6 +14,7 @@ from app.api.dependencies import get_db
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo
 from app.services.workspace_archive import archive_service
+from app.services.workspace_archive.archive_service import ArchiveOutcome
 from app.services.workspace_archive.storage import archive_storage_service
 from app.stores.tasks import subtask_store, task_store
 
@@ -28,6 +29,10 @@ class ManualArchiveResponse(BaseModel):
     success: bool = True
     task_id: int
     archive: ArchiveInfo
+
+
+class SandboxArchiveResponse(ManualArchiveResponse):
+    archive: ArchiveInfo | None
 
 
 class SandboxArchiveRequest(BaseModel):
@@ -81,7 +86,7 @@ async def archive_task_workspace(
         executor_namespace=subtask.executor_namespace or "",
     )
 
-    if not archive_info:
+    if not isinstance(archive_info, ArchiveInfo):
         raise HTTPException(status_code=500, detail="Failed to archive workspace")
 
     db.commit()
@@ -97,7 +102,7 @@ async def archive_task_workspace(
     return ManualArchiveResponse(task_id=task_id, archive=archive_info)
 
 
-@router.post("/{task_id}/archive-sandbox", response_model=ManualArchiveResponse)
+@router.post("/{task_id}/archive-sandbox", response_model=SandboxArchiveResponse)
 async def archive_sandbox_workspace(
     task_id: int,
     request: SandboxArchiveRequest,
@@ -114,7 +119,10 @@ async def archive_sandbox_workspace(
         runtime_type="sandbox",
     )
 
-    if not archive_info:
+    if archive_info is ArchiveOutcome.EMPTY_SANDBOX:
+        return SandboxArchiveResponse(task_id=task_id, archive=None)
+
+    if not isinstance(archive_info, ArchiveInfo):
         raise HTTPException(status_code=500, detail="Failed to archive sandbox")
 
     db.commit()
@@ -127,7 +135,7 @@ async def archive_sandbox_workspace(
         request.executor_name,
     )
 
-    return ManualArchiveResponse(task_id=task_id, archive=archive_info)
+    return SandboxArchiveResponse(task_id=task_id, archive=archive_info)
 
 
 @router.get("/{task_id}/download-url", response_model=ArchiveDownloadUrlResponse)

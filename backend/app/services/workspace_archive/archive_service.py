@@ -14,6 +14,7 @@ Provides functionality to:
 import logging
 from copy import deepcopy
 from datetime import datetime
+from enum import Enum, auto
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
@@ -31,6 +32,10 @@ from app.utils.workspace_archive_time import (
 from .storage import archive_storage_service
 
 logger = logging.getLogger(__name__)
+
+
+class ArchiveOutcome(Enum):
+    EMPTY_SANDBOX = auto()
 
 
 class ArchiveService:
@@ -62,7 +67,7 @@ class ArchiveService:
         executor_name: str,
         executor_namespace: str,
         runtime_type: str = "executor",
-    ) -> Optional[ArchiveInfo]:
+    ) -> ArchiveInfo | ArchiveOutcome | None:
         """Archive workspace files before Pod deletion.
 
         Args:
@@ -72,7 +77,8 @@ class ArchiveService:
             executor_namespace: Executor namespace
 
         Returns:
-            ArchiveInfo if successful, None if skipped or failed
+            ArchiveInfo after uploading, EMPTY_SANDBOX for an initialized sandbox
+            with no data, or None if skipped or failed.
         """
         if not settings.WORKSPACE_ARCHIVE_ENABLED:
             logger.info("Workspace archiving is disabled")
@@ -98,6 +104,10 @@ class ArchiveService:
                 executor_namespace=executor_namespace,
                 runtime_type=runtime_type,
             )
+
+            if archive_result is ArchiveOutcome.EMPTY_SANDBOX:
+                logger.info("[ArchiveService] Sandbox has no data for task %s", task_id)
+                return archive_result
 
             if not archive_result:
                 # Executor may have uploaded the file before the response failed.
@@ -270,7 +280,7 @@ class ArchiveService:
         executor_name: str,
         executor_namespace: str,
         runtime_type: str = "executor",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Dict[str, Any] | ArchiveOutcome | None:
         """Call executor to archive workspace.
 
         Args:
@@ -280,7 +290,7 @@ class ArchiveService:
             executor_namespace: Executor namespace
 
         Returns:
-            Archive result dict if successful, None otherwise
+            Archive metadata, EMPTY_SANDBOX for an empty sandbox, or None on failure.
         """
         # Build URL to executor_manager archive endpoint
         base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
@@ -308,6 +318,11 @@ class ArchiveService:
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
+                if (
+                    response.status_code == httpx.codes.NO_CONTENT
+                    and runtime_type == "sandbox"
+                ):
+                    return ArchiveOutcome.EMPTY_SANDBOX
                 return response.json()
         except httpx.HTTPStatusError as e:
             logger.error(

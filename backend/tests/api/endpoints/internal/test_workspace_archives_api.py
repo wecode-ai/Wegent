@@ -7,6 +7,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -212,6 +213,45 @@ def test_archive_sandbox_endpoint_uses_sandbox_runtime(
     archive_mock.assert_awaited_once()
     assert archive_mock.await_args.kwargs["runtime_type"] == "sandbox"
     assert archive_mock.await_args.kwargs["executor_name"] == "sandbox-1501"
+
+
+def test_empty_sandbox_archive_preserves_previous_backup(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    mocker,
+):
+    task = _create_task(test_db, task_id=1502, user_id=test_user.id)
+    existing = {
+        "storageKey": "workspace-archives/1502/archive.tar.gz",
+        "sizeBytes": 2048,
+    }
+    task.json = {**task.json, "status": {"archive": existing}}
+    test_db.commit()
+    mocker.patch.object(
+        archive_storage_service,
+        "generate_upload_url",
+        return_value=("https://minio.example.com/upload", existing["storageKey"]),
+    )
+    storage_lookup = mocker.patch.object(archive_storage_service, "archive_exists")
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=httpx.Response(
+            204,
+            request=httpx.Request("POST", "http://executor-manager/executor/archive"),
+        ),
+    )
+
+    response = test_client.post(
+        f"/api/internal/workspace-archives/{task.id}/archive-sandbox",
+        json={"executor_name": "sandbox-1502"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "task_id": task.id, "archive": None}
+    test_db.refresh(task)
+    assert task.json["status"]["archive"] == existing
+    storage_lookup.assert_not_called()
 
 
 @pytest.mark.parametrize(

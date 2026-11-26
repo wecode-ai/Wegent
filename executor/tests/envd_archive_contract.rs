@@ -20,6 +20,45 @@ use wegent_executor::envd::archive_sessions::SessionArchiveRoots;
 use std::os::unix::fs::symlink;
 
 #[test]
+fn sandbox_archive_distinguishes_an_empty_workspace_from_a_missing_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let workspace = temp.path().join("workspace").join("42");
+    let options = ArchiveOptions {
+        mode: ArchiveMode::Sandbox,
+        task_id: "42".to_owned(),
+        workspace_path: workspace.clone(),
+        home_path: home.clone(),
+        max_size_bytes: 1024,
+    };
+
+    assert!(matches!(
+        create_runtime_archive(options.clone()),
+        Err(wegent_executor::envd::archive::ArchiveError::EmptyArchiveRoots { .. })
+    ));
+
+    fs::create_dir_all(&workspace).unwrap();
+    let archive = create_runtime_archive(options).unwrap();
+    assert!(archive.is_empty);
+    assert!(archive_names(&archive.bytes).is_empty());
+    assert!(!archive.session_file_included);
+    assert!(!archive.git_included);
+
+    fs::remove_dir(&workspace).unwrap();
+    let restored = restore_runtime_archive(
+        &archive.bytes,
+        ArchiveMode::Sandbox,
+        "42",
+        &workspace,
+        &home,
+    )
+    .unwrap();
+    assert!(restored.success);
+    assert!(workspace.is_dir());
+}
+
+#[test]
 fn sandbox_archive_restores_user_files_without_including_the_process_home() {
     let temp = tempfile::tempdir().unwrap();
     let runtime_home = temp.path().join("runtime-home");
