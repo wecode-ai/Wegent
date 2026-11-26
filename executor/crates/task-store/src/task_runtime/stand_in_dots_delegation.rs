@@ -379,7 +379,7 @@ pub(super) fn save_delegation(
             let cutoff = if carry_boundaries && previous["templates"][template] == true {
                 match previous_cutoffs.and_then(|cutoffs| cutoffs.get(template)) {
                     Some(cutoff) if timestamp(cutoff).is_some() => cutoff,
-                    None if previous_cutoffs.is_none_or(Value::is_object) => {
+                    None if previous_cutoffs.map_or(true, Value::is_object) => {
                         legacy_boundary.unwrap_or(&boundary)
                     }
                     _ => &boundary,
