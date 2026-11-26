@@ -15,6 +15,12 @@ import {
 
 const temporaryDirectories = []
 
+function proxyConnectServer(sockets) {
+  const server = createServer()
+  server.on('connect', (_request, socket) => sockets.push(socket))
+  return server
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))
@@ -238,6 +244,47 @@ describe('downloadWithRetry', () => {
       })
       expect((await readFile(destination)).equals(archive)).toBe(true)
     } finally {
+      proxyServer.closeAllConnections?.()
+      await new Promise(resolve => proxyServer.close(resolve))
+      for (const [name, value] of Object.entries(previousEnvironment)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
+  test('rejects a silent proxy CONNECT within the header timeout', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
+    temporaryDirectories.push(directory)
+    const destination = join(directory, 'codex.tgz')
+    const proxySockets = []
+    const proxyServer = proxyConnectServer(proxySockets)
+    await new Promise(resolve => proxyServer.listen(0, '127.0.0.1', resolve))
+    const proxyUrl = 'http://127.0.0.1:' + proxyServer.address().port
+    const previousEnvironment = {
+      HTTPS_PROXY: process.env.HTTPS_PROXY,
+      https_proxy: process.env.https_proxy,
+      NO_PROXY: process.env.NO_PROXY,
+      no_proxy: process.env.no_proxy,
+    }
+    process.env.HTTPS_PROXY = proxyUrl
+    process.env.https_proxy = proxyUrl
+    process.env.NO_PROXY = ''
+    process.env.no_proxy = ''
+
+    try {
+      await expect(
+        downloadWithRetry('https://example.test/codex.tgz', destination, {
+          attempts: 1,
+          timeouts: {
+            connectTimeoutMs: 1_000,
+            headersTimeoutMs: 100,
+            bodyTimeoutMs: 1_000,
+          },
+        })
+      ).rejects.toThrow()
+    } finally {
+      for (const socket of proxySockets) socket.destroy()
       proxyServer.closeAllConnections?.()
       await new Promise(resolve => proxyServer.close(resolve))
       for (const [name, value] of Object.entries(previousEnvironment)) {

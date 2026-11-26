@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
-import { EnvHttpProxyAgent, request as undiciRequest } from 'undici'
+import { EnvHttpProxyAgent, Pool, request as undiciRequest } from 'undici'
 import { extract } from 'tar'
 import { acquireProcessLock } from './lib/process-lock.mjs'
 
@@ -130,6 +130,8 @@ async function downloadFile(url, destination, timeouts = DOWNLOAD_TIMEOUTS) {
     headersTimeout: timeouts.headersTimeoutMs,
     bodyTimeout: timeouts.bodyTimeoutMs,
     proxyTunnel: false,
+    clientFactory: (origin, options) =>
+      new Pool(origin, { ...options, headersTimeout: timeouts.headersTimeoutMs }),
   })
   try {
     let address = new URL(url)
@@ -154,7 +156,13 @@ async function downloadFile(url, destination, timeouts = DOWNLOAD_TIMEOUTS) {
         await response.body.dump()
         throw new Error(`Failed to download ${url}: ${response.statusCode} ${response.statusText}`)
       }
-      await mkdir(dirname(destination), { recursive: true })
+      try {
+        await mkdir(dirname(destination), { recursive: true })
+      } catch (error) {
+        response.body.on('error', () => {})
+        response.body.destroy()
+        throw error
+      }
       await pipeline(response.body, createWriteStream(destination))
       return
     }
