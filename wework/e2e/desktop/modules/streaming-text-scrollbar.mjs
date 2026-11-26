@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { waitForTopMetrics } from './conversation-layout.mjs'
 import { verifyConversationSwitchScrollStability } from './streaming-text-switch-stability.mjs'
+import { createConversationPanelResizeChecks } from './streaming-text-panel-resize.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   ASSISTANT_CONTENT_SELECTOR,
@@ -113,8 +114,11 @@ async function verifySearchScrollbarInput(control) {
 
 export function createConversationScrollbarChecks({ resultDir, uiTimeoutMs }) {
   const scrollbar = SCROLLBAR
+  const panelResize = createConversationPanelResizeChecks({ resultDir, uiTimeoutMs })
   return {
+    cleanup: panelResize.cleanup,
     async handleModelRequest(body, response, id) {
+      if (await panelResize.handleModelRequest(body, response, id)) return true
       const turn = latestModelInputText(body).match(new RegExp(`${PROMPT}_(\\d+)`))?.[1]
       if (!turn) return false
       const reply = assistantMessage(responseForTurn(turn), 'final_answer')
@@ -172,6 +176,7 @@ export function createConversationScrollbarChecks({ resultDir, uiTimeoutMs }) {
       )
       assert.ok(Math.abs(thumb.top - track.top) <= 2, 'The thumb must match the restored viewport')
       await verifyConversationSwitchScrollStability(control, { address, resultDir, uiTimeoutMs })
+      await panelResize.verify(control)
     },
   }
 }

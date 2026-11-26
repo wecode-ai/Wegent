@@ -182,10 +182,12 @@ export function applyRuntimeConversationSubagentActivity(
 }
 
 export function settleRuntimeConversationSubagents(address: RuntimeTaskAddress): void {
-  updateRuntimeConversationMetadata(address, current => ({
-    ...current,
-    subagentStatuses: markRuntimeSubagentsSettled(current.subagentStatuses),
-  }))
+  updateRuntimeConversationMetadata(address, current => {
+    const subagentStatuses = markRuntimeSubagentsSettled(current.subagentStatuses)
+    return subagentStatuses === current.subagentStatuses
+      ? current
+      : { ...current, subagentStatuses }
+  })
 }
 
 export function getRuntimeConversationMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
