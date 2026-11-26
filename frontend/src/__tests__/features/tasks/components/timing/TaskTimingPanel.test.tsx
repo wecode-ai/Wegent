@@ -92,6 +92,26 @@ const emptyResponse: TaskTimingResponse = {
   has_spans: false,
 }
 
+const modelCallTimingResponse: TaskTimingResponse = {
+  ...timingResponse,
+  spans: [
+    timingResponse.spans[0],
+    {
+      ...timingResponse.spans[0],
+      id: 3,
+      parent_span_id: 'agent-1',
+      span_id: 'model-call-1',
+      actor_id: 'provider/model-x',
+      actor_type: 'model',
+      actor_label: 'Model call: model-x',
+      start_at_ms: 6_000,
+      end_at_ms: 16_000,
+      duration_ms: 10_000,
+      metadata: { timeToFirstTokenMs: 2_000 },
+    },
+  ],
+}
+
 const interiorGapResponse: TaskTimingResponse = {
   ...timingResponse,
   spans: [
@@ -329,6 +349,23 @@ describe('TaskTimingPanel', () => {
     expect(report).not.toContain('## Top spans')
     expect(report).toContain('| 11 | agent | Agent execution | 2s → 14s |')
     expect(report).toContain('| agent-1 | executor-manager | executor |')
+  })
+
+  it('reports model-call first-token and output timing', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    mockGetTaskTiming.mockResolvedValue(modelCallTimingResponse)
+    renderPanel()
+
+    await screen.findByText('Model call: model-x')
+
+    await screen.findByTestId('task-timing-copy-report')
+    await act(async () => {
+      screen.getByTestId('task-timing-copy-report').click()
+    })
+
+    const report = writeText.mock.calls[0][0] as string
+    expect(report).toContain('Model call: model-x · first token=2s · output=8s')
   })
 
   it('uses semantic theme classes and a responsive layout', async () => {

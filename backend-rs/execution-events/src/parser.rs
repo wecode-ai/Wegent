@@ -817,6 +817,7 @@ fn extract_completed_result(response: &Value) -> Map<String, Value> {
         "messages_chain",
         "context_metrics",
         "context_compactions",
+        "model_calls",
         "standalone_chat_workspace_path",
         "file_changes",
         "task_file_changes",

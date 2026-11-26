@@ -315,6 +315,8 @@
       "start": "开始",
       "end": "结束",
       "duration": "耗时",
+      "first_token": "首 token",
+      "output": "输出阶段",
       "running": "进行中",
       "status": "状态",
       "interval": "相对区间",

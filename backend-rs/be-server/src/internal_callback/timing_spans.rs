@@ -79,6 +79,9 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
     if let Some(timing) = event.data.get("timing").filter(|timing| timing.is_object()) {
         spans.extend(boundary_spans(event, timing));
     }
+    if event.event_type == "done" {
+        spans.extend(model_call_spans(event));
+    }
     if let Some(span) = waiting_user_span(event) {
         spans.push(span);
     }
@@ -508,6 +511,57 @@ fn boundary_spans(event: &ExecutionEvent, timing: &Value) -> Vec<NewTimingSpan> 
     spans
 }
 
+fn model_call_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
+    let Some(result) = event.result.as_ref() else {
+        return Vec::new();
+    };
+    let Some(calls) = result.get("model_calls").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let parent_span_id = format!("task-{}-subtask-{}-agent", event.task_id, event.subtask_id);
+    calls
+        .iter()
+        .enumerate()
+        .filter_map(|(index, call)| {
+            let start_at_ms = call.get("startedAt").and_then(Value::as_i64)?;
+            let end_at_ms = call.get("finishedAt").and_then(Value::as_i64)?;
+            if end_at_ms < start_at_ms {
+                return None;
+            }
+            let model = call
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|model| !model.is_empty())
+                .unwrap_or("unknown");
+            let provider = call
+                .get("provider")
+                .and_then(Value::as_str)
+                .filter(|provider| !provider.is_empty())
+                .unwrap_or("unknown");
+            let first_token_at_ms = call.get("firstTokenAt").and_then(Value::as_i64);
+            Some(NewTimingSpan {
+                span_id: format!(
+                    "task-{}-subtask-{}-model-call-{}",
+                    event.task_id, event.subtask_id, index
+                ),
+                kind: "agent",
+                parent_span_id: Some(parent_span_id.clone()),
+                actor_id: format!("{provider}/{model}"),
+                actor_type: "model",
+                actor_label: format!("Model call: {model}"),
+                status: "completed",
+                start_at_ms: Some(start_at_ms),
+                end_at_ms: Some(end_at_ms),
+                metadata: json!({
+                    "attempt": call.get("attempt").cloned().unwrap_or_else(|| json!(index)),
+                    "firstTokenAt": first_token_at_ms,
+                    "timeToFirstTokenMs": first_token_at_ms.and_then(|at| at.checked_sub(start_at_ms)),
+                }),
+            })
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_boundary_span(
     spans: &mut Vec<NewTimingSpan>,
@@ -576,6 +630,43 @@ mod tests {
             }),
         )]);
         event
+    }
+
+    #[test]
+    fn model_calls_create_agent_child_spans() {
+        let mut event = ExecutionEvent::new(super::super::event::EventType::Done, 7, 11);
+        event.result = Some(json!({
+            "model_calls": [
+                {
+                    "startedAt": 10,
+                    "firstTokenAt": 13,
+                    "finishedAt": 20,
+                    "model": "test-model",
+                    "provider": "test-provider"
+                },
+                {
+                    "startedAt": 30,
+                    "finishedAt": 40,
+                    "model": "test-model",
+                    "provider": "test-provider"
+                }
+            ]
+        }));
+
+        let spans = model_call_spans(&event);
+
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].span_id, "task-7-subtask-11-model-call-0");
+        assert_eq!(
+            spans[0].parent_span_id.as_deref(),
+            Some("task-7-subtask-11-agent")
+        );
+        assert_eq!(spans[0].kind, "agent");
+        assert_eq!(spans[0].actor_type, "model");
+        assert_eq!(spans[0].actor_label, "Model call: test-model");
+        assert_eq!(spans[0].duration_ms(), Some(10));
+        assert_eq!(spans[0].metadata["timeToFirstTokenMs"], json!(3));
+        assert_eq!(spans[1].metadata["firstTokenAt"], json!(null));
     }
 
     fn done_event(data: Value, result: Value) -> ExecutionEvent {

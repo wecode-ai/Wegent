@@ -147,6 +147,25 @@ export function spanTooltip(
     .join(' · ')
 }
 
+export function modelCallMetrics(span: TimingSpan): {
+  firstTokenMs?: number | null
+  outputMs?: number | null
+} | null {
+  if (span.actor_type !== 'model') return null
+  const firstTokenMs = numberMetadata(span, 'timeToFirstTokenMs')
+  if (firstTokenMs === undefined) return null
+  const outputMs = span.duration_ms == null ? undefined : span.duration_ms - firstTokenMs
+  return {
+    firstTokenMs,
+    outputMs: outputMs == null || outputMs < 0 ? 0 : outputMs,
+  }
+}
+
+function numberMetadata(span: TimingSpan, key: string): number | undefined {
+  const value = span.metadata?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
 export function buildMarkdownReport(
   data: TaskTimingResponse,
   bounds: TimelineBounds,
@@ -213,10 +232,17 @@ export function buildMarkdownReport(
     const interval = spanInterval(span, bounds)
     const offsetStart = interval && bounds.start ? interval.start - bounds.start : undefined
     const offsetEnd = interval && bounds.start ? interval.end - bounds.start : undefined
+    const metrics = modelCallMetrics(span)
+    const label = escapeMarkdownTableCell(span.actor_label || span.kind)
+    const timing = metrics
+      ? ` · first token=${formatDuration(metrics.firstTokenMs ?? 0)} · output=${formatDuration(
+          metrics.outputMs ?? 0
+        )}`
+      : ''
     lines.push(
-      `| ${span.subtask_id} | ${span.kind} | ${escapeMarkdownTableCell(
-        span.actor_label || span.kind
-      )} | ${formatDuration(offsetStart)} → ${formatDuration(offsetEnd)} | ${formatIsoTimestamp(
+      `| ${span.subtask_id} | ${span.kind} | ${label}${timing} | ${formatDuration(
+        offsetStart
+      )} → ${formatDuration(offsetEnd)} | ${formatIsoTimestamp(
         interval?.start
       )} | ${formatIsoTimestamp(interval?.end)} | ${formatDuration(
         spanDuration(span)

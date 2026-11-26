@@ -319,6 +319,8 @@
       "start": "Start",
       "end": "End",
       "duration": "Duration",
+      "first_token": "First token",
+      "output": "Output phase",
       "running": "Running",
       "status": "Status",
       "interval": "Relative interval",

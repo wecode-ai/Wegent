@@ -555,6 +555,9 @@ class ChatService(ChatInterface):
             )
             if termination_reason:
                 state.termination_reason = termination_reason
+            model_calls = getattr(agent_builder, "_last_model_calls", None)
+            if model_calls:
+                state.model_calls = model_calls
             if context_guard.context_compactions:
                 state.context_compactions = context_guard.context_compactions
 

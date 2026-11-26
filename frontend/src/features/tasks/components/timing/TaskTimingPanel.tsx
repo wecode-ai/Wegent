@@ -24,6 +24,7 @@ import {
   formatTimestamp,
   intervalPosition,
   isOpenSpan,
+  modelCallMetrics,
   percentValue,
   spanDuration,
   spanInterval,
@@ -573,6 +574,18 @@ function TimingSpanTooltip({ span, bounds }: { span: TimingSpan; bounds: Timelin
         value={isOpenSpan(span) ? t('timing.spans.running') : formatDuration(spanDuration(span))}
       />
       <TimingTooltipRow label={t('timing.spans.subtask')} value={span.subtask_id ?? '--'} />
+      {modelCallMetrics(span) ? (
+        <>
+          <TimingTooltipRow
+            label={t('timing.spans.first_token')}
+            value={formatDuration(modelCallMetrics(span)?.firstTokenMs ?? 0)}
+          />
+          <TimingTooltipRow
+            label={t('timing.spans.output')}
+            value={formatDuration(modelCallMetrics(span)?.outputMs ?? 0)}
+          />
+        </>
+      ) : null}
       {interval ? (
         <TimingTooltipRow
           label={t('timing.spans.interval')}
