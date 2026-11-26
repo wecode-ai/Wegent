@@ -6,6 +6,7 @@ const URL_REGEX =
   /(?:https?:\/\/|www\.)[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]*[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF.,;:!?'")\]}>]/gi
 const URL_PREFIX_REGEX = new RegExp(`^${URL_REGEX.source}`, 'i')
 const TRAILING_REFERENCE = /&(?:#(?:\d{1,7}|x[\da-f]{1,6})|[\da-z]{1,31});$/i
+const LINE_ENDING = /(\r\n?|\n)/
 
 const NON_LINKABLE_ELEMENTS = new Set([
   'a',
@@ -22,27 +23,81 @@ const NON_LINKABLE_ELEMENTS = new Set([
 
 type SourcePart<Child> = { node: Child; start: number; end: number }
 
-function decodeText(value: string): string {
-  return decodeString(value.replace(/\r\n?/g, '\n'))
+function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
+  const sourceLines = raw.split(LINE_ENDING)
+  const textLines = node.value.split(LINE_ENDING)
+  if (sourceLines.length !== textLines.length || sourceLines.length === 1 || !node.position) {
+    return []
+  }
+
+  const parts: SourcePart<Text>[] = []
+  const { offset: startOffset } = node.position.start
+  if (startOffset === undefined) return []
+  let offset = startOffset
+  let { line, column } = node.position.start
+
+  // Markdown strips indentation and quote markers on continuation lines.
+  // Keep the real source offsets after each stripped prefix.
+  for (let index = 0; index < sourceLines.length; index += 2) {
+    const sourceLine = sourceLines[index]
+    const lineEnding = sourceLines[index + 1] ?? ''
+    const value = textLines[index] + (textLines[index + 1] ?? '')
+    const decoded = decodeString(sourceLine)
+    const prefixLength = decoded.length - textLines[index].length
+    const prefix = sourceLine.slice(0, prefixLength)
+    if (
+      prefixLength < 0 ||
+      (index === 0 && prefixLength !== 0) ||
+      !/^[\t >]*$/.test(prefix) ||
+      decodeString(sourceLine.slice(prefixLength)) + lineEnding !== value
+    ) {
+      return []
+    }
+
+    const start = offset + prefixLength
+    const end = offset + sourceLine.length + lineEnding.length
+    if (start < end) {
+      parts.push({
+        start,
+        end,
+        node: {
+          type: 'text',
+          value,
+          position: {
+            start: { offset: start, line, column: column + prefixLength },
+            end: lineEnding
+              ? { offset: end, line: line + 1, column: 1 }
+              : { offset: end, line, column: column + sourceLine.length },
+          },
+        },
+      })
+    }
+    offset = end
+    line++
+    column = 1
+  }
+  return parts
 }
 
-function sourcePart<Child extends RootContent>(
+function sourceParts<Child extends RootContent>(
   node: Child,
   source: string
-): SourcePart<Child> | undefined {
+): SourcePart<Child | Text>[] {
   const start = node.position?.start.offset
   const end = node.position?.end.offset
-  if (start === undefined || end === undefined || start >= end) return
-  if (node.type === 'text' && decodeText(source.slice(start, end)) === node.value) {
-    return { node, start, end }
+  if (start === undefined || end === undefined || start >= end) return []
+  if (node.type === 'text') {
+    const raw = source.slice(start, end)
+    return decodeString(raw) === node.value ? [{ node, start, end }] : continuationParts(node, raw)
   }
   if (node.type === 'element') {
     const marker = source[start]
     const isMarkdownFormatting =
       (node.tagName === 'del' && marker === '~') ||
       ((node.tagName === 'em' || node.tagName === 'strong') && (marker === '*' || marker === '_'))
-    if (isMarkdownFormatting) return { node, start, end }
+    if (isMarkdownFormatting) return [{ node, start, end }]
   }
+  return []
 }
 
 function createLink(url: string): Element {
@@ -81,7 +136,7 @@ function linkRun<Child extends RootContent>(
         if (cursor === part.start && next === part.end) {
           output.push(visit(part.node))
         } else {
-          output.push({ type: 'text', value: decodeText(source.slice(cursor, next)) })
+          output.push({ type: 'text', value: decodeString(source.slice(cursor, next)) })
         }
       }
       cursor = next
@@ -120,7 +175,7 @@ function linkRun<Child extends RootContent>(
 
     advance(start, true)
     advance(end, false)
-    const link = createLink(decodeText(source.slice(start, end)))
+    const link = createLink(decodeString(source.slice(start, end)))
     const before = source.slice(positionOffset, start).split(/\r\n?|\n/)
     line += before.length - 1
     column = before.length === 1 ? column + before[0].length : before[before.length - 1].length + 1
@@ -154,8 +209,8 @@ function autolinkChildren<Child extends RootContent>(
   source: string
 ): Array<Child | Element | Text> {
   const output: Array<Child | Element | Text> = []
-  const run: SourcePart<Child>[] = []
-  const visit = (child: Child) => {
+  const run: SourcePart<Child | Text>[] = []
+  const visit = (child: Child | Text) => {
     if (child.type === 'element' && !NON_LINKABLE_ELEMENTS.has(child.tagName)) {
       const { className } = child.properties
       if (!Array.isArray(className) || !className.includes('katex')) {
@@ -171,13 +226,17 @@ function autolinkChildren<Child extends RootContent>(
   }
 
   for (const child of children) {
-    const part = sourcePart(child, source)
-    if (run.length && part?.start !== run[run.length - 1].end) flush()
-    if (part) {
-      run.push(part)
+    const parts = sourceParts(child, source)
+    if (parts.length) {
+      for (const part of parts) {
+        if (run.length && part.start !== run[run.length - 1].end) flush()
+        run.push(part)
+      }
     } else if (child.type === 'text') {
+      flush()
       for (const node of linkRenderedText(child)) output.push(node)
     } else {
+      flush()
       output.push(visit(child))
     }
   }

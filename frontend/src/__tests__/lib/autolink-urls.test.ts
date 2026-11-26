@@ -87,6 +87,20 @@ describe('rehypeAutolinkUrls', () => {
     }
   )
 
+  it.each(['> Intro\n> ', '- Intro\n  ', 'Intro\r\n  '])(
+    'keeps the complete URL on a Markdown continuation line after %j',
+    prefix => {
+      const url = 'https://example.com/search?q=a(b)*c*d'
+      const { container } = renderMarkdown(`${prefix}https://example.com/search?q=a&#40;b&#41;*c*d`)
+
+      expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+      expect(container.querySelector('em')).toBeNull()
+      expect(container.textContent?.trim()).toBe(
+        `Intro${prefix.includes('\r') ? '\r\n' : '\n'}${url}`
+      )
+    }
+  )
+
   it.each(['（说明）', '说明'])('stops a bare URL before %s', suffix => {
     const url = 'https://example.com/path'
     const { container } = renderMarkdown(`见 ${url}${suffix}`)
