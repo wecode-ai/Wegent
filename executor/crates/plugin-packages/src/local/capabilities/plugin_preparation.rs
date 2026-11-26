@@ -86,8 +86,7 @@ impl PreparedRuntime {
             } else {
                 let stage = result.stage(store, &runtime)?;
                 copy_dir_atomic(source, &stage.path().join("entry"))?;
-                ensure_dual_plugin_manifests(&stage.path().join("entry"))?;
-                ensure_plugin_hook_permissions(&stage.path().join("entry"))?;
+                store.prepare_runtime_copy(&stage.path().join("entry"))?;
                 Some(stage)
             };
             // Personal marketplaces share one entry between Codex and Claude.

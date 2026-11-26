@@ -475,6 +475,51 @@ test.describe('Task runtime consistency', () => {
     await expectNoQueuedMessages(page)
   })
 
+  test('retains an unsent follow-up when leaving and reopening the conversation', async ({
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} start a turn before navigation`
+    const streamMarker = `${TEST_PREFIX}-navigation-stream`
+    const followUp = `${TEST_PREFIX} follow up after navigation`
+    const followUpMarker = `${TEST_PREFIX}-navigation-follow-up`
+    await configureStreamRule(request, messageText, {
+      responseContent: streamMarker,
+      holdDone: true,
+    })
+    await configureStreamRule(request, followUp, { responseContent: followUpMarker })
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    const messages = page.getByTestId('messages-container')
+    const queuedMessage = page.getByTestId('queued-message-item').filter({ hasText: followUp })
+    await expect(messages).toContainText(streamMarker, { timeout: 15_000 })
+    await fillMessageInput(page, followUp)
+    const queueButton = page.getByRole('button', { name: 'Queue message' })
+    await expect(queueButton).toBeEnabled({ timeout: 5_000 })
+    await queueButton.click()
+    await expect(queuedMessage).toBeVisible({ timeout: 5_000 })
+
+    await page.getByTestId('task-sidebar-nav-flow-button').click()
+    await expect(page).toHaveURL(/\/feed(?:[/?]|$)/, { timeout: 8_000 })
+    await expect(queuedMessage).toHaveCount(0, { timeout: 5_000 })
+    await page.goBack()
+    await expect(page).toHaveURL(new RegExp(`[?&]taskId=${taskId}(?:&|$)`), { timeout: 8_000 })
+    await expect(queuedMessage).toBeVisible({ timeout: 5_000 })
+    await expect(messages.getByText(followUp, { exact: true })).toHaveCount(0)
+
+    // Release the original turn and remove its rule so the earlier prompt in
+    // conversation history cannot select that rule again on the follow-up.
+    const release = await request.delete(
+      `${MOCK_MODEL_SERVER_URL}/stream-rules?matchText=${encodeURIComponent(messageText)}`
+    )
+    expect(release.ok(), 'The mock model must complete the original turn').toBe(true)
+    await expect(messages).toContainText(followUpMarker, { timeout: 15_000 })
+    await expect(messages.getByText(followUp, { exact: true })).toHaveCount(1)
+    await expect(queuedMessage).toHaveCount(0)
+  })
+
   async function createTestResources(request: APIRequestContext): Promise<void> {
     const modelResponse = await request.post(`${API_BASE_URL}/api/v1/namespaces/default/models`, {
       headers: authHeaders(),
@@ -573,15 +618,14 @@ test.describe('Task runtime consistency', () => {
       responseContent: string
       chunkDelayMs?: number
       doneDelayMs?: number
+      holdDone?: boolean
     }
   ): Promise<void> {
     streamRulesForCleanup.push(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/stream-rules`, {
       data: {
         matchText,
-        responseContent: options.responseContent,
-        chunkDelayMs: options.chunkDelayMs,
-        doneDelayMs: options.doneDelayMs,
+        ...options,
       },
     })
     expect(response.status()).toBe(200)

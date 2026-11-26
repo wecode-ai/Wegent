@@ -26,7 +26,7 @@ import {
   useWorkbenchShellEventHandlers,
   type ProjectCreateRequestOptions,
 } from './workbenchShellEvents'
-import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkbenchSidebarReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -293,7 +293,7 @@ export function useDesktopWorkbenchLayoutModel({
     ? availableProjectSpaceApis.length > 0
     : Boolean(services.deliveryApi)
   const activeItem: 'stand-in' | 'chat' = standInOpen ? 'stand-in' : 'chat'
-  const taskReminders = useWorkbenchTaskReminders()
+  const taskReminders = useWorkbenchSidebarReminders()
   const toggleMyWork = useCallback(() => {
     if (standInOpen) {
       navigateTo(defaultProjectSpaceContentRoute())

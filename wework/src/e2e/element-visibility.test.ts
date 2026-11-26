@@ -87,6 +87,31 @@ describe('desktop control element visibility', () => {
     expect(hit).toHaveBeenCalledWith(90, 125)
   })
 
+  it('clips an action inside its top-layer menu without clipping it to the dialog', () => {
+    const dialog = document.createElement('div')
+    const menu = document.createElement('div')
+    const action = document.createElement('button')
+    dialog.style.overflow = 'hidden'
+    menu.style.overflow = 'auto'
+    menu.setAttribute('popover', 'manual')
+    menu.showPopover = vi.fn()
+    vi.spyOn(menu, 'matches').mockImplementation(selector => selector === ':popover-open')
+    menu.append(action)
+    dialog.append(menu)
+    document.body.append(dialog)
+    bounds(dialog, 17, 20, 356, 200)
+    bounds(menu, 8, 30, 176, 48)
+    bounds(action, 13, 34, 166, 48)
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: () => action,
+    })
+    expect(readElementVisibility(action)).toEqual({
+      visibleIntersection: { left: 13, top: 34, right: 179, bottom: 78, width: 166, height: 44 },
+      hitTestVisible: true,
+    })
+  })
+
   it('rejects an overlay and accepts a real descendant hit', () => {
     const target = document.createElement('button')
     const child = document.createElement('span')

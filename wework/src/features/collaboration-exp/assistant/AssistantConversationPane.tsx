@@ -137,6 +137,7 @@ function VerifiedAssistantConversation({
         }}
         sendEphemeral={false}
         nativeConversation
+        showActivityDots
         active={active}
         emptyStateText={t('assistant.conversationEmpty')}
         placeholder={t('assistant.placeholder')}

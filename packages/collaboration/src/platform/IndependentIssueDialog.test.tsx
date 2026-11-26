@@ -377,9 +377,10 @@ it.each([false, true])(
   }
 )
 
-it.each([false, true])(
-  'submits the same draft fields with a selected project (share: %s)',
-  async share => {
+it.each(['plain', 'share', 'attachment'] as const)(
+  'submits the same draft fields with a selected project (%s)',
+  async mode => {
+    const share = mode === 'share'
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal(
       'ResizeObserver',
@@ -413,9 +414,7 @@ it.each([false, true])(
     const updateDetail = vi
       .fn()
       .mockResolvedValue({ ...saved, description: updatedDescription, version: 2 })
-    const associate = vi
-      .fn()
-      .mockResolvedValue({ project_id: '41', issue_id: 'new' })
+    const associate = vi.fn().mockResolvedValue({ project_id: '41', issue_id: 'new' })
     const createInProject = vi
       .fn()
       .mockRejectedValueOnce(new Error('Project temporarily unavailable'))
@@ -480,13 +479,13 @@ it.each([false, true])(
                   }
                 : undefined
             }
-            ShareFiles={({ children, onSelectConversationFiles }) => (
+            ShareFiles={({ children, onChange, onSelectConversationFiles }) => (
               <>
                 {children}
                 <button
                   type="button"
                   data-testid="select-source-file"
-                  onClick={() => onSelectConversationFiles(['file'])}
+                  onClick={() => (share ? onSelectConversationFiles(['file']) : onChange([file]))}
                 >
                   Select source file
                 </button>
@@ -506,7 +505,7 @@ it.each([false, true])(
       })
       expect(find('independent-issue-project-option-41')).not.toBeNull()
       await act(async () => find('independent-issue-project-option-41')?.click())
-      if (share) await act(async () => find('select-source-file')?.click())
+      if (mode !== 'plain') await act(async () => find('select-source-file')?.click())
       expect(find('independent-issue-title')).toHaveProperty('value', title)
       expect(find('independent-issue-description')).toHaveProperty('value', description)
       await act(async () => find('independent-issue-save')?.click())
@@ -525,6 +524,17 @@ it.each([false, true])(
         expect(createShared.mock.calls[0][2].description).toContain(description)
         expect(createShared.mock.calls[0][2].description).not.toContain('only')
         expect(create).not.toHaveBeenCalled()
+      } else if (mode === 'attachment') {
+        expect(createShared).toHaveBeenCalledExactlyOnceWith(
+          expect.any(String),
+          undefined,
+          expect.objectContaining({ title, description }),
+          [file],
+          '41',
+          'ready'
+        )
+        expect(create).not.toHaveBeenCalled()
+        expect(createInProject).not.toHaveBeenCalled()
       } else {
         expect(host.querySelector('[role="alert"]')?.textContent).toContain(
           'Project temporarily unavailable'
@@ -540,7 +550,12 @@ it.each([false, true])(
         expect(requestId).toEqual(expect.any(String))
         expect(createInProject.mock.calls).toEqual([
           [expect.objectContaining({ title, description }), '41', 'ready', requestId],
-          [expect.objectContaining({ title, description: updatedDescription }), '41', 'ready', requestId],
+          [
+            expect.objectContaining({ title, description: updatedDescription }),
+            '41',
+            'ready',
+            requestId,
+          ],
         ])
         expect(createShared).not.toHaveBeenCalled()
       }

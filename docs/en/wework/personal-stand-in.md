@@ -30,6 +30,8 @@ From **Collaboration → My work**, the right-hand **Stand-in** tab lists work b
 
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
+After sending a message, three dots appear while you wait for the assistant's first reply. As soon as reply text arrives, it appears in the usual message bubble and the composer returns to its send button. You can send a follow-up while a subagent continues working in the background.
+
 This presentation applies to primary and role conversations on the **My assistants** page and the embedded primary conversation on the collaboration home. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
 Stand-in identity conversations and collaborative Issue stand-in conversations enable native subagent v2, including resumed conversations. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents. Native permission, source-scope and approval constraints remain unchanged.
@@ -285,6 +287,8 @@ All four combinations are supported, including immediate separate conversations 
 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
+Routine progress and successful role-task completion leave background coordination idle. Failures, cancellations, pending questions or approvals, and scheduled follow-ups can still trigger coordination. The coordinator runs silently and shares important findings through the assistant conversation.
+
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
 Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
@@ -380,7 +384,7 @@ Publication shares only the content you enter, not private chat or memories. If 
 
 Record a matter and its trigger time in **My assistants → select an assistant → Assistant details → Manage assistant → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
 
-At trigger time, both new and resumed conversations use the currently saved Calendar approval policy. With confirmation required, the owner handles MCP operation approvals. With automatic operation handling allowed, Codex reviews each external MCP call. Resumed work also follows the approval requirements of its original source.
+Ordinary Calendar tasks default to Codex full access, with AI review for high-risk commands and external MCP calls that require review. To handle approvals yourself, enable **Calendar → Processing → Ask me before acting** and save. Each run reads the current policy at trigger time. Resumed source conversations also retain their original permission and approval requirements. Assistant memory consolidation and weekly reviews use their own review policies.
 
 To amend an existing arrangement in chat, the stand-in first reads the saved arrangement, then updates its content, name, trigger, time zone or enabled state in place. Cancellation and recreation are unnecessary. Omitted settings, the arrangement identity and run history are retained. Content-only or name-only edits keep the pending occurrence; changing the trigger, time zone or enabled state recalculates it. Updates still require native confirmation. Rejected confirmation, invalid parameters or a version conflict leave the saved arrangement unchanged; a conflict requires rereading before editing.
 

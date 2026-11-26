@@ -1,3 +1,4 @@
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type {
   Attachment,
   LocalDeviceApp,
@@ -206,7 +207,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalSkills,
       onListLocalApps,
       projectWork,
-      projectPhrases = [],
+      projectPhrases,
       showProjectWorkBar = true,
       showExecutionTools = true,
       showModelSelector,
@@ -264,7 +265,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           : [],
       [projectWork]
     )
-    const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    const handleQuickPhraseSelect = useStableEvent((phrase: QuickPhrase) => {
       if (!composerRef.current) return
       setPhraseError(null)
       applyQuickPhrase(phrase, composerRef.current, {
@@ -283,7 +284,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           )
           .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
       }
-    }
+    })
 
     const previousAdmission = useRef('')
     if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
@@ -413,7 +414,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectExternalMention={onSelectExternalMention}
               onSelectCloudProject={onSelectCloudProject}
-              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}
               models={models}

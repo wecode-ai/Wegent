@@ -74,10 +74,12 @@ export interface MessageListProps {
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
+  waitingIndicatorStyle?: 'dots'
   disableContentVisibility?: boolean
   forceVirtualMessageId?: string | null
   searchMessageId?: string
   devices?: Array<{ device_id: string; status: string }>
+  onContinueInNewConversation?: () => void
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (
@@ -160,10 +162,12 @@ export const MessageList = memo(function MessageList({
   className,
   conversationKey,
   isWaitingForAssistant = false,
+  waitingIndicatorStyle,
   disableContentVisibility = false,
   forceVirtualMessageId = null,
   searchMessageId,
   devices = EMPTY_DEVICES,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -285,9 +289,10 @@ export const MessageList = memo(function MessageList({
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
-    !resolvedMessages.some(
-      message => message.role === 'assistant' && message.status === 'streaming'
-    )
+    (waitingIndicatorStyle === 'dots' ||
+      !resolvedMessages.some(
+        message => message.role === 'assistant' && message.status === 'streaming'
+      ))
   const rowCount = visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0)
   const hasViewportRows = virtualize && scrollElementRef !== undefined
   // The complete list already fits within the virtualizer's render budget.
@@ -613,7 +618,7 @@ export const MessageList = memo(function MessageList({
               className="min-w-0"
               data-testid="message-assistant-waiting"
             >
-              <AssistantThinkingIndicator />
+              <AssistantThinkingIndicator variant={waitingIndicatorStyle} />
             </article>
           )
         const nextMessage = visibleMessages[index + 1]
@@ -663,6 +668,7 @@ export const MessageList = memo(function MessageList({
               onOpenWorkspaceFile={onOpenWorkspaceFile}
               onOpenLocalSkillFile={onOpenLocalSkillFile}
               onEditLastUserMessage={onEditLastUserMessage}
+              onContinueInNewConversation={onContinueInNewConversation}
               onRetryFailedMessage={onRetryFailedMessage}
               onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}

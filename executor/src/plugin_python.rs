@@ -20,23 +20,39 @@ pub fn is_plugin_python_command() -> bool {
 
 pub async fn run() -> Result<i32, String> {
     let mut args = env::args_os().skip(2);
-    let script = args
+    let first = args
         .next()
         .ok_or("usage: wegent-executor plugin-python <plugin-script.py> [script arguments]")?;
-    run_script(Path::new(&script), args).await
+    let mcp = first == "--mcp";
+    let script = if mcp {
+        args.next()
+            .ok_or("Plugin Python MCP requires a script path")?
+    } else {
+        first
+    };
+    run_script(Path::new(&script), args, mcp).await
 }
 
 async fn run_script(
     script: &Path,
     args: impl IntoIterator<Item = OsString>,
+    mcp: bool,
 ) -> Result<i32, String> {
     let script = plugin_script(script)?;
     if !crate::python_runtime::managed_python_bridge_configured() {
         return Err("Wework managed Python is unavailable on this execution device".to_owned());
     }
     let interpreter =
-        crate::python_runtime::prepare_plugin_python(&plugin_root(&script)?, true).await?;
-    let mut command = plugin_command(&interpreter, &script, args)?;
+        crate::python_runtime::prepare_plugin_python(&plugin_root(&script)?, !mcp).await?;
+    let mut command = plugin_command(&interpreter, &script, args, mcp)?;
+    #[cfg(unix)]
+    if mcp {
+        use std::os::unix::process::CommandExt;
+        return Err(format!(
+            "Failed to execute the plugin Python MCP: {}",
+            command.as_std_mut().exec()
+        ));
+    }
     let status = command
         .status()
         .await
@@ -48,9 +64,13 @@ fn plugin_command(
     interpreter: &crate::python_runtime::PluginPythonInterpreter,
     script: &Path,
     args: impl IntoIterator<Item = OsString>,
+    mcp: bool,
 ) -> Result<Command, String> {
     let mut command = Command::new(&interpreter.path);
     interpreter.configure(&mut command)?;
+    if mcp {
+        command.args(["-E", "-s", "-B"]);
+    }
     command
         .arg(script)
         .args(args)

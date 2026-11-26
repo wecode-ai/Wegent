@@ -1,4 +1,4 @@
-import { useCallback, useContext, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
@@ -52,11 +52,41 @@ export function useRuntimeTaskSidebarSnapshot() {
 export function useRuntimeTaskLifecycle(
   address: RuntimeTaskAddress | null | undefined
 ): RuntimeTaskLifecycleSnapshot | null {
+  return useRuntimeTaskLifecycleSelection(address, identity, Object.is)
+}
+
+function identity(snapshot: RuntimeTaskLifecycleSnapshot | null) {
+  return snapshot
+}
+
+function createTaskSelection<T>(
+  readTask: () => RuntimeTaskLifecycleSnapshot | null,
+  select: (snapshot: RuntimeTaskLifecycleSnapshot | null) => T,
+  equal: (previous: T, next: T) => boolean
+) {
+  let task = readTask()
+  let selected = select(task)
+  return () => {
+    const next = readTask()
+    if (next !== task) {
+      task = next
+      const nextSelected = select(next)
+      if (!equal(selected, nextSelected)) selected = nextSelected
+    }
+    return selected
+  }
+}
+
+export function useRuntimeTaskLifecycleSelection<T>(
+  address: RuntimeTaskAddress | null | undefined,
+  select: (snapshot: RuntimeTaskLifecycleSnapshot | null) => T,
+  equal: (previous: T, next: T) => boolean
+): T {
   const store = useContext(RuntimeTaskLifecycleContext)
   if (!store) throw new Error('RuntimeTaskLifecycleProvider is required')
-  const getSnapshot = useCallback(
-    () => store.selectTask(store.getSnapshot(), address),
-    [address, store]
+  const getSnapshot = useMemo(
+    () => createTaskSelection(() => store.selectTask(store.getSnapshot(), address), select, equal),
+    [address, equal, select, store]
   )
   const subscribe = useCallback(
     (listener: () => void) =>
