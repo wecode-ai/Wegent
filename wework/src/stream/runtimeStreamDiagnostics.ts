@@ -3,10 +3,13 @@ import { RESPONSE_API_STREAM_EVENTS } from './responseApiStream'
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 
 export function isRuntimeChatStreamDebugEnabled(): boolean {
-  return (
-    import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' ||
-    globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
-  )
+  if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') return true
+  try {
+    return globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
+  } catch {
+    // An unavailable diagnostic preference must not interrupt conversation delivery.
+    return false
+  }
 }
 
 export function setRuntimeChatStreamDebugEnabled(enabled: boolean): void {

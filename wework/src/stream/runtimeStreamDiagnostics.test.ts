@@ -92,6 +92,34 @@ test('writes native terminal diagnostics only when stream debugging is enabled',
   }
 })
 
+test('delivers native completion when the stream log preference cannot be read', async () => {
+  const storageRead = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(key => {
+    throw new DOMException(key, 'SecurityError')
+  })
+  let listener!: (event: LocalExecutorEvent) => void
+  const stream = createRuntimeChatStream({
+    subscribe: async handler => {
+      listener = handler
+      return vi.fn()
+    },
+    request: vi.fn(),
+  })
+  const onChatDone = vi.fn()
+  let unsubscribe: (() => void) | undefined
+  try {
+    unsubscribe = stream.subscribe({ onChatDone })
+    await Promise.resolve()
+    listener({
+      event: 'response.completed',
+      payload: { deviceId: 'device', taskId: 'task', subtaskId: 'turn', data: { value: 'reply' } },
+    })
+    expect(onChatDone).toHaveBeenCalledWith(expect.objectContaining({ subtaskId: 'turn' }))
+  } finally {
+    storageRead.mockRestore()
+    unsubscribe?.()
+  }
+})
+
 test('captures actual stream dispatch timing without payloads or identities', () => {
   const listeners = new Map<string, (payload: unknown) => void>()
   const socket = {
