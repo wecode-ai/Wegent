@@ -1,4 +1,5 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
+pub use super::stand_in_inbox::dots_inbox::project_delegation_result;
 use super::*;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};

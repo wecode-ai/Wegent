@@ -3,44 +3,40 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 
-/** Reproduce the persisted SQLite failure observed on an all-contact subscription. */
+/** Reproduce the persisted SQLite failure on an added assistant's all-contact subscription. */
 export async function verifyCollectionLockRecovery({ database, rpc, root, userId, timeoutMs }) {
   const providerId = '@wegent/dsh-connection-dingtalk/dingtalk'
   const roleId = 'collection-lock-recovery'
   const originalSettings = await rpc('runtime.stand_in.personal.get', { userId })
   const settings = structuredClone(originalSettings)
-  const roleTemplate = structuredClone(settings.primary)
-  delete roleTemplate.delegation
-  settings.roles = [
-    ...settings.roles.filter(role => role.id !== roleId),
-    {
-      ...roleTemplate,
-      id: roleId,
-      name: 'Collection lock recovery',
-      enabled: true,
+  const role = {
+    ...settings.primary,
+    id: roleId,
+    name: 'Collection lock recovery',
+    enabled: true,
+    executionDeviceId: settings.executionDeviceId,
+    collaboration: {
+      enabled: false,
+      allProjects: false,
+      projects: [],
+      excludedProjects: [],
       tags: [],
-      executionDeviceId: settings.executionDeviceId,
-      version: 0,
-      collaboration: {
-        enabled: false,
-        allProjects: false,
-        projects: [],
-        excludedProjects: [],
-        tags: [],
-      },
-      connections: [
-        {
-          providerId,
-          profile: 'connection-test-account',
-          kind: 'direct',
-          id: '*',
-          scope: 'all',
-          name: 'All direct messages',
-          policy: { automatic: true, askBeforeAct: true, immediate: true },
-        },
-      ],
+      policy: { automatic: true, askBeforeAct: true, immediate: true },
     },
-  ]
+    connections: [
+      {
+        providerId,
+        profile: 'connection-test-account',
+        kind: 'direct',
+        id: '*',
+        scope: 'all',
+        name: 'All direct messages',
+        policy: { automatic: true, askBeforeAct: true, immediate: true },
+      },
+    ],
+  }
+  delete role.delegation
+  settings.roles = [...(settings.roles ?? []).filter(existing => existing.id !== roleId), role]
   const saved = await rpc('runtime.stand_in.personal.save', { userId, settings })
   const sourceRow = () =>
     database
@@ -102,6 +98,7 @@ export async function verifyCollectionLockRecovery({ database, rpc, root, userId
     'A transient database lock must not permanently stop all-contact direct message intake'
   )
   const work = works.items.find(item => item.source?.id === 'collection-lock-peer')
+  assert.equal(work.roleId, roleId, 'All-contact intake belongs to an added assistant')
   await storyUntil(
     () => rpc('runtime.tasks.get', { taskId: work.taskId }),
     value => value.task?.status === 'done',

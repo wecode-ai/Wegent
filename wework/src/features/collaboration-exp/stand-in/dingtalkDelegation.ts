@@ -19,7 +19,12 @@ export const isDingTalkSource = (source: Pick<StandInSourceConnection, 'provider
 
 export function dingTalkInboxScope(delegation?: StandInDingTalkDelegation) {
   if (!delegation?.accountId) return undefined
-  return JSON.stringify([delegation.profile, delegation.accountId, delegation.accountInvalidated])
+  return JSON.stringify([
+    delegation.profile,
+    delegation.accountId,
+    delegation.organizationId,
+    delegation.accountInvalidated,
+  ])
 }
 
 type SourceIdentity = Pick<

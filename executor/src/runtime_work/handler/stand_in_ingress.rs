@@ -6,6 +6,7 @@ use crate::task_runtime::personal_stand_in::{
     source_collection_namespace, source_provider, stand_in_collection_connection,
     stand_in_connection, stand_in_identities,
 };
+use crate::task_runtime::stand_in_projection::project_visible_work;
 
 #[derive(Clone, Copy)]
 enum ConnectionSubscriber {
@@ -162,6 +163,13 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?
             {
                 self.reconcile_connection_dispatch(&store, user, &mut work)?;
+                let messages = store
+                    .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
+                    .map_err(settings_error)?;
+                let Some(visible) = project_visible_work(&settings, work, messages) else {
+                    continue;
+                };
+                let work = visible.work;
                 if work["status"] != "pending" {
                     continue;
                 }
@@ -187,10 +195,7 @@ impl RuntimeWorkRpcHandler {
                     }
                     continue;
                 }
-                for message in store
-                    .stand_in_messages(user, work["id"].as_str().unwrap_or_default())
-                    .map_err(settings_error)?
-                {
+                for message in visible.messages {
                     let source = &message["source"];
                     if message["dispatchStatus"] != "pending"
                         || !stand_in_collection_connection(role, source).is_some_and(|connection| {

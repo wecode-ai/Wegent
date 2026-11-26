@@ -134,7 +134,9 @@ export function StandInConnectionCatalog({
         !dingTalkDelegation.accountInvalidated &&
         (Boolean(dingTalkDelegation.organizationId) ||
           matchesDingTalkAccount(provider?.availability, dingTalkDelegation)) &&
-        selected.some(row => row.delegated && !row.paused)
+        selected.some(
+          row => row.delegated && !row.paused && matchesDingTalkAccount(dingTalkDelegation, row)
+        )
       const status = loading
         ? t('standIn.loading')
         : availability === 'auth_required'

@@ -87,7 +87,14 @@ export interface ConnectionReadinessSource {
 }
 
 export interface ConnectionReadiness {
-  status: 'ready' | 'auth_required' | 'identity_required' | 'permissions_required' | 'error'
+  status:
+    | 'ready'
+    | 'auth_required'
+    | 'identity_required'
+    | 'permissions_required'
+    | 'component_unavailable'
+    | 'error'
+  code?: string
   identity?: ConnectionReadinessIdentity
   candidates?: ConnectionReadinessIdentity[]
   component?: { source: 'managed' | 'bundled' | 'external'; version: string }
@@ -127,6 +134,7 @@ export interface StandInInboxWork {
   source: StandInSourceConnection
   status: 'pending' | 'needs_grouping' | 'sending' | 'sent' | 'failed'
   updatedAt: string
+  refreshVersion?: string
   messageCount: number
   latestMessage: StandInInboxMessage | null
   delegationResult?: StandInDelegationResult

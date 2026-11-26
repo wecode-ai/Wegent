@@ -179,7 +179,11 @@ export interface ConnectionIdentity {
 }
 
 export interface ConnectionReadiness extends Omit<ConnectionAvailability, 'status'> {
-  status: ConnectionAvailability['status'] | 'identity_required' | 'permissions_required'
+  status:
+    | ConnectionAvailability['status']
+    | 'identity_required'
+    | 'permissions_required'
+    | 'component_unavailable'
   identity?: ConnectionIdentity
   candidates?: ConnectionIdentity[]
   component?: { source: 'bundled' | 'managed' | 'external'; version: string }

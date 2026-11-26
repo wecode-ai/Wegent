@@ -314,20 +314,27 @@ fn find_event_message(
     .transpose()
 }
 
+fn read_stand_in_messages(
+    connection: &Connection,
+    user: i64,
+    work: &str,
+) -> Result<Vec<Value>, TaskRuntimeError> {
+    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
+    let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
+    rows.map(|raw| {
+        serde_json::from_str(&raw?).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .collect()
+}
+
 fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRuntimeError> {
-    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at DESC,id DESC")?;
-    let rows = statement.query_map(
-        params![work["userId"].as_i64(), work["id"].as_str()],
-        |row| row.get::<_, String>(0),
+    let messages = read_stand_in_messages(
+        connection,
+        work["userId"].as_i64().unwrap_or_default(),
+        work["id"].as_str().unwrap_or_default(),
     )?;
-    let messages = rows
-        .map(|raw| {
-            serde_json::from_str::<Value>(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     work["messageCount"] = json!(messages.len());
-    work["latestMessage"] = messages.first().cloned().unwrap_or(Value::Null);
+    work["latestMessage"] = messages.last().cloned().unwrap_or(Value::Null);
     if work["source"]["delegated"] == true {
         work["delegationResult"] = dots_inbox::project_delegation_result(work, &messages);
     }
@@ -630,13 +637,7 @@ impl LocalTaskStore {
     pub fn stand_in_messages(&self, user: i64, work: &str) -> Result<Vec<Value>, TaskRuntimeError> {
         self.stand_in_work(user, work)?;
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
-        let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
-        rows.map(|raw| {
-            serde_json::from_str(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect()
+        read_stand_in_messages(&connection, user, work)
     }
 
     pub fn known_stand_in_message(

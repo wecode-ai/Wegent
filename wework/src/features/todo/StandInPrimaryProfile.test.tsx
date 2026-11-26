@@ -229,6 +229,38 @@ test.each([true, false])(
   }
 )
 
+test('shows DingTalk component recovery when readiness reports it unavailable', async () => {
+  const { services } = standInOverviewFixture().props
+  const api = services.standInApi!
+  api.connectionReadiness = async () => ({
+    status: 'component_unavailable',
+    code: 'connection_cli_unavailable',
+  })
+  render(
+    <DingTalkDelegationControls
+      settings={{
+        saved: { enabled: false, prompt: '', preferences: '' },
+        modelSelection: { identity: null },
+        primaryStopped: false,
+        onSave: async () => true,
+      }}
+      api={api}
+      provider={{
+        id: STAND_IN_DINGTALK_PROVIDER,
+        displayName: 'DingTalk',
+        resourceKinds: ['direct', 'group'],
+        availability: { status: 'ready' },
+        dependencies: [],
+      }}
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+    />
+  )
+  expect(await screen.findByTestId('stand-in-dingtalk-open-updates')).toBeEnabled()
+  expect(screen.getByTestId('stand-in-delegation-enable')).toBeDisabled()
+})
+
 test('a model change keeps the unified instructions for a profile without learning', async () => {
   const { model, save } = openPrimaryProfile()
   expect(screen.getByTestId('stand-in-preferences')).toHaveValue(

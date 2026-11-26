@@ -30,6 +30,8 @@ After initial setup, open **Left sidebar → My assistants → Message center** 
 
 When the local executor verifies the DingTalk identity, review **Replied**, **Needs your attention**, **Not handled automatically**, and **Exceptions**. Only confirmed deliveries count as replies. The header shows **Pause delegation** or **Resume delegation** when the action is available. Select **Delegation settings** to open the default assistant's connection settings. Closing settings returns to the message center. If desktop notifications are turned off, select **Open notification settings** in the center to turn them on again.
 
+Open a record to see the original message, reply evidence, handling details, and delivery receipt. When delivery is unknown and a channel task is available, select **Check delivery status**. To take over work that needs your attention, select **I'll handle this** when available. Select **Edit this source** to open settings for the corresponding conversation.
+
 <a id="stand-in-chat-and-desktop-notifications"></a>
 
 ## Stand-in chat and desktop notifications

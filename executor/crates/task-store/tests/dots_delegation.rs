@@ -643,10 +643,14 @@ fn durable_send_claim_rechecks_current_policy_and_keeps_unknown_on_restart() {
     drop(store);
 
     let store = LocalTaskStore::open(&path).unwrap();
-    let claimed = store.delegated_work_message(7, id, record).unwrap();
+    let claimed = store
+        .delegated_work_message(7, "desktop", id, record)
+        .unwrap();
     assert_eq!(claimed["delegationResult"]["attemptId"], "attempt-question");
     assert!(claimed["delegationResult"]["submittedAt"].is_string());
-    assert!(store.delegated_work_message(8, id, record).is_err());
+    assert!(store
+        .delegated_work_message(8, "desktop", id, record)
+        .is_err());
     store
         .finish_delegated_submission(
             7,
@@ -665,7 +669,7 @@ fn durable_send_claim_rechecks_current_policy_and_keeps_unknown_on_restart() {
             &json!({"status":"unknown","attemptId":"attempt-question","channelTaskId":"channel-task","reasonCode":"channel_result_unconfirmed"}),
         )
         .unwrap();
-    let taken_over = store.take_over_delegated_work(7, id).unwrap();
+    let taken_over = store.take_over_delegated_work(7, "desktop", id).unwrap();
     assert_eq!(taken_over["delegationResult"]["status"], "unknown");
     assert_eq!(
         taken_over["delegationResult"]["deliveryReasonCode"],
@@ -673,7 +677,7 @@ fn durable_send_claim_rechecks_current_policy_and_keeps_unknown_on_restart() {
     );
     assert_eq!(taken_over["delegationResult"]["takenOver"], true);
     assert_eq!(taken_over["delegationResult"]["recordId"], record);
-    assert!(store.take_over_delegated_work(8, id).is_err());
+    assert!(store.take_over_delegated_work(8, "desktop", id).is_err());
     assert!(store
         .record_delegation_decision(7, "desktop", id, record, decision)
         .unwrap()
@@ -681,7 +685,7 @@ fn durable_send_claim_rechecks_current_policy_and_keeps_unknown_on_restart() {
 
     let mut receipt = json!({"status":"sent","attemptId":"attempt-question","channelTaskId":"wrong-external-task","receiptId":"receipt"});
     store
-        .reconcile_delegated_receipt(7, id, record, &receipt)
+        .reconcile_delegated_receipt(7, "desktop", id, record, &receipt)
         .unwrap();
     assert_eq!(
         store.stand_in_work(7, id).unwrap()["delegationResult"]["status"],
@@ -689,7 +693,7 @@ fn durable_send_claim_rechecks_current_policy_and_keeps_unknown_on_restart() {
     );
     receipt["channelTaskId"] = json!("channel-task");
     store
-        .reconcile_delegated_receipt(7, id, record, &receipt)
+        .reconcile_delegated_receipt(7, "desktop", id, record, &receipt)
         .unwrap();
     let confirmed = store.stand_in_work(7, id).unwrap();
     assert_eq!(confirmed["delegationResult"]["status"], "sent");
@@ -729,7 +733,7 @@ fn owner_controls_block_already_queued_replies() {
             "scope removal" => settings["primary"]["connections"] = json!([direct]),
             "takeover" => {
                 store
-                    .take_over_delegated_work(7, group_item["id"].as_str().unwrap())
+                    .take_over_delegated_work(7, "desktop", group_item["id"].as_str().unwrap())
                     .unwrap();
             }
             _ => unreachable!(),
@@ -1142,7 +1146,7 @@ fn unsupported_actions_never_claim_a_send_and_handoff_keeps_its_reason() {
     settings["primary"]["delegation"]["action"] = json!("pause");
     saved(&store, settings);
     let queued = store
-        .delegated_work_message(7, work, queued_record)
+        .delegated_work_message(7, "desktop", work, queued_record)
         .unwrap();
     assert_eq!(queued["delegationResult"]["action"], "skip");
     assert_eq!(
