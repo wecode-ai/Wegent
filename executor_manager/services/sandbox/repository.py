@@ -179,18 +179,23 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.error(f"[SandboxRepository] Failed to save sandbox: {e}")
             return False
 
-    def load_sandbox(self, sandbox_id: str) -> Optional[Sandbox]:
+    def load_sandbox(
+        self, sandbox_id: str, *, require_definitive_result: bool = False
+    ) -> Optional[Sandbox]:
         """Load sandbox by sandbox_id from session Hash.
 
         Note: sandbox_id is actually the task_id (as string)
 
         Args:
             sandbox_id: Sandbox ID (which is task_id as string)
+            require_definitive_result: Propagate lookup failures during cleanup.
 
         Returns:
             Sandbox if found, None otherwise
         """
         if self.redis_client is None:
+            if require_definitive_result:
+                raise RuntimeError("Sandbox storage is unavailable")
             return None
 
         try:
@@ -235,6 +240,8 @@ class SandboxRepository(metaclass=SingletonMeta):
 
             return sandbox
         except Exception as e:
+            if require_definitive_result:
+                raise
             logger.error(
                 f"[SandboxRepository] Failed to load sandbox: {e}", exc_info=True
             )

@@ -2317,43 +2317,55 @@ class TestSandboxManager:
         assert mock_terminate.call_args.args[0] == "12345"
 
     @pytest.mark.asyncio
-    async def test_collect_expired_sandboxes_cleans_orphaned(
+    async def test_collect_expired_sandboxes_retries_orphan_revocation(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
-        """An entry without a session hash still deletes its Pod by task id."""
+        """An absent runtime stays indexed until its callback binding is revoked."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
         mock_redis_client.hget.return_value = None  # No sandbox data
         mock_executor = MagicMock()
-        mock_executor.delete_executor_by_task_id.return_value = {"status": "success"}
+        mock_executor.delete_executor_by_task_id.side_effect = [
+            {"status": "success"},
+            {"status": "not_found"},
+        ]
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
+        )
+        revoke = mocker.patch.object(
+            manager._repository, "delete_executor_binding", side_effect=[False, True]
         )
 
         await manager._collect_expired_sandboxes()
 
         mock_executor.delete_executor_by_task_id.assert_called_once_with(
-            "orphaned-id", sandbox_only=True
+            "12345", sandbox_only=True
         )
-        mock_redis_client.zrem.assert_called_with(
-            "wegent-sandbox:active", "orphaned-id"
-        )
+        revoke.assert_called_once_with(12345, sandbox=True)
+        mock_redis_client.zrem.assert_not_called()
+
+        await manager._collect_expired_sandboxes()
+
+        assert revoke.call_count == 2
+        mock_redis_client.zrem.assert_called_with("wegent-sandbox:active", "12345")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("new_session", [True, False])
+    @pytest.mark.parametrize("condition", ["new_session", "busy", "lookup_failed"])
     async def test_collect_expired_sandboxes_skips_orphan_during_activation(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
-        new_session,
+        condition,
     ):
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.zrangebyscore.return_value = ["12345"]
-        if new_session:
+        if condition == "new_session":
             mock_redis_client.hget.side_effect = [None, sample_sandbox_redis_data]
+        elif condition == "lookup_failed":
+            mock_redis_client.hget.side_effect = [None, OSError("Redis unavailable")]
         else:
             mock_redis_client.hget.return_value = None
             mocker.patch.object(
@@ -2374,7 +2386,7 @@ class TestSandboxManager:
     ):
         """A failed orphan delete keeps the entry so the next GC retries."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
         mock_redis_client.hget.return_value = None
         mock_executor = MagicMock()
         mock_executor.delete_executor_by_task_id.return_value = {
@@ -2389,7 +2401,7 @@ class TestSandboxManager:
         await manager._collect_expired_sandboxes()
 
         mock_executor.delete_executor_by_task_id.assert_called_once_with(
-            "orphaned-id", sandbox_only=True
+            "12345", sandbox_only=True
         )
         mock_redis_client.zrem.assert_not_called()
 

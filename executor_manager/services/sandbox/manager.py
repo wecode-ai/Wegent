@@ -1756,16 +1756,33 @@ class SandboxManager(metaclass=SingletonMeta):
         if lease is None:
             return
         try:
-            if self._repository.load_sandbox(task_id) is not None:
+            try:
+                sandbox = self._repository.load_sandbox(
+                    task_id, require_definitive_result=True
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not verify orphaned Sandbox %s: %s",
+                    task_id,
+                    type(error).__name__,
+                )
+                return
+            if sandbox is not None or lease.lost.is_set():
                 return
             cleanup = asyncio.create_task(self._delete_orphaned_executor(task_id))
             try:
                 removed = await asyncio.shield(cleanup)
             except asyncio.CancelledError:
                 # The deletion thread must finish before releasing the lease.
-                await cleanup
+                while not cleanup.done():
+                    with suppress(asyncio.CancelledError):
+                        await asyncio.shield(cleanup)
                 raise
-            if removed and not lease.lost.is_set():
+            if (
+                removed
+                and not lease.lost.is_set()
+                and self._repository.delete_executor_binding(int(task_id), sandbox=True)
+            ):
                 self._repository.remove_from_active_set(task_id)
         finally:
             await self._release_task_lifecycle_lease(lease)
