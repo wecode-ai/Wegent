@@ -1743,12 +1743,13 @@ class SandboxManager(metaclass=SingletonMeta):
         Args:
             task_id_str: Task ID as string
         """
+        idle_before = time.time() - self._config.timeout.redis_ttl
         sandbox = self._repository.load_sandbox(task_id_str)
         if sandbox is None:
             # The session hash may have expired before GC reached this entry
             # (Redis restart or a failed TTL extension). Delete by task-id
             # label so the Pod does not become an orphan.
-            await self._cleanup_orphaned_executor(task_id_str)
+            await self._cleanup_orphaned_executor(task_id_str, idle_before)
             return
 
         logger.info(
@@ -1766,10 +1767,12 @@ class SandboxManager(metaclass=SingletonMeta):
         await self._cleanup_selected_sandbox(
             task_id_str,
             sandbox,
-            idle_before=time.time() - self._config.timeout.redis_ttl,
+            idle_before=idle_before,
         )
 
-    async def _cleanup_orphaned_executor(self, task_id: str) -> None:
+    async def _cleanup_orphaned_executor(
+        self, task_id: str, idle_before: float
+    ) -> None:
         """Remove an orphan and its active index under the task lifecycle lease."""
         lease = await self._try_acquire_task_lifecycle_lease(task_id)
         if lease is None:
@@ -1779,6 +1782,9 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox = self._repository.load_sandbox(
                     task_id, require_definitive_result=True
                 )
+                if sandbox is not None or lease.lost.is_set():
+                    return
+                activity = self._repository.get_sandbox_activity_score(task_id)
             except Exception as error:
                 logger.warning(
                     "Could not verify orphaned Sandbox %s: %s",
@@ -1786,7 +1792,7 @@ class SandboxManager(metaclass=SingletonMeta):
                     type(error).__name__,
                 )
                 return
-            if sandbox is not None or lease.lost.is_set():
+            if activity is not None and activity > idle_before:
                 return
             cleanup = asyncio.create_task(self._delete_orphaned_executor(task_id))
             try:

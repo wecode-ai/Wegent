@@ -2371,7 +2371,9 @@ class TestSandboxManager:
         mock_redis_client.zrem.assert_called_with("wegent-sandbox:active", "12345")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("condition", ["new_session", "busy", "lookup_failed"])
+    @pytest.mark.parametrize(
+        "condition", ["new_session", "busy", "lookup_failed", "new_activity"]
+    )
     async def test_collect_expired_sandboxes_skips_orphan_during_activation(
         self,
         sandbox_manager_with_mock_redis,
@@ -2386,6 +2388,8 @@ class TestSandboxManager:
             mock_redis_client.hget.side_effect = [None, sample_sandbox_redis_data]
         elif condition == "lookup_failed":
             mock_redis_client.hget.side_effect = [None, OSError("Redis unavailable")]
+        elif condition == "new_activity":
+            mock_redis_client.zscore.return_value = time.time()
         else:
             mock_redis_client.hget.return_value = None
             mocker.patch.object(
