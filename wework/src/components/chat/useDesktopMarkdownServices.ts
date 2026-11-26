@@ -19,6 +19,7 @@ import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const readLocalFile = async (path: string) => new Blob([await readElectronLocalFile(path)])
 const onCopy = () => track('ai_output_action_completed', { action: 'copy', source: 'chat' })
+const desktopStreamingTextFlushIntervalMs = 125
 
 export function useDesktopMarkdownServices(): MarkdownServices {
   const { t: chatTranslate } = useTranslation('chat')
@@ -47,6 +48,9 @@ export function useDesktopMarkdownServices(): MarkdownServices {
       fetchAttachmentBlob,
       readLocalFile: isElectronRuntime() ? readLocalFile : undefined,
       windowMarkdown: isElectronRuntime(),
+      streamingTextFlushIntervalMs: isElectronRuntime()
+        ? desktopStreamingTextFlushIntervalMs
+        : undefined,
       renderVisualization: part => createElement(CodexInlineVisualizationHost, part),
       theme,
       plantumlServerUrl,
