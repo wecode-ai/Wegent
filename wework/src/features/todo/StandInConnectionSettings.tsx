@@ -233,7 +233,7 @@ export function StandInConnectionSettings({
                       testId: 'stand-in-calendar-policy',
                       policy: role.calendar?.policy ?? {
                         automatic: true,
-                        askBeforeAct: true,
+                        askBeforeAct: false,
                         immediate: role.id !== '@primary',
                       },
                       onChange: policy => onChange({ ...role, calendar: { policy } }),
