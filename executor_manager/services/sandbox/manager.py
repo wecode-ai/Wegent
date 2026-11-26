@@ -1417,32 +1417,27 @@ class SandboxManager(metaclass=SingletonMeta):
         if subtask_id is None:
             return None, "subtask_id is required in metadata"
 
-        execution = Execution.create(
-            sandbox_id=sandbox.sandbox_id,
-            prompt=prompt,
-            metadata=exec_metadata,
-        )
-
-        # Add to sandbox and save
-        sandbox.add_execution(execution)
-        self._repository.save_sandbox(sandbox)
-        save_result = self._repository.save_execution(execution, update_activity=True)
-
-        logger.info(
-            f"[SandboxManager] Created execution: execution_id={execution.execution_id}, "
-            f"sandbox_id={sandbox_id}, subtask_id={subtask_id}, "
-            f"prompt_length={len(prompt)}, save_result={save_result}"
-        )
-
-        # Verify execution was saved
-        verify_execution = self._repository.load_execution(int(sandbox_id), subtask_id)
-        logger.info(
-            f"[SandboxManager] Verification: loaded execution = {verify_execution is not None}, "
-            f"execution_id={verify_execution.execution_id if verify_execution else 'None'}"
-        )
+        async with self._lock_current_sandbox(sandbox) as (current, error):
+            if current is None:
+                return None, error
+            if not current.is_active():
+                return (
+                    None,
+                    f"Sandbox {sandbox_id} is not active (status: {current.status.value})",
+                )
+            execution = Execution.create(
+                sandbox_id=current.sandbox_id,
+                prompt=prompt,
+                metadata=exec_metadata,
+            )
+            current.add_execution(execution)
+            if not self._repository.save_sandbox(current):
+                return None, f"Could not refresh Sandbox {sandbox_id}"
+            if not self._repository.save_execution(execution, update_activity=True):
+                return None, f"Could not record execution for Sandbox {sandbox_id}"
 
         # Start execution asynchronously using ExecutionRunner
-        asyncio.create_task(self._run_execution(sandbox, execution, timeout))
+        asyncio.create_task(self._run_execution(current, execution, timeout))
 
         return execution, None
 

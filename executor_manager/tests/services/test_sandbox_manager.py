@@ -1583,30 +1583,43 @@ class TestSandboxManager:
         assert "subtask_id is required" in error
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("condition", ["healthy", "removed", "storage_failed"])
     async def test_create_execution_success(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
+        condition,
     ):
         """Test successful execution creation."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        if condition == "removed":
+            mock_redis_client.hget.side_effect = [sample_sandbox_redis_data, None]
+        elif condition == "storage_failed":
+            mock_redis_client.hset.side_effect = OSError("Redis unavailable")
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
 
         # Mock _run_execution to avoid actual HTTP call
-        mocker.patch.object(manager, "_run_execution", new_callable=AsyncMock)
+        run = mocker.patch.object(manager, "_run_execution", new_callable=AsyncMock)
 
         execution, error = await manager.create_execution(
             sandbox_id="12345", prompt="Test prompt", metadata={"subtask_id": 1}
         )
 
-        assert error is None
-        assert execution is not None
-        assert execution.prompt == "Test prompt"
+        if condition == "healthy":
+            assert error is None
+            assert execution is not None
+            assert execution.prompt == "Test prompt"
+        else:
+            assert execution is None
+            assert error
+            run.assert_not_called()
+            if condition == "removed":
+                mock_redis_client.hset.assert_not_called()
 
     # ----- get_execution Tests -----
 
