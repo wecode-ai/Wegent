@@ -1515,6 +1515,46 @@ class TestSandboxManager:
         mock_redis_client.delete.assert_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tracked_by_manager", [False, True])
+    async def test_admin_cleanup_keeps_orphan_index_until_binding_is_revoked(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        mocker,
+        tracked_by_manager,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = None
+        mock_redis_client.zscore.return_value = 1.0 if tracked_by_manager else None
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
+        ).return_value
+        executor.delete_executor_by_task_id.return_value = {"status": "not_found"}
+        revoke = mocker.patch.object(
+            manager._repository, "delete_executor_binding", side_effect=[False, True]
+        )
+
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+
+        if not tracked_by_manager:
+            assert result["redis_cleared"] is True
+            revoke.assert_not_called()
+            return
+
+        assert result["reason"] == "sandbox_metadata_cleanup_failed"
+        assert result["redis_cleared"] is False
+        revoke.assert_called_once_with(12345, sandbox=True)
+        mock_redis_client.zrem.assert_not_called()
+
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+
+        assert result["redis_cleared"] is True
+        assert revoke.call_count == 2
+        mock_redis_client.zrem.assert_any_call(
+            manager._repository.active_sandboxes_zset, "12345"
+        )
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("reuse_name", [False, True])
     async def test_task_cleanup_preserves_runtime_replaced_during_archive(
         self,

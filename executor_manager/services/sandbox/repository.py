@@ -312,7 +312,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return None
 
     def delete_sandbox(self, sandbox_id: str) -> bool:
-        """Delete sandbox data from Redis.
+        """Delete sandbox data from Redis after confirming runtime removal.
 
         Args:
             sandbox_id: Sandbox ID (task_id as string)
@@ -338,6 +338,10 @@ class SandboxRepository(metaclass=SingletonMeta):
                 ):
                     return False
                 e2b_sandbox_id = (sandbox.get("metadata") or {}).get("e2b_sandbox_id")
+            elif self.get_sandbox_activity_score(str(task_id)) is not None:
+                # The scoped index still identifies this deployment's orphan.
+                if not self.delete_executor_binding(task_id, sandbox=True):
+                    return False
 
             # Until the session is deleted, E2B requests and GC must still find it.
             self.redis_client.delete(hash_key)
