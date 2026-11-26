@@ -324,7 +324,8 @@ export function createDesktopScenario(options) {
           'The assistant turn is running with the model held'
         )
         const userMessage = `${CHAT} [data-testid="user-message-content"]`
-        const thinking = `${WAITING} [data-testid="thinking-indicator"]:has(> [aria-hidden="true"] + [aria-hidden="true"] + [aria-hidden="true"]:last-child)`
+        const thinking = `${WAITING} [data-testid="thinking-indicator"][role="status"]`
+        const dots = `${thinking} > [aria-hidden="true"]`
         await control.command('waitFor', userMessage, {
           text: NOTIFICATION_REQUEST,
           visible: true,
@@ -334,22 +335,33 @@ export function createDesktopScenario(options) {
           visible: true,
           timeoutMs: options.uiTimeoutMs,
         })
-        await control.command('waitFor', thinking, {
-          text: '正在思考',
-          visible: true,
-          timeoutMs: options.uiTimeoutMs,
-        })
-        assert.equal(
-          await control.command(
-            'getComputedStyleValue',
-            `${thinking} > [aria-hidden="true"]:last-child`,
-            {
-              value: 'animation-name',
-            }
-          ),
-          'pulse',
-          'The running indicator animates while the model response is held'
-        )
+        try {
+          for (const [preference, animationName] of [
+            ['no-preference', 'pulse'],
+            ['reduce', 'none'],
+          ]) {
+            await control.command('setReducedMotion', 'body', { value: preference })
+            await control.command('waitFor', thinking, {
+              text: '正在思考',
+              visible: true,
+              timeoutMs: options.uiTimeoutMs,
+            })
+            assert.equal(
+              await control.command('getElementCount', dots),
+              '3',
+              `The held turn shows three thinking dots with ${preference}`
+            )
+            assert.equal(
+              await control.command('getComputedStyleValue', `${dots}:last-child`, {
+                value: 'animation-name',
+              }),
+              animationName,
+              `The running indicator respects ${preference} while the model response is held`
+            )
+          }
+        } finally {
+          await control.command('setReducedMotion', 'body', { value: 'system' })
+        }
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('closeMainWindowToTray', 'body')
         const acknowledgement = assistantMessage('收到，正在核对。')

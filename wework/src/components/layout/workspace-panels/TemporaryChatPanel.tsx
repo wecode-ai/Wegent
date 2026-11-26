@@ -559,13 +559,6 @@ export function TemporaryChatPanel({
   const showComposerWhilePending =
     allowMessagesDuringApproval &&
     (pendingRequest?.interactionKind ?? pendingRequest?.interaction_kind) === 'approval'
-  const isWaitingForAssistant = hideProcessing
-    ? !pendingRequest &&
-      !taskLifecycle?.interactionStatus &&
-      (sending || paneStatus.isWaitingForAssistantIndicator || paneStatus.isResponseActive)
-    : nativeConversation
-      ? sending
-      : busy
   const canSendWithCurrentModel = () => {
     if (nativeConversation && taskLifecycle?.interactionStatus && !showComposerWhilePending) {
       setError(t('standIn.native_input_pending'))
@@ -920,8 +913,8 @@ export function TemporaryChatPanel({
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   const messageGaps = renderMessageGaps?.(presentation.messages)
-  const showWaitingDots =
-    showActivityDots &&
+  const showReplyWaitingIndicator =
+    (hideProcessing || showActivityDots) &&
     !readOnly &&
     !pendingRequest &&
     !taskLifecycle?.interactionStatus &&
@@ -934,9 +927,16 @@ export function TemporaryChatPanel({
         message.role === 'user' ||
         (message.role === 'assistant' && getAssistantContentPresentation(message).content.trim())
     )?.role !== 'assistant'
+  const showWaitingDots = showActivityDots && showReplyWaitingIndicator
+  const isWaitingForAssistant =
+    hideProcessing || showActivityDots
+      ? showReplyWaitingIndicator
+      : nativeConversation
+        ? sending
+        : busy
   const layout = (
     <TemporaryConversationLayout
-      messageCount={presentation.messages.length + Number(showWaitingDots)}
+      messageCount={presentation.messages.length + Number(showReplyWaitingIndicator)}
       loading={historyLoading}
       loadError={historyError}
       onRetry={retryHistory}
@@ -1132,7 +1132,7 @@ export function TemporaryChatPanel({
         onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
-        isWaitingForAssistant={showActivityDots ? showWaitingDots : isWaitingForAssistant}
+        isWaitingForAssistant={isWaitingForAssistant}
         waitingIndicatorStyle={showActivityDots ? 'dots' : undefined}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
