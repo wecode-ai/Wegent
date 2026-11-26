@@ -576,8 +576,16 @@ function renderNodes(
         exited && 'text-text-muted opacity-60'
       )}
     >
-      <td className="overflow-hidden py-1.5 pr-3" style={{ paddingLeft: 32 + depth * 16 }}>
-        <div className="flex min-w-0 items-center gap-1.5">
+      <td className="overflow-hidden py-1.5 pl-4 pr-3">
+        <div className="flex min-w-0 items-center">
+          <span className="w-4 shrink-0" />
+          {Array.from({ length: depth }, (_, level) => (
+            <span
+              key={level}
+              aria-hidden
+              className="relative -my-1.5 w-4 shrink-0 self-stretch before:absolute before:inset-y-0 before:left-1/2 before:w-px before:bg-border/60"
+            />
+          ))}
           <span
             className="truncate"
             title={exited ? `${record.name} · ${t('process_explorer.exited')}` : record.name}
