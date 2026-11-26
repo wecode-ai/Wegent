@@ -493,15 +493,12 @@ fn automatic_next_stage(
     };
     let members = team.pointer("/spec/members")?.as_array()?;
     let current = members.get(stage)?;
-    let bot_stage = members.iter().position(|member| {
-        member.pointer("/botRef/name").and_then(Value::as_str) == Some(bot_name)
-            && member
-                .pointer("/botRef/namespace")
-                .and_then(Value::as_str)
-                .unwrap_or("default")
-                == namespace
-    })?;
-    if bot_stage != stage
+    if current.pointer("/botRef/name").and_then(Value::as_str) != Some(bot_name)
+        || current
+            .pointer("/botRef/namespace")
+            .and_then(Value::as_str)
+            .unwrap_or("default")
+            != namespace
         || current
             .get("requireConfirmation")
             .and_then(Value::as_bool)
@@ -644,7 +641,10 @@ mod tests {
     #[test]
     fn duplicate_completion_cannot_advance_adjacent_stages_with_the_same_bot() {
         let mut repeated = team();
-        repeated["spec"]["members"][1]["botRef"]["name"] = json!("first");
+        repeated["spec"]["members"]
+            .as_array_mut()
+            .unwrap()
+            .insert(1, json!({"botRef":{"name":"first","namespace":"default"}}));
         assert!(is_current_completion(42, Some(42)));
         assert!(!is_current_completion(42, Some(44)));
         assert!(!is_current_completion(42, None));
@@ -655,7 +655,7 @@ mod tests {
                 "first",
                 "default"
             ),
-            None
+            Some(2)
         );
     }
 
