@@ -1,3 +1,4 @@
+import { decodeHTML } from 'entities/decode'
 import type { Element, Root, RootContent, Text } from 'hast'
 import { decodeString } from 'micromark-util-decode-string'
 import { normalizeUri } from 'micromark-util-sanitize-uri'
@@ -15,23 +16,34 @@ const NON_LINKABLE_ELEMENTS = new Set([
   'button',
   'code',
   'math',
+  'option',
   'pre',
   'script',
+  'select',
   'style',
   'svg',
   'textarea',
   'title',
 ])
 
-type SourcePart<Child> = { node: Child; start: number; end: number }
+type SourcePart<Child> = {
+  node: Child
+  start: number
+  end: number
+  decode?: (value: string) => string
+}
 
 function decodeMarkdownText(value: string): string {
   return decodeString(value.replace(/\0/g, '\uFFFD'))
 }
 
-function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
+function decodeHtmlText(value: string): string {
+  return decodeHTML(value.replace(/\r\n?/g, '\n'))
+}
+
+function continuationParts(node: Text, raw: string, afterHardBreak = false): SourcePart<Text>[] {
   const sourceLines = raw.split(LINE_ENDING)
-  if (sourceLines.length === 1 || !node.position) return []
+  if ((sourceLines.length === 1 && !afterHardBreak) || !node.position) return []
 
   const parts: SourcePart<Text>[] = []
   const { offset: startOffset } = node.position.start
@@ -45,7 +57,8 @@ function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
   for (let index = 0; index < sourceLines.length; index += 2) {
     const sourceLine = sourceLines[index]
     const lineEnding = sourceLines[index + 1] ?? ''
-    const prefix = index === 0 ? '' : (CONTINUATION_PREFIX.exec(sourceLine)?.[0] ?? '')
+    const prefix =
+      index === 0 && !afterHardBreak ? '' : (CONTINUATION_PREFIX.exec(sourceLine)?.[0] ?? '')
     const body = decodeMarkdownText(sourceLine.slice(prefix.length)) + lineEnding
     const rendered = node.value.slice(textOffset, textOffset + prefix.length + body.length)
     // An entity can add a line break to the rendered text. Match the decoded
@@ -84,6 +97,35 @@ function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
   return textOffset === node.value.length ? parts : []
 }
 
+function hardBreakContinuation(
+  node: RootContent,
+  previous: RootContent | undefined,
+  source: string
+): SourcePart<Text>[] {
+  if (
+    node.type !== 'text' ||
+    node.position?.start ||
+    !node.value.startsWith('\n') ||
+    previous?.type !== 'element' ||
+    previous.tagName !== 'br'
+  ) {
+    return []
+  }
+  const start = previous.position?.end
+  const end = node.position?.end
+  if (start?.offset === undefined || end?.offset === undefined || start.offset >= end.offset) {
+    return []
+  }
+
+  // rehypeRaw merges the generated newline with the next text node and drops
+  // its start position. The break's end anchors the remaining source text.
+  return continuationParts(
+    { ...node, value: node.value.slice(1), position: { start, end } },
+    source.slice(start.offset, end.offset),
+    true
+  )
+}
+
 function sourceParts<Child extends RootContent>(
   node: Child,
   source: string
@@ -93,9 +135,16 @@ function sourceParts<Child extends RootContent>(
   if (start === undefined || end === undefined || start >= end) return []
   if (node.type === 'text') {
     const raw = source.slice(start, end)
-    return decodeMarkdownText(raw) === node.value
-      ? [{ node, start, end }]
-      : continuationParts(node, raw)
+    if (decodeMarkdownText(raw) === node.value) return [{ node, start, end }]
+
+    const parts = continuationParts(node, raw)
+    if (parts.length) return parts
+
+    // Raw HTML normalizes physical line endings and leaves backslashes literal.
+    if (decodeHtmlText(raw) === node.value) {
+      return [{ node, start, end, decode: decodeHtmlText }]
+    }
+    return []
   }
   if (node.type === 'element') {
     const marker = source[start]
@@ -143,7 +192,8 @@ function linkRun<Child extends RootContent>(
         if (cursor === part.start && next === part.end) {
           output.push(visit(part.node))
         } else {
-          output.push({ type: 'text', value: decodeMarkdownText(source.slice(cursor, next)) })
+          const decode = part.decode ?? decodeMarkdownText
+          output.push({ type: 'text', value: decode(source.slice(cursor, next)) })
         }
       }
       cursor = next
@@ -182,7 +232,8 @@ function linkRun<Child extends RootContent>(
 
     advance(start, true)
     advance(end, false)
-    const link = createLink(decodeMarkdownText(source.slice(start, end)))
+    const decode = startPart.decode ?? decodeMarkdownText
+    const link = createLink(decode(source.slice(start, end)))
     const before = source.slice(positionOffset, start).split(/\r\n?|\n/)
     line += before.length - 1
     column = before.length === 1 ? column + before[0].length : before[before.length - 1].length + 1
@@ -232,8 +283,13 @@ function autolinkChildren<Child extends RootContent>(
     run.length = 0
   }
 
-  for (const child of children) {
-    const parts = sourceParts(child, source)
+  for (const [index, child] of children.entries()) {
+    const continued = hardBreakContinuation(child, children[index - 1], source)
+    if (continued.length) {
+      flush()
+      output.push({ type: 'text', value: '\n' })
+    }
+    const parts = continued.length ? continued : sourceParts(child, source)
     if (parts.length) {
       for (const part of parts) {
         if (run.length && part.start !== run[run.length - 1].end) flush()

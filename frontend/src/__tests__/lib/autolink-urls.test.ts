@@ -30,8 +30,10 @@ function renderMarkdown(source: string) {
 
 describe('rehypeAutolinkUrls', () => {
   it.each(['  ', '\\'])('preserves a hard line break written with %j', marker => {
-    const url = 'https://example.com/path'
-    const { container } = renderMarkdown(`Before${marker}\n${url}`)
+    const url = 'https://example.com/a*b*c?q=(d)'
+    const { container } = renderMarkdown(
+      `> Before${marker}\n> https://example.com/a*b*c?q=&#40;d&#41;`
+    )
 
     expect(container.querySelector('br')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
@@ -129,6 +131,16 @@ describe('rehypeAutolinkUrls', () => {
     expect(bare.textContent).toBe('https://example.com/search?q=a\nb|c%20d')
   })
 
+  it.each(['\r\n', '\n\\* '])('keeps the complete URL in raw HTML after %j', prefix => {
+    const url = 'https://example.com/search?q=a(b)c'
+    const { container } = renderMarkdown(
+      `<div>${prefix}https://example.com/search?q=a&#40;b&#41;c\n</div>`
+    )
+
+    expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+    expect(container.textContent).toBe(`${prefix.replace(/\r\n/g, '\n')}${url}\n`)
+  })
+
   it.each(['（说明）', '说明'])('stops a bare URL before %s', suffix => {
     const url = 'https://example.com/path'
     const { container } = renderMarkdown(`见 ${url}${suffix}`)
@@ -161,7 +173,9 @@ describe('rehypeAutolinkUrls', () => {
     '```\nhttps://example.com/code\n```',
     '![https://example.com/image.jpeg](https://example.com/image.jpeg)',
     '<img src="https://example.com/image.jpeg">',
-  ])('leaves code and images without links in %s', source => {
+    '<select><option>https://example.com/path</option></select>',
+    '<datalist><option>https://example.com/path</option></datalist>',
+  ])('leaves text without links where anchors are inappropriate in %s', source => {
     renderMarkdown(source)
 
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
