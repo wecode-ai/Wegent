@@ -48,6 +48,18 @@ pub(super) fn restore_dispatches(state: &mut turns::RuntimeTurnQueueState) {
     }
 }
 
+pub(super) fn remove_goal_turns_shadowed_by_waits(
+    turns: &VecDeque<SpawnTurnRequest>,
+    active_goal_turns: &mut HashMap<String, SpawnTurnRequest>,
+) {
+    let quota_waiting_tasks = turns
+        .iter()
+        .filter(|turn| wait(turn).is_some())
+        .map(|turn| turn.local_task_id.as_str())
+        .collect::<HashSet<_>>();
+    active_goal_turns.retain(|task, _| !quota_waiting_tasks.contains(task.as_str()));
+}
+
 fn account_identity(response: &Value) -> Value {
     let account = &response["account"];
     json!({"type": account["type"], "email": account["email"], "id": account["id"]})
