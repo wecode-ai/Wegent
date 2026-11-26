@@ -89,7 +89,7 @@ fn source_scope(source: &Value) -> Value {
     scope
 }
 
-struct ReadScope {
+pub(super) struct ReadScope {
     source: Option<Value>,
     role: Value,
     coordinator_tasks: Option<HashSet<String>>,
@@ -111,7 +111,7 @@ impl RuntimeWorkRpcHandler {
             .filter(|link| {
                 link.local_task_id != identity.task_id
                     && self.conversation_visible(link, identity, &scope, &store)
-                    && self.source_visible_for_search(link, identity, &store)
+                    && self.source_visible_for_search(link, identity, &scope, &store)
             })
             .collect();
         links.sort_by(|a, b| {
@@ -141,7 +141,7 @@ impl RuntimeWorkRpcHandler {
         Ok((run.to_owned(), through))
     }
 
-    fn conversation_scope(
+    pub(super) fn conversation_scope(
         &self,
         identity: &StandInMcpIdentity,
         store: &LocalTaskStore,
@@ -421,7 +421,7 @@ impl RuntimeWorkRpcHandler {
         Ok(visible)
     }
 
-    fn conversation_visible(
+    pub(super) fn conversation_visible(
         &self,
         link: &RuntimeTaskLink,
         identity: &StandInMcpIdentity,
@@ -547,6 +547,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         link: &RuntimeTaskLink,
         identity: &StandInMcpIdentity,
+        scope: &ReadScope,
         store: &LocalTaskStore,
     ) -> bool {
         let primary_connection_work = identity.work.is_none()
@@ -557,7 +558,12 @@ impl RuntimeWorkRpcHandler {
                 Some("connection_work" | "dingtalk_work")
             )
             && link.runtime_handle["origin"]["workId"].is_string();
-        primary_connection_work || self.memory_review_source_visible(link, identity.user, store)
+        if primary_connection_work {
+            return self
+                .visible_connection_work(link, identity, scope, store)
+                .is_some();
+        }
+        self.memory_review_source_visible(link, identity.user, store)
     }
 
     pub(super) fn memory_review_source_visible(

@@ -148,8 +148,11 @@ impl RuntimeWorkRpcHandler {
             .find(|link| link.local_task_id == task)
             .ok_or_else(invalid)?;
         let current = self.local_task_link(&task).ok_or_else(invalid)?;
-        if !self.source_visible_for_search(original, identity, &store)
-            || !self.source_visible_for_search(&current, identity, &store)
+        let scope = self.conversation_scope(identity, &store)?;
+        if !self.conversation_visible(original, identity, &scope, &store)
+            || !self.conversation_visible(&current, identity, &scope, &store)
+            || !self.source_visible_for_search(original, identity, &scope, &store)
+            || !self.source_visible_for_search(&current, identity, &scope, &store)
         {
             return Err(AppIpcError::new(
                 "permission_denied",
@@ -246,13 +249,20 @@ impl RuntimeWorkRpcHandler {
         }
         // Revalidate every returned source after all awaited reads.
         let store = LocalTaskStore::open(self.task_store_path.as_ref());
+        let scope = store
+            .as_ref()
+            .ok()
+            .and_then(|store| self.conversation_scope(&identity, store).ok());
         hits.retain(|hit| {
+            let Some(scope) = &scope else {
+                return false;
+            };
             store.as_ref().ok().is_some_and(|store| {
                 self.local_task_link(hit["taskId"].as_str().unwrap_or_default())
                     .is_some_and(|link| {
                         self.validate_history_delivery(&identity, &link, store)
                             .is_ok()
-                            && self.source_visible_for_search(&link, &identity, store)
+                            && self.source_visible_for_search(&link, &identity, scope, store)
                     })
             })
         });
