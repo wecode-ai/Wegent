@@ -41,11 +41,15 @@ async function loadSetup(
   if (!device) throw new Error('Executor identity is unavailable')
   const { target } = await api.binding(device.deviceId)
   signal.throwIfAborted()
-  const boundRemote = target && target.deviceId !== device.deviceId && target.userId === userId
-  if (boundRemote) {
-    const profile = await api.personalGet(userId, target.deviceId)
+  if (
+    target &&
+    (target.userId === userId ||
+      (target.userId === LOCAL_USER.id && target.deviceId === device.deviceId))
+  ) {
+    const profile = await api.personalGet(target.userId, target.deviceId)
     signal.throwIfAborted()
     if (hasSavedStandIn(profile)) return { account: null, local: profile }
+    return { account: await cloud.initialize(name, undefined, target.deviceId), local: undefined }
   }
   const [owned, local] = await Promise.all([
     api.personalGet(userId, device.deviceId),
@@ -56,11 +60,7 @@ async function loadSetup(
   return legacy
     ? { account: null, local: legacy }
     : {
-        account: await cloud.initialize(
-          name,
-          undefined,
-          boundRemote ? target.deviceId : (preferredDevice ?? device.deviceId)
-        ),
+        account: await cloud.initialize(name, undefined, preferredDevice ?? device.deviceId),
         local: undefined,
       }
 }
