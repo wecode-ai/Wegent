@@ -18,6 +18,7 @@ const USER = 9001
 const MARKER = 'CALENDAR_SERIAL_QUEUE_WORK'
 const AUTOMATION = 'calendar-serialized-deadlines'
 const PERSONAL_AUTOMATION = 'personal-schedule-after-restart'
+const PERSONAL_PROMPT = 'Review the linked project after restart'
 const WORKSPACE_PROJECT = 'arrangement-recovery-workspace'
 
 /** Reuse the existing recovery checkpoint and hold only its model service. */
@@ -36,10 +37,11 @@ export function createDesktopScenario(options) {
         return false
       const body = await readRequestBody(request)
       if (await existing.handleHttp(request, response, url)) return true
-      if (isReplyPredictionRequest(body) || !JSON.stringify(body.input ?? []).includes(MARKER))
+      const input = JSON.stringify(body.input ?? [])
+      const serialized = input.includes(MARKER)
+      if (isReplyPredictionRequest(body) || (!serialized && !input.includes(PERSONAL_PROMPT)))
         return false
-      calls++
-      const id = `serialized-calendar-${calls}`
+      const id = serialized ? `serialized-calendar-${++calls}` : 'personal-schedule-run'
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       const finish = () =>
         response.end(
@@ -49,7 +51,7 @@ export function createDesktopScenario(options) {
             responseCompleted(id),
           ])
         )
-      if (calls === 1) releaseFirst = finish
+      if (serialized && calls === 1) releaseFirst = finish
       else finish()
       return true
     },
@@ -208,7 +210,7 @@ export function createDesktopScenario(options) {
         await options.captureScreenshot(control, 'automation-interrupted-run.png')
         await control.command('waitFor', projectPicker, { text: 'Arrangement workspace' })
         await control.command('fill', '[data-testid="automation-prompt-input"]', {
-          value: 'Review the linked project after restart',
+          value: PERSONAL_PROMPT,
         })
         await control.command('clickWhenEnabled', saveButton)
         await control.command('waitFor', saveButton, { visible: false })
@@ -220,6 +222,35 @@ export function createDesktopScenario(options) {
         await options.captureScreenshot(control, 'automation-reopened-project.png')
         const saved = await rpc('runtime.automations.get', { automationId: PERSONAL_AUTOMATION })
         assert.equal(saved.automation.taskRequest.runtimeProjectKey, WORKSPACE_PROJECT)
+
+        const actionsId = `automation-detail-actions-${PERSONAL_AUTOMATION}`
+        const actions = `[data-testid="${actionsId}"]`
+        const menu = `[data-testid="${actionsId}-menu"]`
+        await control.command('clickWhenEnabled', actions)
+        await control.command('waitFor', menu, { visible: true, timeoutMs: 5000 })
+        const [triggerBounds] = JSON.parse(await control.command('getElementMetrics', actions))
+        const [menuBounds] = JSON.parse(await control.command('getElementMetrics', menu))
+        assert.ok(
+          triggerBounds && menuBounds && menuBounds.top > triggerBounds.bottom,
+          'The scheduled actions menu must open below its trigger'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="automation-run-now-button"]')
+        await control.command('waitFor', '[data-testid="automation-run-history"]', {
+          text: '已完成',
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
+        const personalRuns = await rpc('runtime.automation_runs.list', {
+          automationId: PERSONAL_AUTOMATION,
+        })
+        const manualRun = personalRuns.items.find(run => run.trigger === 'manual')
+        assert.ok(manualRun?.taskId, 'The personal schedule must create a workbench task')
+        const openRun = `[data-testid="automation-run-open-${manualRun.id}"]`
+        await control.command('scrollIntoView', openRun)
+        await control.command('clickWhenEnabled', openRun, { timeoutMs: 5000 })
+        const assistant = '[data-testid="assistant-message-content"]'
+        await control.command('waitFor', assistant, { text: '本轮安排已完成', timeoutMs: 10000 })
+        const { location } = JSON.parse(await control.command('snapshot', 'body'))
+        assert.equal(new URL(location).searchParams.get('taskId'), manualRun.taskId)
       } catch (error) {
         failureDiagnostics = {
           runs: await rpc('runtime.automation_runs.list'),

@@ -150,6 +150,7 @@ export function DesktopWorkbenchPaneView({
     deliveryDialogOpen,
     finishDelivery,
     openBoundProjectSpaceTask,
+    projectSpaceContextRetryAction,
     taskBoardAssociation,
     todoBindingError,
     workItemContextAvailable,
@@ -552,7 +553,12 @@ export function DesktopWorkbenchPaneView({
           tone="error"
           onClear={() => setFileOpenError(null)}
         />
-        <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
+        <TransientNotice
+          message={todoBindingError}
+          tone="error"
+          onClear={clearTodoBindingError}
+          action={projectSpaceContextRetryAction}
+        />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />
         <TaskBoardAssociationDialog
           key={

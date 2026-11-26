@@ -110,7 +110,7 @@ export function DesktopWorkbenchConversationView({
     runtimeTaskSummary,
     cloudProjectMentionCandidates,
     handleSelectCloudProject,
-    openBoundProjectSpaceTask,
+    openIssueExecutionSource,
     visibleCloudMentionCandidates,
     issueExecutionReadOnly,
     mcpAppConversationServices,
@@ -435,7 +435,7 @@ export function DesktopWorkbenchConversationView({
                                 variant="unstyled"
                                 type="button"
                                 data-testid="project-execution-open-issue"
-                                onClick={openBoundProjectSpaceTask}
+                                onClick={openIssueExecutionSource}
                                 className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
                               >
                                 {t('workbench.back_to_work_item', '返回 Issue')}
