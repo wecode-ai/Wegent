@@ -1,8 +1,50 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { ArrowLeft, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, X } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useId, useState } from 'react'
+import { useId } from 'react'
+
+export function StandInSettingsPanel({
+  testId,
+  contentTestId,
+  onClose,
+  active,
+  suspended,
+  embedded = false,
+  calendarOpen,
+  children,
+}: {
+  testId: string
+  contentTestId?: string
+  onClose(): void
+  active?: boolean
+  suspended?: boolean
+  embedded?: boolean
+  calendarOpen: boolean
+  children: ReactNode
+}) {
+  return (
+    <DialogSurface
+      onClose={onClose}
+      active={active}
+      suspended={suspended}
+      render={
+        <section
+          className={`min-h-0 px-5 text-base text-text-primary ${embedded ? '' : 'h-full'} ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          data-testid={testId}
+        />
+      }
+    >
+      <div
+        className={`flex w-full flex-col ${calendarOpen ? 'h-full min-h-0' : 'min-h-full'}`}
+        data-testid={contentTestId}
+      >
+        {children}
+      </div>
+    </DialogSurface>
+  )
+}
 
 export function StandInSettingsError({
   error,
@@ -38,7 +80,6 @@ export function StandInSettingsHeader({
   disabled,
   back,
   close,
-  actions,
   path,
 }: {
   title: ReactNode
@@ -46,7 +87,6 @@ export function StandInSettingsHeader({
   disabled: boolean
   back?: { testId: string; onClick(): void }
   close?: { testId: string; onClick(): void }
-  actions?: ReactNode
   path?: Array<{ label: string; testId: string; onClick?: () => void }>
 }) {
   const { t } = useTranslation('common')
@@ -87,7 +127,13 @@ export function StandInSettingsHeader({
                     {entry.label}
                   </ControlButton>
                 ) : (
-                  <span data-testid={entry.testId} aria-current="page">
+                  <span
+                    data-testid={entry.testId}
+                    aria-current="page"
+                    role="heading"
+                    aria-level={2}
+                    className="font-medium text-text-primary"
+                  >
                     {entry.label}
                   </span>
                 )}
@@ -100,7 +146,6 @@ export function StandInSettingsHeader({
         )}
         {description && <p className="mt-1 text-sm text-text-secondary">{description}</p>}
       </div>
-      {actions}
       {close && (
         <ControlButton
           variant="unstyled"
@@ -144,7 +189,10 @@ export function StandInSettingsActions({
     <footer className="sticky bottom-0 z-10 mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border bg-background py-4">
       {children}
       {leading && (
-        <div data-testid={`${prefix}-footer-leading`} className="mr-auto flex items-center">
+        <div
+          data-testid={`${prefix}-footer-leading`}
+          className="mr-auto flex max-w-full flex-wrap items-center gap-2"
+        >
           {leading}
         </div>
       )}
@@ -180,81 +228,83 @@ export function StandInSettingsEntry({
   onClick,
   label,
   description,
-  disclosure,
+  summary,
+  footer,
+  grouped = false,
 }: {
   testId: string
   disabled: boolean
   onClick(): void
   label: string
   description?: string
-  disclosure?: { expanded: boolean; controls: string }
+  summary?: ReactNode
+  footer?: ReactNode
+  grouped?: boolean
 }) {
-  const { t } = useTranslation('common')
+  const labelId = useId()
+  const descriptionId = useId()
   return (
-    <ControlButton
-      variant="outline"
-      size="sm"
-      type="button"
-      data-testid={testId}
-      disabled={disabled}
-      onClick={onClick}
-      aria-expanded={disclosure?.expanded}
-      aria-controls={disclosure?.controls}
-      className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
-    >
-      <span className="min-w-0 flex-1 whitespace-normal break-words">
-        <span className="block font-medium">{label}</span>
-        {description && (
-          <span className="mt-1 block text-sm text-text-secondary">{description}</span>
-        )}
-      </span>
-      <span className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-sm">
-        {t(
-          disclosure
-            ? disclosure.expanded
-              ? 'standIn.workspace.settings_collapse'
-              : 'standIn.workspace.settings_expand'
-            : 'standIn.personal.manage'
-        )}
-      </span>
-      {disclosure ? (
-        <ChevronDown
-          aria-hidden="true"
-          className={`h-4 w-4 shrink-0 ${disclosure.expanded ? 'rotate-180' : ''}`}
-        />
-      ) : (
-        <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0" />
-      )}
-    </ControlButton>
+    <div className={grouped ? undefined : 'rounded-lg border border-border'}>
+      <ControlButton
+        variant="unstyled"
+        type="button"
+        data-testid={testId}
+        disabled={disabled}
+        onClick={onClick}
+        aria-labelledby={labelId}
+        aria-describedby={description || summary ? descriptionId : undefined}
+        className="flex min-h-11 w-full items-center gap-3 rounded-lg p-3 text-left text-sm hover:bg-muted"
+      >
+        <span className="min-w-0 flex-1 whitespace-normal break-words">
+          <span id={labelId} className="block font-medium">
+            {label}
+          </span>
+          {(description || summary) && (
+            <span id={descriptionId} className="mt-1 block text-sm text-text-secondary">
+              {description && <span className="block">{description}</span>}
+              {summary}
+            </span>
+          )}
+        </span>
+        <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+      </ControlButton>
+      {footer && <div className="mx-3 border-t border-border py-1">{footer}</div>}
+    </div>
   )
 }
 
-export function StandInSettingsDisclosure({
-  testId,
-  label,
-  description,
-  children,
-}: {
+export type StandInSettingsShortcut = {
+  id: 'im' | 'revision' | 'memory'
   testId: string
+  containerTestId?: string
   label: string
-  description: string
-  children: ReactNode
+  description?: string
+} & ({ content: ReactNode; onClick?: never } | { content?: never; onClick(): void })
+
+export function StandInSettingsShortcuts({
+  shortcuts,
+  disabled,
+  onOpen,
+}: {
+  shortcuts?: StandInSettingsShortcut[]
+  disabled: boolean
+  onOpen(id: StandInSettingsShortcut['id']): void
 }) {
-  const [expanded, setExpanded] = useState(false)
-  const contentId = useId()
+  const entries = shortcuts?.filter(shortcut => shortcut.id !== 'revision')
+  if (!entries?.length) return null
   return (
-    <section data-testid={testId} aria-label={label}>
-      <StandInSettingsEntry
-        testId={`${testId}-toggle`}
-        label={label}
-        description={description}
-        disabled={false}
-        disclosure={{ expanded, controls: contentId }}
-        onClick={() => setExpanded(value => !value)}
-      />
-      <div id={contentId} hidden={!expanded} className="space-y-3 px-3 pt-3">
-        {expanded && children}
-      </div>
+    <section data-testid="stand-in-settings-tools" className="mt-4 space-y-4">
+      {entries.map(({ id, testId, containerTestId, label, description, onClick }) => (
+        <div key={id} data-testid={containerTestId}>
+          <StandInSettingsEntry
+            testId={testId}
+            label={label}
+            description={description}
+            disabled={disabled}
+            onClick={onClick ?? (() => onOpen(id))}
+          />
+        </div>
+      ))}
     </section>
   )
 }

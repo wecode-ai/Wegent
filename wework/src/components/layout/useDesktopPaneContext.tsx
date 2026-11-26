@@ -8,7 +8,7 @@ import { useMemo, useState, useSyncExternalStore } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useRuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -35,6 +35,7 @@ import {
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import {
   DEFAULT_ENVIRONMENT_INFO_VISIBILITY,
   sanitizeEmbeddedBrowserLabelSegment,
@@ -88,27 +89,18 @@ export function useDesktopPaneContext({
     listDeviceDirectories,
     createDeviceDirectory,
     startNewChat,
-  } = useWorkbenchPaneContext()
-  const {
     services,
     openRuntimeTask,
     workspaceTabId,
     loadRuntimeTranscriptForPane,
     sendRuntimePaneMessage,
-  } = useWorkbench()
+    refreshWorkLists,
+  } = useWorkbenchPaneContext()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
-  const paneModelChat = useMemo<ProjectChatControls>(() => {
-    if (!currentRuntimeTask) return projectChat
-    const selection = projectChat.resolveRuntimeTaskModelSelection(currentRuntimeTask)
-    return {
-      ...projectChat,
-      ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
-    }
-  }, [currentRuntimeTask, projectChat])
   const currentRuntimeProjectWork = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
   )
@@ -119,6 +111,8 @@ export function useDesktopPaneContext({
     currentRuntimeTask && initialWorkspaceState?.transferredFromBlank ? initialWorkspaceState : null
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
+    separateTranscript: true,
+    presentationActive: paneVisible && workbenchVisible,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
   const startupSurfaceReady =
@@ -132,7 +126,7 @@ export function useDesktopPaneContext({
     project: currentProject,
   })
   const sendPaneInput = paneSession.send
-  const paneInput = paneSession.input
+  const getPaneInput = paneSession.getInput
   const setPaneInput = paneSession.setInput
   const replacePaneInput = paneSession.replaceInput
   const getDraftEditVersion = paneSession.getDraftEditVersion
@@ -143,6 +137,26 @@ export function useDesktopPaneContext({
     runtimeWork,
     currentRuntimeTask
   )
+  const taskPermissions = useRuntimeTaskPermissions(
+    currentRuntimeTask,
+    runtimeTaskSummary,
+    state.user?.id,
+    services?.standInApi,
+    refreshWorkLists,
+    paneActive && paneVisible && workbenchVisible
+  )
+  const paneModelChat = useMemo<ProjectChatControls>(() => {
+    if (!currentRuntimeTask) return projectChat
+    const selection = projectChat.resolveRuntimeTaskModelSelection(
+      currentRuntimeTask,
+      runtimeTaskSummary
+    )
+    return {
+      ...projectChat,
+      ...runtimeTaskModelControlOverrides(projectChat, currentRuntimeTask, selection),
+      ...taskPermissions,
+    }
+  }, [currentRuntimeTask, projectChat, runtimeTaskSummary, taskPermissions])
   const currentProjectSpaceRuntimeTask = currentRuntimeTask
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const runtimeTaskDescription =
@@ -221,10 +235,12 @@ export function useDesktopPaneContext({
     finishDelivery,
     handleSelectCloudProject,
     openBoundProjectSpaceTask,
+    openIssueExecutionSource,
     openDelivery,
     pendingCloudProject,
     prepareSubmission,
     removeCloudProjectContext,
+    projectSpaceContextRetryAction,
     taskBoardAssociation,
     todoBindingError,
     visibleCloudMentionCandidates,
@@ -401,7 +417,7 @@ export function useDesktopPaneContext({
     startupSurfaceSource,
     refinePluginTrialPrompt,
     sendPaneInput,
-    paneInput,
+    getPaneInput,
     setPaneInput,
     replacePaneInput,
     getDraftEditVersion,
@@ -432,10 +448,12 @@ export function useDesktopPaneContext({
     finishDelivery,
     handleSelectCloudProject,
     openBoundProjectSpaceTask,
+    openIssueExecutionSource,
     openDelivery,
     pendingCloudProject,
     prepareSubmission,
     removeCloudProjectContext,
+    projectSpaceContextRetryAction,
     taskBoardAssociation,
     todoBindingError,
     visibleCloudMentionCandidates,
@@ -452,6 +470,7 @@ export function useDesktopPaneContext({
     environmentInfo,
     conversationSummaryIsGitRepository,
     paneProjectWork,
+    projectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
     commitAndPushEnvironmentChanges,

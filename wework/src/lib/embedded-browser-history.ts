@@ -34,13 +34,17 @@ export function embeddedBrowserHistoryNextCursor(
 
 export async function searchEmbeddedBrowserHistory(
   text: string,
-  cursor?: EmbeddedBrowserHistoryCursor
+  options: Partial<EmbeddedBrowserHistoryCursor> & {
+    maxResults?: number
+    distinctUrls?: boolean
+  } = {}
 ): Promise<EmbeddedBrowserHistoryEntry[]> {
   return invokeDesktopHost<EmbeddedBrowserHistoryEntry[]>('browser.historySearch', {
     text,
-    endTimeMs: cursor?.endTimeMs ?? null,
-    offset: cursor?.offset ?? 0,
-    maxResults: EMBEDDED_BROWSER_HISTORY_PAGE_SIZE,
+    endTimeMs: options.endTimeMs ?? null,
+    offset: options.offset ?? 0,
+    maxResults: options.maxResults ?? EMBEDDED_BROWSER_HISTORY_PAGE_SIZE,
+    ...(options.distinctUrls && { distinctUrls: true }),
   })
 }
 

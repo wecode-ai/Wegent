@@ -60,6 +60,7 @@ export function ReasoningSlider({
   const fallback = steps.findIndex(step => step.value === control.defaultValue)
   const index = selected >= 0 ? selected : Math.max(0, fallback)
   if (!steps.length) return null
+  const singleStep = steps.length === 1
   const current = steps[index]
   const choose = (value: string) => {
     if (onSelectStep) onSelectStep(value)
@@ -80,8 +81,9 @@ export function ReasoningSlider({
         describedBy={describedBy}
         label={control.labelKey ? t(control.labelKey, control.label) : control.label}
         value={index}
+        min={singleStep ? -1 : 0}
         max={Math.max(1, steps.length - 1)}
-        disabled={steps.length < 2}
+        disabled={singleStep}
         valueText={current.label}
         onChange={next => {
           const step = steps[next]
@@ -117,8 +119,10 @@ export function ReasoningSlider({
             showTooltip={false}
             onFocus={clear}
             onClick={() => choose(step.value)}
-            style={{ left: steps.length < 2 ? '50%' : (position / (steps.length - 1)) * 100 + '%' }}
-            className="absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+            style={{
+              insetInlineStart: singleStep ? '50%' : (position / (steps.length - 1)) * 100 + '%',
+            }}
+            className={`${styles.step} absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full rtl:translate-x-1/2`}
           >
             <span
               aria-hidden="true"

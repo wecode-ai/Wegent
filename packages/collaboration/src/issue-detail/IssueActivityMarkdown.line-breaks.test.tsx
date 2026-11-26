@@ -133,29 +133,71 @@ it('anchors document Markdown blocks to source lines only when requested', async
   )
 })
 
-it.each(['default', 'process'] as const)(
-  'does not reparse unchanged %s Markdown at completion',
-  async variant => {
+it.each([
+  ['default', false],
+  ['default', true],
+  ['process', false],
+] as const)(
+  'keeps live %s Markdown mounted through completion with desktop windowing=%s',
+  async (variant, windowMarkdown) => {
     const content = '# Heading\n\nParagraph **bold**.\n\n- First\n- Second'
-    await act(async () =>
-      root.render(<AssistantMarkdown content={content} variant={variant} isStreaming />)
-    )
+    const services = { ...browserMarkdownServices, windowMarkdown }
+    const render = (value: string, isStreaming = false) =>
+      act(async () =>
+        root.render(
+          <MarkdownServicesProvider value={services}>
+            <AssistantMarkdown content={value} variant={variant} isStreaming={isStreaming} />
+          </MarkdownServicesProvider>
+        )
+      )
+    await render(content, true)
     const parsed = parses.length
     expect(parsed).toBeGreaterThan(0)
     const paragraph = container.querySelector('p')
-    await act(async () => root.render(<AssistantMarkdown content={content} variant={variant} />))
+    await render(content)
     expect(parses).toHaveLength(parsed)
     expect(container.querySelector('p')).toBe(paragraph)
     expect(container.querySelector('strong')?.textContent).toBe('bold')
-    await act(async () =>
-      root.render(
-        <AssistantMarkdown content={content + '\n\nActual new content.'} variant={variant} />
-      )
-    )
+    await render(content + '\n\nActual new content.')
     expect(parses.length).toBeGreaterThan(parsed)
     expect(container.textContent).toContain('Actual new content.')
   }
 )
+
+it('does not remeasure a single visible Markdown chunk when its stream ends', async () => {
+  const content = 'First paragraph.\n\nSecond paragraph.'
+  const render = (isStreaming: boolean) =>
+    act(async () =>
+      root.render(
+        <MarkdownServicesProvider value={{ ...browserMarkdownServices, windowMarkdown: true }}>
+          <AssistantMarkdown content={content} isStreaming={isStreaming} />
+        </MarkdownServicesProvider>
+      )
+    )
+  await render(true)
+  const chunk = container.querySelector<HTMLElement>('[data-markdown-window-chunk]')!
+  const measure = vi.spyOn(chunk, 'getBoundingClientRect')
+
+  await render(false)
+
+  expect(container.querySelector('[data-markdown-window-chunk]')).toBe(chunk)
+  expect(chunk.textContent).toContain('Second paragraph.')
+  expect(measure).not.toHaveBeenCalled()
+})
+
+it('renders tables and following paragraphs in completed desktop Markdown', async () => {
+  await act(async () =>
+    root.render(
+      <MarkdownServicesProvider value={{ ...browserMarkdownServices, windowMarkdown: true }}>
+        <AssistantMarkdown
+          content={'# Table\n\n| Result |\n| --- |\n| Success |\n\nClosing **note**.'}
+        />
+      </MarkdownServicesProvider>
+    )
+  )
+  expect(container.querySelector('td')?.textContent).toBe('Success')
+  expect(container.querySelector('p strong')?.textContent).toBe('note')
+})
 
 it('finalizes an unfinished citation when streaming ends', async () => {
   const content = 'Visible text :codex-followup{prompt='

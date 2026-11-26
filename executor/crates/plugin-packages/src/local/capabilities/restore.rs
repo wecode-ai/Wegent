@@ -14,7 +14,8 @@ pub fn restore_enabled_claude_plugin_cache_with_manifest(
     let plugins_dir = config_dir.join("plugins");
     let store = GlobalCapabilityStore::new(manifest_path, config_dir.join("skills"))
         .with_plugins_dir(plugins_dir.clone())
-        .with_shared_packages();
+        .with_shared_packages()
+        .with_managed_mcp_python(crate::local::plugin_recovery::desktop_managed_mcp_python());
     let mut restored = store.reconcile_managed_claude_plugins()?;
     let settings = read_json_or_default(&config_dir.join("settings.json"), || json!({}))?;
     let enabled_plugins = object_map(settings.get("enabledPlugins")).unwrap_or_default();

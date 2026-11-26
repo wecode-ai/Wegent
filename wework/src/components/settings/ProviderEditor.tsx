@@ -743,6 +743,7 @@ export function ProviderEditor({
         cancelLabel={t('cancel')}
         confirmLabel={t('confirm')}
         confirmTestId="provider-discard-confirm"
+        destructive
         onClose={() => setDiscard(false)}
         onConfirm={onClose}
       />

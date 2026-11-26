@@ -1,10 +1,10 @@
 import {
-  getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   subscribeRuntimeConversation,
 } from './runtimeConversationCache'
 import { synchronizeRuntimeConversation } from './runtimeConversationSynchronization'
 import { conversationOutcomePresentation } from '@/components/layout/workspace-panels/conversationOutcomePresentation'
+import i18n from '@/i18n'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
@@ -14,38 +14,28 @@ import type { ReceivedAssistantMessage } from './runtimeTaskLifecycle/RuntimeMes
 
 function completedReplies(item: RuntimeTaskReminderItem): ReceivedAssistantMessage[] {
   const turns = getRuntimeConversationTurns(item.address)
-  const messages = getRuntimeConversationMessages(item.address)
-  if (!turns.length)
-    return messages.flatMap(message =>
-      message.role === 'assistant' && message.status === 'done' && message.content.trim()
-        ? [
-            {
-              id: message.id,
-              text: message.content,
-              createdAt: Date.parse(message.createdAt ?? '') || 0,
-            },
-          ]
-        : []
-    )
-  const visible = conversationOutcomePresentation(messages, turns).turns
-  return visible.flatMap((turn, index) =>
-    turn.items.flatMap(entry => {
+  if (!turns.length) return []
+  const visible = conversationOutcomePresentation([], turns).turns
+  return visible.flatMap((turn, index) => {
+    const original = turns[index]
+    const settled = !isRuntimeTurnRunningStatus(original.status)
+    const replies = turn.items.flatMap<ReceivedAssistantMessage>(entry => {
       if (entry.type !== 'assistant_text' || !entry.content.trim()) return []
-      const original = turns[index]
-      const position = original.items.findIndex(item => item.id === entry.id)
-      if (position < 0) return []
-      const settled = !isRuntimeTurnRunningStatus(original.status)
-      if (!settled && position === original.items.length - 1) return []
+      if (!settled && entry.id === original.items.at(-1)?.id) return []
       const completedAt = settled ? new Date(original.completedAt ?? 0).getTime() : 0
       return [
         {
           id: entry.id,
           text: entry.content,
           createdAt: Math.max(completedAt || 0, Date.parse(entry.createdAt) || 0),
+          notificationTurnId: null,
         },
       ]
     })
-  )
+    const finalReply = replies.at(-1)
+    if (settled && finalReply) finalReply.notificationTurnId = turn.id
+    return replies
+  })
 }
 
 /** Canonical conversation subscriptions publish the actual unread counts shown by the workbench. */
@@ -84,6 +74,12 @@ export function createStandInMessageReminderSource(
           cleanups.forEach(cleanup => cleanup())
         }
         for (const item of identities) {
+          const origin = item.task.runtimeHandle?.origin as { standInId?: unknown } | undefined
+          const role = origin?.standInId
+          const title =
+            typeof role === 'string' && role !== '@primary'
+              ? item.task.title
+              : i18n.t('common:standIn.title')
           const observe = () => {
             if (controller.signal.aborted) return
             const incoming = receipts.observe(
@@ -95,7 +91,7 @@ export function createStandInMessageReminderSource(
             if (system)
               for (const message of incoming) {
                 void sendSystemNotification({
-                  title: item.task.title,
+                  title,
                   body: message.text.replace(/\s+/g, ' ').trim().slice(0, 160),
                   address: item.address,
                 })

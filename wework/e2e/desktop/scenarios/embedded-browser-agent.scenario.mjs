@@ -8,15 +8,30 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
 import { createSetupRenderingEvidence } from '../modules/setup-rendering-evidence.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyBrowserChromeFocus } from './browser-chrome-focus.mjs'
 import {
   handleBrowserHistoryModelRequest,
   verifyBrowserHistoryResume,
 } from './browser-history-resume-regression.mjs'
 import {
+  handleBrowserDownloadHttp,
+  verifyBrowserDownloadHistory,
+  verifyBrowserDownloadPolicy,
+} from './browser-download-policy-regression.mjs'
+import {
+  verifyInterleavedVideoSettings,
+  verifyRestoredVideoSettings,
+  videoSettingsFixtureHtml,
+} from './browser-video-settings-regression.mjs'
+import {
+  ACTIVE_SEND_BUTTON_SELECTOR,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
+  selectE2EModel,
 } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -326,6 +341,27 @@ async function verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs) 
     timeoutMs,
   })
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs })
+}
+
+async function verifyWaitTimeoutWithoutApproval(bridgeCall, control, timeoutMs) {
+  const result = await bridgeCall({
+    action: 'waitFor',
+    options: { condition: { textVisible: 'WEWORK_APPROVAL_ABSENT_TEXT' } },
+    timeoutMs: 100,
+  })
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.error?.code, 'wait_timeout', JSON.stringify(result))
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, {
+    text: 'AI 等待页面就绪超时',
+    timeoutMs,
+  })
+  for (const selector of [BROWSER_AGENT_APPROVE_SELECTOR, BROWSER_AGENT_REJECT_SELECTOR]) {
+    await control.command('waitFor', selector, { visible: false, timeoutMs })
+  }
+
+  const inspected = await bridgeCall({ action: 'inspect' })
+  assert.ok(inspected.inspectText.includes('Code editor'))
+  await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, { visible: false, timeoutMs })
 }
 
 async function beginEditorApproval(invoke, control, text, timeoutMs, previousId = '') {
@@ -654,24 +690,27 @@ function parseToolJson(text) {
 }
 
 export function createDesktopScenario({
+  electronUserDataDirectory,
   executorHome,
+  restartDesktopApp,
   resultDir,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workspacePath,
 }) {
   let cacheResourceRequests = 0
+  const downloadsPath = join(resultDir, 'e2e-downloads')
 
   return {
     appEnvironment: {
-      WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
-      WEWORK_E2E_RENDERER_CPU_PROFILE_INTERVAL_MS: '5000',
+      WEWORK_E2E_DOWNLOADS_DIR: downloadsPath,
     },
     setExecutorBinary(path) {
       desktopScenarioExecutorBinary = path
     },
     async handleHttp(request, response, url) {
       if (await handleBrowserHistoryModelRequest(request, response, url)) return true
+      if (await handleBrowserDownloadHttp(request, response, url)) return true
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
         response.end()
@@ -698,12 +737,17 @@ export function createDesktopScenario({
       }
       if (request.method !== 'GET' || url.pathname !== FIXTURE_PATH) return false
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      response.end(fixtureHtml())
+      response.end(
+        url.searchParams.has('video-settings')
+          ? videoSettingsFixtureHtml(READY_TEXT)
+          : fixtureHtml()
+      )
       return true
     },
 
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       control.setScenario('embedded_browser_setup')
@@ -730,6 +774,11 @@ export function createDesktopScenario({
             value: EMBEDDED_BROWSER_SETUP_PROMPT,
           }
         )
+        await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+          enabled: true,
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command(
           'press',
           '[data-testid="chat-message-input"][contenteditable="true"]',
@@ -747,7 +796,7 @@ export function createDesktopScenario({
         )
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-          timeoutMs: uiTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
         setupCompleted = true
       } finally {
@@ -763,7 +812,62 @@ export function createDesktopScenario({
           if (setupCompleted) throw error
         }
       }
-      const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+      let bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+      const bridgeCall = payload =>
+        withTimeout(
+          callBridge(bridgeIdentity, { label: browserLabel, ...payload }),
+          (payload.timeoutMs ?? uiTimeoutMs) + 5_000,
+          `Timed out waiting for embedded browser bridge action: ${payload.action}`
+        )
+      const restartBrowser = async url => {
+        const previousPid = control.applicationProcessId
+        await restartDesktopApp()
+        assert.notEqual(control.applicationProcessId, previousPid, 'The download host must restart')
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="runtime-local-task-row-${taskId}"]`,
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        await waitForRuntimeTask(control, taskId, uiTimeoutMs)
+        bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+        assert.equal((await bridgeCall({ action: 'open', url, timeoutMs: 8_000 })).ok, true)
+        const loaded = await bridgeCall({
+          action: 'waitFor',
+          options: { condition: { selectorVisible: '#download-single' } },
+          timeoutMs: 5_000,
+        })
+        assert.equal(loaded.ok, true, 'The restarted browser must load the download fixture')
+      }
+      const verifyChromeFocus = (searchOverlayOnly = false) =>
+        verifyBrowserChromeFocus({
+          control,
+          bridgeCall,
+          fixtureUrl,
+          address: BROWSER_INPUT_SELECTOR,
+          resultDir,
+          searchOverlayOnly,
+        })
+      if (process.env.WEWORK_E2E_BROWSER_SEARCH_OVERLAY_ONLY === 'true')
+        return verifyChromeFocus(true)
+      if (process.env.WEWORK_E2E_BROWSER_CHROME_FOCUS_ONLY === 'true') return verifyChromeFocus()
+      if (process.env.WEWORK_E2E_DOWNLOAD_HISTORY_ONLY === 'true') {
+        console.log('[desktop-e2e] Running embedded-browser download history')
+        const evidence = await verifyBrowserDownloadHistory({
+          bridgeCall,
+          restartBrowser,
+          control,
+          downloadsPath,
+          electronUserDataDirectory,
+          uiTimeoutMs,
+        })
+        await writeFile(
+          join(resultDir, 'browser-download-history.json'),
+          JSON.stringify(evidence, null, 2)
+        )
+        return
+      }
       const originalBridgeRuntime = await readFile(bridgeIdentity.runtimePath, 'utf8')
       const stopForeignBridge = await startForeignBridgeRuntime(bridgeIdentity.runtimePath)
       try {
@@ -790,12 +894,6 @@ export function createDesktopScenario({
         await writeFile(bridgeIdentity.runtimePath, originalBridgeRuntime, 'utf8')
         await stopForeignBridge()
       }
-      const bridgeCall = payload =>
-        withTimeout(
-          callBridge(bridgeIdentity, { label: browserLabel, ...payload }),
-          (payload.timeoutMs ?? uiTimeoutMs) + 5_000,
-          `Timed out waiting for embedded browser bridge action: ${payload.action}`
-        )
       const firstTaskRowSelector = `[data-testid="runtime-local-task-row-${taskId}"]`
       control.setScenario('fresh_chat')
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -822,13 +920,52 @@ export function createDesktopScenario({
       )
       await control.command('click', firstTaskRowSelector)
       await waitForRuntimeTask(control, taskId, uiTimeoutMs)
+      const videoSettingsUrl = `${fixtureUrl}?video-settings`
+      const verifyTaskSwitchDuringClick = async () => {
+        const secondTaskRow = `[data-testid="runtime-local-task-row-${backgroundTaskId}"]`
+        const evidence = await verifyInterleavedVideoSettings({
+          withTaskBrowser: (label, run) => withBrowserMcp(bridgeIdentity, label, run),
+          parseToolJson,
+          first: browserLabel,
+          second: backgroundBrowserLabel,
+          url: videoSettingsUrl,
+          armTaskSwitch: async () => {
+            const cursor = `[data-wework-browser-webview^="${browserLabel}"] ${BROWSER_AGENT_CURSOR_SELECTOR}`
+            await waitForElementCount(
+              control,
+              cursor,
+              0,
+              uiTimeoutMs,
+              'Old task cursor remained visible'
+            )
+            const started = Promise.withResolvers()
+            const switched = control.command(
+              'clickWhenEnabled',
+              `body:has(${cursor}) ${secondTaskRow}`,
+              { timeoutMs: 5_000, onStarted: started.resolve }
+            )
+            await Promise.race([started.promise, switched])
+            return { switched }
+          },
+          assertSecondActive: () => waitForRuntimeTask(control, backgroundTaskId, 5_000),
+        })
+        await writeFile(
+          join(resultDir, 'interleaved-video-settings.json'),
+          JSON.stringify(evidence, null, 2)
+        )
+        await control.command('click', firstTaskRowSelector)
+        await waitForRuntimeTask(control, taskId, uiTimeoutMs)
+      }
+      if (process.env.WEWORK_E2E_INTERLEAVED_VIDEO_SETTINGS_ONLY === 'true') {
+        return verifyTaskSwitchDuringClick()
+      }
       const backgroundOpenResult = await withTimeout(
         callBridge(
           bridgeIdentity,
           {
             action: 'open',
             label: backgroundBrowserLabel,
-            url: fixtureUrl,
+            url: videoSettingsUrl,
             timeoutMs: 8_000,
           },
           backgroundBrowserLabel
@@ -878,9 +1015,18 @@ export function createDesktopScenario({
       await waitForControlValue(
         control,
         BROWSER_INPUT_SELECTOR,
-        fixtureUrl,
+        videoSettingsUrl,
         uiTimeoutMs,
         'The background browser request was not restored with its runtime task'
+      )
+      await waitForVisibleSingleElement(
+        control,
+        BROWSER_NATIVE_VIEW_SELECTOR,
+        5_000,
+        'Restoring the task did not expand its browser panel'
+      )
+      await withBrowserMcp(bridgeIdentity, backgroundBrowserLabel, callTool =>
+        verifyRestoredVideoSettings(callTool, parseToolJson)
       )
       await control.command('click', '[data-testid="right-workspace-browser-tab-1-close-button"]')
       await control.command('click', firstTaskRowSelector)
@@ -1691,6 +1837,7 @@ export function createDesktopScenario({
               })
             )
         )
+        await verifyWaitTimeoutWithoutApproval(bridgeCall, control, uiTimeoutMs)
         await verifyBrowserFullControl(
           control,
           bridgeCall,
@@ -1872,6 +2019,18 @@ export function createDesktopScenario({
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,
+      })
+
+      await verifyTaskSwitchDuringClick()
+      await verifyChromeFocus()
+      await verifyBrowserDownloadPolicy({
+        bridgeCall,
+        restartBrowser,
+        control,
+        downloadsPath,
+        electronUserDataDirectory,
+        resultDir,
+        uiTimeoutMs,
       })
 
       await writeFile(

@@ -1,3 +1,4 @@
+import { useScopedDraft, type ScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
 import { WorkspaceTabSurface } from '@/AppWorkspaceRoutes'
 import { renderRuntimeTaskLifecycle } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.fixtures'
@@ -130,6 +131,7 @@ import {
 } from './runtimeTaskLifecycle'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
 import { useWorkbench } from './useWorkbench'
+import { useWorkbenchTaskReminders, useWorkbenchSidebarReminders } from './runtimeTaskReminders'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 
@@ -180,6 +182,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => 'test-runtime',
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
@@ -1253,9 +1256,18 @@ function RemoteRuntimeCacheProbe() {
   )
 }
 
+function ScopedDraftText({ store, scope }: { store: ScopedDraftStore; scope: string }) {
+  const draft = useScopedDraft(store, scope)
+  return draft.value
+}
+
 function PluginTrialInputProbe({ testId }: { testId: string }) {
   const { paneSession } = useWorkbenchProbeSession()
-  return <span data-testid={testId}>{paneSession.input}</span>
+  return (
+    <span data-testid={testId}>
+      {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+    </span>
+  )
 }
 
 function ProjectSendProbe({
@@ -1306,7 +1318,9 @@ function ProjectSendProbe({
           'none'}
       </span>
       <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">
+        {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+      </span>
       <span data-testid="project-browser-annotation-command">
         {paneSession.browserAnnotationCommand
           ? `${paneSession.browserAnnotationCommand.sequence}:${paneSession.browserAnnotationCommand.reason}`
@@ -1896,12 +1910,13 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
 }
 
 function RuntimePaneSessionIdentityProbe() {
+  const [presentationActive, setPresentationActive] = useState(true)
   const [address, setAddress] = useState<RuntimeTaskAddress>({
     deviceId: 'device-1',
     workspacePath: '/workspace/project-alpha',
     taskId: 'runtime-a',
   })
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address })
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address, presentationActive })
 
   return (
     <div>
@@ -1919,6 +1934,9 @@ function RuntimePaneSessionIdentityProbe() {
           .join('|')}
       </span>
       <span data-testid="runtime-session-error">{paneSession.error}</span>
+      <button type="button" onClick={() => setPresentationActive(active => !active)}>
+        toggle pane presentation
+      </button>
       <button type="button" onClick={() => paneSession.setError('local pane event')}>
         publish a pane error
       </button>
@@ -2452,7 +2470,14 @@ function RuntimeModelSelectionProbe() {
       <span data-testid="runtime-model-task">
         {workbench.state.currentRuntimeTask?.taskId ?? ''}
       </span>
-      <span data-testid="runtime-model-draft">{workbench.projectChat.input}</span>
+      <span data-testid="runtime-model-draft">
+        {
+          <ScopedDraftText
+            store={workbench.projectChat.draftStore}
+            scope={workbench.projectChat.scopeKey}
+          />
+        }
+      </span>
       <span data-testid="background-task-selected-model">
         {backgroundTaskModel.selectedModel?.name ?? ''}
       </span>
@@ -2547,7 +2572,9 @@ function FollowUpProbe() {
 
   return (
     <div>
-      <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="composer-input">
+        {<ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />}
+      </span>
       <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
       <span data-testid="queued-messages">
         {paneSession.queuedMessages
@@ -2976,7 +3003,14 @@ function StartSkillChatProbe() {
       </span>
       <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="skill-chat-start-result">{result}</span>
-      <span data-testid="skill-chat-input">{workbench.projectChat.input}</span>
+      <span data-testid="skill-chat-input">
+        {
+          <ScopedDraftText
+            store={workbench.projectChat.draftStore}
+            scope={workbench.projectChat.scopeKey}
+          />
+        }
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -3002,6 +3036,47 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('publishes reminder items without invalidating workbench and sidebar consumers', async () => {
+    const workbenchRender = vi.fn()
+    const sidebarRender = vi.fn()
+    const WorkbenchReader = memo(function WorkbenchReader() {
+      workbenchRender(useWorkbench())
+      return null
+    })
+    const SidebarReader = memo(function SidebarReader() {
+      sidebarRender(useWorkbenchSidebarReminders())
+      return null
+    })
+    function ReminderReader() {
+      const ids = useWorkbenchTaskReminders().items.map(item => item.address.taskId)
+      return <span data-testid="reminder-ids">{ids.join(',')}</span>
+    }
+    const { lifecycleStore } = renderWorkbenchWithLifecycleCoordinator(
+      <>
+        <BootstrapProbe />
+        <WorkbenchReader />
+        <SidebarReader />
+        <ReminderReader />
+      </>
+    )
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    const workbenchCount = workbenchRender.mock.calls.length
+    const sidebarCount = sidebarRender.mock.calls.length
+    const address = { deviceId: 'device-1', taskId: 'hidden-question' }
+    act(() => {
+      lifecycleStore.syncRuntimeTask(address, {
+        taskId: address.taskId,
+        title: 'Hidden question',
+        workspacePath: '/workspace/repo',
+        runtime: 'codex',
+        interactionStatus: 'awaitingUserReply',
+      })
+    })
+    expect(screen.getByTestId('reminder-ids')).toHaveTextContent(address.taskId)
+    expect(workbenchRender).toHaveBeenCalledTimes(workbenchCount)
+    expect(sidebarRender).toHaveBeenCalledTimes(sidebarCount)
+  })
+
   test('coalesces work-change events while a list refresh is pending', async () => {
     let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
     const pending = deferred<RuntimeWorkListResponse>()
@@ -13439,6 +13514,51 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(paneSubscribeCount()).toBe(0)
   })
 
+  test('presents a finished conversation when an inactive pane becomes visible again', async () => {
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'loaded transcript' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    renderWorkbench(
+      <RuntimePaneSessionIdentityProbe />,
+      createWorkbenchServices({ runtimeWorkApi })
+    )
+    const messages = screen.getByTestId('runtime-session-messages')
+    await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
+    const toggle = screen.getByRole('button', { name: 'toggle pane presentation' })
+    await userEvent.click(toggle)
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: 'background-turn',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'background-turn',
+        itemId: 'background-content',
+        content: 'finished in another tab',
+      })
+    })
+    expect(
+      getRuntimeConversationMessages(address).some(
+        message => message.content === 'finished in another tab'
+      )
+    ).toBe(true)
+    expect(messages).not.toHaveTextContent('finished in another tab')
+    await userEvent.click(toggle)
+    expect(messages).toHaveTextContent('finished in another tab')
+  })
+
   test('defers hidden stream text while publishing interaction requests and completed turns', async () => {
     const address = {
       deviceId: 'device-1',
@@ -13927,6 +14047,35 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('follow-up-collaboration-mode')).toHaveTextContent('plan')
     )
     expect(screen.getByTestId('runtime-attachment-count')).toHaveTextContent('1')
+  })
+
+  test('publishes a composer draft without rerendering the workbench or pane', async () => {
+    const rendered = vi.fn()
+    function DraftIsolationProbe() {
+      const { paneSession } = useWorkbenchProbeSession()
+      rendered()
+      return (
+        <>
+          <button onClick={() => paneSession.setInput('Isolated draft')}>Publish draft</button>
+          <output data-testid="draft-isolation-current">
+            <ScopedDraftText store={paneSession.draftStore} scope={paneSession.scopeKey} />
+          </output>
+          <output data-testid="draft-isolation-other">
+            <ScopedDraftText store={paneSession.draftStore} scope="pane:other" />
+          </output>
+        </>
+      )
+    }
+
+    await act(async () => {
+      renderWorkbench(<DraftIsolationProbe />)
+    })
+    const publish = screen.getByRole('button', { name: 'Publish draft' })
+    rendered.mockClear()
+    act(() => publish.click())
+    expect(screen.getByTestId('draft-isolation-current')).toHaveTextContent('Isolated draft')
+    expect(screen.getByTestId('draft-isolation-other')).toBeEmptyDOMElement()
+    expect(rendered).not.toHaveBeenCalled()
   })
 
   test('keeps blank chat draft when clearing a project chat context', async () => {

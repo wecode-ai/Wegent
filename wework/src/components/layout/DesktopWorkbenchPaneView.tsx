@@ -1,6 +1,8 @@
 import { createDesktopWorkbenchPaneChrome } from './desktopWorkbenchPaneChrome'
 import { DesktopWorkbenchConversationView } from './DesktopWorkbenchConversationView'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
+import { ImageEditProvider } from '@/components/chat/image-preview/ImageEditContext'
+import { useImageEditSubmission } from './useImageEditSubmission'
 import { memo, useCallback } from 'react'
 import {
   SubagentConversationPanel,
@@ -79,6 +81,15 @@ export function DesktopWorkbenchPaneView({
   model: ReturnType<typeof useDesktopWorkbenchPaneModel>
 }) {
   const model = { ...baseModel, ...createDesktopWorkbenchPaneChrome(baseModel) }
+  const imageEditSubmission = useImageEditSubmission({
+    enabled: model.paneVisible && !model.issueExecutionReadOnly && !model.composerDisabled,
+    scope: model.paneSession.scopeKey,
+    upload: model.services.attachmentApi?.uploadAttachment,
+    submit: model.submitPaneInput,
+    replaceImageAttachment: model.projectChat.replaceImageAttachmentForScope,
+    releaseDraftAttachment: model.projectChat.releaseAttachmentForScope,
+    getDraftAttachment: model.getDraftAttachment,
+  })
   const {
     workbenchVisible,
     sidebarCollapsed,
@@ -139,6 +150,7 @@ export function DesktopWorkbenchPaneView({
     deliveryDialogOpen,
     finishDelivery,
     openBoundProjectSpaceTask,
+    projectSpaceContextRetryAction,
     taskBoardAssociation,
     todoBindingError,
     workItemContextAvailable,
@@ -171,7 +183,7 @@ export function DesktopWorkbenchPaneView({
     rightWorkspacePanelRef,
     bottomPanelOpenByKey,
     openFileRequest,
-    setOpenFileRequest,
+    openAttachment,
     forkDialogOpen,
     setForkDialogOpen,
     isDesktop,
@@ -200,7 +212,6 @@ export function DesktopWorkbenchPaneView({
     rightPanelPlanContent,
     paneIsBusy,
     hasMainBackground,
-    openRightPanelTab,
     backgroundTerminals,
     openSubagentConversation,
     rightWorkspaceExtensionScope,
@@ -542,7 +553,12 @@ export function DesktopWorkbenchPaneView({
           tone="error"
           onClear={() => setFileOpenError(null)}
         />
-        <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
+        <TransientNotice
+          message={todoBindingError}
+          tone="error"
+          onClear={clearTodoBindingError}
+          action={projectSpaceContextRetryAction}
+        />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />
         <TaskBoardAssociationDialog
           key={
@@ -564,7 +580,7 @@ export function DesktopWorkbenchPaneView({
             item={activeDeliveryItem}
             runtimeTask={currentRuntimeTask}
             runtimeTaskTitle={runtimeTaskTitle}
-            messages={paneSession.messages}
+            transcript={paneSession.transcript}
             deliveryApi={boundProjectSpaceApi}
             onCancel={closeDeliveryDialog}
             onDelivered={finishDelivery}
@@ -574,18 +590,8 @@ export function DesktopWorkbenchPaneView({
     </main>
   )
   return (
-    <AttachmentPreviewContext.Provider
-      value={source => {
-        setOpenFileRequest(current => ({
-          id: (current?.id ?? 0) + 1,
-          path: source.filename,
-          target: current?.target,
-          attachment: source,
-        }))
-        openRightPanelTab('files')
-      }}
-    >
-      {content}
+    <AttachmentPreviewContext.Provider value={openAttachment}>
+      <ImageEditProvider actions={imageEditSubmission}>{content}</ImageEditProvider>
       {model.panelActionDialogs}
     </AttachmentPreviewContext.Provider>
   )

@@ -62,6 +62,19 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.stand_in_onboarding_rpc(method, payload).await },
                 )
             }
+            "runtime.stand_in.share.definition" => {
+                boxed_rpc(move || async move { self.stand_in_share_definition(payload).await })
+            }
+            "runtime.stand_in.share.list"
+            | "runtime.stand_in.share.search_users"
+            | "runtime.stand_in.share.publish"
+            | "runtime.stand_in.share.direct"
+            | "runtime.stand_in.share.revoke" => {
+                boxed_rpc(move || async move { self.share_stand_in_cloud(method, payload).await })
+            }
+            "runtime.stand_in.share.copy" => {
+                boxed_rpc(move || async move { self.copy_stand_in_share(payload).await })
+            }
             "runtime.stand_in.personal.save" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, true).await },
@@ -115,6 +128,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.stand_in.proposal.get" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
+            }
+            "runtime.stand_in.learning.run" => {
+                boxed_rpc(move || async move { self.run_stand_in_learning(payload) })
             }
             "runtime.stand_in.proposal.resolve" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
@@ -267,6 +283,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.get" => {
                 boxed_rpc(move || async move { self.get_task_with_active_provider(&payload).await })
+            }
+            "runtime.tasks.permissions.set" => {
+                boxed_rpc(move || async move { self.set_stand_in_task_permissions(payload).await })
             }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })
@@ -516,6 +535,12 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.codex.plugin.install_local_first" => {
                 boxed_rpc(move || async move { self.install_local_plugin(payload).await })
+            }
+            "runtime.codex.marketplace.check_updates" => {
+                boxed_rpc(move || async move { self.check_git_marketplace_versions(payload).await })
+            }
+            "runtime.codex.marketplace.list_configured" => {
+                boxed_rpc(move || async move { self.list_configured_marketplaces().await })
             }
             "runtime.codex.plugin.sync_bundled" => {
                 boxed_rpc(move || async move { self.sync_bundled_plugin(payload).await })

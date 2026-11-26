@@ -1,4 +1,5 @@
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
+import { includeDraftAttachmentGroup } from '@wegent/collaboration/composer'
 
 import i18n from '@/i18n'
 
@@ -9,6 +10,10 @@ import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProvid
 import { persistAttachmentReferences } from '@/lib/attachments'
 
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
+import {
+  composeImageMarkupMessage,
+  hasImageMarkupComments,
+} from '@/components/chat/image-preview/imageEdit'
 import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { appendConversationMentionContext } from '@/lib/conversation-mentions'
@@ -41,20 +46,18 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
   ) => Promise<boolean> = async (inputOverride, options = {}) => {
     const {
       attachmentState,
-      codeCommentContexts,
+      codeCommentContexts: draftCodeComments,
       compactRuntimePaneTask,
       currentRuntimeTask,
       goalDraftActive,
-      input,
-      inputRevision,
-      sharedInputRevision,
+      getInput,
       getInputRevisionForScope,
       inputScopeKey,
       lifecycleStore,
       pendingGoalState,
       addExistingAttachmentForScope,
       queuedMessageBusyBlocks,
-      resetAttachments,
+      resetAttachments: resetDraftAttachments,
       sendCurrentInput,
       setRuntimeGoal,
     } = sessionOwner.frame
@@ -76,10 +79,25 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       setQueuedMessages,
     } = sessionOwner.commands
 
-    const { captureAttachments } = attachmentState
+    const { attachments: draftAttachments, captureAttachments } = attachmentState
     const { getDraftEditVersion } = sessionOwner.commands
 
+    const input = getInput()
+    const standalone = options.standaloneAttachments !== undefined
+    const codeCommentContexts = standalone ? [] : draftCodeComments
+    const resetAttachments = () => {
+      if (!standalone) resetDraftAttachments()
+    }
+    const submittedAttachmentSourceId = standalone ? options.draftAttachmentSourceId : undefined
+    const restoreAttachments = (
+      scope: string,
+      attachments: ReturnType<typeof captureAttachments>
+    ) => {
+      if (standalone) return
+      attachments.forEach(attachment => addExistingAttachmentForScope(scope, attachment))
+    }
     const submittedInput = (inputOverride ?? input).trim()
+    const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
     const submittedDraftEditVersion = options.draftEditVersion ?? getDraftEditVersion()
     const restoreRevisions = new Map([
       [
@@ -90,15 +108,16 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         },
       ],
     ])
-    // Capture the rendered revision, before asynchronous submission preparation.
-    let submittedInputRevision = inputRevision
+    // Capture draft and pane ownership before asynchronous submission preparation.
+    let submittedInputRevision = sessionOwner.live.inputRevision
     let submittedSharedInputRevision = sharedInputRevision
     const ownsSubmittedInput = () =>
       getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
       sessionOwner.live.inputRevision === submittedInputRevision &&
-      sessionOwner.live.activeInputScope === inputScopeKey
+      sessionOwner.live.activeInputScope === inputScopeKey &&
+      getDraftEditVersion() === submittedDraftEditVersion
     const clearSubmittedInput = () => {
-      if (!sessionOwner.live.mounted || !ownsSubmittedInput()) return
+      if (standalone || !sessionOwner.live.mounted || !ownsSubmittedInput()) return
       setInput('')
       submittedInputRevision = sessionOwner.live.inputRevision
       submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
@@ -108,6 +127,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       })
     }
     const restoreSubmittedInput = (scopeKey: string, value: string) => {
+      if (standalone) return
       const revision = restoreRevisions.get(scopeKey)
       if (
         revision &&
@@ -117,7 +137,13 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         replaceInputForScope(scopeKey, value)
       }
     }
-    const currentAttachments = captureAttachments()
+    const currentAttachments = options.standaloneAttachments
+      ? includeDraftAttachmentGroup({
+          submittedAttachments: options.standaloneAttachments,
+          draftAttachments,
+          sourceAttachmentId: submittedAttachmentSourceId,
+        })
+      : captureAttachments()
     const hasCodeComments = codeCommentContexts.length > 0
     const paneIsBusy = readCurrentPaneBusy()
     debugComposerEvent('pane-send-called', {
@@ -135,7 +161,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       paneBusy: paneIsBusy,
     })
 
-    if (goalDraftActive) {
+    if (goalDraftActive && !standalone) {
       if (!submittedInput) {
         setError(i18n.t('workbench.goal_objective_required'))
         return false
@@ -145,6 +171,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         return false
       }
 
+      const goalMessage = composeImageMarkupMessage(submittedInput, currentAttachments)
       const goalContext = appendConversationMentionContext(
         submittedInput,
         options.additionalContext
@@ -156,10 +183,13 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         const initialGoal = runtimeGoalCreateInput(draftGoal)
         const baseMessage: RuntimePaneQueuedMessage = {
           id: `queued-runtime-pane-${crypto.randomUUID()}`,
-          content: submittedInput,
+          content: goalMessage.content,
           status: 'queued',
           createdAt: new Date().toISOString(),
           attachments: persistAttachmentReferences(currentAttachments),
+          ...(hasImageMarkupComments(currentAttachments)
+            ? { imageMarkupDraftText: submittedInput }
+            : {}),
           runtimeGoalRequest: true,
           additionalContext: goalContext,
           cloudProjectId: options.cloudProjectId,
@@ -236,13 +266,17 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       clearSubmittedInput()
       setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
       setGoalDraftActive(false)
-      const optimisticMessage = createRuntimeUserMessage(submittedInput, currentAttachments, {
-        runtimeGoalRequest: true,
-      })
+      const optimisticMessage = createRuntimeUserMessage(
+        goalMessage.content,
+        goalMessage.attachments,
+        {
+          runtimeGoalRequest: true,
+        }
+      )
       let seededGoalAddress: RuntimeTaskAddress | null = null
       let errorScopeKey = inputScopeKey
-      const sent = await sendCurrentInput(submittedInput, {
-        attachments: currentAttachments,
+      const sent = await sendCurrentInput(goalMessage.content, {
+        attachments: goalMessage.attachments,
         optimisticUserMessage: optimisticMessage,
         initialGoal,
         additionalContext: goalContext,
@@ -287,7 +321,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       if (sent) {
         clearSubmittedInput()
         if (!isRuntimeTaskAddress(sent)) {
-          appendLocalUserMessage(submittedInput, currentAttachments, {
+          appendLocalUserMessage(goalMessage.content, goalMessage.attachments, {
             runtimeGoalRequest: true,
           })
         } else {
@@ -336,7 +370,10 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     }
 
     const pendingInitialGoal =
-      !currentRuntimeTask && pendingGoalState && isUnboundPendingGoalState(pendingGoalState)
+      !standalone &&
+      !currentRuntimeTask &&
+      pendingGoalState &&
+      isUnboundPendingGoalState(pendingGoalState)
         ? runtimeGoalCreateInput(pendingGoalState.goal)
         : null
     const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
@@ -369,23 +406,23 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     setError(null)
     const visibleSubmittedInput =
       effectiveSubmittedInput || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
+    const { content: messageInput, attachments: messageAttachments } = composeImageMarkupMessage(
+      visibleSubmittedInput,
+      currentAttachments
+    )
     if (!currentRuntimeTask) {
       clearSubmittedInput()
       resetAttachments()
       let errorScopeKey = inputScopeKey
       let submissionScopeKey = inputScopeKey
-      const optimisticMessage = createRuntimeUserMessage(
-        visibleSubmittedInput,
-        currentAttachments,
-        {
-          runtimeGoalRequest: Boolean(pendingInitialGoal),
-          codeComments: codeCommentContexts,
-        }
-      )
+      const optimisticMessage = createRuntimeUserMessage(messageInput, messageAttachments, {
+        runtimeGoalRequest: Boolean(pendingInitialGoal),
+        codeComments: codeCommentContexts,
+      })
       let sent: boolean | RuntimeTaskAddress
       try {
-        sent = await sendCurrentInput(visibleSubmittedInput, {
-          attachments: currentAttachments,
+        sent = await sendCurrentInput(messageInput, {
+          attachments: messageAttachments,
           preserveAttachments: true,
           optimisticUserMessage: optimisticMessage,
           codeCommentContexts,
@@ -443,14 +480,12 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         })
       } catch (error) {
         restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
-        currentAttachments.forEach(attachment =>
-          addExistingAttachmentForScope(submissionScopeKey, attachment)
-        )
+        restoreAttachments(submissionScopeKey, currentAttachments)
         throw error
       }
       if (sent) {
         if (!isRuntimeTaskAddress(sent)) {
-          appendLocalUserMessage(visibleSubmittedInput, currentAttachments, {
+          appendLocalUserMessage(messageInput, messageAttachments, {
             runtimeGoalRequest: Boolean(pendingInitialGoal),
             codeComments: codeCommentContexts,
           })
@@ -474,9 +509,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
       } else {
         restoreSubmittedInput(submissionScopeKey, visibleSubmittedInput)
-        currentAttachments.forEach(attachment =>
-          addExistingAttachmentForScope(submissionScopeKey, attachment)
-        )
+        restoreAttachments(submissionScopeKey, currentAttachments)
       }
       return Boolean(sent)
     }
@@ -484,14 +517,17 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
     const queuedMessage: RuntimePaneQueuedMessage = {
       id: `queued-runtime-pane-${crypto.randomUUID()}`,
       content: hasCodeComments
-        ? appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts)
-        : submittedInput,
+        ? appendCodeCommentContexts(messageInput, codeCommentContexts)
+        : messageInput,
       ...(hasCodeComments
-        ? { displayContent: visibleSubmittedInput, codeComments: codeCommentContexts }
+        ? { displayContent: messageInput, codeComments: codeCommentContexts }
         : {}),
       status: 'queued',
       createdAt: new Date().toISOString(),
       attachments: persistAttachmentReferences(currentAttachments),
+      ...(hasImageMarkupComments(currentAttachments)
+        ? { imageMarkupDraftText: visibleSubmittedInput }
+        : {}),
       additionalContext: resolvedAdditionalContext,
       cloudProjectId: options.cloudProjectId,
       origin: options.origin,
@@ -505,9 +541,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         const sent = await interruptAndSendQueuedMessage(queuedMessage)
         if (!sent) {
           restoreSubmittedInput(inputScopeKey, submittedInput)
-          currentAttachments.forEach(attachment =>
-            addExistingAttachmentForScope(inputScopeKey, attachment)
-          )
+          restoreAttachments(inputScopeKey, currentAttachments)
         } else {
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
         }
@@ -548,9 +582,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
     } else {
       restoreSubmittedInput(inputScopeKey, submittedInput)
-      currentAttachments.forEach(attachment =>
-        addExistingAttachmentForScope(inputScopeKey, attachment)
-      )
+      restoreAttachments(inputScopeKey, currentAttachments)
       setErrorForScope(inputScopeKey, sendError ?? i18n.t('workbench.project_chat_send_failed'))
     }
     return result.accepted || isRuntimeTaskBusyError(sendError)

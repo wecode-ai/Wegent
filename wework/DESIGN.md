@@ -68,9 +68,16 @@ Codex's recognizable visual grammar is:
   four-card quick-start row is intentional and must not expand into a dashboard;
 - soft rounded shapes are systematic, not decorative;
 - borders are low-contrast hairlines and elevation is restrained;
-- one strong action is allowed; surrounding actions remain quiet;
-- information appears progressively instead of every option being visible at
-  equal weight.
+- buttons on the same surface must use the shared recipes in section 6.1.
+  Actions of equal importance use the same variant and size within a group.
+  When there is a clear next step, give that action the strongest emphasis;
+- organize each view around the user's current task. Show the work item and
+  the context needed to act on it together. For example, an issue detail view
+  should open with the issue and its status; choosing Edit reveals its fields;
+- ask only for information the current task requires. Reuse known values,
+  group fields that users decide together, and reveal occasional settings
+  when relevant. Keep essential choices visible and advanced options easy
+  to find.
 
 A normal screenshot should first read as work content, then structure, then
 controls. It must not first read as green, colorful, card-heavy, glossy, or
@@ -735,6 +742,63 @@ Issue activity composers follow the per-frame geometry and acceptance contract
 in [任务动态评论框交互规范](../docs/zh/wegent/user-guide/coding/issue-comment-interaction.md)
 and its [English version](../docs/en/wegent/user-guide/coding/issue-comment-interaction.md).
 Do not claim pinned scrolling is verified from a static screenshot or CSS declaration alone.
+
+#### Desktop task image preview
+
+The Codex image viewer places a light translucent layer over the conversation,
+with zoom, image actions and close controls across the titlebar and a movable
+dark editing toolbar at the bottom. Keep the image itself unrounded in the
+full-screen editor. Read-only conversations expose the viewer without edit
+actions. Opening the image in Files passes the originating image editor and any
+draft attachment ID to the existing attachment preview panel. The editor
+resolves current permission and conversation scope from the original owner.
+
+Markup opened from a composer thumbnail saves an edited PNG in the same draft
+attachment slot in either viewer. Positional comments travel with that
+attachment and are numbered in image order when the composer sends a message
+or starts a goal. Other edit submissions enter the owning conversation as
+independent messages, including when the owner is a temporary chat.
+Markup has its own drawing tools and undo history. The pen and both erasers use
+the pointer samples coalesced by Chromium. The pen uses stylus pressure or
+pointer speed and draws tapered segments with round joins. The preview and PNG
+export use the same aspect-preserving coordinates, paths and per-mark erasures. Export
+composites erased marks over the source image without modifying its pixels
+outside the remaining marks. The message carries any instructions entered in the viewer.
+The standalone comment mode and the comment tool in markup show an unnumbered
+pin until the user saves it. Sending includes a localized image heading with
+numbered image-relative coordinates in the user message. Comment-only
+submissions use the original image. After the conversation accepts the message
+and the image is available for dispatch, remove only the admitted composer
+attachment group from its draft.
+Erase uploads the original and a black-and-white selection mask. Background
+removal and resizing send the image with the selected edit instruction.
+
+```mermaid
+sequenceDiagram
+    participant Viewer as Desktop image preview
+    participant Panel as Files panel
+    participant Pane as Owning conversation pane
+    participant Runtime as Selected executor and model
+    opt Open in side panel
+        Viewer->>Panel: Pass image, originating editor and draft attachment ID
+    end
+    Viewer->>Viewer: Normalize pointer samples and saved comment positions
+    alt Save markup on a composer attachment
+        Viewer->>Pane: Export PNG and save position comments on the draft attachment
+        Pane->>Pane: Replace the original draft attachment after staging
+        Pane->>Pane: Admit images, numbered coordinates and composer text on send or Goal
+    else Submit an image edit
+        Viewer->>Pane: Submit edit instruction and pending attachments
+        Pane->>Pane: Admit message or queue entry and preserve unrelated draft contents
+        opt Comment-only send from a composer attachment
+            Pane->>Pane: Retain the source image for dispatch and remove its admitted attachment group from the draft
+        end
+        Pane->>Pane: Stage original image, marks or selection
+    end
+    Pane->>Pane: Display image and coordinate text in the user message
+    Pane->>Runtime: Dispatch through task transport
+    Runtime-->>Pane: Render response and any generated image
+```
 
 ### 6.3 Navigation and list rows
 
@@ -1580,8 +1644,9 @@ component-level validation outlines to override the native-outline reset.
   `IssueMainCommentComposer` owns the main textarea, settings/attachment/send
   toolbar, keyboard and paste behavior, and mention selection. Both hosts use
   `ComposerAttachmentBadges` and `AttachmentImageView` for document/text cards,
-  upload thumbnails and the image lightbox. Image loading, local file access and
-  downloading are host services; hosts do not render separate preview UI.
+  upload thumbnails and image resource lifecycle. The desktop host supplies the
+  native task image lightbox through the shared image services. The browser uses
+  the shared lightbox.
   Card replies share the same queue presentation, scheduler and dispatcher.
   Persist and execute a reply only after its owning card's session becomes idle;
   a busy card must not block a different idle card. A persisted reply is removed

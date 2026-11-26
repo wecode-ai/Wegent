@@ -14,7 +14,10 @@ import { useProjectExecutionEnvironmentReadiness } from '../execution-environmen
 import { IssueHomeComposer } from './IssueHomeComposer'
 import type { IssueHomeOwner } from './issueHomeOwners'
 import type { CollaborationPlatformHostAdapter } from './types'
+import { createPersonalIssueTranslator } from './personalIssueMessages'
 import type { PlatformMessages } from './platformMessages'
+
+const subscribeLocalDraft = () => () => {}
 
 export function IssueHomeLauncher({
   draft,
@@ -30,9 +33,15 @@ export function IssueHomeLauncher({
   locale,
   renderTaskComposer,
   currentUserId,
+  embedded,
+  onTaskCreated,
 }: {
   draft?: CollaborationPlatformHostAdapter['issueHomeDraft']
   currentUserId?: number
+  embedded?: boolean
+  onTaskCreated?: NonNullable<
+    import('./IssueHomeComposer').IssueHomeTaskComposerProps['onTaskCreated']
+  >
   messages: PlatformMessages
   projects: CollaborationProject[]
   workspaces: CollaborationWorkspace[]
@@ -52,12 +61,18 @@ export function IssueHomeLauncher({
   renderTaskComposer?: CollaborationPlatformHostAdapter['renderIssueComposer']
 }) {
   const [localContent, setLocalContent] = useState('')
-  const content = draft?.value ?? localContent
+  const readContent = () => draft?.value ?? localContent
+  const content = useSyncExternalStore(
+    draft?.subscribe ?? subscribeLocalDraft,
+    readContent,
+    readContent
+  )
   const contentRevision = draft?.getRevision()
   const setContent = draft?.onChange ?? setLocalContent
   const composerRef = useRef<ComposerInputHandle>(null)
   const selectedProject = projects.find(project => project.id === selectedProjectId)
   const translate = useMemo(() => createCollaborationTranslator(locale), [locale])
+  const personalTranslate = useMemo(() => createPersonalIssueTranslator(locale), [locale])
   const environmentReadiness = useProjectExecutionEnvironmentReadiness({
     api,
     project: selectedProject,
@@ -136,6 +151,11 @@ export function IssueHomeLauncher({
   const composer = (
     <IssueHomeComposer
       renderTaskComposer={renderTaskComposer}
+      browserHome={
+        embedded && !renderTaskComposer && onTaskCreated
+          ? { api, onTaskCreated, translate: personalTranslate }
+          : undefined
+      }
       currentUserId={currentUserId}
       ref={composerRef}
       value={content}
@@ -173,10 +193,10 @@ export function IssueHomeLauncher({
       }
     />
   )
-  if (renderTaskComposer)
+  if (renderTaskComposer || embedded)
     return (
       <div
-        className="flex min-h-0 min-w-0 max-w-full flex-1"
+        className={`flex min-h-0 min-w-0 max-w-full flex-1 ${renderTaskComposer ? '' : 'flex-col'}`}
         data-testid="collaboration-issue-home"
         data-execution-environment-readiness={environmentReadiness.kind}
       >

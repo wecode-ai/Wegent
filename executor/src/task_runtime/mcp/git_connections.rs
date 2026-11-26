@@ -1,5 +1,6 @@
 //! Source-bound Git reads execute outside the model's network-denied sandbox.
 use super::*;
+use crate::task_runtime::stand_in_projection::project_visible_work;
 use wegent_local_task_store::store::{AcceptedReply, DeliveryRole};
 
 pub(super) fn tool() -> Value {
@@ -115,9 +116,16 @@ fn git_comment_request(
     if args["method"] != "POST" {
         return None;
     }
+    let settings = store
+        .personal_stand_in(identity.user, &identity.device)
+        .ok()?;
+    let work = store
+        .stand_in_work(identity.user, identity.work.as_deref()?)
+        .ok()?;
     let messages = store
         .stand_in_messages(identity.user, identity.work.as_deref()?)
         .ok()?;
+    let messages = project_visible_work(&settings, work, messages)?.messages;
     let matches_target = |message: &Value| {
         let source = &message["source"];
         let external = &message["external"];
@@ -194,6 +202,12 @@ pub(crate) fn bind(
         .into_iter()
         .find(|row| row["id"] == work["roleId"])
         .ok_or("Role was removed")?;
+    let messages = store
+        .stand_in_messages(identity.user, work["id"].as_str().unwrap_or_default())
+        .map_err(|e| e.to_string())?;
+    let work = project_visible_work(&settings, work, messages)
+        .ok_or("Work has no source events visible to the current account")?
+        .work;
     let source = crate::task_runtime::personal_stand_in::stand_in_connection(
         &role,
         &work["latestMessage"]["source"],
@@ -242,6 +256,7 @@ mod tests {
             crate::task_runtime::LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let old = json!({"providerId":"@wegent/dsh-connection-git/github","profile":"[\"https://github.com\",\"7\"]","id":"42","kind":"repository","name":"org/repo","subscriptionId":"receiver","generation":"old","policy":{"automatic":true,"askBeforeAct":true}});
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
         let mut current = old.clone();
         current["generation"] = json!("new");
         settings["roles"][0]["connections"] = json!([current]);

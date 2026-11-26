@@ -30,6 +30,7 @@ interface ResizableSidebarProps {
   maxWidth?: number
   defaultWidth?: number
   storageKey?: string
+  flush?: boolean
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
 }
@@ -40,6 +41,7 @@ export default function ResizableSidebar({
   maxWidth = 500,
   defaultWidth = 244, // 增加 20px，原来是 224px
   storageKey = 'task-sidebar-width',
+  flush = false,
   isCollapsed = false,
   onToggleCollapsed,
 }: ResizableSidebarProps) {
@@ -137,7 +139,7 @@ export default function ResizableSidebar({
 
   return (
     <div
-      className={`hidden lg:flex relative ${isInitialized ? 'transition-all duration-200' : ''} pl-3 z-20`}
+      className={`hidden lg:flex relative ${isInitialized ? 'transition-all duration-200' : ''} ${flush ? '' : 'pl-3'} z-20`}
       style={{ width: `${sidebarWidth}px`, overflow: 'visible' }}
     >
       {/* Keep children mounted so global shortcuts remain available when collapsed. */}

@@ -4,6 +4,20 @@
 
 use super::*;
 
+pub(super) const REMOTE_PERSONAL_RUNTIME_IDENTITY: &str = "remote_personal_runtime_identity";
+
+fn bind_personal_runtime_token(payload: &mut Value, token: &str) {
+    let request_key = if payload.get("executionRequest").is_some() {
+        "executionRequest"
+    } else {
+        "execution_request"
+    };
+    if let Some(request) = payload.get_mut(request_key).and_then(Value::as_object_mut) {
+        request.insert("runtime_auth_token".into(), json!(token));
+        request.insert(REMOTE_PERSONAL_RUNTIME_IDENTITY.into(), json!(true));
+    }
+}
+
 impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
     fn connection_service_owner<'a>(
         &'a self,
@@ -81,6 +95,9 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 self.verify_runtime_user(&payload).await?;
             }
             self.bind_submitted_interface(&method, &mut payload, data.get("modelBinding"))?;
+            if let Some(token) = data["personalRuntimeToken"].as_str() {
+                bind_personal_runtime_token(&mut payload, token);
+            }
             self.dispatch(&method, payload).await
         })
     }
@@ -97,6 +114,12 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                     "unsupported_codex_app_server_method",
                     format!("Unsupported Codex app-server method: {method}"),
                 ));
+            }
+            if method == "marketplace/remove" && data["params"].get("confirmedPluginIds").is_some()
+            {
+                return self
+                    .remove_marketplace_with_plugins(data["params"].clone())
+                    .await;
             }
             // Bundled reconciliation rewrites the same complete configuration that
             // marketplace RPCs update. Keep an accepted native edit out of that window.
@@ -127,6 +150,7 @@ impl RuntimeWorkRpcHandler {
             .cloned()
             .filter(Value::is_object)
             .unwrap_or_else(|| json!({}));
+        super::plugin_marketplace::check_marketplace_write(&method, &params).await?;
         if method == "app/list" {
             log_executor_event(
                 "codex app catalog read started",

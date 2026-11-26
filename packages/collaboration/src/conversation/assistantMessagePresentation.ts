@@ -198,31 +198,89 @@ export interface AssistantProseRegion {
   sources: ConversationSearchSource[];
 }
 
-/** This is the renderer's prose layout, including the sources used by its index. */
-export function getAssistantRenderProjection(message: WorkbenchMessage) {
+export function hasSameAssistantRenderInputs(
+  previous: WorkbenchMessage,
+  next: WorkbenchMessage,
+): boolean {
+  if (
+    previous.id !== next.id ||
+    previous.content !== next.content ||
+    previous.status !== next.status ||
+    previous.runtimeStatus !== next.runtimeStatus ||
+    previous.error !== next.error
+  )
+    return false;
+
+  const nextBlocks = next.blocks;
+  if (
+    previous.blocks !== nextBlocks &&
+    (!previous.blocks ||
+      !nextBlocks ||
+      previous.blocks.length !== nextBlocks.length ||
+      !previous.blocks.every(
+        (block, index) =>
+          block === nextBlocks[index] ||
+          (block.type === "thinking" && nextBlocks[index]?.type === "thinking"),
+      ))
+  )
+    return false;
+
+  const nextItems = next.runtimeDisplayItems;
+  return (
+    previous.runtimeDisplayItems === nextItems ||
+    Boolean(
+      previous.runtimeDisplayItems &&
+      nextItems &&
+      previous.runtimeDisplayItems.length === nextItems.length &&
+      previous.runtimeDisplayItems.every((item, index) => {
+        const candidate = nextItems[index];
+        return (
+          item.id === candidate.id &&
+          (item.type === "assistant_text"
+            ? candidate.type === "assistant_text" &&
+              item.content === candidate.content
+            : candidate.type === "block")
+        );
+      }),
+    )
+  );
+}
+
+/** Rendering and search share the prose layout. Only the index needs source offsets. */
+export function getAssistantRenderProjection(
+  message: WorkbenchMessage,
+  includeSearchSources = false,
+) {
   const presentation = getAssistantContentPresentation(message);
   const blocks = getDisplayProcessingBlocks(
     message.blocks,
     isCancelledAssistantMessage(message),
     presentation.content,
   );
-  const ordered = getOrderedRuntimeDisplaySegments(
-    message.runtimeDisplayItems,
-    blocks,
-  );
+  const hasContent = Boolean(presentation.content.trim());
+  const ordered =
+    (hasContent && blocks.length) || includeSearchSources
+      ? getOrderedRuntimeDisplaySegments(
+          message.runtimeDisplayItems,
+          blocks,
+          includeSearchSources,
+        )
+      : [];
   const contentSegments = ordered.filter(
     (segment) => segment.kind === "content",
   );
   const orderedContent = contentSegments
     .map((segment) => segment.content)
     .join("\n\n");
+  const firstProseIndex = ordered.findIndex(
+    (segment) => segment.kind === "content",
+  );
   const interleaved =
-    Boolean(presentation.content.trim()) &&
+    hasContent &&
     orderedContent === presentation.content &&
     ordered.some(
       (segment, index) =>
-        segment.kind === "content" &&
-        ordered.slice(index + 1).some((next) => next.kind === "processing"),
+        index > firstProseIndex && segment.kind === "processing",
     );
   const firstItem = message.runtimeDisplayItems?.find(
     (item) => item.type === "assistant_text",
@@ -232,11 +290,11 @@ export function getAssistantRenderProjection(message: WorkbenchMessage) {
     content: presentation.content,
     sources: [],
   };
-  if (!firstItem && presentation.content) {
+  if (includeSearchSources && !firstItem && presentation.content) {
     finalRegion.sources = projectPluginWorkspaceResultText(
       message.content,
     ).sources.map((source) => ({ ...source, itemId: message.id }));
-  } else {
+  } else if (includeSearchSources) {
     let cursor = 0;
     for (const segment of contentSegments) {
       const offset = presentation.content.indexOf(segment.content, cursor);
@@ -261,7 +319,20 @@ export function getAssistantRenderProjection(message: WorkbenchMessage) {
           ? [{ kind: "content" as const, ...finalRegion }]
           : []),
       ];
-  const regions = segments.flatMap<AssistantProseRegion>((segment) =>
+  return {
+    ...presentation,
+    blocks,
+    segments,
+    interleaved,
+    finalRegion,
+  };
+}
+
+export function getAssistantSearchRegions(message: WorkbenchMessage) {
+  return getAssistantRenderProjection(
+    message,
+    true,
+  ).segments.flatMap<AssistantProseRegion>((segment) =>
     segment.kind === "content"
       ? [segment]
       : segment.blocks.flatMap((block) =>
@@ -284,14 +355,6 @@ export function getAssistantRenderProjection(message: WorkbenchMessage) {
             : [],
         ),
   );
-  return {
-    ...presentation,
-    blocks,
-    segments,
-    regions,
-    interleaved,
-    finalRegion,
-  };
 }
 
 export function getMessageDisplayStateKey(
@@ -327,9 +390,10 @@ export type RuntimeDisplaySegment =
       blocks: ProcessingBlock[];
     };
 
-export function getOrderedRuntimeDisplaySegments(
+function getOrderedRuntimeDisplaySegments(
   items: RuntimeAssistantDisplayItem[] | undefined,
   displayBlocks: ProcessingBlock[],
+  includeSearchSources: boolean,
 ): RuntimeDisplaySegment[] {
   if (!items?.length) return [];
 
@@ -346,30 +410,35 @@ export function getOrderedRuntimeDisplaySegments(
 
   items.forEach((item) => {
     if (item.type === "assistant_text") {
-      const projection = projectPluginWorkspaceResultText(item.content);
-      const content = projection.content;
+      const projection = includeSearchSources
+        ? projectPluginWorkspaceResultText(item.content)
+        : undefined;
+      const content =
+        projection?.content ?? stripPluginWorkspaceResultMarkers(item.content);
       if (!content.trim()) return;
       const previous = segments.at(-1);
       if (previous?.kind === "content") {
         const start = previous.content.length + 2;
-        previous.sources.push(
-          ...projection.sources.map((source) => ({
-            ...source,
-            itemId: item.id,
-            start: source.start + start,
-            end: source.end + start,
-          })),
-        );
+        if (projection)
+          previous.sources.push(
+            ...projection.sources.map((source) => ({
+              ...source,
+              itemId: item.id,
+              start: source.start + start,
+              end: source.end + start,
+            })),
+          );
         previous.content = `${previous.content}\n\n${content}`;
       } else {
         segments.push({
           kind: "content",
           id: item.id,
           content,
-          sources: projection.sources.map((source) => ({
-            ...source,
-            itemId: item.id,
-          })),
+          sources:
+            projection?.sources.map((source) => ({
+              ...source,
+              itemId: item.id,
+            })) ?? [],
         });
       }
       return;
@@ -390,22 +459,6 @@ export function getOrderedRuntimeDisplaySegments(
   });
 
   return segments;
-}
-
-export function getProcessingPhase(
-  segments: ProcessingSegment[],
-  index: number,
-  hasFinalContent: boolean,
-): "live" | "intermediate" | "final" {
-  const laterSegments = segments.slice(index + 1);
-  if (
-    hasFinalContent &&
-    !laterSegments.some((segment) => segment.kind === "tool")
-  )
-    return "final";
-  if (laterSegments.some((segment) => segment.kind === "narrative"))
-    return "intermediate";
-  return "live";
 }
 
 export function splitProcessingBlocks(

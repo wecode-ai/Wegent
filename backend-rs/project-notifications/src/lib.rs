@@ -33,10 +33,17 @@ struct Channels {
     im: bool,
 }
 
+const STAND_IN_START_FAILED: &str = "stand_in_start_failed";
+
 fn channels(preferences: &Value, kind: &str) -> Channels {
     let collaboration = matches!(
         kind,
-        "assignment" | "mention" | "execution" | "issue_dispatch_assignment" | "issue_shared"
+        "assignment"
+            | "mention"
+            | "execution"
+            | "issue_dispatch_assignment"
+            | "issue_shared"
+            | "issue_participation"
     );
     let category = if collaboration {
         "collaboration"
@@ -44,14 +51,16 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
         "general"
     };
     let selected = &preferences["wework_notification_preferences"][category];
+    let im_only = kind == "issue_participation";
+    let assistant_share = matches!(kind, "assistant_share" | "assistant_share_update");
     Channels {
-        in_app: selected["in_app"].as_bool().unwrap_or(true),
-        system: if collaboration {
+        in_app: !im_only && selected["in_app"].as_bool().unwrap_or(true),
+        system: if collaboration && !im_only {
             selected["system"].as_bool().unwrap_or(true)
         } else {
             false
         },
-        im: selected["im"].as_bool().unwrap_or(true),
+        im: !assistant_share && selected["im"].as_bool().unwrap_or(true),
     }
 }
 
@@ -78,7 +87,16 @@ pub async fn create_on(
         .and_then(|user| user.preferences)
         .and_then(|value| serde_json::from_str::<Value>(&value).ok())
         .unwrap_or(json!({}));
-    let channels = channels(&preferences, kind);
+    let channels = if payload["action"] == STAND_IN_START_FAILED {
+        let selected = &preferences["wework_notification_preferences"]["stand_in"];
+        Channels {
+            in_app: selected["in_app"].as_bool().unwrap_or(true),
+            system: selected["system"].as_bool().unwrap_or(true),
+            im: false,
+        }
+    } else {
+        channels(&preferences, kind)
+    };
     let now = Utc::now().naive_utc();
     let id = uuid();
     let project = payload["projectId"].as_str().unwrap_or("");
@@ -112,6 +130,45 @@ pub async fn create_on(
         channels,
         stored: channels.in_app,
     })
+}
+
+pub async fn stand_in_start_failure_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    project: &str,
+    issue: &str,
+    title: &str,
+    code: Option<&str>,
+) -> MysqlResult<Pending> {
+    let (code, body) = match code {
+        Some("workspace_unavailable") => (
+            "workspace_unavailable",
+            "所选工作目录在执行设备上不可用。请检查助理的运行环境后重试。",
+        ),
+        Some("workspace_not_git") => (
+            "workspace_not_git",
+            "所选工作目录不是 Git 仓库。请检查助理的工作区设置后重试。",
+        ),
+        _ => (
+            "stand_in_start_failed",
+            "助理未能启动。请检查助理的运行环境后重试。",
+        ),
+    };
+    let notification_title = format!("助理启动失败：{title}")
+        .chars()
+        .take(256)
+        .collect::<String>();
+    create_on(
+        tx,
+        user,
+        user,
+        "execution",
+        &notification_title,
+        body,
+        json!({"projectId":project,"itemId":issue,"itemTitle":title,
+            "action":STAND_IN_START_FAILED,"failureCode":code,"status":"failed"}),
+    )
+    .await
 }
 
 pub async fn target(
@@ -240,7 +297,7 @@ pub async fn direct_human_on(
             actor,
             "issue_dispatch_assignment",
             &format!("新任务：{title}"),
-            "这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
+            "这个事项已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
             payload,
         )
         .await?,
@@ -334,20 +391,51 @@ pub trait LocalEmit: Send + Sync {
     async fn emit(&self, event: &str, room: &str, frame: &Value);
 }
 
+/// A private recipient identifier scoped to the selected IM channel.
+pub struct IssueImRecipient {
+    pub channel_id: i64,
+    pub recipient_id: String,
+}
+
+#[async_trait::async_trait]
+pub trait IssueImRecipientResolver: Send + Sync {
+    async fn resolve(&self, user_id: i64) -> Result<Option<IssueImRecipient>>;
+}
+
 pub async fn deliver(
     mysql: &MysqlService,
     redis: Option<&brz_redis::RedisService>,
     local: &dyn LocalEmit,
     pending: Pending,
 ) {
+    deliver_with_issue_im_recipient(mysql, redis, local, None, pending).await;
+}
+
+pub async fn deliver_with_issue_im_recipient(
+    mysql: &MysqlService,
+    redis: Option<&brz_redis::RedisService>,
+    local: &dyn LocalEmit,
+    issue_im_recipient: Option<&dyn IssueImRecipientResolver>,
+    pending: Pending,
+) {
     let notification = &pending.notification;
     let user = notification["user_id"].as_i64().unwrap_or(0);
     if let Some(redis) = redis {
         let mut frames = Vec::new();
-        if pending.stored {
-            frames.push(
-                json!({"event":"wework.notification.created","payload":{"id":notification["id"]}}),
-            );
+        let stand_in_alert =
+            pending.channels.system && notification["payload"]["action"] == STAND_IN_START_FAILED;
+        if pending.stored || stand_in_alert {
+            let mut payload = json!({"id":notification["id"]});
+            if !pending.stored {
+                payload["stored"] = json!(false);
+            }
+            if stand_in_alert {
+                payload["standInStartFailure"] = json!({
+                    "userId":user,"itemTitle":notification["payload"]["itemTitle"],
+                    "code":notification["payload"]["failureCode"],"url":notification["url"],
+                });
+            }
+            frames.push(json!({"event":"wework.notification.created","payload":payload}));
         }
         if pending.channels.system && notification["kind"] == "assignment" {
             frames.push(json!({"event":"project.task.assigned","payload":notification["payload"]}));
@@ -382,7 +470,9 @@ pub async fn deliver(
         let base = wegent_backend_config::env_or_dotenv("FRONTEND_URL")
             .unwrap_or_else(|| "http://localhost:3000".into());
         let links = im_links(notification, &base);
-        if let Err(error) = im::send_im(mysql, redis, user, notification, &links).await {
+        if let Err(error) =
+            im::send_im(mysql, redis, user, notification, &links, issue_im_recipient).await
+        {
             tracing::error!(notification_id=%notification["id"],%error,"Wework IM notification delivery failed");
         }
     }
@@ -468,6 +558,62 @@ fn push_facts(payload: &Value) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_participation_uses_only_the_collaboration_im_channel() {
+        let default = channels(&Value::Null, "issue_participation");
+        assert!(!default.in_app && !default.system && default.im);
+        let disabled = channels(
+            &json!({"wework_notification_preferences":{"collaboration":{"im":false},"general":{"im":true}}}),
+            "issue_participation",
+        );
+        assert!(!disabled.in_app && !disabled.system && !disabled.im);
+    }
+
+    #[tokio::test]
+    async fn issue_without_a_private_session_resolves_only_enabled_issue_recipients() {
+        #[derive(Default)]
+        struct Resolver(std::sync::Mutex<Vec<i64>>);
+        #[async_trait::async_trait]
+        impl IssueImRecipientResolver for Resolver {
+            async fn resolve(&self, user_id: i64) -> Result<Option<IssueImRecipient>> {
+                self.0.lock().unwrap().push(user_id);
+                Ok(None)
+            }
+        }
+
+        struct NoEmit;
+        #[async_trait::async_trait]
+        impl LocalEmit for NoEmit {
+            async fn emit(&self, _: &str, _: &str, _: &Value) {}
+        }
+
+        let unused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mysql = MysqlService::connect_lazy(&format!(
+            "mysql://ci:ci@{}/unused",
+            unused.local_addr().unwrap()
+        ))
+        .unwrap();
+        let resolver = Resolver::default();
+        let opted_out = json!({
+            "wework_notification_preferences":{"collaboration":{"im":false}}
+        });
+        for (user, kind, preferences) in [
+            (10, "issue_shared", &Value::Null),
+            (11, "issue_participation", &Value::Null),
+            (12, "issue_shared", &opted_out),
+            (13, "assignment", &Value::Null),
+        ] {
+            let pending = Pending {
+                notification: json!({"user_id": user, "kind": kind}),
+                channels: channels(preferences, kind),
+                stored: false,
+            };
+            deliver_with_issue_im_recipient(&mysql, None, &NoEmit, Some(&resolver), pending).await;
+        }
+        assert_eq!(*resolver.0.lock().unwrap(), vec![10, 11]);
+    }
+
     #[test]
     fn disabled_inbox_does_not_disable_other_channels() {
         let selected = channels(

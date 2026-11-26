@@ -7,6 +7,10 @@ import { projectIssueNeedsInput } from './pendingProjectWork'
 import { createPendingProjectIssuesStore } from './pendingProjectIssuesStore'
 export type { PendingProjectIssue } from './pendingProjectIssuesStore'
 
+function issueKey(store: string, projectId: string | number, itemId: string) {
+  return JSON.stringify([store, String(projectId), itemId])
+}
+
 /** This page owns its reads; project failures do not erase another store's results. */
 export function usePendingProjectIssues(active: boolean) {
   const source = useNotificationTaskSource()
@@ -36,23 +40,37 @@ export function usePendingProjectIssues(active: boolean) {
     store.getSnapshot
   )
   useWindowEvent('focus', () => void store.refresh(), { enabled: active })
-  return {
-    items: snapshot.items.filter(row => {
-      const running = source?.items.some(task => {
-        const origin = task.task.runtimeHandle?.origin as Record<string, unknown> | undefined
-        return (
-          isRuntimeTaskExecutionRunning(task.task) &&
-          origin &&
-          String(origin.cloudProjectId) === String(row.item.cloud_project_id) &&
-          origin.loopItemId === row.item.id &&
-          (origin.projectStore === 'local' ? 'local' : 'backend') === row.store
+  const tasks = source?.items
+  const runningIssues = useMemo(() => {
+    const keys = new Set<string>()
+    for (const { task } of tasks ?? []) {
+      const origin = task.runtimeHandle?.origin as Record<string, unknown> | undefined
+      if (!origin || typeof origin.loopItemId !== 'string') continue
+      if (!isRuntimeTaskExecutionRunning(task)) continue
+      keys.add(
+        issueKey(
+          origin.projectStore === 'local' ? 'local' : 'backend',
+          String(origin.cloudProjectId),
+          origin.loopItemId
         )
-      })
-      return projectIssueNeedsInput(
-        running ? { ...row.item, execution_state: 'running' } : row.item,
-        row.userId
       )
-    }),
+    }
+    return keys
+  }, [tasks])
+  const items = useMemo(
+    () =>
+      snapshot.items.filter(row =>
+        projectIssueNeedsInput(
+          runningIssues.has(issueKey(row.store, row.item.cloud_project_id, row.item.id))
+            ? { ...row.item, execution_state: 'running' }
+            : row.item,
+          row.userId
+        )
+      ),
+    [snapshot.items, runningIssues]
+  )
+  return {
+    items,
     errors: snapshot.errors,
     loading: active && (snapshot.loading.local || snapshot.loading.backend),
     refresh: store.refresh,

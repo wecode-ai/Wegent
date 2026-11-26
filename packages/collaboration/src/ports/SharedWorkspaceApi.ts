@@ -209,6 +209,7 @@ export interface WorkspaceIssueUpdateInput {
   assigneeGroupId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
+  notifyAssignee?: boolean;
   startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];
@@ -1130,7 +1131,6 @@ export interface SharedWorkspaceRuntimeApi extends RuntimeConversationClient {
 
 export interface WorkspaceStandInWorkspace {
   projectKey: string;
-  workspacePath: string;
   executionMode: "current_workspace" | "git_worktree";
   branch?: string | null;
 }

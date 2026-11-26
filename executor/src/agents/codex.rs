@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::future::BoxFuture;
 use serde_json::Map;
 use serde_json::{json, Value};
@@ -104,8 +105,9 @@ Sub-agents are off-limits in this side conversation. Do not interact with any ex
 
 Do not modify files, source, git state, permissions, configuration, or workspace state unless the user explicitly asks for that mutation after this boundary. Do not request escalated permissions or broader sandbox access unless the user explicitly asks for a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
+- Continue ordinary follow-ups using the conversation. Consult project-space data only when the user explicitly asks to look up or act on a project or Issue, or when the current request requires information from that project or Issue that is missing from the conversation. A project or Issue reference alone does not trigger a lookup.
 - Use `wework_space` MCP tools for Wework project spaces and Issues; discover deferred tools before reporting them unavailable.
-- For the current Issue, start with `get_current_context`; without a binding, use `list_spaces` and explicit target IDs. Follow the discovered tool instructions.
+- When a lookup is needed for the current Issue, start with `get_current_context`. Without a binding, use any supplied target IDs; use `list_spaces` when the target project needs to be discovered. Follow the discovered tool instructions.
 - Never use MCP resources, browser, Shell, `curl`, local storage or provider APIs to bypass these tools or their access errors.
 "#;
 
@@ -135,6 +137,7 @@ mod auth_mode;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+mod marketplace_catalog;
 mod memory_review;
 mod native_provider;
 mod plugin_cache;
@@ -211,6 +214,8 @@ pub type CodexInputAdmission = Box<dyn Fn() -> Result<(), String> + Send + Sync 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
     pub input_admission: Option<CodexInputAdmission>,
+    #[doc(hidden)]
+    pub gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
     #[doc(hidden)]
     pub event_goal: Option<EventGoalAdmission>,
     pub recover_usage_limits: bool,
@@ -2443,6 +2448,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let CodexAppServerTurnOptions {
         mut event_goal,
         input_admission,
+        gateway_credentials,
         recover_usage_limits,
         quota_resume,
         direct_thread_id,
@@ -2461,7 +2467,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         defer_interactive_forms: _,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    let launch_config =
+        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -2548,9 +2555,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                         early_request_context.as_mut(),
                     )
                     .await?;
+                let thread_id = thread_id_from_response(
+                    operation,
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
                 if external_work::applies(request) {
                     log_executor_event("codex source sandbox applied", &[
                         ("task_id", request.task_id.clone()),
+                        ("thread_id", thread_id.clone()),
                         ("profile", response["activePermissionProfile"].to_string()),
                         ("sandbox", response["sandbox"].to_string()),
                         ("reviewer", response["approvalsReviewer"].to_string()),
@@ -2562,11 +2575,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                         return Err("Codex did not apply the required source permissions and reviewer".into());
                     }
                 }
-                let thread_id = thread_id_from_response(
-                    operation,
-                    &response,
-                    launch_config.model_provider.as_deref(),
-                )?;
                 resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
@@ -2674,6 +2682,13 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .as_ref()
                 .expect("initial goal must exist when awaiting its turn");
             let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            // Setting an active Goal can start inference immediately.
+            if let Some(params) = initial_goal_image_params(&thread_id, &request.prompt).await? {
+                client
+                    .request_for_launch_config_once("thread/inject_items", params, &launch_config)
+                    .await?;
+            }
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
             let goal_response = turn_request_context
                 .request(client, "thread/goal/set", goal_params, &launch_config)
                 .await?;
@@ -2726,7 +2741,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
-        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let active_turn_id = if awaits_initial_goal_turn || awaits_event_goal_turn || resume_goal_only || restored_quota_goal {
@@ -2953,6 +2968,7 @@ async fn run_codex_app_server_turn_with_runtime(
     let CodexAppServerTurnOptions {
         mut event_goal,
         input_admission,
+        gateway_credentials,
         recover_usage_limits,
         quota_resume,
         direct_thread_id,
@@ -2971,7 +2987,8 @@ async fn run_codex_app_server_turn_with_runtime(
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    let launch_config =
+        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -3149,24 +3166,8 @@ async fn run_codex_app_server_turn_with_runtime(
         } else {
             None
         };
-        if !request.ephemeral && event_goal_request_id.is_none() {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = with_rpc_timeout(
-                    "thread/goal/set",
-                    timeout_seconds,
-                    rpc.request("thread/goal/set", goal_params, &mut state),
-                )
-                .await?;
-                sync_goal_status_from_response(&mut state, &goal_response);
-            }
-        }
-
-        let turn_input = turn_input(&request.prompt);
-        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        turn_fields.push(("input_items", turn_input.len().to_string()));
-        log_executor_event("codex turn request started", &turn_fields);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
         // Cancellation owns the complete admission/read sequence, including
         // the Goal snapshot and restoration requests before a turn exists.
@@ -3178,6 +3179,18 @@ async fn run_codex_app_server_turn_with_runtime(
             }
             let (turn_method, turn_params) = if event_goal_request_id.is_some() {
                 ("thread/goal/set", Value::Null)
+            } else if let Some(goal) = initial_thread_goal.as_ref().filter(|_| !request.ephemeral) {
+                let goal_params = thread_goal_set_params(&thread_id, goal)?;
+                if let Some(params) = initial_goal_image_params(&thread_id, &request.prompt).await?
+                {
+                    with_rpc_timeout(
+                        "thread/inject_items",
+                        timeout_seconds,
+                        rpc.request("thread/inject_items", params, &mut state),
+                    )
+                    .await?;
+                }
+                ("thread/goal/set", goal_params)
             } else if let Some(goal) = quota_resume
                 .as_ref()
                 .and_then(|recovery| recovery.goal.as_ref())
@@ -3206,6 +3219,9 @@ async fn run_codex_app_server_turn_with_runtime(
                     )),
                 )
             } else {
+                let turn_input = turn_input(&request.prompt);
+                turn_fields.push(("input_items", turn_input.len().to_string()));
+                log_executor_event("codex turn request started", &turn_fields);
                 (
                     "turn/start",
                     turn_start_params(&thread_id, request, &launch_config, turn_input),
@@ -4808,8 +4824,9 @@ struct CodexLocalImage {
     source_path: String,
 }
 
+#[cfg(test)]
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
-    build_codex_launch_config_with_route_scope(request, &request.task_id)
+    build_codex_launch_config_with_route_scope(request, &request.task_id, None)
 }
 
 fn build_codex_launch_config_for_fork(
@@ -4818,7 +4835,7 @@ fn build_codex_launch_config_for_fork(
 ) -> Result<CodexLaunchConfig, String> {
     // A fork owns its route even when the source is running or was opened after a restart.
     let route_scope = format!("fork:{source_thread_id}:{}", uuid::Uuid::new_v4());
-    build_codex_launch_config_with_route_scope(request, &route_scope)
+    build_codex_launch_config_with_route_scope(request, &route_scope, None)
 }
 
 async fn prepare_codex_fork_launch_config(
@@ -4832,6 +4849,7 @@ async fn prepare_codex_fork_launch_config(
 fn build_codex_launch_config_with_route_scope(
     request: &ExecutionRequest,
     route_scope: &str,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
@@ -4905,7 +4923,12 @@ fn build_codex_launch_config_with_route_scope(
             .push(format!("model={model}"));
     }
 
-    provider_routing::configure_request_provider(&mut launch_config, request, route_scope)?;
+    provider_routing::configure_request_provider(
+        &mut launch_config,
+        request,
+        route_scope,
+        gateway_credentials,
+    )?;
 
     mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
@@ -4934,10 +4957,17 @@ fn build_codex_launch_config_with_route_scope(
 
 fn build_codex_launch_config_for_prepared_request(
     prepared: &PreparedCodexExecutionRequest,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<CodexLaunchConfig, String> {
     let config =
         crate::artifact_workspace::bind(&prepared.request, prepared.request.cwd().map(Path::new))
-            .and_then(|()| build_codex_launch_config(&prepared.request));
+            .and_then(|()| {
+                build_codex_launch_config_with_route_scope(
+                    &prepared.request,
+                    &prepared.request.task_id,
+                    gateway_credentials,
+                )
+            });
     cleanup_generated_files_on_error(&prepared.generated_files, config)
 }
 
@@ -4954,13 +4984,12 @@ fn cleanup_generated_files_on_error<T>(
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
     task_id: &str,
-    mut upstream: LocalModelProxyUpstream,
-    routing_model_id: Option<String>,
+    upstream: LocalModelProxyUpstream,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
     official_websocket: bool,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) {
-    upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
     log_executor_event(
         "codex local model router configuring",
@@ -4978,8 +5007,12 @@ fn configure_codex_router(
             ("auth_present", (!upstream.api_key.is_empty()).to_string()),
         ],
     );
-    let local_token =
-        local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
+    let local_token = local_model_proxy::register_codex_route(
+        task_id,
+        upstream,
+        vision_sidecar,
+        gateway_credentials,
+    );
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
@@ -6326,12 +6359,31 @@ async fn prepare_codex_execution_request(
     };
     let mut generated_files = Vec::new();
     text_generation::prepare_text_model_catalog(&mut request, &mut generated_files).await?;
+    let resize_images = !is_official_codex_model(&request.model_config);
+    Ok(prepare_codex_input_attachments(
+        request,
+        generated_files,
+        resize_images,
+    ))
+}
+
+pub(crate) async fn codex_guidance_input(request: ExecutionRequest) -> Vec<Value> {
+    let request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
+    let prepared = prepare_codex_input_attachments(request, Vec::new(), false);
+    turn_input(&prepared.request.prompt)
+}
+
+fn prepare_codex_input_attachments(
+    mut request: ExecutionRequest,
+    mut generated_files: Vec<PathBuf>,
+    resize_images: bool,
+) -> PreparedCodexExecutionRequest {
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
-        return Ok(PreparedCodexExecutionRequest {
+        return PreparedCodexExecutionRequest {
             request,
             generated_files,
-        });
+        };
     }
     log_executor_event(
         "codex attachment payload received",
@@ -6365,7 +6417,6 @@ async fn prepare_codex_execution_request(
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
-    let resize_images = !is_official_codex_model(&request.model_config);
     for attachment in attachments {
         if let Some(local_path) = attachment
             .local_path
@@ -6425,10 +6476,10 @@ async fn prepare_codex_execution_request(
         request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
     }
 
-    Ok(PreparedCodexExecutionRequest {
+    PreparedCodexExecutionRequest {
         request,
         generated_files,
-    })
+    }
 }
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
@@ -6928,9 +6979,20 @@ fn codex_has_full_access(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
 }
 
+fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
+    codex_has_full_access(request) && !external_work::applies(request)
+}
+
 fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str> {
     if !codex_has_full_access(request) {
         return None;
+    }
+    if let Some(permissions) = request.stand_in_task_permissions {
+        return Some(
+            permissions
+                .command_approval
+                .map_or("manual", |mode| mode.as_str()),
+        );
     }
     match request
         .extra
@@ -6946,7 +7008,8 @@ fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str
 
 fn codex_auto_approve_commands(request: &ExecutionRequest) -> bool {
     codex_full_access_command_approval(request) == Some("automatic")
-        && stand_in_approval::native_reviewer(request).is_none()
+        && (request.stand_in_task_permissions.is_some()
+            || stand_in_approval::native_reviewer(request).is_none())
 }
 
 fn automatic_command_approval_id(message: &Value, enabled: bool) -> Option<Value> {
@@ -6982,7 +7045,7 @@ pub(crate) fn prepare_codex_runtime_notification(
     automatic_command_approval_id(message, codex_auto_approve_commands(request)).is_none()
         && prepare_runtime_notification(
             message,
-            codex_has_full_access(request),
+            codex_auto_approve_mcp_tool_calls(request),
             crate::runtime_work::stand_in_requires_confirmation(request),
         )
 }
@@ -7172,6 +7235,49 @@ fn provider_switch_boundary_inject_params(thread_id: &str) -> Value {
         "threadId": thread_id,
         "items": [local_model_proxy::provider_switch_boundary_item()],
     })
+}
+
+async fn initial_goal_image_params(
+    thread_id: &str,
+    prompt: &Value,
+) -> Result<Option<Value>, String> {
+    let mut content = Vec::new();
+    let images = prompt
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(turn_image_input);
+    for item in images {
+        let image_url = match item["type"].as_str() {
+            Some("localImage") => {
+                let path = item["path"]
+                    .as_str()
+                    .ok_or("Goal image has no local path")?;
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .map_err(|error| format!("Cannot read Goal image: {error}"))?;
+                let format = image::guess_format(&bytes)
+                    .map_err(|error| format!("Cannot identify Goal image format: {error}"))?;
+                format!(
+                    "data:{};base64,{}",
+                    format.to_mime_type(),
+                    STANDARD.encode(bytes)
+                )
+            }
+            Some("image") => item["url"]
+                .as_str()
+                .ok_or("Goal image has no URL")?
+                .to_owned(),
+            _ => continue,
+        };
+        content.push(json!({"type": "input_image", "image_url": image_url, "detail": "high"}));
+    }
+    Ok((!content.is_empty()).then(|| {
+        json!({
+            "threadId": thread_id,
+            "items": [{"type": "message", "role": "user", "content": content}],
+        })
+    }))
 }
 
 fn thread_goal_set_params(thread_id: &str, goal: &Value) -> Result<Value, String> {
@@ -7423,16 +7529,9 @@ fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Val
             .get("text")
             .and_then(Value::as_str)
             .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
-        "input_image" => item
-            .get("image_url")
-            .or_else(|| item.get("url"))
-            .and_then(Value::as_str)
-            .map(|url| vec![json!({"type": "image", "url": url})]),
-        "image" => image_input(item).map(|item| vec![item]),
-        "localImage" | "local_image" => item
-            .get("path")
-            .and_then(Value::as_str)
-            .map(|path| vec![json!({"type": "localImage", "path": path})]),
+        "input_image" | "image" | "localImage" | "local_image" => {
+            turn_image_input(item).map(|item| vec![item])
+        }
         "skill" => match (
             item.get("name").and_then(Value::as_str),
             item.get("path").and_then(Value::as_str),
@@ -7456,6 +7555,22 @@ fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Val
             .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
     }
     .unwrap_or_default()
+}
+
+fn turn_image_input(item: &Value) -> Option<Value> {
+    match item.get("type").and_then(Value::as_str)? {
+        "input_image" => item
+            .get("image_url")
+            .or_else(|| item.get("url"))
+            .and_then(Value::as_str)
+            .map(|url| json!({"type": "image", "url": url})),
+        "image" => image_input(item),
+        "localImage" | "local_image" => item
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| json!({"type": "localImage", "path": path})),
+        _ => None,
+    }
 }
 
 fn image_input(item: &Value) -> Option<Value> {
@@ -7664,21 +7779,17 @@ const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
 const MCP_ELICITATION_DECLINE: &str = "Decline";
 const MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval_";
 
+/// Automatic approvals have already been filtered before runtime delivery.
 pub(crate) fn codex_notification_requires_user_input(message: &Value) -> bool {
     match message.get("method").and_then(Value::as_str) {
         Some(
-            "item/commandExecution/requestApproval"
+            "item/tool/requestUserInput"
+            | "item/commandExecution/requestApproval"
             | "item/fileChange/requestApproval"
             | "item/permissions/requestApproval",
         ) => true,
-        Some("item/tool/requestUserInput") => {
-            message_params(message)["standInSingleApproval"] == true
-                || mcp_tool_call_request_user_input_response(message_params(message)).is_none()
-        }
         Some("mcpServer/elicitation/request") => {
             mcp_server_elicitation_request_user_input_params(message_params(message)).is_some()
-                && (message_params(message)["standInSingleApproval"] == true
-                    || !is_mcp_tool_call_approval(message_params(message)))
         }
         _ => false,
     }

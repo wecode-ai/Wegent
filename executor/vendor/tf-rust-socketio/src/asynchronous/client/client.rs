@@ -2,8 +2,8 @@ use std::{
     ops::Deref,
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Weak,
     },
 };
 
@@ -15,13 +15,14 @@ use tf_rust_engineio::header::{HeaderMap, HeaderValue};
 use tokio::{
     sync::RwLock,
     task::JoinHandle,
-    time::{sleep, Duration, Instant},
+    time::{sleep, timeout, Duration, Instant},
 };
 
 use super::{
     ack::Ack,
     builder::ClientBuilder,
     callback::{Callback, DynAsyncCallback},
+    lifetime::{ClientLifetime, TransportCleanup, CLEANUP_TIMEOUT},
 };
 use crate::{
     asynchronous::socket::Socket as InnerSocket,
@@ -84,12 +85,14 @@ impl ReconnectSettings {
 
 /// An in-flight per-packet dispatch task plus whether it is a terminal
 /// notification (Close/Error of a dying session).
-type DispatchTask = (JoinHandle<()>, bool);
+pub(super) type DispatchTask = (JoinHandle<()>, bool);
 
 /// A socket which handles communication with the server. It's initialized with
 /// a specific address as well as an optional namespace to connect to. If `None`
 /// is given the client will connect to the default namespace `"/"`.
-#[derive(Clone)]
+/// Dropping the last caller-owned client cancels its reader and callbacks and
+/// schedules transport cleanup. Callback arguments borrow this lifetime;
+/// explicitly clone a callback's client to retain an owning handle.
 pub struct Client {
     /// The inner socket client to delegate the methods to.
     socket: Arc<RwLock<InnerSocket>>,
@@ -110,6 +113,27 @@ pub struct Client {
     // (Close/Error notifications of a dead session) survive a stream-end
     // abort but are cut by a manual disconnect.
     dispatch_tasks: Arc<std::sync::Mutex<Vec<DispatchTask>>>,
+    shutdown: Arc<AtomicBool>,
+    lifetime: Option<Arc<ClientLifetime>>,
+    weak_lifetime: Weak<ClientLifetime>,
+}
+
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        Self {
+            socket: self.socket.clone(),
+            outstanding_acks: self.outstanding_acks.clone(),
+            nsp: self.nsp.clone(),
+            auth: self.auth.clone(),
+            builder: self.builder.clone(),
+            disconnect_reason: self.disconnect_reason.clone(),
+            session_epoch: self.session_epoch.clone(),
+            dispatch_tasks: self.dispatch_tasks.clone(),
+            shutdown: self.shutdown.clone(),
+            lifetime: self.weak_lifetime.upgrade(),
+            weak_lifetime: self.weak_lifetime.clone(),
+        }
+    }
 }
 
 impl Client {
@@ -118,16 +142,33 @@ impl Client {
     /// `"/"` is taken.
     /// ```
     pub(crate) fn new(socket: InnerSocket, builder: ClientBuilder) -> Result<Self> {
+        let socket = Arc::new(RwLock::new(socket));
+        let dispatch_tasks = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let lifetime = Arc::new(ClientLifetime::new(
+            socket.clone(),
+            dispatch_tasks.clone(),
+            shutdown.clone(),
+        ));
         Ok(Client {
-            socket: Arc::new(RwLock::new(socket)),
+            socket,
             nsp: builder.namespace.to_owned(),
             outstanding_acks: Arc::new(RwLock::new(Vec::new())),
             auth: builder.auth.clone(),
             builder: Arc::new(RwLock::new(builder)),
             disconnect_reason: Arc::new(RwLock::new(DisconnectReason::default())),
             session_epoch: Arc::new(AtomicU64::new(0)),
-            dispatch_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            dispatch_tasks,
+            shutdown,
+            weak_lifetime: Arc::downgrade(&lifetime),
+            lifetime: Some(lifetime),
         })
+    }
+
+    fn background_clone(&self) -> Self {
+        let mut client = self.clone();
+        client.lifetime = None;
+        client
     }
 
     /// Returns the current session epoch: the number of successfully connected
@@ -157,6 +198,16 @@ impl Client {
     /// Connects the client to a server. Afterwards the `emit_*` methods can be
     /// called to interact with the server.
     pub(crate) async fn connect(&self) -> Result<()> {
+        let mut cleanup = TransportCleanup::new(self.socket.clone());
+        let result = self.connect_inner().await;
+        if result.is_err() {
+            TransportCleanup::disconnect(&self.socket).await;
+        }
+        cleanup.disarm();
+        result
+    }
+
+    async fn connect_inner(&self) -> Result<()> {
         // Connect the underlying socket
         self.socket.read().await.connect().await?;
 
@@ -237,9 +288,15 @@ impl Client {
         let reconnect_on_disconnect = builder.reconnect_on_disconnect;
         drop(builder);
 
-        let mut client_clone = self.clone();
+        let mut client_clone = self.background_clone();
 
-        tokio::runtime::Handle::current().spawn(async move {
+        // Cancellation must wait until a concurrently started reader is registered.
+        let mut poll_task = self.lifetime.as_ref().unwrap().poll_task.lock().unwrap();
+        let handle = tokio::runtime::Handle::current().spawn(async move {
+            let _cleanup = TransportCleanup::for_reader(
+                client_clone.socket.clone(),
+                client_clone.shutdown.clone(),
+            );
             loop {
                 let mut stream = client_clone.as_stream().await;
                 // Consume the stream until it returns None and the stream is closed.
@@ -251,6 +308,9 @@ impl Client {
 
                 // Drop the stream so we can once again use `socket_clone` as mutable
                 drop(stream);
+                if !client_clone.shutdown.load(Ordering::Acquire) {
+                    TransportCleanup::disconnect(&client_clone.socket).await;
+                }
 
                 let should_reconnect = match *(client_clone.disconnect_reason.read().await) {
                     DisconnectReason::Unknown => {
@@ -264,7 +324,7 @@ impl Client {
                         // reconnect below can bump it, so the close is
                         // attributed to the dying session (issue #15).
                         let close_epoch = client_clone.session_epoch();
-                        let close_client = client_clone.clone();
+                        let close_client = client_clone.background_clone();
                         client_clone.spawn_dispatch(
                             async move {
                                 if let Some(err) = close_client
@@ -288,6 +348,7 @@ impl Client {
                 };
 
                 if should_reconnect {
+                    let mut reconnected = false;
                     let mut reconnect_attempts = 0;
                     let mut backoff = ExponentialBackoffBuilder::new()
                         .with_initial_interval(Duration::from_millis(reconnect_delay_min))
@@ -304,6 +365,7 @@ impl Client {
                         }
                         match client_clone.reconnect().await {
                             Ok(_) => {
+                                reconnected = true;
                                 trace!("Reconnected after {reconnect_attempts} attempts");
                                 break;
                             }
@@ -317,11 +379,15 @@ impl Client {
                             }
                         }
                     }
+                    if !reconnected {
+                        break;
+                    }
                 } else {
                     break;
                 }
             }
         });
+        *poll_task = Some(handle);
 
         Ok(())
     }
@@ -481,13 +547,47 @@ impl Client {
     /// }
     /// ```
     pub async fn disconnect(&self) -> Result<()> {
+        let mut cleanup = TransportCleanup::for_disconnect(
+            self.socket.clone(),
+            self.dispatch_tasks.clone(),
+            self.weak_lifetime.clone(),
+        );
+        self.shutdown.store(true, Ordering::Release);
         *(self.disconnect_reason.write().await) = DisconnectReason::Manual;
+        if let Some(lifetime) = self.weak_lifetime.upgrade() {
+            lifetime.abort_reader();
+        }
 
         let disconnect_packet =
             Packet::new(PacketId::Disconnect, self.nsp.clone(), None, None, 0, None);
 
-        self.socket.read().await.send(disconnect_packet).await?;
-        self.socket.read().await.disconnect().await?;
+        let result = match timeout(CLEANUP_TIMEOUT, async {
+            let send_result = {
+                let socket = self.socket.read().await;
+                if socket.is_connected() {
+                    match socket.send(disconnect_packet).await {
+                        Err(Error::IllegalActionBeforeOpen()) => Ok(()),
+                        result => result,
+                    }
+                } else {
+                    Ok(())
+                }
+            };
+            let close_result = self.socket.read().await.disconnect().await;
+            send_result.and(close_result)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                self.socket.read().await.release_transport().await;
+                Err(Error::IncompleteIo(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Socket.IO disconnect timed out",
+                )))
+            }
+        };
+        cleanup.disarm();
 
         // Abort all in-flight dispatch tasks (including terminal ones) after
         // the teardown above: no user callback may fire late against the
@@ -498,7 +598,7 @@ impl Client {
         // possible; the ordering above makes it unnecessary.)
         self.abort_dispatch(true);
 
-        Ok(())
+        result
     }
 
     /// Sends a message to the server but `alloc`s an `ack` to check whether the
@@ -598,8 +698,11 @@ impl Client {
         task: impl std::future::Future<Output = ()> + Send + 'static,
         terminal: bool,
     ) {
-        let handle = tokio::spawn(task);
         let mut tasks = self.dispatch_tasks.lock().unwrap();
+        if self.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let handle = tokio::spawn(task);
         // Prune finished handles so the list only holds in-flight tasks.
         tasks.retain(|(h, _)| !h.is_finished());
         tasks.push((handle, terminal));
@@ -609,6 +712,12 @@ impl Client {
     /// `include_terminal` is set. Callers must not hold any other lock while
     /// calling this (it locks the dispatch list).
     fn abort_dispatch(&self, include_terminal: bool) {
+        // Manual teardown owns cancellation until its close sends finish.
+        // In particular, dropping the reader must not cancel a callback that
+        // is currently awaiting its own disconnect().
+        if !include_terminal && self.shutdown.load(Ordering::Acquire) {
+            return;
+        }
         let mut tasks = self.dispatch_tasks.lock().unwrap();
         let mut remaining = Vec::new();
         for (handle, terminal) in tasks.drain(..) {
@@ -648,12 +757,12 @@ impl Client {
         };
 
         if let Some(callback) = on_callback {
-            callback(payload.clone(), self.clone()).await;
+            callback(payload.clone(), self.background_clone()).await;
         }
 
         // Call on_any for all common and custom events.
         if let Some(callback) = on_any_callback {
-            callback(event.clone(), payload, self.clone()).await;
+            callback(event.clone(), payload, self.background_clone()).await;
         }
 
         Ok(())
@@ -673,7 +782,7 @@ impl Client {
             builder.on_close_with_session.clone()
         };
         if let Some(callback) = close_callback {
-            callback(Payload::from(reason), epoch, self.clone()).await;
+            callback(Payload::from(reason), epoch, self.background_clone()).await;
         }
 
         Ok(())
@@ -714,12 +823,12 @@ impl Client {
                 if let Some(ref payload) = socket_packet.data {
                     let mut payload = Payload::from(payload.to_owned());
                     payload.set_ack_id(socket_packet.id);
-                    let _ = ack.callback.deref()(payload, self.clone()).await;
+                    let _ = ack.callback.deref()(payload, self.background_clone()).await;
                 }
                 if let Some(ref attachments) = socket_packet.attachments {
                     if let Some(payload) = attachments.first() {
                         let payload = Payload::Binary(payload.to_owned(), socket_packet.id);
-                        let _ = ack.callback.deref()(payload, self.clone()).await;
+                        let _ = ack.callback.deref()(payload, self.background_clone()).await;
                     }
                 }
             } else {
@@ -795,12 +904,12 @@ impl Client {
         match packet.packet_type {
             PacketId::Ack | PacketId::BinaryAck => {
                 let packet = packet.clone();
-                let client = self.clone();
+                let client = self.background_clone();
                 self.spawn_dispatch(async move { client.handle_ack(&packet).await }, false);
             }
             PacketId::BinaryEvent => {
                 let packet = packet.clone();
-                let client = self.clone();
+                let client = self.background_clone();
                 self.spawn_dispatch(
                     async move {
                         if let Err(err) = client.handle_binary_event(&packet).await {
@@ -812,7 +921,7 @@ impl Client {
             }
             PacketId::Connect => {
                 *(self.disconnect_reason.write().await) = DisconnectReason::default();
-                let client = self.clone();
+                let client = self.background_clone();
                 // Terminal: survives a stream-end abort so a connect-then-
                 // immediate-transport-drop still runs the Connect callback.
                 self.spawn_dispatch(
@@ -830,7 +939,7 @@ impl Client {
                 // this dying session's generation (issue #15).
                 self.abort_dispatch(false);
                 let epoch = self.session_epoch();
-                let client = self.clone();
+                let client = self.background_clone();
                 self.spawn_dispatch(
                     async move {
                         let _ = client
@@ -841,7 +950,7 @@ impl Client {
                 );
             }
             PacketId::ConnectError => {
-                let client = self.clone();
+                let client = self.background_clone();
                 let message = String::from("Received an ConnectError frame: ")
                     + packet
                         .data
@@ -851,12 +960,12 @@ impl Client {
                     async move {
                         let _ = client.callback(&Event::Error, message, None).await;
                     },
-                    false,
+                    true,
                 );
             }
             PacketId::Event => {
                 let packet = packet.clone();
-                let client = self.clone();
+                let client = self.background_clone();
                 self.spawn_dispatch(
                     async move {
                         if let Err(err) = client.handle_event(&packet).await {
@@ -880,7 +989,7 @@ impl Client {
         let socket_clone = (*self.socket.read().await).clone();
         let state = ReaderState {
             socket: socket_clone,
-            client: self.clone(),
+            client: self.background_clone(),
         };
 
         stream::unfold(state, |mut state| async move {
@@ -907,7 +1016,7 @@ impl Client {
                     } else {
                         // Terminal: the stream yields Err and ends right after, so
                         // a plain task would be aborted before it ever runs.
-                        let client = state.client.clone();
+                        let client = state.client.background_clone();
                         let message = err.to_string();
                         state.client.spawn_dispatch(
                             async move {
@@ -954,6 +1063,10 @@ impl Drop for ReaderState {
         self.client.abort_dispatch(false);
     }
 }
+
+#[cfg(test)]
+#[path = "test_async_lifetime.rs"]
+mod test_async_lifetime;
 
 #[cfg(test)]
 mod test {

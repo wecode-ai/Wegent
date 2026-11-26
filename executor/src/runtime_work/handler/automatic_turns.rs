@@ -727,6 +727,7 @@ mod tests {
                 .create_project(serde_json::from_value(json!({"name":"Authority"})).unwrap())
                 .unwrap();
             let mut settings = store.personal_stand_in(7, "device-1").unwrap();
+            settings["roles"] = json!([crate::test_env::stand_in_role("device-1")]);
             settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
             settings["roles"][0]["enabled"] = json!(true);
             settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":project.id,"store":"local"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}});

@@ -418,6 +418,9 @@ def test_backlog_view_round_trips_without_changing_issue_fields(
         headers=headers,
         json={"title": "Unplanned", "status": "inbox", "tags": ["bug"]},
     ).json()
+    issue_path = f"/api/v1/loop-items/{issue['id']}"
+    before = test_client.get(issue_path, headers=headers)
+    assert before.status_code == 200, before.text
     config = {
         "schema_version": 1,
         "default_view_id": "stages",
@@ -443,5 +446,6 @@ def test_backlog_view_round_trips_without_changing_issue_fields(
     assert saved.json()["board_views"] == config
     read = test_client.get(f"/api/v1/projects/{project['id']}", headers=headers)
     assert read.json()["board_views"] == config
-    persisted = test_client.get(f"/api/v1/loop-items/{issue['id']}", headers=headers)
-    assert persisted.json() == issue
+    persisted = test_client.get(issue_path, headers=headers)
+    assert persisted.status_code == 200, persisted.text
+    assert persisted.json() == before.json()

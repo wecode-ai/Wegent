@@ -1,6 +1,7 @@
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { cn } from '@/lib/utils'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { issueNeedsUser, issueWaitingSince, pendingIssueHumanRequests } from '@wegent/collaboration'
@@ -12,7 +13,7 @@ import {
 import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { InteractionDraftRecovery } from './InteractionDraftRecovery'
 import { InteractionTime } from './InteractionTime'
 import { RuntimeInteractionReply } from './RuntimeInteractionReply'
@@ -55,6 +56,88 @@ interface PendingWorkRow {
 function originalUrl(row: PendingWorkRow): string {
   return row.originalUrl || (row.address ? weworkTaskScheme(row.address) : '')
 }
+
+const PendingWorkListRow = memo(function PendingWorkListRow({
+  id,
+  source,
+  timestamp,
+  title,
+  question,
+  waitingSince,
+  projectItem,
+  history,
+  selected,
+  dismissLabel,
+  dismissDisabled,
+  onSelect,
+  onDismiss,
+}: Pick<
+  PendingWorkRow,
+  'id' | 'source' | 'timestamp' | 'title' | 'question' | 'waitingSince' | 'projectItem'
+> & {
+  history: boolean
+  selected: boolean
+  dismissLabel: string
+  dismissDisabled: boolean
+  onSelect: (id: string) => void
+  onDismiss: (id: string) => void
+}) {
+  return (
+    <div className="group relative">
+      <ControlButton
+        variant="unstyled"
+        type="button"
+        data-testid="interaction-list-item"
+        data-project-issue={projectItem ? 'true' : undefined}
+        data-interaction-id={id}
+        aria-pressed={selected}
+        className={cn(
+          'mb-0.5 flex w-full items-start rounded-md px-2.5 py-1.5 text-left text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
+          !history && 'pr-12 md:pr-9',
+          selected && 'bg-[rgb(var(--color-sidebar-active))]'
+        )}
+        onClick={() => onSelect(id)}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-baseline justify-between gap-2">
+            <span className="truncate text-base" title={projectItem ? question : title}>
+              {projectItem ? question : title || question}
+            </span>
+            <span className="shrink-0 tabular-nums">
+              <InteractionTime timestamp={timestamp} testId="interaction-list-time" />
+            </span>
+          </span>
+          {title && question && title !== question && (
+            <span
+              data-testid="interaction-list-summary"
+              className="block truncate text-xs text-text-secondary"
+              title={projectItem ? title : question}
+            >
+              {projectItem ? title : question}
+            </span>
+          )}
+          {!history && source === 'project' && waitingSince && (
+            <IssueWaitingTime since={waitingSince} />
+          )}
+        </span>
+      </ControlButton>
+      {!history && (
+        <ControlButton
+          variant="unstyled"
+          type="button"
+          data-testid="interaction-dismiss"
+          aria-label={dismissLabel}
+          title={dismissLabel}
+          disabled={dismissDisabled}
+          className="absolute right-1 top-1.5 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+          onClick={() => onDismiss(id)}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </ControlButton>
+      )}
+    </div>
+  )
+})
 
 export function RuntimeInteractionsPage({
   selectedId,
@@ -174,11 +257,10 @@ export function RuntimeInteractionsPage({
     enabled: !twoPanes && showList && focusListRequested,
     selector: 'button[aria-pressed="true"], :scope:not(:has(button[aria-pressed="true"])) h2',
   })
-  if (!interactions) return null
-  const { pending, errors } = interactions
-  const loading = interactions.loading || projectIssues.loading
+  const pending = interactions?.pending ?? []
+  const loading = interactions?.loading || projectIssues.loading
   const rows: PendingWorkRow[] = history
-    ? interactions.history.map(item => ({
+    ? (interactions?.history ?? []).map(item => ({
         ...item,
         source: interactionSource(item),
         timestamp: item.answeredAt,
@@ -216,7 +298,7 @@ export function RuntimeInteractionsPage({
         }),
       ]
   const dismissRows = async (entries: PendingWorkRow[]) => {
-    if (!page.beginDismiss()) return
+    if (!interactions || !page.beginDismiss()) return
     const isCurrent = page.capture()
     try {
       for (const entry of entries) {
@@ -257,6 +339,19 @@ export function RuntimeInteractionsPage({
       page.finishDismiss()
     }
   }
+  const selectRow = useCallback(
+    (id: string) => {
+      setSelected(id)
+      setContextRowId(null)
+      setShowList(false)
+    },
+    [setSelected, setShowList]
+  )
+  const dismissRow = useStableEvent((id: string) => {
+    const entry = rows.find(item => item.id === id)
+    if (entry) void dismissRows([entry])
+  })
+  const dismissLabel = t('interactions.skip')
   const row = selected ? rows.find(item => item.id === selected) : rows[0]
   const pendingQuestion = row ? pending.find(item => item.id === row.id) : undefined
   const liveQuestion = pendingQuestion?.cached ? undefined : pendingQuestion
@@ -268,26 +363,45 @@ export function RuntimeInteractionsPage({
   )
   const showContext = Boolean(row && (contextRowId === row.id || !showProcessing))
   const projectPreview = Boolean(row?.projectItem && showContext)
-  const openOriginal = row && (
-    <ControlButton
-      variant="ghost"
-      size="sm"
-      type="button"
-      data-testid="interaction-open-original"
-      className="shrink-0 text-text-secondary"
-      onClick={() =>
-        openWeworkScheme(
-          originalNavigation?.id === row.id ? originalNavigation.url : originalUrl(row)
-        )
-      }
-    >
-      {t('interactions.open_original')}
-      <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-    </ControlButton>
+  const rowUrl = row ? originalUrl(row) : null
+  const navigatedUrl = originalNavigation?.id === row?.id ? originalNavigation?.url : undefined
+  const openOriginal = useMemo(
+    () =>
+      rowUrl !== null && (
+        <ControlButton
+          variant="ghost"
+          size="sm"
+          type="button"
+          data-testid="interaction-open-original"
+          className="shrink-0 text-text-secondary"
+          onClick={() => openWeworkScheme(navigatedUrl ?? rowUrl)}
+        >
+          {t('interactions.open_original')}
+          <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </ControlButton>
+      ),
+    [rowUrl, navigatedUrl, t]
   )
-  const detailTime = row && (
-    <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
+  const timestamp = row?.timestamp
+  const detailTime = useMemo(
+    () =>
+      timestamp === undefined ? null : (
+        <InteractionTime timestamp={timestamp} testId="interaction-detail-time" />
+      ),
+    [timestamp]
   )
+  const issueHeaderActions = useMemo(
+    () =>
+      projectPreview && (
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2">
+          {detailTime}
+          {openOriginal}
+        </div>
+      ),
+    [projectPreview, detailTime, openOriginal]
+  )
+  if (!interactions) return null
+  const { errors } = interactions
   return (
     <main
       data-testid="runtime-interactions-page"
@@ -379,69 +493,22 @@ export function RuntimeInteractionsPage({
                     <span data-testid={`interaction-source-count-${source}`}>{entries.length}</span>
                   </h2>
                   {entries.map(entry => (
-                    <div key={entry.id} className="group relative">
-                      <ControlButton
-                        variant="unstyled"
-                        type="button"
-                        data-testid="interaction-list-item"
-                        data-project-issue={entry.projectItem ? 'true' : undefined}
-                        data-interaction-id={entry.id}
-                        aria-pressed={row?.id === entry.id}
-                        className={cn(
-                          'mb-0.5 flex w-full items-start rounded-md px-2.5 py-1.5 text-left text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
-                          !history && 'pr-12 md:pr-9',
-                          row?.id === entry.id && 'bg-[rgb(var(--color-sidebar-active))]'
-                        )}
-                        onClick={() => {
-                          setSelected(entry.id)
-                          setContextRowId(null)
-                          setShowList(false)
-                        }}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="flex min-w-0 items-baseline justify-between gap-2">
-                            <span
-                              className="truncate text-base"
-                              title={entry.projectItem ? entry.question : entry.title}
-                            >
-                              {entry.projectItem ? entry.question : entry.title || entry.question}
-                            </span>
-                            <span className="shrink-0 tabular-nums">
-                              <InteractionTime
-                                timestamp={entry.timestamp}
-                                testId="interaction-list-time"
-                              />
-                            </span>
-                          </span>
-                          {entry.title && entry.question && entry.title !== entry.question && (
-                            <span
-                              data-testid="interaction-list-summary"
-                              className="block truncate text-xs text-text-secondary"
-                              title={entry.projectItem ? entry.title : entry.question}
-                            >
-                              {entry.projectItem ? entry.title : entry.question}
-                            </span>
-                          )}
-                          {!history && entry.source === 'project' && entry.waitingSince && (
-                            <IssueWaitingTime since={entry.waitingSince} />
-                          )}
-                        </span>
-                      </ControlButton>
-                      {!history && (
-                        <ControlButton
-                          variant="unstyled"
-                          type="button"
-                          data-testid="interaction-dismiss"
-                          aria-label={t('interactions.skip')}
-                          title={t('interactions.skip')}
-                          disabled={dismissing || interactions.busy.has(entry.id)}
-                          className="absolute right-1 top-1.5 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                          onClick={() => void dismissRows([entry])}
-                        >
-                          <X className="h-4 w-4" aria-hidden="true" />
-                        </ControlButton>
-                      )}
-                    </div>
+                    <PendingWorkListRow
+                      key={entry.id}
+                      id={entry.id}
+                      source={entry.source}
+                      timestamp={entry.timestamp}
+                      title={entry.title}
+                      question={entry.question}
+                      waitingSince={entry.waitingSince}
+                      projectItem={entry.projectItem}
+                      history={history}
+                      selected={row?.id === entry.id}
+                      dismissLabel={dismissLabel}
+                      dismissDisabled={dismissing || interactions.busy.has(entry.id)}
+                      onSelect={selectRow}
+                      onDismiss={dismissRow}
+                    />
                   ))}
                 </div>
               )
@@ -588,14 +655,7 @@ export function RuntimeInteractionsPage({
                       url={originalUrl(row)}
                       address={row.address}
                       active={active && showContext}
-                      issueHeaderActions={
-                        projectPreview && (
-                          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2">
-                            {detailTime}
-                            {openOriginal}
-                          </div>
-                        )
-                      }
+                      issueHeaderActions={issueHeaderActions}
                     />
                   </WorkbenchErrorBoundary>
                 </div>

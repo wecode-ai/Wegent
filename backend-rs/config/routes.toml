@@ -362,6 +362,9 @@ path = "/api/attachments/task/:task_id/all"
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/tasks"
 [[routes]]
+methods = ["DELETE"]
+path = "/api/v1/loop-items/:item_id/collaborators/:collaborator_user_id"
+[[routes]]
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/assistant-participations"
 [[routes]]
@@ -652,6 +655,15 @@ path = "/api/auth/wework/refresh"
 [[routes]]
 methods = ["POST"]
 path = "/api/connector-runtime/token"
+
+# Connector authorization precheck and user-bound OAuth links for external services.
+[[routes]]
+methods = ["GET"]
+path = "/api/external/connector-apps/:slug/authorization"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/external/connector-apps/:slug/oauth/start"
 
 # `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
 # and probe the upstream (`apps_installed::refresh_endpoint`). The handler and
@@ -1236,6 +1248,32 @@ path = "/api/plugins/local-sync/complete"
 [[routes]]
 methods = ["POST"]
 path = "/api/plugins/native-auth/exchange"
+
+# Creating an Issue can optionally associate a project in the same transaction.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items"
+
+# Assistant sharing uses explicit recipient grants.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/assistant-shares"
+[[routes]]
+methods = ["GET", "PATCH"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source"
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/assistant-shares/:kind/:source/recipients/:recipient"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source/snapshot/:mode"
+
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/v1/assistant-shares/owner-sync"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/assistant-shares/:owner/:kind/:source/copied"
 
 # First-class independent Issues have no project or space.
 [[routes]]

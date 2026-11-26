@@ -1,6 +1,5 @@
 import type { RefObject } from 'react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { computeStreamingScrollStep, STREAM_FOLLOW_SETTLE_PX } from './streamingScrollFollow'
 import {
   getConversationScrollSnapshot,
   type ConversationScrollSnapshot,
@@ -47,7 +46,6 @@ export interface ConversationScrollInput {
   autoScrollSuspended?: boolean
   initialScrollPosition?: 'restore' | 'latest'
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
-  geometry: unknown
 }
 type ScrollConfiguration = Omit<
   ConversationScrollInput,
@@ -63,7 +61,7 @@ interface ScrollPorts {
 type ViewportMode = 'follow' | 'read' | 'navigate' | 'drag'
 interface ScrollSnapshot {
   mode: ViewportMode
-  motionActive: boolean
+  virtualAnchorToEnd: boolean
   showScrollButton: boolean
   turnNavigationLoading: boolean
   turnNavigationTargetMessageId: string | null
@@ -105,7 +103,9 @@ export function createConversationScrollState(
       : listeners.size > 0)
   let state: ScrollSnapshot = {
     mode: 'follow',
-    motionActive: false,
+    virtualAnchorToEnd:
+      !initialInput.autoScrollSuspended &&
+      !initialInput.messages.some(message => message.status === 'streaming'),
     showScrollButton: false,
     turnNavigationLoading: false,
     turnNavigationTargetMessageId: null,
@@ -113,8 +113,11 @@ export function createConversationScrollState(
     viewport: null,
     interaction: null,
   }
-  function publish(change: Partial<ScrollSnapshot>) {
+  function publish(change: Partial<ScrollSnapshot> = {}) {
     const next = { ...state, ...change }
+    // A streaming viewport already disables TanStack follow during native animation.
+    next.virtualAnchorToEnd =
+      next.mode === 'follow' && !streaming && !autoScrollSuspended && nativeFollow === null
     if (
       Object.keys(next).every(
         key => next[key as keyof ScrollSnapshot] === state[key as keyof ScrollSnapshot]
@@ -176,12 +179,7 @@ export function createConversationScrollState(
   let restoreNeedsDistance = false
   let inputActive = false
   let inputDirection: 'backward' | 'forward' | null = null
-  const motion: {
-    frame: SafeAnimationFrameHandle | null
-    position: number | null
-    velocity: number
-    at: number | null
-  } = { frame: null, position: null, velocity: 0, at: null }
+  let nativeFollow: { viewport: HTMLDivElement; end: number } | null = null
   let layoutFrame: SafeAnimationFrameHandle | null = null
   let followBehavior: 'auto' | 'smooth' = 'auto'
   let initializedKey: string | null | undefined
@@ -191,15 +189,18 @@ export function createConversationScrollState(
     readerState.selfScrollOffset = 0
     readerState.lastMeasuredLayout = null
   }
+  const cancelNativeFollow = () => {
+    const active = nativeFollow
+    nativeFollow = null
+    if (!active || !owned()) return
+    const { viewport } = active
+    viewport.scrollTo({ top: viewport.scrollTop, behavior: 'instant' })
+  }
   const cancelMotion = () => {
     if (layoutFrame) cancelSafeAnimationFrame(layoutFrame)
     layoutFrame = null
-    if (motion.frame !== null) cancelSafeAnimationFrame(motion.frame)
-    motion.frame = null
-    motion.position = null
-    motion.velocity = 0
-    motion.at = null
-    publish({ motionActive: false })
+    cancelNativeFollow()
+    publish()
     readVirtualizer()?.cancelScroll()
   }
   const changeMode = (next: ViewportMode) => {
@@ -225,12 +226,13 @@ export function createConversationScrollState(
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport) return
+    const currentOffset = viewport.scrollTop
+    if (top === currentOffset) {
+      readerState.lastScrollPosition = currentOffset
+      return
+    }
     command = true
-    const engine = readVirtualizer()
-    if (engine) {
-      engine.cancelScroll()
-      engine.scrollToOffset(top, { behavior: 'auto' })
-    } else
+    try {
       recordConversationScrollWrite(
         viewport,
         CONVERSATION_SCROLL_WRITE_SOURCE.controllerBottom,
@@ -240,8 +242,14 @@ export function createConversationScrollState(
           else viewport.scrollTop = top
         }
       )
-    command = false
+    } finally {
+      command = false
+    }
     readerState.lastScrollPosition = viewport.scrollTop
+  }
+  const publishScrollButton = (distanceFromBottom: number) => {
+    const showScrollButton = distanceFromBottom > BOTTOM_THRESHOLD
+    if (state.showScrollButton !== showScrollButton) publish({ showScrollButton })
   }
   const save = (measuredDistanceFromBottomPx?: number) => {
     if (!owned()) return
@@ -264,11 +272,20 @@ export function createConversationScrollState(
     }
     lastSnapshot = { key: currentScrollKey, snapshot }
     if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
-    // Follow steps already measured the range and read back their applied offset.
-    publish({
-      showScrollButton:
-        (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD,
-    })
+    publishScrollButton(measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport))
+  }
+  const followEnd = (viewport: HTMLDivElement, animate: boolean) => {
+    const nativeHeight = viewport.scrollHeight
+    const engine = readVirtualizer()
+    // A visible tail owns instant restoration, even when the task is still running.
+    // Markdown can grow in this commit before the virtualizer publishes row sizes.
+    const useNativeBottom =
+      !animate && engine && engine.range?.endIndex === engine.options.count - 1
+    const height =
+      engine && !useNativeBottom
+        ? Math.min(nativeHeight, Math.round(engine.getTotalSize() + engine.options.scrollMargin))
+        : nativeHeight
+    return Math.max(0, height - viewport.clientHeight)
   }
   const follow = (smooth = false) => {
     if (!owned()) return
@@ -281,22 +298,26 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
-    const distanceFromBottom = motion.position === null ? getDistanceFromBottom(viewport) : null
-    if (distanceFromBottom !== null && distanceFromBottom < 1) {
+    const animate = nativeFollow !== null || smooth || followBehavior === 'smooth'
+    const end = followEnd(viewport, animate)
+    const distanceFromBottom = Math.max(0, end - viewport.scrollTop)
+    if (distanceFromBottom < 1) {
       cancelMotion()
       save(distanceFromBottom)
       return
     }
-    const animate = smooth || followBehavior === 'smooth' || motion.frame !== null
-    if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    if (
+      !animate ||
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ||
+      typeof viewport.scrollTo !== 'function'
+    ) {
       cancelMotion()
-      const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
       writeOffset(end)
       save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
       return
     }
-    if (motion.frame !== null) return
-    motion.position ??= viewport.scrollTop
+    if (nativeFollow?.viewport === viewport && nativeFollow.end === end) return
+    nativeFollow = { viewport, end }
     const engine = readVirtualizer()
     if (engine) {
       engine.cancelScroll()
@@ -306,42 +327,9 @@ export function createConversationScrollState(
         scrollEndThreshold: -1,
       })
     }
-    publish({ motionActive: true })
-    const advance = (now: number) => {
-      motion.frame = null
-      if (
-        !owned() ||
-        state.mode !== 'follow' ||
-        autoScrollSuspended ||
-        state.turnNavigationLoading ||
-        state.turnNavigationTargetMessageId
-      ) {
-        cancelMotion()
-        return
-      }
-      const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-      // Keep subpixel progress even when the browser quantizes scrollTop writes.
-      const position = Math.min(end, motion.position ?? viewport.scrollTop)
-      const lag = Math.max(0, end - position)
-      if (lag <= STREAM_FOLLOW_SETTLE_PX) {
-        writeOffset(end)
-        cancelMotion()
-        save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
-        return
-      }
-      const step = computeStreamingScrollStep(
-        lag,
-        motion.velocity,
-        motion.at === null ? 16 : now - motion.at
-      )
-      motion.at = now
-      motion.velocity = step.velocityPxPerSecond
-      motion.position = Math.min(end, position + step.advancePx)
-      writeOffset(motion.position)
-      publish({ showScrollButton: false })
-      motion.frame = requestSafeAnimationFrame(advance)
-    }
-    motion.frame = requestSafeAnimationFrame(advance)
+    publish()
+    viewport.scrollTo({ top: end, behavior: 'smooth' })
+    if (state.showScrollButton) publish({ showScrollButton: false })
   }
   const handleContentLayoutChange = () => {
     if (!owned()) return
@@ -358,6 +346,7 @@ export function createConversationScrollState(
       restoreConversationAnchor(viewport, snapshot)
     } else if (state.mode === 'read') restoreReaderPositionFromLayout()
     else follow()
+    if (state.mode === 'read') publishScrollButton(getDistanceFromBottom(viewport))
     traceHistoryLayout('layout')
   }
   const handleVirtualLayoutChange = () => {
@@ -372,6 +361,29 @@ export function createConversationScrollState(
       layoutFrame = null
       handleContentLayoutChange()
     })
+  }
+  let layoutObserver: ResizeObserver | null = null
+  let observedViewport: HTMLDivElement | null = null
+  let observedContent: HTMLDivElement | null = null
+  function stopObservingLayout() {
+    layoutObserver?.disconnect()
+    layoutObserver = null
+    observedViewport = null
+    observedContent = null
+  }
+  function observeLayout() {
+    const viewport = scrollRef.current
+    const content = contentRef.current
+    if (viewport === observedViewport && content === observedContent) return
+    stopObservingLayout()
+    if (!viewport || !content || typeof ResizeObserver === 'undefined') return
+    // Scroll handling only needs size changes. Reading and publishing both
+    // bounds on every scroll step also rerenders the entire transcript.
+    layoutObserver = new ResizeObserver(handleVirtualLayoutChange)
+    layoutObserver.observe(viewport)
+    layoutObserver.observe(content)
+    observedViewport = viewport
+    observedContent = content
   }
   const preserveScrollPositionForNextLayout = () => {
     if (!owned()) return
@@ -456,6 +468,7 @@ export function createConversationScrollState(
       interaction: externalScrollInteractionRef?.current ?? null,
     })
     if (!owned()) return
+    observeLayout()
     if (previousViewport !== state.viewport) cancelMotion()
     const changed =
       !previousInput ||
@@ -468,8 +481,7 @@ export function createConversationScrollState(
     else if (
       refresh ||
       previousViewport !== state.viewport ||
-      previousInteraction !== state.interaction ||
-      previousInput.geometry !== next.geometry
+      previousInteraction !== state.interaction
     )
       handleContentLayoutChange()
   }
@@ -650,13 +662,19 @@ export function createConversationScrollState(
       save()
       pointerStepObserved = true
     } else if (state.mode === 'read') handleContentLayoutChange()
-    else follow()
+    else if (nativeFollow === null) follow()
+    else readerState.lastScrollPosition = viewport.scrollTop
   }
   const endInput = () => {
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport) return
     if (state.mode === 'drag') return
+    if (!inputActive && state.mode === 'follow' && nativeFollow?.viewport === viewport) {
+      if (Math.abs(nativeFollow.end - viewport.scrollTop) > 1) return
+      nativeFollow = null
+      publish()
+    }
     inputActive = false
     save()
   }
@@ -730,6 +748,7 @@ export function createConversationScrollState(
       setConversationScrollSnapshot(currentScrollKey, lastSnapshot.snapshot)
   }
   function stop() {
+    stopObservingLayout()
     cancelMotion()
     reader.dispose()
     persist()
@@ -739,11 +758,13 @@ export function createConversationScrollState(
   }
   return {
     getSnapshot: () => state,
-    subscribe(listener: () => void, next: ConversationScrollInput, ports: ScrollPorts) {
+    update(next: ConversationScrollInput, ports: ScrollPorts) {
       ;({ contentRef, virtualizerRef } = ports)
+      commit(next)
+    },
+    subscribe(listener: () => void) {
       stopped = false
       listeners.add(listener)
-      commit(next)
       return () => {
         listeners.delete(listener)
         queueMicrotask(() => {
@@ -773,7 +794,10 @@ export function createConversationScrollState(
       )
       return () => {
         if (contentLease !== lease) return
+        // Cancel the native animation while this content still owns the viewport.
+        cancelNativeFollow()
         contentLease = null
+        stopObservingLayout()
         if (ports.owner.lease === lease) {
           ports.owner.lease = null
           if (contentRef.current === node) contentRef.current = null

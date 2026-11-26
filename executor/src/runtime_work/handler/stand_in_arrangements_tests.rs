@@ -102,6 +102,13 @@ async fn collaboration_chat_inherits_primary_settings_with_separate_persistent_h
         handler.identity_conversation_address(collaboration["taskId"].as_str().unwrap())["taskId"],
         collaboration["taskId"]
     );
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        handler.codex_app_server.request("test/stop", json!({})),
+    )
+    .await
+    .expect("fake Codex stdio server must stop before runtime shutdown")
+    .unwrap();
 }
 
 #[tokio::test]
@@ -605,6 +612,7 @@ fn a_locally_enabled_role_provisions_review_when_the_primary_is_paused() {
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     store.materialize_implicit_primary(7, "device").unwrap();
     let mut settings = store.personal_stand_in(7, "device").unwrap();
+    settings["roles"] = json!([crate::test_env::stand_in_role("device")]);
     settings["primary"]["enabled"] = json!(false);
     settings["roles"][0]["enabled"] = json!(true);
     settings["roles"][0]["selfLearningEnabled"] = json!(true);

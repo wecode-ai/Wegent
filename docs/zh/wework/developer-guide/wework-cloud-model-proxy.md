@@ -58,7 +58,7 @@ OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "mess
 
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
-官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和助理共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
+本机路由和云端网关在转发前映射顶层 `model`。显式透传保留其余 JSON 字节，包括工具说明、历史 ID、数字格式和空白。内置 ChatGPT 订阅会单独转换其他供应商的推理历史，使切换模型后仍可继续会话。
 
 例如，Kimi Responses 可配置为：
 
@@ -170,7 +170,9 @@ executor 验证工具结果保留、无重复用户消息、自动恢复与取�
 
 ### Codex 外部上下文转换
 
-Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。executor 为 Responses、Chat Completions 和 Anthropic Messages 转换请求时，会在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍通过各自协议的调用 ID 与原调用配对。
+
+Responses 适配会添加 `[tool_result without a matching tool_call]` 来源标记，并保留原生 `input_image` 和 `input_file` 内容块。
 
 ### Codex 子代理消息转换
 

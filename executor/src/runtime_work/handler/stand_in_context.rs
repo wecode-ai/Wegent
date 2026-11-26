@@ -148,8 +148,11 @@ impl RuntimeWorkRpcHandler {
             .find(|link| link.local_task_id == task)
             .ok_or_else(invalid)?;
         let current = self.local_task_link(&task).ok_or_else(invalid)?;
-        if !self.memory_review_source_visible(original, identity.user, &store)
-            || !self.memory_review_source_visible(&current, identity.user, &store)
+        let scope = self.conversation_scope(identity, &store)?;
+        if !self.conversation_visible(original, identity, &scope, &store)
+            || !self.conversation_visible(&current, identity, &scope, &store)
+            || !self.source_visible_for_search(original, identity, &scope, &store)
+            || !self.source_visible_for_search(&current, identity, &scope, &store)
         {
             return Err(AppIpcError::new(
                 "permission_denied",
@@ -246,13 +249,20 @@ impl RuntimeWorkRpcHandler {
         }
         // Revalidate every returned source after all awaited reads.
         let store = LocalTaskStore::open(self.task_store_path.as_ref());
+        let scope = store
+            .as_ref()
+            .ok()
+            .and_then(|store| self.conversation_scope(&identity, store).ok());
         hits.retain(|hit| {
+            let Some(scope) = &scope else {
+                return false;
+            };
             store.as_ref().ok().is_some_and(|store| {
                 self.local_task_link(hit["taskId"].as_str().unwrap_or_default())
                     .is_some_and(|link| {
                         self.validate_history_delivery(&identity, &link, store)
                             .is_ok()
-                            && self.memory_review_source_visible(&link, identity.user, store)
+                            && self.source_visible_for_search(&link, &identity, scope, store)
                     })
             })
         });
@@ -298,7 +308,9 @@ mod tests {
         handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-        store.personal_stand_in(7, "mac").unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "actor".into(), runtime: "chat".into(),
             runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac","standInId":"default"},"executionRequest":{"user_id":7}}),

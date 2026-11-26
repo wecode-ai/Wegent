@@ -42,6 +42,7 @@ import {
 } from './capability-router.js'
 import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
+import { observeSmartAppInstall } from './smart-app-install-diagnostics.js'
 import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { OpenAiCatalogStore } from './openai-catalog-store.js'
@@ -617,14 +618,25 @@ export function createElectronCapabilityRouter(
     return browser.capture(label)
   })
   router.register('browser.pauseDownload', params =>
-    browser.pauseDownload(stringParam(params, 'id'))
+    browser.downloads.pause(stringParam(params, 'id'))
   )
   router.register('browser.resumeDownload', params =>
-    browser.resumeDownload(stringParam(params, 'id'))
+    browser.downloads.resume(stringParam(params, 'id'))
   )
   router.register('browser.deleteDownload', params =>
-    browser.deleteDownload(stringParam(params, 'id'))
+    browser.downloads.delete(stringParam(params, 'id'))
   )
+  router.register('browser.listDownloads', () => browser.downloads.list())
+  router.register('browser.removeDownloadRecord', params =>
+    browser.downloads.removeRecord(stringParam(params, 'id'))
+  )
+  router.register('browser.openDownload', params =>
+    browser.downloads.openFile(stringParam(params, 'id'), false)
+  )
+  router.register('browser.revealDownload', params =>
+    browser.downloads.openFile(stringParam(params, 'id'), true)
+  )
+  router.register('browser.openDownloadsFolder', () => browser.openDownloadsFolder())
   router.register('browser.setRequestHeaderRule', params =>
     browser.setRequestHeaderRule({
       id: stringParam(params, 'id'),
@@ -1434,15 +1446,21 @@ export function createElectronCapabilityRouter(
       releaseId: requiredIntegerParam(params, 'releaseId'),
     })
   )
-  router.register('smartApps.install', params =>
-    requiredSmartApps(smartApps).install({
-      archivePath: stringParam(params, 'archivePath'),
-      expectedSha256: stringParam(params, 'expectedSha256'),
-      modelKey: nullableStringParam(params, 'modelKey'),
-      smartAppId: nullableIntegerParam(params, 'smartAppId'),
-      releaseId: nullableIntegerParam(params, 'releaseId'),
-    })
-  )
+  router.register('smartApps.install', async params => {
+    const observe = observeSmartAppInstall(process.env)
+    observe?.('handler_received')
+    try {
+      return await requiredSmartApps(smartApps).install({
+        archivePath: stringParam(params, 'archivePath'),
+        expectedSha256: stringParam(params, 'expectedSha256'),
+        modelKey: nullableStringParam(params, 'modelKey'),
+        smartAppId: nullableIntegerParam(params, 'smartAppId'),
+        releaseId: nullableIntegerParam(params, 'releaseId'),
+      })
+    } finally {
+      observe?.('handler_finished')
+    }
+  })
   router.register('smartApps.start', params =>
     requiredSmartApps(smartApps).start({
       installationId: stringParam(params, 'installationId'),
@@ -1936,6 +1954,7 @@ export function registerBrowserHistoryCapabilities(
       endTimeMs: nullableIntegerParam(params, 'endTimeMs') ?? null,
       offset: integerParam(params, 'offset') ?? 0,
       maxResults: integerParam(params, 'maxResults') ?? 100,
+      ...(params.distinctUrls === true && { distinctUrls: true }),
     })
   )
   router.register('browser.historyRemove', params =>

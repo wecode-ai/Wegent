@@ -21,10 +21,11 @@ impl LocalEmit for GatewayEmit {
 }
 
 pub(crate) async fn deliver(state: &AppState, pending: Pending) {
-    wegent_project_notifications::deliver(
+    wegent_project_notifications::deliver_with_issue_im_recipient(
         &state.mysql,
         state.redis.as_ref(),
         &GatewayEmit,
+        state.issue_im_recipient.as_deref(),
         pending,
     )
     .await;

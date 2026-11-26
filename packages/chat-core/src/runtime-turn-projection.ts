@@ -10,6 +10,17 @@ import type {
   WorkbenchMessage,
 } from "./runtime-conversation";
 
+type UserItem = Extract<RuntimeConversationItem, { type: "user_message" }>;
+
+const userProjections = new WeakMap<
+  UserItem,
+  { turnId: string | null; message: WorkbenchMessage }
+>();
+const textTurnProjections = new WeakMap<
+  RuntimeConversationTurn,
+  WorkbenchMessage[]
+>();
+
 export function runtimeAssistantViewId(
   turnId: string,
   anchor = "assistant",
@@ -40,9 +51,46 @@ export function projectRuntimeConversationTurns(
       .filter((block) => block.type === "subagent")
       .map((block) => [block.id, block]),
   );
-  return turns.flatMap((turn) =>
-    projectTurn(turn, blocksById, nonSubagentParentIds),
-  );
+  return turns.flatMap((turn) => {
+    const cached = textTurnProjections.get(turn);
+    if (cached) return cached;
+    const messages = projectTurn(turn, blocksById, nonSubagentParentIds);
+    // Tool blocks can share ownership across turns; only text turns are local.
+    if (
+      turn.items.every(
+        (item) =>
+          item.type === "assistant_text" ||
+          (item.type === "user_message" && !item.message.runtimeGuidance),
+      )
+    ) {
+      textTurnProjections.set(turn, messages);
+    }
+    return messages;
+  });
+}
+
+function projectUserItem(
+  item: UserItem,
+  turnId: string | null,
+): WorkbenchMessage {
+  const cached = userProjections.get(item);
+  if (cached?.turnId === turnId) return cached.message;
+  const parsedContexts = parseCodeCommentContexts(item.message.content);
+  const message = {
+    ...item.message,
+    ...(turnId ? { turnId, subtaskId: turnId } : {}),
+    runtimeItemId: item.id,
+    ...(parsedContexts
+      ? {
+          content: parsedContexts.content,
+          codeComments: item.message.codeComments?.length
+            ? item.message.codeComments
+            : parsedContexts.codeComments,
+        }
+      : {}),
+  };
+  userProjections.set(item, { turnId, message });
+  return message;
 }
 
 function projectTurn(
@@ -92,6 +140,7 @@ function projectTurn(
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
       runtimeMessageIndex: turn.runtimeMessageIndex,
+      runtimeClientUserMessageId: turn.clientUserMessageId ?? undefined,
       blocks: blocks.length > 0 ? blocks : undefined,
       runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(
         (item) =>
@@ -129,23 +178,7 @@ function projectTurn(
         assistantItems.some((item) => item.type === "assistant_text");
       if (splitsReply) flushAssistant(false, hadAssistant);
       hasUser = true;
-      const parsedContexts = parseCodeCommentContexts(item.message.content);
-      const userMessage = {
-        ...item.message,
-        ...(turn.id ? { turnId: turn.id, subtaskId: turn.id } : {}),
-        runtimeItemId: item.id,
-      };
-      messages.push(
-        parsedContexts
-          ? {
-              ...userMessage,
-              content: parsedContexts.content,
-              codeComments: item.message.codeComments?.length
-                ? item.message.codeComments
-                : parsedContexts.codeComments,
-            }
-          : userMessage,
-      );
+      messages.push(projectUserItem(item, turn.id));
       followsGuidance = item.message.runtimeGuidance === true;
       // Output items can be reordered or recovered while the same reply streams.
       // Only user boundaries establish another assistant view within a turn.

@@ -1,5 +1,6 @@
 import type { CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
+import { X } from 'lucide-react'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -67,6 +68,7 @@ import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
 import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -85,6 +87,8 @@ export interface ProjectChatControls {
   requiresNewSession?: boolean
   onSessionStartConfirmed?(model: UnifiedModel): void
   selectedModelOptions: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
+  permissionError?: { message: string; dismiss(): void }
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
   trialPluginName?: string
@@ -148,12 +152,9 @@ export interface ProjectWorkControls {
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
   branchLoading?: boolean
-  onRefreshBranch?: () => Promise<void>
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-  onGenerateBranchName?: (sourceText: string) => Promise<string>
-  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   // When false, the project trigger renders a static folder icon instead of the
@@ -183,6 +184,7 @@ export interface ChatInputProps {
   requireText?: boolean
   allowEmptySubmit?: boolean
   error?: string | null
+  onDismissError?: () => void
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
@@ -327,6 +329,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     requireText = false,
     allowEmptySubmit = false,
     error,
+    onDismissError,
     disabledReason,
     placeholder,
     inputTestId,
@@ -481,8 +484,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   const projectQuickPhrases =
     projectPhrases ??
     (isDeviceRuntimeProject(currentRuntimeProject)
-      ? (currentRuntimeProject?.aiSettings?.quickPhrases ?? [])
-      : [])
+      ? currentRuntimeProject?.aiSettings?.quickPhrases
+      : undefined)
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const editor = composerRef.current
     if (!editor) return
@@ -649,7 +652,28 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     followUpBehavior,
     isStreaming,
   }
-  const errorBanner = <ComposerErrorBanner error={error} />
+  const dismissError = controls.permissionError?.dismiss ?? onDismissError
+  const errorBanner = (
+    <ComposerErrorBanner
+      error={controls.permissionError?.message ?? error}
+      action={
+        dismissError && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 text-current md:h-7 md:w-7"
+            aria-label={t('workbench.dismiss_composer_error')}
+            title={t('workbench.dismiss_composer_error')}
+            data-testid="dismiss-chat-input-error"
+            onClick={dismissError}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )
+      }
+    />
+  )
   const quotaWaitStatus = (
     <QuotaWaitStatus
       onCancel={onPause}
@@ -742,6 +766,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             selectedModel={controls.selectedModel}
             activeModel={controls.activeModel}
             selectedModelOptions={controls.selectedModelOptions}
+            permissionControls={controls.permissionControls}
             modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
             onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
             isModelSelectionReady={controls.isModelSelectionReady ?? true}
@@ -925,6 +950,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           selectedModel={controls.selectedModel}
           activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
+          permissionControls={controls.permissionControls}
           onSelectModel={model => requestModelSelection(model)}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}

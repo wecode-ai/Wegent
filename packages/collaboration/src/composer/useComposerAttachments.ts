@@ -1,10 +1,14 @@
 import { useCallback, useState, useSyncExternalStore } from 'react'
+import type { Attachment } from '@wegent/chat-core/runtime'
 import {
   createComposerAttachmentsModel,
   type ComposerAttachmentsModel,
   type ComposerAttachmentsOptions,
 } from './composerAttachmentsModel'
-export { createComposerAttachmentsModel } from './composerAttachmentsModel'
+export {
+  createComposerAttachmentsModel,
+  includeDraftAttachmentGroup,
+} from './composerAttachmentsModel'
 export type {
   ComposerAttachmentsModel,
   ComposerAttachmentsOptions,
@@ -13,10 +17,23 @@ export type {
 } from './composerAttachmentsModel'
 
 export function useComposerAttachments(
-  options: ComposerAttachmentsOptions,
+  options: ComposerAttachmentsOptions & { initialAttachments?: Attachment[] },
   providedModel?: ComposerAttachmentsModel
 ) {
-  const [ownedModel] = useState(() => providedModel ?? createComposerAttachmentsModel(options))
+  const [ownedModel] = useState(
+    () =>
+      providedModel ??
+      createComposerAttachmentsModel(
+        options,
+        options.initialAttachments === undefined
+          ? undefined
+          : {
+              ...options.initialState,
+              scopeKey: options.scopeKey ?? options.initialState?.scopeKey,
+              attachments: options.initialAttachments.map(attachment => ({ attachment })),
+            }
+      )
+  )
   const model = providedModel ?? ownedModel
   const { uploadAttachment, deleteAttachment, onAction } = options
   const scopeKey = options.scopeKey ?? 'default'

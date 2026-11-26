@@ -1,3 +1,4 @@
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleResolver } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   runtimeTaskSummaryTrackingExecutionStatus,
@@ -31,10 +32,11 @@ export function PersonalHomeIssueActivity({
 }) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const resolveLifecycle = useRuntimeTaskLifecycleResolver()
   const [taskAnchor, setTaskAnchor] = useState<HTMLButtonElement | null>(null)
   const tasks = bindings.map(binding => {
-    const reminder = workbench?.runtimeTaskReminders.items.find(
+    const reminder = taskReminderItems.find(
       item => item.address.deviceId === binding.deviceId && item.address.taskId === binding.taskId
     )
     const lifecycle = resolveLifecycle(binding) ?? reminder?.lifecycle
@@ -130,7 +132,7 @@ export function PersonalHomeIssueActivity({
           }}
         >
           <SquareTerminal aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-          <span className="min-w-0 max-w-sm truncate">{names}</span>
+          <span className="collaboration-issue-task-names min-w-0 max-w-sm truncate">{names}</span>
           <span className="shrink-0">{countLabel}</span>
           {counts
             .filter(([status]) => status !== 'unknown')

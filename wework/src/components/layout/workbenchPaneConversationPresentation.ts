@@ -1,8 +1,91 @@
 import type { getRuntimeConversationSnapshot } from '@/features/workbench/runtimeConversationCache'
+import { latestConnectorAuthMessage } from '@/features/plugins/localConnectorAuthGate'
 import type { RuntimeConversationItem, RuntimeConversationTurn } from '@/types/workbench'
 import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
 
 type Conversation = ReturnType<typeof getRuntimeConversationSnapshot>
+
+export interface PaneTranscript {
+  getSnapshot: () => Conversation
+  subscribe: (listener: () => void) => () => void
+}
+
+function equalExcept<T extends object>(before: T, after: T, ...omitted: (keyof T)[]) {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)] as (keyof T)[])
+  return [...keys].every(key => omitted.includes(key) || Object.is(before[key], after[key]))
+}
+
+function grows(before: string, after: string) {
+  return after.length > before.length && after.startsWith(before)
+}
+
+function isReasoningUpdate(before: RuntimeConversationTurn, after: RuntimeConversationTurn) {
+  if (!equalExcept(before, after, 'items', 'streamingThinkingContent')) return false
+  return before.items.every((item, index) => {
+    const next = after.items[index]
+    return (
+      item === next ||
+      (item.type === 'block' &&
+        next.type === 'block' &&
+        item.block.type === 'thinking' &&
+        next.block.type === 'thinking' &&
+        item.block.status === 'streaming' &&
+        equalExcept(item, next, 'block') &&
+        equalExcept(item.block, next.block, 'content', 'contentOriginalChars', 'contentTruncated'))
+    )
+  })
+}
+
+/** Updates to an established reply's text or reasoning can leave the pane chrome untouched. */
+export function isTranscriptOnlyStreamingUpdate(previous: Conversation, current: Conversation) {
+  const before = previous.turns.at(-1)
+  const after = current.turns.at(-1)
+  if (
+    !before ||
+    !after ||
+    before.status !== 'streaming' ||
+    previous.turns.length !== current.turns.length ||
+    previous.turns.some(
+      (turn, index) => index < previous.turns.length - 1 && turn !== current.turns[index]
+    ) ||
+    before.items.length !== after.items.length
+  ) {
+    return false
+  }
+  if (isReasoningUpdate(before, after)) return true
+  if (
+    !equalExcept(before, after, 'items') ||
+    before.items.some(
+      (item, index) => index < before.items.length - 1 && item !== after.items[index]
+    )
+  ) {
+    return false
+  }
+
+  const first = before.items.at(-1)
+  const next = after.items.at(-1)
+  // Authorization is derived from the tail message, including its live text.
+  if (latestConnectorAuthMessage(previous.messages) || latestConnectorAuthMessage(current.messages))
+    return false
+  if (first?.type === 'assistant_text' && next?.type === 'assistant_text') {
+    return (
+      equalExcept(first, next, 'content', 'streamTextOffset') && grows(first.content, next.content)
+    )
+  }
+  if (
+    first?.type === 'block' &&
+    next?.type === 'block' &&
+    first.block.type === 'text' &&
+    next.block.type === 'text'
+  ) {
+    return (
+      equalExcept(first, next, 'block') &&
+      equalExcept(first.block, next.block, 'content') &&
+      grows(first.block.content, next.block.content)
+    )
+  }
+  return false
+}
 
 function deferTurnText(
   turn: RuntimeConversationTurn,

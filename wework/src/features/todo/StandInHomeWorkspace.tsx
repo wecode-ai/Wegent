@@ -1,7 +1,8 @@
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -18,7 +19,7 @@ import {
   LoaderCircle,
   Settings,
 } from 'lucide-react'
-import { useContext, useState } from 'react'
+import { useState } from 'react'
 import { StandInConversation } from './StandInConversation'
 import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -41,7 +42,7 @@ type Props = {
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
   const { t } = useTranslation('common')
-  const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const [view, setView] = useState('conversation')
   const inbox = useStandInInbox(
     services.standInApi,
@@ -52,12 +53,7 @@ export function StandInHomeWorkspace(props: Props) {
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
   >([])
-  const items = mergeStandInWorkItems(
-    workbench?.runtimeTaskReminders.items ?? [],
-    inbox.items,
-    deviceId,
-    projects
-  )
+  const items = mergeStandInWorkItems(taskReminderItems, inbox.items, deviceId, projects)
     .filter(item => {
       const origin = standInOrigin(item)
       return (
@@ -272,6 +268,24 @@ export function StandInHomeWorkspace(props: Props) {
                               ? CircleAlert
                               : Circle
                       const work = inbox.items.find(work => work.taskId === item.task.taskId)
+                      const decisionLabel = delegationResultLabel(work?.delegationResult)
+                      if (work?.source.delegated && !work.task) {
+                        return (
+                          <div
+                            key={item.key}
+                            data-testid={`personal-home-delegated-work-${item.task.taskId}`}
+                            className="px-4 py-3 text-sm"
+                          >
+                            <p className="font-medium">{item.task.title}</p>
+                            {decisionLabel && <p>{t(decisionLabel)}</p>}
+                            {work.delegationResult?.reason && (
+                              <p className="break-words text-xs text-text-secondary">
+                                {work.delegationResult.reason}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      }
                       const status =
                         work && work.status !== 'sent'
                           ? t(`standIn.workspace.inbox_${work.status}`)

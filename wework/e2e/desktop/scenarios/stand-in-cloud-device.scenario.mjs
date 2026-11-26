@@ -17,12 +17,7 @@ import {
 import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
-import {
-  CLOUD_DEVICE_ID,
-  REMOTE_DOCKER_DEVICE_ID,
-  fetchJson,
-  selectE2EModel,
-} from '../modules/shared.mjs'
+import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, fetchJson } from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -155,13 +150,12 @@ export function createDesktopScenario({
     return selector
   }
   async function sendChat(control, selector, message) {
-    await selectE2EModel(control, undefined, undefined, selector)
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
     })
-    await control.command('waitFor', `${selector} [data-testid="send-message-button"]:enabled`)
-    await control.command('press', `${selector} [data-testid="chat-message-input"]`, {
-      key: 'Enter',
+    // Model selection can still disable submission while the composer is mounted.
+    await control.command('clickWhenEnabled', `${selector} [data-testid="send-message-button"]`, {
+      visible: true,
     })
   }
   async function observeDevice(control, device, status) {

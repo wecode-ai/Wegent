@@ -4,6 +4,8 @@
   "scenarioOnly": true,
   "paths": [
     "wework/e2e/desktop/modules/managed-python.mjs",
+    "wework/e2e/desktop/modules/plugin-python-mcp.mjs",
+    "executor/crates/plugin-packages/src/local/capabilities/python_mcp.rs",
     "wework/electron/src/runtime/python-runtime*",
     "wework/src/desktop/executionEnvironments*",
     "wework/src/components/settings/ExecutionEnvironmentsSettingsPage*"

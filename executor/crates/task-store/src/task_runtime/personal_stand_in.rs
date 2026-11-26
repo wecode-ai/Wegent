@@ -1,15 +1,32 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wegent_protocol::StandInTaskPermissions;
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
+#[path = "stand_in_dots_delegation.rs"]
+mod dots_delegation;
 use connections::validate_connections;
+#[path = "personal_stand_in_share_copy.rs"]
+mod share_copy;
+#[path = "personal_stand_in_share_sync.rs"]
+mod share_sync;
+pub use share_copy::assistant_share_copy_revision;
+pub use share_sync::AssistantShareCopyReceipt;
+#[path = "personal_stand_in_teams.rs"]
+mod teams;
 pub use connections::{
     connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
     source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
     training_source_granted,
 };
+pub use dots_delegation::{
+    active_delegated_source, is_primary_dingtalk, permits_delegated_message,
+    permits_delegated_reply, requires_dingtalk_delegation,
+};
+pub use teams::{stand_in_team, supports_role_delegation, team_scope_id, StandInTeam};
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
@@ -29,18 +46,29 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
         .into_iter()
         .flatten()
     {
-        changed |= migrate_agent_binding(identity)?;
-        changed |= migrate_identity_connections(identity)?;
-        changed |= migrate_connection_timing(identity, immediate);
+        changed |= normalize_stand_in_identity(identity, immediate)?;
     }
     if value["primary"].is_object() {
-        changed |= migrate_agent_binding(&mut value["primary"])?;
-        changed |= migrate_identity_connections(&mut value["primary"])?;
-        changed |= migrate_connection_timing(&mut value["primary"], immediate);
+        changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
+        changed |= dots_delegation::migrate_delegation_version(&mut value["primary"]);
     }
     changed |= value
         .as_object_mut()
         .is_some_and(|fields| fields.remove("processing").is_some());
+    Ok(changed)
+}
+
+pub(super) fn normalize_stand_in_identity(
+    identity: &mut Value,
+    immediate: bool,
+) -> Result<bool, TaskRuntimeError> {
+    let mut changed = migrate_agent_binding(identity)?;
+    changed |= migrate_identity_connections(identity)?;
+    changed |= migrate_connection_timing(identity, immediate);
+    changed |= identity
+        .get_mut("workspace")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|workspace| workspace.remove("workspacePath").is_some());
     Ok(changed)
 }
 
@@ -160,7 +188,7 @@ pub(super) fn empty_role(id: &str, device: &str) -> Value {
 
 fn empty_personal(user: i64, device: &str) -> Value {
     json!({"userId":user,"executionDeviceId":device,"version":0,
-        "roles":[empty_role("default", device)]})
+        "roles":[]})
 }
 
 pub(super) fn personal_key(user: i64) -> String {
@@ -296,6 +324,11 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
                 .is_some_and(|rows| rows.iter().any(matches)))
 }
 
+pub fn role_receives_participating_issues(role: &Value) -> bool {
+    role["collaboration"]["enabled"] == true
+        && role["collaboration"]["includeParticipatingIssues"] == true
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -357,8 +390,17 @@ pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
             "invalid personal stand-in role".into(),
         ));
     }
+    validate_task_permissions(role)?;
     validate_connections(role)?;
     super::stand_in::validate_execution_settings(role)
+}
+
+fn validate_task_permissions(identity: &Value) -> Result<(), TaskRuntimeError> {
+    if let Some(permissions) = identity.get("taskPermissions") {
+        StandInTaskPermissions::deserialize(permissions)
+            .map_err(|_| TaskRuntimeError::Invalid("invalid Stand-in task permissions".into()))?;
+    }
+    Ok(())
 }
 
 fn validate_policy(policy: &Value) -> bool {
@@ -377,6 +419,7 @@ mod session_policy_tests {
     #[test]
     fn role_devices_survive_profile_reads_and_primary_identity_changes() {
         let mut settings = empty_personal(7, "mac");
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["executionDeviceId"] = json!("remote");
         settings["primary"] = implicit_primary();
         bind_personal_device(&mut settings, "new-mac");
@@ -393,10 +436,18 @@ mod session_policy_tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(settings["roles"], json!([]));
+        store.materialize_implicit_primary(7, "mac").unwrap();
+        settings = store.personal_stand_in(7, "mac").unwrap();
+        let identities = stand_in_identities(&settings);
+        assert_eq!(identities.len(), 1);
+        assert_eq!(identities[0]["id"], "@primary");
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["executionDeviceId"] = json!("remote");
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let restored = store.personal_stand_in(7, "mac").unwrap();
         assert_eq!(restored["executionDeviceId"], "mac");
+        assert_eq!(restored["roles"][0]["id"], "default");
         assert_eq!(restored["roles"][0]["executionDeviceId"], "remote");
     }
 
@@ -430,6 +481,9 @@ fn valid_collaboration(source: &Value) -> bool {
         && source
             .get("includeIndependentIssues")
             .map_or(true, Value::is_boolean)
+        && source
+            .get("includeParticipatingIssues")
+            .map_or(true, Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
         && source["tags"].as_array().is_some_and(|tags| {
@@ -455,6 +509,69 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
         identity["sharedPreferences"] = settings["primary"]["preferences"].clone();
     }
     identities
+}
+
+pub fn matches_delegation_account(settings: &Value, role: &Value, source: &Value) -> bool {
+    if role != "@primary" || source_provider(source) != DINGTALK_PROVIDER {
+        return source["delegated"] != true;
+    }
+    let policy = &settings["primary"]["delegation"];
+    if policy["accountInvalidated"] == true {
+        return false;
+    }
+    if source["delegated"] != true {
+        return policy["accountId"].is_null();
+    }
+    policy["accountId"].is_string()
+        && policy["accountId"] == source["accountId"]
+        && policy["profile"] == source["profile"]
+}
+
+/// Project a saved identity or team into the fields allowed to leave its account.
+pub fn assistant_share_definition(
+    settings: &Value,
+    kind: &str,
+    id: &str,
+) -> Option<crate::protocol::assistant_share::AssistantShareDefinition> {
+    use crate::protocol::assistant_share::{
+        AssistantDefinition, AssistantShareDefinition, AssistantTeamDefinition,
+    };
+    match kind {
+        "team" => {
+            let team = stand_in_team(settings, id)?;
+            Some(AssistantShareDefinition::Team(AssistantTeamDefinition {
+                id: team.id,
+                name: team.name,
+                lead_id: team.lead_id,
+                members: team.members,
+            }))
+        }
+        "assistant" => {
+            let role = if id == "@primary" {
+                settings.get("primary").filter(|role| role.is_object())
+            } else {
+                settings["roles"].as_array()?.iter().find(|role| {
+                    role["id"] == id && role["executionDeviceId"] == settings["executionDeviceId"]
+                })
+            };
+            if role.is_none() && id != "@primary" {
+                return None;
+            }
+            Some(AssistantShareDefinition::Assistant(AssistantDefinition {
+                id: id.to_owned(),
+                name: role
+                    .and_then(|role| role["name"].as_str())
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or("我的助理")
+                    .to_owned(),
+                prompt: role
+                    .and_then(|role| role["prompt"].as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            }))
+        }
+        _ => None,
+    }
 }
 
 pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
@@ -558,11 +675,58 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.save_personal_stand_in_for_backend(user, device, None, value)
+    }
+
+    pub fn save_personal_stand_in_for_backend(
+        &self,
+        user: i64,
+        device: &str,
+        backend: Option<&str>,
+        value: Value,
+    ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved = self.save_personal_stand_in_on(&connection, user, device, value)?;
+        let saved =
+            self.save_personal_stand_in_on(&connection, user, device, value, backend, true)?;
         connection.commit()?;
         Ok(saved)
+    }
+
+    /// Revoke a verified connector identity change without retiring a newer selection.
+    pub fn invalidate_delegation_account(
+        &self,
+        user: i64,
+        device: &str,
+        source: &Value,
+        expected_version: &Value,
+    ) -> Result<bool, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous = read_personal(&connection, user, device)?;
+        let mut settings = previous.clone();
+        if settings["executionDeviceId"] != device
+            || settings["version"] != *expected_version
+            || !dots_delegation::invalidate_account(&mut settings["primary"], source)?
+        {
+            return Ok(false);
+        }
+        settings["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
+        write_personal(&connection, &settings)?;
+        super::stand_in_ghost_proposals::retire_stale_candidates(
+            &connection,
+            user,
+            &settings["version"],
+        )?;
+        super::stand_in_processing::update_processing_configuration(
+            &connection,
+            user,
+            &previous,
+            &settings,
+        )?;
+        super::stand_in_telemetry::configuration_changes(&connection, user, &previous, &settings);
+        connection.commit()?;
+        Ok(true)
     }
 
     /// Update a routing reference without applying intake changes to local identities.
@@ -622,7 +786,7 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let result = self
-            .save_personal_stand_in_on(&transaction, user, device, value)
+            .save_personal_stand_in_on(&transaction, user, device, value, None, true)
             .map(|_| ());
         transaction.rollback()?;
         result
@@ -635,6 +799,8 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         mut value: Value,
+        backend: Option<&str>,
+        direct_save: bool,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
@@ -664,8 +830,10 @@ impl LocalTaskStore {
             {
                 return Err(TaskRuntimeError::Invalid("invalid primary stand-in".into()));
             }
+            validate_task_permissions(primary)?;
             validate_connections(primary)?;
         }
+        teams::validate_teams(&value)?;
         let mut ids = HashSet::new();
         for role in roles {
             validate_role(role)?;
@@ -674,6 +842,9 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
+        if value.get("primary").is_none() && previous["primary"]["delegation"].is_object() {
+            value["primary"] = previous["primary"].clone();
+        }
         super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
@@ -685,14 +856,28 @@ impl LocalTaskStore {
         }
         if value["primary"].is_object() {
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
+            dots_delegation::save_delegation(
+                &mut value["primary"],
+                &previous["primary"],
+                direct_save,
+            )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
+            dots_delegation::strip_source_markers(role);
             let before = previous["roles"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .find(|before| before["id"] == role["id"]);
+            if before.is_none()
+                && role["migrationSource"].is_string()
+                && role.get("taskPermissions").is_some()
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "A portable Stand-in import cannot carry task permissions".into(),
+                ));
+            }
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
@@ -703,6 +888,11 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        if let Some(backend) = backend.filter(|backend| {
+            !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
+        }) {
+            share_sync::queue_assistant_share_sync(connection, user, backend, &value)?;
+        }
         super::stand_in_ghost_proposals::retire_stale_candidates(
             connection,
             user,
@@ -764,6 +954,18 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    if identity["enabled"] == true && role_receives_participating_issues(identity) {
+        identity["participatingIssuesEnabledAfter"] = if preserve
+            && role_receives_participating_issues(previous)
+            && previous["participatingIssuesEnabledAfter"].is_string()
+        {
+            previous["participatingIssuesEnabledAfter"].clone()
+        } else {
+            enabled_at.clone()
+        };
+    } else if let Some(fields) = identity.as_object_mut() {
+        fields.remove("participatingIssuesEnabledAfter");
+    }
     if identity["enabled"] == true
         && identity["collaboration"]["enabled"] == true
         && identity["collaboration"]["includeIndependentIssues"] == true
@@ -896,6 +1098,7 @@ mod email_policy_tests {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"] = json!([empty_role("default", "mac")]);
         settings["roles"][0]["connections"] = json!([{
             "providerId":"example/events","profile":"account","kind":"resource",
             "id":"shared","name":"Shared","collectionKey":"selected:v1",

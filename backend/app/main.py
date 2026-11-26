@@ -143,7 +143,12 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
 
 
 def _should_capture_http_body(path: str) -> bool:
-    if path.rstrip("/") in SENSITIVE_HTTP_BODY_PATHS:
+    path = path.rstrip("/")
+    if path in SENSITIVE_HTTP_BODY_PATHS:
+        return False
+    if path.startswith(f"{settings.API_PREFIX}/connector-apps/") and path.endswith(
+        "/oauth/sessions"
+    ):
         return False
     return not (
         path.startswith(f"{settings.API_PREFIX}/sites/")

@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { issueCommentFormSelector } from '../modules/issue-comment-selectors.mjs'
 import { setTimeout as poll } from 'node:timers/promises'
@@ -270,8 +271,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
           roles: [
             ...initial.roles,
             {
-              ...initial.roles[0],
-              id: ROLE,
+              ...standInRoleFixture(initial.executionDeviceId, ROLE),
               name: '项目检查助理',
               enabled: true,
               manual: true,

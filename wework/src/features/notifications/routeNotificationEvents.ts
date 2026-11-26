@@ -5,6 +5,7 @@ import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNo
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { parseWeworkScheme, weworkIssueScheme } from './scheme'
 import { ISSUE_ASSIGNMENTS_CHANGED } from '@/features/todo/issueAssignmentEvents'
+import { standInStartFailureCopy } from './standInNotifications'
 
 export interface RouteNotificationInput {
   chatStream: WorkbenchServices['chatStream']
@@ -22,6 +23,7 @@ interface StreamBinding {
 export function createRouteNotificationEvents() {
   const deliveredShares = new Set<string>()
   const deliveredAssignments = new Set<string>()
+  const deliveredStartFailures = new Set<string>()
   let observing = false
   let input: RouteNotificationInput | undefined
   let binding: StreamBinding | undefined
@@ -88,8 +90,27 @@ export function createRouteNotificationEvents() {
         onRuntimeTransportReplaced: () => {
           if (ownsStream()) window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
         },
-        onWeworkNotification: () => {
-          if (ownsStream()) window.dispatchEvent(new Event('wework-notifications-changed'))
+        onWeworkNotification: notification => {
+          if (!ownsStream()) return
+          if (notification?.stored !== false)
+            window.dispatchEvent(new Event('wework-notifications-changed'))
+          const failure = notification?.standInStartFailure
+          const context = input
+          if (
+            !notification ||
+            !failure ||
+            !context ||
+            failure.userId !== context.currentUserId ||
+            getDesktopWindowLabel() !== 'main' ||
+            deliveredStartFailures.has(notification.id) ||
+            !parseWeworkScheme(failure.url)
+          )
+            return
+          deliveredStartFailures.add(notification.id)
+          void sendSystemNotification({
+            ...standInStartFailureCopy(context.t, failure.itemTitle, failure.code),
+            url: failure.url,
+          })
         },
         onIssueShared: ({ id, userId, title, body, url }) => {
           if (

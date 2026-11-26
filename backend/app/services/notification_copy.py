@@ -29,6 +29,7 @@ COLLABORATION_NOTIFICATION_KINDS = (
     "execution",
     "issue_dispatch_assignment",
     "issue_shared",
+    "issue_participation",
 )
 
 
@@ -100,6 +101,19 @@ class NotificationTarget:
             if value:
                 payload[key] = value
         return payload
+
+
+@dataclass(frozen=True)
+class PersonalIssueInvitationTarget:
+    item_id: str
+    item_title: str
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "personalIssueId": self.item_id,
+            "itemTitle": self.item_title,
+            "assigned": False,
+        }
 
 
 @dataclass(frozen=True)

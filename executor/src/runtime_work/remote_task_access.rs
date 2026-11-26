@@ -24,6 +24,7 @@ pub(crate) const TASK_METHODS: &[&str] = &[
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
     "runtime.tasks.send",
+    "runtime.tasks.permissions.set",
     "runtime.tasks.guidance",
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
@@ -118,6 +119,9 @@ impl RemoteTaskAccess {
             "runtime.tasks.send" | "runtime.tasks.transcript" | "runtime.tasks.transcript.search"
         );
         if method == "runtime.runner.catalog"
+            || (access_scope
+                == Some(wegent_protocol::assistant_share::ASSISTANT_SHARE_DEFINITION_SCOPE)
+                && method == wegent_protocol::assistant_share::ASSISTANT_SHARE_DEFINITION_METHOD)
             || (access_scope == Some("project-session") && project_method)
             || (access_scope == Some("stand-in-conversation")
                 && method == "runtime.stand_in.conversation")
@@ -184,6 +188,7 @@ mod tests {
         for method in [
             "runtime.tasks.create",
             "runtime.tasks.guidance",
+            "runtime.tasks.permissions.set",
             "runtime.worktrees.capabilities",
             "runtime.worktrees.preflight",
             "runtime.projects.upsert_local",
@@ -199,6 +204,9 @@ mod tests {
         ] {
             assert!(reader.authorize(method, None).is_err());
             assert!(reader.authorize(method, Some("project-session")).is_err());
+            assert!(reader
+                .authorize(method, Some("stand-in-role-task"))
+                .is_err());
             access.update(json!({"enabled": true})).unwrap();
             assert!(reader.authorize(method, None).is_ok());
             assert!(peer.authorize(method, None).is_err());
@@ -235,6 +243,28 @@ mod tests {
         assert!(access
             .authorize("runtime.tasks.list", Some("project-session"))
             .is_err());
+    }
+
+    #[test]
+    fn assistant_definition_scope_does_not_grant_settings_or_tasks() {
+        use wegent_protocol::assistant_share::{
+            ASSISTANT_SHARE_DEFINITION_METHOD as METHOD, ASSISTANT_SHARE_DEFINITION_SCOPE as SCOPE,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let access = RemoteTaskAccess::new(root.path().join("settings.json"));
+        assert!(access.authorize(METHOD, None).is_err());
+        assert!(access
+            .authorize(METHOD, Some("stand-in-role-task"))
+            .is_err());
+        assert!(access.authorize(METHOD, Some(SCOPE)).is_ok());
+        for method in [
+            "runtime.stand_in.personal.get",
+            "runtime.stand_in.share.publish",
+            "runtime.stand_in.share.copy",
+            "runtime.tasks.transcript",
+        ] {
+            assert!(access.authorize(method, Some(SCOPE)).is_err(), "{method}");
+        }
     }
 
     #[test]

@@ -3,13 +3,19 @@ import {
   openStandInActivity,
 } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
+import {
+  ONBOARDING_FIRST_MESSAGE,
+  ONBOARDING_FOLLOWUP,
+} from './stand-in-onboarding-skip.scenario.mjs'
 import {
   assistantMessage,
   createSse,
@@ -27,35 +33,56 @@ const USER = 9001
 const ROLE = 'silent-review'
 const MARKER = 'SILENT_INTAKE_REAL_ASSIGNMENT'
 const FOLLOWUP = 'SILENT_PROGRESS_CHECK'
+const BACKGROUND_PERMISSION_PROBE = 'BACKGROUND_PERMISSION_PROBE'
+const BACKGROUND_PERMISSION_DONE = 'BACKGROUND_PERMISSION_DONE'
+const BACKGROUND_CONTINUE_CALL = 'background-continue-owner-task'
+const FULL_ACCESS = { permissionMode: 'full-access' }
+
+function assertNativeThreadPermission(log, threadId, profile) {
+  const applied = log
+    .split('\n')
+    .filter(
+      line =>
+        line.includes('codex source sandbox applied ') && line.includes(` thread_id=${threadId} `)
+    )
+  assert.ok(
+    applied.some(
+      line =>
+        line.includes(String.raw`\"id\":\"${profile}\"`) &&
+        line.includes(String.raw`reviewer="\"user\""`)
+    ),
+    `Native Codex thread ${threadId} must apply ${profile} with the human reviewer. Observed: ${applied.join('\n') || 'no application'}`
+  )
+}
 
 function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
-  return JSON.stringify(
-    input.filter(item => {
-      if (
-        item?.type === 'function_call_output' &&
-        item.namespace === 'agent' &&
-        item.name === 'weworkstandinrecall'
-      )
-        return false
-      const text =
-        typeof item?.content === 'string'
-          ? item.content
-          : (item?.content ?? []).map(part => part?.text ?? '').join('')
-      // Quoted recall remains in the real request, but cannot select a scripted command.
-      return !(
-        item?.role === 'user' &&
-        text.trim().startsWith('<external_wework.stand-in.recall>') &&
-        text.trim().endsWith('</external_wework.stand-in.recall>')
-      )
-    })
-  )
+  return input.filter(item => {
+    if (isDetachedResponsesContext(item)) return false
+    if (
+      item?.type === 'function_call_output' &&
+      item.namespace === 'agent' &&
+      item.name === 'weworkstandinrecall'
+    )
+      return false
+    const text =
+      typeof item?.content === 'string'
+        ? item.content
+        : (item?.content ?? []).map(part => part?.text ?? '').join('')
+    // Quoted recall remains in the real request, but cannot select a scripted command.
+    return !(
+      item?.role === 'user' &&
+      text.trim().startsWith('<external_wework.stand-in.recall>') &&
+      text.trim().endsWith('</external_wework.stand-in.recall>')
+    )
+  })
 }
 
 export function createDesktopScenario({
   captureScreenshot,
   workspacePath,
   executorHome,
+  resultDir,
   uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
@@ -64,6 +91,9 @@ export function createDesktopScenario({
   let workCalls = 0
   let ordinaryTaskId
   let createdTaskId
+  let originalRoleTaskId
+  let checkBackgroundPermission = false
+  let backgroundContinueAccepted = false
   let intake
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const meetingStory = createMeetingUserStory({
@@ -124,10 +154,43 @@ export function createDesktopScenario({
       const body = await readRequestBody(req)
       if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
-      const input = processingInput(body)
+      const messages = processingInput(body)
+      const input = JSON.stringify(messages)
+      const latestUserInput = JSON.stringify(
+        messages.findLast(item => item?.role === 'user')?.content ?? []
+      )
       let events = delegatedTaskResultEvents(body)
       if (events) {
         // A result wake is a new host turn, even when its history quotes the original request.
+      } else if (latestUserInput.includes(ONBOARDING_FIRST_MESSAGE)) {
+        events = [assistantMessage(`${ONBOARDING_FIRST_MESSAGE}_ANSWERED`)]
+      } else if (latestUserInput.includes(ONBOARDING_FOLLOWUP)) {
+        events = [assistantMessage(`${ONBOARDING_FOLLOWUP}_ANSWERED`)]
+      } else if (
+        checkBackgroundPermission &&
+        latestUserInput.includes('Review this silent intake batch')
+      ) {
+        if (requestContainsToolOutput(body, BACKGROUND_CONTINUE_CALL)) {
+          const result = JSON.parse(readMcpToolOutput(body, BACKGROUND_CONTINUE_CALL))
+          assert.equal(result.accepted, true, 'The real coordinator must enqueue this follow-up')
+          assert.equal(result.taskId, createdTaskId)
+          backgroundContinueAccepted = true
+          events = [assistantMessage('已安排后台续办。')]
+        } else {
+          events = mcpToolRequestEvents(body, {
+            toolName: 'continue_task',
+            directToolName: 'mcp__wework_stand_in__continue_task',
+            argumentsValue: {
+              taskId: createdTaskId,
+              requestId: BACKGROUND_CONTINUE_CALL,
+              message: BACKGROUND_PERMISSION_PROBE,
+            },
+            searchCallId: `${BACKGROUND_CONTINUE_CALL}-search`,
+            toolCallId: BACKGROUND_CONTINUE_CALL,
+          }).events
+        }
+      } else if (latestUserInput.includes(BACKGROUND_PERMISSION_PROBE)) {
+        events = [assistantMessage(BACKGROUND_PERMISSION_DONE)]
       } else if (input.includes('Review this silent intake batch')) {
         coordinatorCalls++
         const readId = `silent-read-${round}`
@@ -140,9 +203,9 @@ export function createDesktopScenario({
         } else if (requestContainsToolOutput(body, readId)) {
           intake = JSON.parse(readMcpToolOutput(body, readId)).snapshot
           const eventIds = intake.events.map(event => event.id)
-          const taskId = intake.works[0]?.taskId
-          assert.ok(taskId, 'The feedback batch must expose the original work conversation')
-          assert.ok(intake.events.every(event => ['work_state', 'followup'].includes(event.kind)))
+          const taskId = intake.works.find(work => work.taskId === originalRoleTaskId)?.taskId
+          assert.ok(taskId, 'The review batch must expose the original work conversation')
+          assert.ok(intake.events.every(event => event.kind === 'assignment'))
           events = mcpToolRequestEvents(body, {
             toolName: 'continue_work',
             directToolName: 'mcp__wework_stand_in__continue_work',
@@ -159,8 +222,8 @@ export function createDesktopScenario({
             toolCallId: readId,
           }).events
         }
-      } else if (input.includes('PRIMARY_ORCHESTRATE_TASK')) {
-        const followup = input.includes('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
+      } else if (latestUserInput.includes('PRIMARY_ORCHESTRATE_TASK')) {
+        const followup = latestUserInput.includes('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
         const callId = followup ? 'primary-continue-task' : 'primary-create-task'
         if (requestContainsToolOutput(body, callId)) {
           const result = JSON.parse(readMcpToolOutput(body, callId))
@@ -190,12 +253,12 @@ export function createDesktopScenario({
           }).events
         }
       } else if (
-        input.includes('PRIMARY_CONCRETE_WORK') ||
-        input.includes('ORDINARY_PROGRESS_CHECK')
+        latestUserInput.includes('PRIMARY_CONCRETE_WORK') ||
+        latestUserInput.includes('ORDINARY_PROGRESS_CHECK')
       ) {
         events = [
           assistantMessage(
-            input.includes('ORDINARY_PROGRESS_CHECK')
+            latestUserInput.includes('ORDINARY_PROGRESS_CHECK')
               ? 'ORDINARY_FOLLOWUP_DONE'
               : 'PRIMARY_CONCRETE_DONE'
           ),
@@ -242,6 +305,7 @@ export function createDesktopScenario({
               preferences: 'Only delegate concrete work.',
               model,
               workspace,
+              taskPermissions: FULL_ACCESS,
             },
             roles: [
               {
@@ -304,7 +368,7 @@ export function createDesktopScenario({
         assert.equal(configured.roles[0].collaboration.projectPolicies[0].policy.askBeforeAct, true)
         assert.equal(configured.processing, undefined)
         await verifyQueuedAssignmentReceipt(control, project.id)
-        // Direct source routing is explicit; completion feedback still uses the silent window.
+        // Successful direct work must leave coordination idle.
         await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
         await control.command(
@@ -334,6 +398,7 @@ export function createDesktopScenario({
           90000 + modelResponseTimeoutMs
         )
         const taskId = bindings[0].task_id
+        originalRoleTaskId = taskId
         const first = await waitFor(
           () => rpc(control, 'runtime.tasks.get', { taskId }),
           value => value.task?.status === 'done',
@@ -345,16 +410,35 @@ export function createDesktopScenario({
           0,
           'Direct assignment must not require an extra model assessment'
         )
-        const scheduled = await waitFor(
-          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
-          state => state.pendingCount > 0 && Date.parse(state.nextCheckAt) > Date.now() + 4 * 60000,
+        // The earlier receipt-only assignment can still be retiring after this work settles.
+        await waitFor(
+          () => rpc(control, 'runtime.coordination.contexts', {}),
+          discovery =>
+            discovery.contexts.find(context => context.id === `personal:${USER}`)
+              ?.needsProcessing === false,
           uiTimeoutMs
         )
-        assert.equal(scheduled.running, false)
+        const completionDatabase = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'), {
+          readOnly: true,
+        })
+        try {
+          completionDatabase.exec('PRAGMA busy_timeout = 10000')
+          const completionEvents = completionDatabase.prepare(
+            "SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.taskId')=? AND json_extract(metadata,'$.kind')='work_state'"
+          )
+          assert.equal(
+            completionEvents.get(USER, taskId).count,
+            0,
+            'Successful role work must not create a coordination state event'
+          )
+        } finally {
+          completionDatabase.close()
+        }
+        assert.equal(coordinatorCalls, 0, 'Successful role work must not start assessment')
         assert.equal(
           await control.command('getElementCount', '[data-testid="stand-in-processing-notice"]'),
           '0',
-          'Scheduled background feedback without a question or failure must not interrupt the user'
+          'Successful role work must not open a processing notice'
         )
         await captureScreenshot(control, 'silent-02-feedback-without-extra-work.png')
         // Collaboration executions belong to the stand-in work list, not the ordinary task sidebar.
@@ -369,31 +453,41 @@ export function createDesktopScenario({
         await captureScreenshot(control, 'silent-03-concrete-work-created.png')
         const threadId = first.task.runtimeHandle.threadId
         assert.ok(threadId)
+        const settings = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+        settings.roles[0].collaboration.projectPolicies[0].policy.immediate = false
+        await rpc(control, 'runtime.stand_in.personal.save', { userId: USER, settings })
+        const reviewIssue = await rpc(control, 'todos.create', {
+          project_id: project.id,
+          todo: { title: 'Check progress on the original assignment', assignee_user_id: USER },
+        })
+        await waitFor(
+          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
+          state => state.pendingCount > 0 && Date.parse(state.nextCheckAt) > Date.now() + 4 * 60000,
+          uiTimeoutMs
+        )
         // Advance this isolated source's receive window, never a removed global coordinator deadline.
         let dueAt
         const database = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
         try {
           database.exec('PRAGMA busy_timeout = 10000')
-          // Completion precedes the coordinator's observation tick. Other intake
-          // can satisfy pendingCount, so wait for this task's durable completion.
-          const feedbackWhere =
-            "resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.taskId')=? AND json_extract(metadata,'$.kind')='work_state' AND json_extract(metadata,'$.status')='pending' AND json_extract(metadata,'$.state[3]')='done'"
-          const feedback = database.prepare(
-            `SELECT COUNT(*) AS count FROM loop_items WHERE ${feedbackWhere}`
+          const assignmentWhere =
+            "resource_type='stand_in_event' AND json_extract(metadata,'$.userId')=? AND json_extract(metadata,'$.issueId')=? AND json_extract(metadata,'$.kind')='assignment' AND json_extract(metadata,'$.status')='pending'"
+          const assignment = database.prepare(
+            `SELECT COUNT(*) AS count FROM loop_items WHERE ${assignmentWhere}`
           )
           await waitFor(
-            () => feedback.get(USER, taskId).count,
-            count => count > 0,
+            () => assignment.get(USER, reviewIssue.id).count,
+            count => count === 1,
             uiTimeoutMs
           )
           database.exec('BEGIN IMMEDIATE')
           dueAt = Date.now() + 1000
           const changed = database
             .prepare(
-              `UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE ${feedbackWhere}`
+              `UPDATE loop_items SET metadata=json_set(metadata,'$.createdAt',?) WHERE ${assignmentWhere}`
             )
-            .run(new Date(dueAt - 5 * 60000).toISOString(), USER, taskId)
-          assert.ok(changed.changes > 0, 'The real completed work must produce durable feedback')
+            .run(new Date(dueAt - 5 * 60000).toISOString(), USER, reviewIssue.id)
+          assert.equal(changed.changes, 1, 'The real review assignment must be pending')
           database.exec('COMMIT')
         } finally {
           database.close()
@@ -468,6 +562,74 @@ export function createDesktopScenario({
         )
         assert.ok(createdTaskId)
         await captureScreenshot(control, 'silent-06-primary-creates-task.png')
+        const ownerTask = await waitFor(
+          () => rpc(control, 'runtime.tasks.get', { taskId: createdTaskId }),
+          value => value.task?.status === 'done',
+          modelResponseTimeoutMs
+        )
+        assert.deepEqual(ownerTask.task.runtimeHandle.taskPermissions, FULL_ACCESS)
+        const ownerThreadId = ownerTask.task.runtimeHandle.threadId
+        assert.ok(ownerThreadId)
+        const executorLog = join(resultDir, 'executor.log')
+        const ownerLog = await readFile(executorLog, 'utf8')
+        assertNativeThreadPermission(ownerLog, ownerThreadId, ':danger-full-access')
+
+        checkBackgroundPermission = true
+        const permissionReview = await rpc(control, 'todos.create', {
+          project_id: project.id,
+          todo: { title: 'Review the owner task permissions', assignee_user_id: USER },
+        })
+        await waitFor(
+          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
+          state => state.pendingCount > 0,
+          uiTimeoutMs
+        )
+        const scheduledBackground = await rpc(control, 'runtime.coordination.wake', {
+          contextId: `personal:${USER}`,
+        })
+        assert.equal(scheduledBackground.accepted, true)
+        await waitFor(
+          () => rpc(control, 'runtime.tasks.transcript', { taskId: createdTaskId, limit: 20 }),
+          transcript =>
+            backgroundContinueAccepted &&
+            transcript.messages?.some(
+              message =>
+                message.role === 'assistant' &&
+                message.content?.includes(BACKGROUND_PERMISSION_DONE)
+            ),
+          modelResponseTimeoutMs
+        )
+        checkBackgroundPermission = false
+        const review = await rpc(control, 'todos.get', {
+          project_id: project.id,
+          task_id: permissionReview.id,
+        })
+        await rpc(control, 'todos.update', {
+          project_id: project.id,
+          task_id: permissionReview.id,
+          todo: { version: review.version, status: 'completed', assignee_user_id: null },
+        })
+        const backgroundTask = await rpc(control, 'runtime.tasks.get', { taskId: createdTaskId })
+        assert.equal(backgroundTask.task.runtimeHandle.threadId, ownerThreadId)
+        assert.deepEqual(backgroundTask.task.runtimeHandle.taskPermissions, FULL_ACCESS)
+        assertNativeThreadPermission(
+          (await readFile(executorLog, 'utf8')).slice(ownerLog.length),
+          ownerThreadId,
+          'wework-source-read'
+        )
+        const afterPermissionProbe = await rpc(control, 'runtime.stand_in.personal.get', {
+          userId: USER,
+        })
+        await rpc(control, 'runtime.stand_in.personal.save', {
+          userId: USER,
+          settings: {
+            ...afterPermissionProbe,
+            primary: {
+              ...afterPermissionProbe.primary,
+              taskPermissions: initial.primary?.taskPermissions,
+            },
+          },
+        })
         await control.command('fill', input, { value: 'PRIMARY_ORCHESTRATE_TASK_CONTINUE' })
         await control.command('press', input, { key: 'Enter' })
         await control.command(

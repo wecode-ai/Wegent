@@ -1,3 +1,9 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import {
+  waitForElementInsideScroller,
+  waitForOverflowMetrics,
+  waitForSnapshot,
+} from './conversation-layout.mjs'
 import {
   assertCloudAttachmentProjectSelection,
   assertRuntimeTaskAttachments,
@@ -222,4 +228,65 @@ export async function verifyCloudWorkspacePathMentions(
     'file',
     'The cloud workspace file mention was not rendered as a file reference'
   )
+
+  await verifyOverflowingWorkspaceMentions({ composerSelector, control, workspacePath })
+}
+
+async function verifyOverflowingWorkspaceMentions({ composerSelector, control, workspacePath }) {
+  const directory = await mkdtemp(join(workspacePath, 'entries-'))
+  const names = Array.from({ length: 12 }, (_, index) => `picker-item-${index}.txt`)
+  const menuSelector = '[data-testid="local-skill-autocomplete"]'
+  const popupSelector = '[data-testid="composer-autocomplete-popup"]'
+  const optionSelector = '[data-testid^="workspace-mention-option-"]'
+  try {
+    await Promise.all(names.map(name => writeFile(join(directory, name), '')))
+    await control.command('fill', composerSelector, { value: '@picker-item-' })
+    await control.command('waitFor', menuSelector)
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.filter(id => id.startsWith('workspace-mention-option-')).length ===
+        names.length,
+      'The workspace mention search must return all fixture files',
+      DEFAULT_STEP_TIMEOUT_MS,
+      menuSelector
+    )
+    await control.command('scrollToRatioAsUser', popupSelector, { value: '0' })
+    const popup = await waitForOverflowMetrics(
+      control,
+      popupSelector,
+      'The mention popup must overflow'
+    )
+    const options = JSON.parse(
+      await control.command('getElementMetrics', optionSelector, { value: 'includeText' })
+    )
+    const last = options.at(-1)
+    const name = names.find(candidate => last?.text?.startsWith(candidate))
+    assert.ok(name && last.testId, 'The last mention candidate must be a fixture file')
+    assert.ok(
+      last.bottom > popup.bottom,
+      'The last mention candidate must start outside the popup viewport'
+    )
+    const target = `[data-testid="${last.testId}"]`
+    await control.command('scrollToRatioAsUser', popupSelector, { value: '1' })
+    const { scroller } = await waitForElementInsideScroller(
+      control,
+      target,
+      popupSelector,
+      'Scrolling must reveal the off-screen mention candidate',
+      DEFAULT_STEP_TIMEOUT_MS,
+      { clipToViewport: true }
+    )
+    assert.ok(scroller.scrollTop > 0, 'The mention popup did not scroll')
+    await control.command('click', target)
+    const chip = `[data-testid="composer-path-chip-${name.replace('.', '-')}"]`
+    await control.command('waitFor', chip)
+    assert.equal(
+      await control.command('getAttribute', chip, { value: 'data-composer-path-kind' }),
+      'file'
+    )
+    await control.command('fill', composerSelector, { value: '' })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 }

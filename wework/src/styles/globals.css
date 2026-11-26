@@ -16,9 +16,23 @@
   }
 }
 
-/* DSH paints text-field outlines too; pointer focus uses its dedicated token. */
-html[data-input-modality='pointer'] body :focus-visible {
+/* DSH's theme still colors the outline on editable controls during pointer input. */
+:where(html[data-input-modality='pointer']) :read-write:focus-visible {
   --dsw-focus-ring-color: transparent;
+}
+
+/* Controls that draw their own keyboard ring share one visible indicator with DSH. */
+@media (forced-colors: none) {
+  :where(html:not([data-input-modality='pointer']))
+    .outline-none:is(
+      .keyboard\:focus-visible\:ring-1,
+      .keyboard\:focus-visible\:ring-2,
+      .keyboard\:focus\:ring-1,
+      .keyboard\:focus\:ring-2
+    ):focus-visible {
+    --dsw-focus-ring-color: transparent;
+    --tw-ring-color: rgb(var(--color-focus));
+  }
 }
 
 .electron-titlebar-drag-region {
@@ -39,8 +53,8 @@ input.content-find-input:focus-visible {
 
 /* Native drag regions intercept clicks even beneath renderer overlays. */
 body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
-body:has([data-wework-file-preview]) .electron-titlebar-drag-region,
-body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
+body[data-wework-file-preview-open] .electron-titlebar-drag-region,
+body[data-wework-debug-panel-expanded] .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
@@ -54,7 +68,7 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
 }
 
 /* Chromium can omit promoted sidebar overlays from a backdrop filter. */
-body:has([data-testid='cloud-todo-create-panel'])
+body[data-collaboration-issue-create-open]
   :is([data-testid='desktop-sidebar'], [data-testid='collaboration-platform-sidebar'])
   svg {
   filter: blur(2px);
@@ -452,6 +466,26 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 .task-description-editor .bn-side-menu[data-block-type='heading'][data-level='6'] {
   height: 54px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sidebar-connection-event-status[data-state='waiting'] > svg {
+    animation: sidebar-connection-event-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes sidebar-connection-event-pulse {
+  0%,
+  65%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+
+  30% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 
 @keyframes runtime-task-title-sheen {
@@ -2133,8 +2167,6 @@ button.plugin-market-card-menu {
   appearance: none;
   -webkit-appearance: none;
   display: grid;
-  width: 28px;
-  height: 28px;
   place-items: center;
   border: 0;
   border-radius: 8px;

@@ -46,7 +46,7 @@ interface Input {
   >['updateLocalRuntimeTaskSnapshot']
   refreshWorkLists: ReturnType<typeof useWorkbenchDataRefresh>['refreshWorkLists']
   refreshDevices: ReturnType<typeof useWorkbenchDataRefresh>['refreshDevices']
-  draftInputByScope: Record<string, string>
+  draftStore: import('./scopedDraftStore').ScopedDraftStore
   projectChatScopeKey: string
 }
 export function createWorkbenchRuntimeOperations({
@@ -61,7 +61,7 @@ export function createWorkbenchRuntimeOperations({
   updateLocalRuntimeTaskSnapshot,
   refreshWorkLists,
   refreshDevices,
-  draftInputByScope,
+  draftStore,
   projectChatScopeKey,
 }: Input): Pick<
   WorkbenchSessionOperations,
@@ -174,7 +174,6 @@ export function createWorkbenchRuntimeOperations({
           if (delayMs > 0) {
             await new Promise(resolve => globalThis.setTimeout(resolve, delayMs))
           }
-          if (!runtimeTaskSettleSyncActiveRef.current) return
           if (
             !runtimeTaskSettleSyncActiveRef.current ||
             runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation
@@ -185,6 +184,16 @@ export function createWorkbenchRuntimeOperations({
           if (expectedLifecycle?.turn.phase === 'streaming') return
 
           try {
+            if (delayMs === 0 && expectedLifecycle?.task?.executionState) {
+              // Native lifecycle events already drive the current presentation.
+              // Schedule their reconciliation read after the delivery task.
+              await new Promise(resolve => globalThis.setTimeout(resolve, 0))
+              if (
+                !runtimeTaskSettleSyncActiveRef.current ||
+                runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation
+              )
+                return
+            }
             const task = await refreshRuntimeTask(address)
             if (
               !runtimeTaskSettleSyncActiveRef.current ||
@@ -327,9 +336,10 @@ export function createWorkbenchRuntimeOperations({
       inputOverride?: string,
       options?: Parameters<typeof runtimeMessaging.sendCurrentInput>[1]
     ) => {
-      const sent = await runtimeMessaging.sendCurrentInput(inputOverride, options)
+      const submittedInput = inputOverride ?? draftStore.read(projectChatScopeKey).value
+      const sent = await runtimeMessaging.sendCurrentInput(submittedInput, options)
       if (sent) {
-        recordPluginUsageFromInput(inputOverride ?? draftInputByScope[projectChatScopeKey] ?? '')
+        recordPluginUsageFromInput(submittedInput)
       }
       return sent
     },

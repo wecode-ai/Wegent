@@ -143,7 +143,7 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_input(&mut responses_body, api_format);
+    normalize_responses_request_input(&mut responses_body, api_format == "openai-responses");
     group_responses_tool_history(&mut responses_body);
     image_budget::limit_request_images(&mut responses_body);
 
@@ -160,6 +160,13 @@ pub(super) fn prepare_request_with_model_hint(
             detail: format!("Failed to convert local model request: {error}"),
         })?;
         responses_body = converted;
+        if let Some(items) = responses_body
+            .get_mut("input")
+            .and_then(Value::as_array_mut)
+        {
+            merge_tool_outputs(items);
+        }
+        request_policy::strip_incompatible_responses_history_ids(&mut responses_body);
         if tool_capabilities.function_tools_only {
             request_policy::retain_function_tools(&mut responses_body)?;
         }
@@ -190,6 +197,61 @@ pub(super) fn prepare_request_with_model_hint(
         detail: format!("Failed to serialize local model request: {error}"),
     })?;
     Ok((body, Some(context), HashSet::new()))
+}
+
+// Code Mode can emit both the cell result and notify() updates for one call.
+fn merge_tool_outputs(items: &mut Vec<Value>) {
+    let mut first_by_call = std::collections::HashMap::new();
+    let mut removed = false;
+    for index in 0..items.len() {
+        let item = &items[index];
+        if matches!(
+            item["type"].as_str(),
+            Some("function_call" | "custom_tool_call")
+        ) {
+            // Forked history can contain an earlier invocation with the same provider ID.
+            if let Some(id) = item["call_id"].as_str() {
+                first_by_call.remove(id);
+            }
+            continue;
+        }
+        if !matches!(
+            item["type"].as_str(),
+            Some("function_call_output" | "custom_tool_call_output")
+        ) {
+            continue;
+        }
+        let Some(id) = item["call_id"].as_str().filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let first = *first_by_call.entry(id.to_owned()).or_insert(index);
+        if first == index {
+            continue;
+        }
+        let extra = items[index]["output"].take();
+        let output = &mut items[first]["output"];
+        match (&mut *output, extra) {
+            (Value::String(original), Value::String(text)) => {
+                original.push('\n');
+                original.push_str(&text);
+            }
+            (output, extra) => {
+                if !output.is_array() {
+                    *output = json!([{"type":"input_text","text":output.take()}]);
+                }
+                let parts = output.as_array_mut().unwrap();
+                match extra {
+                    Value::Array(more) => parts.extend(more),
+                    text => parts.push(json!({"type":"input_text","text":text})),
+                }
+            }
+        }
+        items[index] = Value::Null;
+        removed = true;
+    }
+    if removed {
+        items.retain(|item| !item.is_null());
+    }
 }
 
 fn group_responses_tool_history(body: &mut Value) {
@@ -271,9 +333,7 @@ pub(super) fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) 
     );
 }
 
-fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
-    let adapt_detached_context =
-        matches!(api_format, "anthropic-messages" | "openai-chat-completions");
+fn normalize_responses_request_input(body: &mut Value, native_responses: bool) {
     let Some(input) = body.get_mut("input") else {
         return;
     };
@@ -288,10 +348,7 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
     };
 
     for item in items {
-        if let Some(message) = adapt_detached_context
-            .then(|| chat::detached_context_message(item))
-            .flatten()
-        {
+        if let Some(message) = chat::detached_context_message(item, native_responses) {
             *item = message;
             continue;
         }

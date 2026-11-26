@@ -19,8 +19,6 @@ import {
 export interface PaneSessionState {
   codeCommentContexts: CodeCommentContext[]
   browserAnnotationCommand: BrowserAnnotationCommand | null
-  inputRevision: number
-  replaceDraftKey: number
   localError: string | null
   answeredRequestUserInputIds: ReadonlySet<string>
   transcriptLoadingKey: string | null
@@ -47,8 +45,6 @@ export function createPaneSessionState(
   return {
     codeCommentContexts: [],
     browserAnnotationCommand: null,
-    inputRevision: 0,
-    replaceDraftKey: 0,
     localError: null,
     answeredRequestUserInputIds: (() => new Set())(),
     transcriptLoadingKey: (() =>

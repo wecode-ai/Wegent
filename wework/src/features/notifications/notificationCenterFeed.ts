@@ -5,6 +5,7 @@ import type {
   WeworkInbox,
 } from '@/api/notifications'
 import type { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { dequal } from 'dequal'
 import {
   cacheNotificationPreferences,
   readCachedNotificationPreferences,
@@ -50,8 +51,12 @@ export function createNotificationCenterFeed(accountKey: string) {
     publish({ preferences: typeof change === 'function' ? change(snapshot.preferences) : change })
   const setInboxes = (change: Change<Snapshot['inboxes']>) =>
     publish({ inboxes: typeof change === 'function' ? change(snapshot.inboxes) : change })
-  const setError = (error: Snapshot['error']) => publish({ error })
-  const setBusy = (busy: boolean) => publish({ busy })
+  const setError = (error: Snapshot['error']) => {
+    if (error !== snapshot.error) publish({ error })
+  }
+  const setBusy = (busy: boolean) => {
+    if (busy !== snapshot.busy) publish({ busy })
+  }
   const fetchPreferences = async () => {
     if (!listeners.size) return
     const id = ++preferenceRequestId.current
@@ -110,7 +115,7 @@ export function createNotificationCenterFeed(accountKey: string) {
       CLOUD_CATEGORIES.map(async cloudCategory => {
         try {
           const inbox = await client.list(0, cloudCategory)
-          if (id === requestId.current)
+          if (id === requestId.current && !dequal(inbox, snapshot.inboxes[cloudCategory]))
             setInboxes(current => ({ ...current, [cloudCategory]: inbox }))
           return null
         } catch (cause) {

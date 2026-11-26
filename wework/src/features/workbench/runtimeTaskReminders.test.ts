@@ -6,11 +6,15 @@ import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 import { collectRuntimeTaskReminderItems, useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { defaultNotificationPreferences } from '@/features/notifications/notificationPreferences'
+import { createUnlistedStandInTasksSource } from '@/features/notifications/unlistedStandInTasksSource'
+import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import { createNotificationCenterSummary } from '@/features/notifications/notificationCenterSummary'
 import { readCachedRemoteRuntimeWork, writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { serializeTaskKeys } from './runtimeTaskLifecycle/taskKeyStorage'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
+import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
 
 vi.mock('@/desktop/windowFocus', () => ({
   isMainWindowFocused: () => false,
@@ -44,7 +48,189 @@ function reminderItem(key: string): RuntimeTaskReminderItem {
   }
 }
 
-describe('getVisibleRuntimeTaskUnreadKeys', () => {
+describe('runtime task reminders', () => {
+  test('keeps the read action stable when another task starts', () => {
+    const store = new RuntimeTaskLifecycleStore('reminder-read-action-identity')
+    const { result, rerender } = renderHook(
+      lifecycleSnapshot =>
+        useRuntimeTaskReminders({ runtimeWork: null, lifecycleStore: store, lifecycleSnapshot }),
+      { initialProps: store.getSnapshot() }
+    )
+    const markRead = result.current.markRuntimeTaskRead
+
+    store.executorStarted(reminderItem('other').address)
+    rerender(store.getSnapshot())
+
+    expect(result.current.hasRunningTasks).toBe(true)
+    expect(result.current.markRuntimeTaskRead).toBe(markRead)
+  })
+
+  test('preserves listed reminder rows when only an unlisted task changes', () => {
+    const listed = reminderItem('listed')
+    const unlisted = new RuntimeTaskMachine(reminderItem('unlisted').address).getSnapshot()
+    const items = [listed]
+    const initial = new RuntimeTaskLifecycleStore('reminder-row-identity-test').getSnapshot()
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: initial,
+    })
+    const rows = result.current
+    rerender({ ...initial, version: 1, tasks: new Map([[unlisted.key, unlisted]]) })
+    expect(result.current).toBe(rows)
+  })
+
+  test('reuses unchanged listed reminder rows when one task starts a turn', () => {
+    const first = new RuntimeTaskMachine(reminderItem('first-listed').address)
+    const second = new RuntimeTaskMachine(reminderItem('second-listed').address)
+    const firstSnapshot = first.getSnapshot()
+    const secondSnapshot = second.getSnapshot()
+    const items = [
+      { ...reminderItem('first-listed'), key: firstSnapshot.key },
+      { ...reminderItem('second-listed'), key: secondSnapshot.key },
+    ]
+    const initial = new RuntimeTaskLifecycleStore('listed-reminder-update-test').getSnapshot()
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: {
+        ...initial,
+        tasks: new Map([
+          [firstSnapshot.key, firstSnapshot],
+          [secondSnapshot.key, secondSnapshot],
+        ]),
+      },
+    })
+    const [firstRow, secondRow] = result.current
+    expect(firstRow.lifecycle).toBe(firstSnapshot)
+    expect(secondRow.lifecycle).toBe(secondSnapshot)
+
+    first.dispatch({ type: 'turn_started', turnId: 'turn-1' })
+    const updated = first.getSnapshot()
+    rerender({
+      ...initial,
+      version: 1,
+      tasks: new Map([
+        [updated.key, updated],
+        [secondSnapshot.key, secondSnapshot],
+      ]),
+    })
+
+    expect(result.current[0]).not.toBe(firstRow)
+    expect(result.current[0].lifecycle).toBe(updated)
+    expect(result.current[1]).toBe(secondRow)
+  })
+
+  test('keeps the mark-read action stable across lifecycle updates for one store', async () => {
+    const item = reminderItem('running-reminder')
+    const runtimeWork = {
+      projects: [],
+      chats: [{ ...item.workspace, tasks: [item.task] }],
+      totalTasks: 1,
+    }
+    const firstStore = new RuntimeTaskLifecycleStore('stable-reminder-action-test')
+    firstStore.syncRuntimeWork(runtimeWork)
+    const { result, rerender } = renderHook(
+      ({ store }: { store: RuntimeTaskLifecycleStore }) =>
+        useRuntimeTaskReminders({
+          runtimeWork,
+          lifecycleStore: store,
+          lifecycleSnapshot: store.getSnapshot(),
+        }),
+      { initialProps: { store: firstStore } }
+    )
+    const initialAction = result.current.markRuntimeTaskRead
+
+    await act(async () => {
+      firstStore.turnStarted(item.address, 'turn-1')
+      rerender({ store: firstStore })
+    })
+    expect(result.current.items[0].lifecycle?.turn.id).toBe('turn-1')
+    expect(result.current.markRuntimeTaskRead).toBe(initialAction)
+
+    const nextStore = new RuntimeTaskLifecycleStore('new-reminder-action-test')
+    const markRead = vi.spyOn(nextStore, 'markRead')
+    await act(async () => rerender({ store: nextStore }))
+    expect(result.current.markRuntimeTaskRead).not.toBe(initialAction)
+    await act(async () => result.current.markRuntimeTaskRead(item.address))
+    expect(markRead).toHaveBeenCalledWith(item.address)
+  })
+
+  test('reuses unchanged lifecycle projections when another listed task starts', () => {
+    const store = new RuntimeTaskLifecycleStore('reminder-lifecycle-row-identity')
+    const workspace = notificationItem('device-1').workspace
+    const runtimeWork = {
+      projects: [],
+      chats: [{ ...workspace, tasks: [reminderItem('first').task, reminderItem('second').task] }],
+      totalTasks: 2,
+    }
+    store.syncRuntimeWork(runtimeWork)
+    const items = collectRuntimeTaskReminderItems(runtimeWork)
+    const { result, rerender } = renderHook(snapshot => useUnlistedStandInTasks(items, snapshot), {
+      initialProps: store.getSnapshot(),
+    })
+    const [first, second] = result.current
+    expect(second.lifecycle).toBeDefined()
+
+    store.executorStarted(first.address)
+    rerender(store.getSnapshot())
+
+    expect(result.current[0].lifecycle?.derived.isRunning).toBe(true)
+    expect(result.current[1]).toBe(second)
+  })
+
+  test('discovers hidden stand-in work from task metadata without loading its transcript', async () => {
+    const hidden = reminderItem('hidden-stand-in')
+    const ordinary = reminderItem('hidden-ordinary')
+    const task = { ...hidden.task, runtimeHandle: { origin: { initiatedBy: 'stand_in' } } }
+    const readTask = vi.fn(async (_deviceId: string, taskId: string) => ({
+      success: true,
+      task: taskId === hidden.address.taskId ? task : ordinary.task,
+    }))
+    const source = createUnlistedStandInTasksSource({ readTask })
+    const stop = source.subscribe(vi.fn(), [
+      { key: hidden.key, address: hidden.address, signature: '1' },
+      { key: ordinary.key, address: ordinary.address, signature: '1' },
+    ])
+    try {
+      await waitFor(() => expect(source.getSnapshot().get(hidden.key)?.task).toBe(task))
+      expect(source.getSnapshot().has(ordinary.key)).toBe(false)
+    } finally {
+      stop()
+    }
+  })
+
+  test('only reads hidden tasks whose native summary cannot rule out a stand-in', async () => {
+    const ordinary = reminderItem('ordinary-native')
+    const cached = reminderItem('cached-native')
+    const standIn = reminderItem('stand-in-native')
+    const store = new RuntimeTaskLifecycleStore('unlisted-native-summary-test')
+    store.syncRuntimeTask(ordinary.address, {
+      ...ordinary.task,
+      runtimeHandle: { threadId: null },
+    })
+    store.syncRuntimeTask(cached.address, {
+      ...cached.task,
+      cachedProjection: true,
+      runtimeHandle: { threadId: null },
+    })
+    const standInTask = {
+      ...standIn.task,
+      runtimeHandle: { threadId: 'stand-in-thread', origin: { initiatedBy: 'stand_in' } },
+    }
+    store.syncRuntimeTask(standIn.address, standInTask)
+    const calls: string[] = []
+    const reader = {
+      async readTask(_deviceId: string, taskId: string) {
+        calls.push(taskId)
+        return taskId === standIn.task.taskId
+          ? { success: true, task: standInTask }
+          : { success: true, task: cached.task }
+      },
+    }
+    const { result } = renderHook(() => useUnlistedStandInTasks([], store.getSnapshot(), reader))
+    await waitFor(() =>
+      expect(result.current.map(item => item.task.taskId)).toEqual([standIn.task.taskId])
+    )
+    expect(calls).toEqual([cached.task.taskId, standIn.task.taskId])
+  })
+
   test('discovers hidden pending work without adding it to visible unread badges', () => {
     const item = reminderItem('hidden-pending')
     const machine = new RuntimeTaskMachine(item.address)
@@ -94,21 +280,42 @@ function notificationItem(deviceId: string): RuntimeTaskReminderItem {
   }
 }
 
-test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
-  'keeps memory review results silent when the origin is available in the %s',
-  async originSource => {
+const silentTaskOrigins = [
+  { type: 'stand_in_schedule', memoryReview: true },
+  { type: 'stand_in_coordinator' },
+]
+
+test.each(
+  silentTaskOrigins.flatMap(origin =>
+    ['task list', 'executor snapshot', 'earlier running snapshot'].map(source => ({
+      origin,
+      source,
+      type: origin.type,
+    }))
+  )
+)(
+  'keeps $type results silent when the origin is available in the $source',
+  async ({ origin, source: originSource }) => {
     const send = vi.mocked(sendSystemNotification)
     send.mockClear()
-    const store = new RuntimeTaskLifecycleStore('memory-review-reminder-test')
+    const store = new RuntimeTaskLifecycleStore(`silent-reminder-${origin.type}-${originSource}`)
     const item = notificationItem('device-1')
     const scheduled = {
       ...item.task,
       runtimeHandle: { origin: { type: 'stand_in_schedule' } },
     }
-    const review = {
+    const background = {
       ...scheduled,
-      taskId: 'memory-review',
-      runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+      taskId: 'background-task',
+      runtimeHandle: { origin },
+    }
+    const reported = {
+      ...scheduled,
+      taskId: 'reported-by-assistant',
+      runtimeHandle: {
+        ...scheduled.runtimeHandle,
+        executionRequest: { standInReportTo: { userId: 7, taskId: 'stand-in-chat-7-primary' } },
+      },
     }
     const work = {
       projects: [],
@@ -116,17 +323,18 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
         {
           ...item.workspace,
           tasks: [
-            originSource === 'task list' ? review : { ...review, runtimeHandle: undefined },
+            originSource === 'task list' ? background : { ...background, runtimeHandle: undefined },
             scheduled,
+            reported,
           ],
         },
       ],
-      totalTasks: 2,
+      totalTasks: 3,
     }
     const items = collectRuntimeTaskReminderItems(work)
     store.syncRuntimeWork(work)
     if (originSource === 'earlier running snapshot') {
-      store.syncRuntimeTask(items[0].address, { ...review, running: true, updatedAt: 1000 })
+      store.syncRuntimeTask(items[0].address, { ...background, running: true, updatedAt: 1000 })
       store.syncRuntimeWork({
         ...work,
         chats: [
@@ -141,12 +349,13 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
                 updatedAt: 2000,
               },
               scheduled,
+              reported,
             ],
           },
         ],
       })
     } else if (originSource === 'executor snapshot') {
-      store.syncRuntimeTask(items[0].address, review)
+      store.syncRuntimeTask(items[0].address, background)
     }
     const settlingItems = originSource === 'earlier running snapshot' ? items.slice(1) : items
     for (const { address } of settlingItems) {
@@ -155,12 +364,13 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       store.turnSettled(address, 'turn-1', 'succeeded')
       store.executorSettled(address)
     }
-    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key])
+    expect([...store.getSnapshot().unreadTaskKeys]).toEqual([items[1].key, items[2].key])
     const source = createRuntimeTaskReminderSource(store)
     const stop = source.subscribe(() => {}, {
       items,
       listedItems: items,
       unreadMessageCounts: new Map(),
+      preferences: defaultAppPreferences,
       notificationPreferences: {
         ...defaultNotificationPreferences,
         tasks: { in_app: true, system: true, im: null },
@@ -178,24 +388,24 @@ test.each(['task list', 'executor snapshot', 'earlier running snapshot'])(
       expect(send.mock.calls.map(([notification]) => notification.address?.taskId)).toEqual([
         scheduled.taskId,
       ])
-      expect([...source.getSnapshot()]).toEqual([items[1].key])
+      expect([...source.getSnapshot()]).toEqual([items[1].key, items[2].key])
     } finally {
       stop()
     }
   }
 )
 
-test('excludes an existing memory review unread marker when restoring cached remote work', async () => {
-  const owner = 'cached-memory-review-reminder-test'
+test.each(silentTaskOrigins)('clears cached $type unread markers', async origin => {
+  const owner = `cached-silent-reminder-${origin.type}`
   const item = notificationItem('remote-device')
-  const review = {
+  const background = {
     ...item.task,
-    taskId: 'memory-review',
-    runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true, userId: 7 } },
+    taskId: 'background-task',
+    runtimeHandle: { origin: { ...origin, userId: 7 } },
   }
   const work = {
     projects: [],
-    chats: [{ ...item.workspace, tasks: [review, item.task] }],
+    chats: [{ ...item.workspace, tasks: [background, item.task] }],
     totalTasks: 2,
   }
   const unreadStorageKey = `wework.runtimeTaskLifecycle.${owner}.unread.v2`
@@ -205,9 +415,7 @@ test('excludes an existing memory review unread marker when restoring cached rem
   )
   writeCachedRemoteRuntimeWork(owner, work)
   const cachedWork = readCachedRemoteRuntimeWork(owner)
-  expect(cachedWork.chats[0]?.tasks[0]?.runtimeHandle).toEqual({
-    origin: { type: 'stand_in_schedule', memoryReview: true },
-  })
+  expect(cachedWork.chats[0]?.tasks[0]?.runtimeHandle).toEqual({ origin })
   const store = new RuntimeTaskLifecycleStore(owner)
   store.syncRuntimeWork(cachedWork)
   const { result, unmount } = renderHook(() =>
@@ -234,6 +442,44 @@ test('excludes an existing memory review unread marker when restoring cached rem
     unmount()
     await act(async () => {})
   }
+})
+
+test('keeps the notification summary and native badge stable across read task updates', async () => {
+  const badge = vi.mocked(syncNotificationUnreadCount)
+  badge.mockClear()
+  const bell = createNotificationCenterSummary()
+  const input = {
+    taskSource: null,
+    collaborationUnreadCount: 0,
+    generalInbox: null,
+  }
+  const listener = vi.fn()
+  const stop = bell.subscribe(listener, input)
+  const snapshot = bell.getSnapshot()
+  stop()
+
+  const item = reminderItem('read-task')
+  const taskSource = {
+    items: [item],
+    unreadTaskKeys: new Set<string>(),
+    markRuntimeTaskRead: vi.fn(),
+  }
+  const stopRead = bell.subscribe(listener, { ...input, taskSource })
+  expect(bell.getSnapshot()).toBe(snapshot)
+  expect(listener).not.toHaveBeenCalled()
+  expect(badge.mock.calls).toEqual([[0]])
+  stopRead()
+
+  const stopUnread = bell.subscribe(listener, {
+    ...input,
+    taskSource: { ...taskSource, unreadTaskKeys: new Set([item.key]) },
+  })
+  expect(bell.getSnapshot().sortedTasks).toEqual([item])
+  expect(listener).toHaveBeenCalledTimes(1)
+  expect(badge.mock.calls).toEqual([[0], [1]])
+  stopUnread()
+  await act(async () => {})
+  expect(badge.mock.calls).toEqual([[0], [1], [0]])
 })
 
 test('notifies once when an unread completion survives a device alias migration', async () => {

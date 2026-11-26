@@ -16,6 +16,7 @@ import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
   testLocalModelConnection,
@@ -42,6 +43,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import { composeDesktopInput } from './input-composition'
+import { recordComposerSubmitModel } from './composer-submit-model-diagnostics'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { decodeDesktopControlImage } from './desktop-control-image'
@@ -1395,6 +1397,7 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
+  recordComposerSubmitModel(element, keyboardEvent)
   for (const type of ['keydown', 'keyup']) {
     element.dispatchEvent(
       new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
@@ -1450,6 +1453,9 @@ async function pressNativeDesktopControlKey(
     : null
   const recordKey = (event: KeyboardEvent) => {
     recordNativeTerminalKey('native-event', key, element, event)
+    if (event.type === 'keydown' && event.target === element) {
+      recordComposerSubmitModel(element, event)
+    }
     if (event.key === expectedKey) observation?.record(event)
   }
   window.addEventListener(eventType, recordKey, true)
@@ -2373,6 +2379,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value || undefined,
         })
       )
+    case 'triggerBlobDownload': {
+      const input = JSON.parse(command.value ?? '{}') as { content?: string; filename?: string }
+      if (!input.filename?.trim()) throw new Error('triggerBlobDownload requires filename')
+      await saveBlobToDownloads(
+        new Blob([input.content ?? ''], { type: 'application/octet-stream' }),
+        input.filename
+      )
+      return ''
+    }
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
@@ -3845,6 +3860,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
+      if (command.value === 'pane-activity') {
+        const { pane } = getWorkbenchDebugSnapshot()
+        return JSON.stringify({
+          taskId: pane?.currentRuntimeTask?.taskId,
+          isBusy: pane?.status.isBusy,
+        })
+      }
       if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
@@ -4194,7 +4216,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           element,
           command.value ?? '',
           command.by,
-          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+          command.includeOptionsOnError
         )
       })
     }

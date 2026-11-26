@@ -1,14 +1,20 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { personalStandInFixture } from './personalStandInSettings.testFixtures'
 import { standInOverviewFixture } from './StandInOverviewPage.testFixtures'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
+import { StandInImConnections } from './StandInImConnections'
 
-function openPrimaryProfile(selfLearningEnabled?: boolean) {
+function openPrimaryProfile(
+  selfLearningEnabled?: boolean,
+  imSessionApi?: WorkbenchServices['imSessionApi']
+) {
   const { settings } = personalStandInFixture()
   const { services } = standInOverviewFixture().props
   const model: RunnerModel = {
@@ -50,6 +56,20 @@ function openPrimaryProfile(selfLearningEnabled?: boolean) {
         devices={[]}
         projects={[]}
         onSelectDevice={() => {}}
+        shortcuts={[
+          {
+            id: 'im',
+            testId: 'stand-in-im-channels-toggle',
+            label: 'Chat channels',
+            content: (
+              <StandInImConnections
+                services={{ ...services, imSessionApi }}
+                deviceId={settings.executionDeviceId}
+                name="Assistant"
+              />
+            ),
+          },
+        ]}
       />
     </AppPreferencesContext.Provider>
   )
@@ -68,21 +88,93 @@ test('a model change keeps the unified instructions for a profile without learni
     'Ask for evidence\n\nPrivate context'
   )
   const environment = screen.getByTestId('stand-in-primary-execution-toggle')
-  expect(environment).toHaveAttribute('aria-expanded', 'false')
   expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
   fireEvent.click(environment)
+  expect(screen.getByTestId('stand-in-path-advanced')).toHaveAttribute('aria-current', 'page')
+  expect(screen.queryByTestId('stand-in-preferences')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('model-selector-button'))
   const modelOption = `model-option-${runnerModelKey(model)}`
   if (!screen.queryByTestId(modelOption)) {
     fireEvent.click(await screen.findByTestId('model-group-codex-provider:fixture'))
   }
   fireEvent.click(await screen.findByTestId(modelOption))
-  fireEvent.click(environment)
+  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toBeInTheDocument()
   expect(save()).toMatchObject({
     prompt: '',
     preferences: 'Ask for evidence\n\nPrivate context',
     model: { model_id: model.model_id },
   })
+})
+
+test('saves a confirmed task permission with the primary profile', async () => {
+  const user = userEvent.setup()
+  const { save } = openPrimaryProfile()
+  await user.click(screen.getByTestId('stand-in-primary-execution-toggle'))
+  const trigger = screen.getByTestId('permission-mode-menu-button')
+  expect(trigger).toHaveTextContent('只读')
+
+  await user.click(trigger)
+  await user.click(screen.getByTestId('permission-mode-full-access'))
+  await user.click(screen.getByTestId('command-approval-confirm-option-ai'))
+  await user.click(screen.getByTestId('full-access-confirm-submit'))
+  expect(save()).toMatchObject({
+    taskPermissions: { permissionMode: 'full-access', commandApproval: 'ai' },
+  })
+})
+
+test('chat channels are listed directly without sessions and returning keeps the profile draft', async () => {
+  const { save } = openPrimaryProfile(undefined, {
+    bindStandIn: async (_sessionKey, binding) => binding,
+    listPrivateSessions: async () => ({ total: 0, items: [] }),
+  })
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'Edited private context' },
+  })
+  fireEvent.click(screen.getByTestId('stand-in-im-channels-toggle'))
+  expect(screen.getByTestId('stand-in-path-tool')).toHaveTextContent('Chat channels')
+  for (const channel of ['dingtalk', 'telegram', 'discord', 'weibo']) {
+    expect(screen.getByTestId(`stand-in-im-channel-${channel}`)).toBeVisible()
+  }
+  expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-preferences')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
+  expect(await screen.findByTestId('stand-in-im-empty')).toBeVisible()
+  fireEvent.click(screen.getByTestId('stand-in-im-dialog-close'))
+  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('Edited private context')
+  expect(save()).toMatchObject({ preferences: 'Edited private context' })
+})
+
+test('a connected channel shows its status beside the other channel entries', async () => {
+  const { settings } = personalStandInFixture()
+  openPrimaryProfile(undefined, {
+    bindStandIn: async (_sessionKey, binding) => binding,
+    listPrivateSessions: async () => ({
+      total: 1,
+      items: [
+        {
+          session_key: 'telegram-session',
+          channel_type: 'telegram',
+          channel_label: 'Telegram',
+          channel_id: 1,
+          conversation_id: 'test-chat',
+          sender_id: 'test-sender',
+          display_name: 'Example conversation',
+          last_seen_at: '2025-01-01T00:00:00Z',
+          mode: 'stand_in',
+          stand_in: { deviceId: settings.executionDeviceId, roleId: null },
+        },
+      ],
+    }),
+  })
+  fireEvent.click(screen.getByTestId('stand-in-im-channels-toggle'))
+  expect(await screen.findByText('已连接当前助理')).toBeVisible()
+  expect(screen.getByTestId('stand-in-im-channel-dingtalk')).toBeVisible()
+  fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
+  expect(screen.getByTestId('stand-in-im-connect-telegram-session')).toHaveTextContent(
+    'Example conversation'
+  )
 })
 
 test('turning on learning alone preserves the existing Ghost and private preferences', () => {

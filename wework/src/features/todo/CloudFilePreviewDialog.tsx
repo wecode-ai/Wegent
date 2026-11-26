@@ -5,10 +5,14 @@ import {
   useAttachmentPreview,
 } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import type { ComponentProps } from 'react'
+import { createBodyFlagRef } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+
+const markFilePreviewOpen = createBodyFlagRef('data-wework-file-preview-open')
 
 export function CloudFilePreviewDialog({
   filename,
@@ -17,6 +21,7 @@ export function CloudFilePreviewDialog({
   loadFile,
   onDownload,
   onClose,
+  finalFocus,
 }: {
   filename: string
   contentType: string | null
@@ -24,6 +29,7 @@ export function CloudFilePreviewDialog({
   loadFile: () => Promise<Blob>
   onDownload: () => Promise<void>
   onClose: () => void
+  finalFocus?: ComponentProps<typeof DialogSurface>['finalFocus']
 }) {
   const { t, i18n } = useTranslation('common')
   const translate = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
@@ -58,12 +64,14 @@ export function CloudFilePreviewDialog({
 
   return createPortal(
     <div
+      ref={markFilePreviewOpen}
       data-wework-file-preview
       className="fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
       <DialogSurface
         onClose={onClose}
+        finalFocus={finalFocus}
         initialFocus={'[data-testid="cloud-file-preview-close"]'}
         render={
           <section

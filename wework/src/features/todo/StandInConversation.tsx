@@ -1,6 +1,8 @@
-import { standInConversationTaskId } from '@/api/personalStandIn'
+import { standInConversationTaskId, type StandInConversationScope } from '@/api/personalStandIn'
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { Button } from '@/components/ui/button'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -24,8 +26,14 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { selectStandInDelegatedWork } from './standInDelegatedBranches'
+import {
+  activeStandInBranchRows,
+  groupStandInDelegations,
+  selectStandInDelegatedWork,
+  standInDelegationsByMessage,
+} from './standInDelegatedBranches'
 import { StandInDelegatedWork } from './StandInDelegatedWork'
+import { StandInSidebarTaskList, type StandInSidebarTasks } from './StandInSidebarTaskList'
 import { useStandInConversationModel } from './useStandInConversationModel'
 
 export function StandInConversation({
@@ -39,6 +47,9 @@ export function StandInConversation({
   draftRequest,
   onDraftRequestConsumed,
   contentFooter,
+  delegationPanelOpen,
+  sidebarTasks,
+  renderDetails,
   settings,
   services,
   scope,
@@ -53,9 +64,12 @@ export function StandInConversation({
   draftRequest?: { id: number; text: string }
   onDraftRequestConsumed?(id: number): void
   contentFooter?: ReactNode
+  delegationPanelOpen?: boolean
+  sidebarTasks?: StandInSidebarTasks
+  renderDetails?(activeBranches: ReturnType<typeof activeStandInBranchRows>): ReactNode
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
-  scope?: 'collaboration'
+  scope?: StandInConversationScope
 }) {
   const [recordOpened] = useState(createStandInOpenedReceipt)
   const openedIdentity = roleId ? 'role' : 'primary'
@@ -75,6 +89,7 @@ export function StandInConversation({
   }
   const resource = owner.resource
   const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
     {
@@ -86,9 +101,18 @@ export function StandInConversation({
     },
     active
   )
+  const showModelSelector = scope === 'collaboration'
+  const conversationModelControls =
+    !showModelSelector && modelControls.unavailable
+      ? {
+          ...modelControls,
+          unavailableReason: undefined,
+          error: t('standIn.errors.conversation_profile_model_unavailable'),
+        }
+      : modelControls
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
   const persistedTaskExists = Boolean(
-    workbench?.runtimeTaskReminders.items.some(
+    taskReminderItems.some(
       item =>
         item.address.taskId === taskId &&
         (aliases.get(item.address.deviceId) ?? item.address.deviceId) ===
@@ -114,15 +138,16 @@ export function StandInConversation({
       ),
     [api, userId, deviceId, taskId]
   )
+  const roleDelegationEnabled = scope !== 'collaboration' && !scope?.startsWith('shared:')
   const remoteBranches = useSyncExternalStore(
-    active && !scope && address ? roleBranches.subscribe : subscribeIdleResource,
+    active && roleDelegationEnabled && address ? roleBranches.subscribe : subscribeIdleResource,
     roleBranches.getSnapshot,
     getIdleResourceSnapshot
   )
-  const delegatedWork = scope
+  const delegatedWork = !roleDelegationEnabled
     ? []
     : selectStandInDelegatedWork(
-        workbench?.runtimeTaskReminders.items ?? [],
+        taskReminderItems,
         remoteBranches.data?.items ?? [],
         userId,
         deviceId,
@@ -152,16 +177,61 @@ export function StandInConversation({
       </ControlButton>
     </div>
   ) : null
-  if (error && address === undefined) return failureNotice
-  if (address === undefined)
+  const [expandedDelegations, setExpandedDelegations] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const groups = groupStandInDelegations(delegatedWork)
+  const renderDelegation = (group: (typeof groups)[number], inSidebar = false) => {
+    const expansionKey = `${inSidebar ? 'panel' : 'message'}:${group.root}`
     return (
-      <p role="status" className="p-5 text-sm text-text-secondary">
-        {t('standIn.loading')}
-      </p>
+      <StandInDelegatedWork
+        key={group.root}
+        branches={group.branches}
+        inSidebar={inSidebar}
+        expanded={expandedDelegations.has(expansionKey)}
+        onExpandedChange={expanded => {
+          setExpandedDelegations(previous => {
+            const next = new Set(previous)
+            if (expanded) next.add(expansionKey)
+            else next.delete(expansionKey)
+            return next
+          })
+        }}
+        taskId={taskId}
+        onOpenTask={onOpenTask}
+        onCancel={async (root, branch) => {
+          await api.cancelRoleWork(
+            userId,
+            branch?.dispatcherDeviceId ?? deviceId,
+            taskId,
+            root,
+            branch?.taskId
+          )
+          void roleBranches.reload()
+        }}
+        onRetry={async branch => {
+          await api.retryRoleWork(
+            userId,
+            branch.dispatcherDeviceId,
+            taskId,
+            branch.root,
+            branch.taskId,
+            branch.attempt
+          )
+          await roleBranches.reload()
+        }}
+      />
     )
-  return (
-    <>
-      {failureNotice}
+  }
+  const details = renderDetails?.(activeStandInBranchRows(delegatedWork))
+  const conversation =
+    address === undefined ? (
+      error ? null : (
+        <p role="status" className="p-5 text-sm text-text-secondary">
+          {t('standIn.loading')}
+        </p>
+      )
+    ) : (
       <TemporaryChatPanel
         key={taskId}
         currentProject={null}
@@ -169,40 +239,19 @@ export function StandInConversation({
         instanceId={`stand-in:${deviceId}:${taskId}`}
         testId="stand-in-conversation"
         draftRequest={draftRequest}
-        contentFooter={
-          delegatedWork.length ? (
-            <>
-              <StandInDelegatedWork
-                tasks={delegatedWork}
-                taskId={taskId}
-                onOpenTask={onOpenTask}
-                onCancel={async (root, branch) => {
-                  await api.cancelRoleWork(
-                    userId,
-                    branch?.dispatcherDeviceId ?? deviceId,
-                    taskId,
-                    root,
-                    branch?.taskId
+        contentFooter={contentFooter}
+        renderMessageGaps={
+          groups.length
+            ? messages =>
+                new Map(
+                  [...standInDelegationsByMessage(messages, groups)].map(
+                    ([messageId, messageGroups]) => [
+                      messageId,
+                      messageGroups.map(group => renderDelegation(group)),
+                    ]
                   )
-                  void roleBranches.reload()
-                }}
-                onRetry={async branch => {
-                  await api.retryRoleWork(
-                    userId,
-                    branch.dispatcherDeviceId,
-                    taskId,
-                    branch.root,
-                    branch.taskId,
-                    branch.attempt
-                  )
-                  await roleBranches.reload()
-                }}
-              />
-              {contentFooter}
-            </>
-          ) : (
-            contentFooter
-          )
+                )
+            : undefined
         }
         onDraftRequestConsumed={onDraftRequestConsumed}
         initialAddress={address}
@@ -210,28 +259,48 @@ export function StandInConversation({
         onAddressChange={setAddress}
         sendEphemeral={false}
         showExecutionTools={false}
+        showModelSelector={showModelSelector}
+        composerHeader={
+          !showModelSelector && modelControls.unavailable && !modelControls.loading ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 self-start md:min-h-8"
+              data-testid="stand-in-conversation-model-retry"
+              onClick={modelControls.refreshModelCatalog}
+            >
+              {t('standIn.errors.reload_conversation_models')}
+            </Button>
+          ) : null
+        }
         hideProcessing
+        showActivityDots
         assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
-        modelControls={modelControls}
+        allowMessagesDuringApproval
+        modelControls={conversationModelControls}
         expanded
         active={active}
         placeholder={t(
           scope === 'collaboration'
             ? 'personalHome.conversationPrompt'
-            : roleId
-              ? 'standIn.workspace.role_prompt'
-              : 'standIn.workspace.primary_prompt'
+            : scope?.startsWith('team:')
+              ? 'standIn.teams.prompt'
+              : roleId
+                ? 'standIn.workspace.role_prompt'
+                : 'standIn.workspace.primary_prompt'
         )}
         emptyStateText={t(
           scope === 'collaboration'
             ? 'personalHome.conversationEmpty'
-            : hasPendingWork
-              ? 'standIn.workspace.pending_work_help'
-              : roleId
-                ? 'standIn.workspace.role_empty'
-                : 'standIn.workspace.primary_empty'
+            : scope?.startsWith('team:')
+              ? 'standIn.teams.empty_conversation'
+              : hasPendingWork
+                ? 'standIn.workspace.pending_work_help'
+                : roleId
+                  ? 'standIn.workspace.role_empty'
+                  : 'standIn.workspace.primary_empty'
         )}
         onOpenRuntimeTask={onOpenTask}
         createTask={async (message, options) => {
@@ -252,6 +321,29 @@ export function StandInConversation({
           }
         }}
       />
+    )
+  return (
+    <>
+      {failureNotice}
+      <div className="flex min-h-0 flex-1">
+        <div
+          className={delegationPanelOpen ? 'hidden min-w-0 flex-1 md:flex' : 'flex min-w-0 flex-1'}
+        >
+          {conversation}
+        </div>
+        {delegationPanelOpen && (
+          <StandInSidebarTaskList
+            tasks={sidebarTasks}
+            delegations={groups.map(group => ({
+              key: group.root,
+              createdAt: group.createdAt,
+              content: renderDelegation(group, true),
+            }))}
+            onOpenTask={onOpenTask}
+          />
+        )}
+      </div>
+      {details}
     </>
   )
 }
@@ -269,7 +361,7 @@ function createConversationSource(
       const result = await api.readTask(deviceId, taskId)
       return result.task
         ? {
-            deviceId,
+            deviceId: result.deviceId ?? deviceId,
             taskId,
             runtime: result.task.runtime,
             threadId: result.task.threadId,

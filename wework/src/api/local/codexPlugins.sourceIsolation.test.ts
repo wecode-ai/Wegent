@@ -10,6 +10,8 @@ import {
   type LocalCodexPluginsState,
 } from './codexPlugins'
 import { resolveLocalPluginInventory } from '@/features/plugins/pluginInventorySources'
+import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
+import { ExpiredPluginInventoryRequest } from './codexInstalledCatalog'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import {
   clearPluginMarketplaceCache,
@@ -19,6 +21,7 @@ import {
 const mocks = vi.hoisted(() => ({
   request: vi.fn(),
   deviceId: 'device-a',
+  runtimeInstanceId: 'runtime-a',
   bundled: null as { id: string; path: string } | null,
 }))
 vi.mock('@/api/local/runtimeAuthStatus', () => ({
@@ -31,10 +34,15 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 vi.mock('@/desktop/localExecutor', () => ({
   requestLocalExecutor: (...args: unknown[]) => mocks.request(...args),
-  ensureLocalExecutorStarted: async () => ({ deviceId: mocks.deviceId }),
+  ensureLocalExecutorStarted: async () => ({
+    deviceId: mocks.deviceId,
+    runtimeInstanceId: mocks.runtimeInstanceId,
+  }),
   ensureBundledPluginMarketplaceRegistered: async () => {},
   getKnownLocalExecutorDeviceId: () => mocks.deviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => mocks.runtimeInstanceId,
   getInitializedBundledPluginMarketplace: () => mocks.bundled,
+  resumeBundledPluginUpdates: () => {},
 }))
 
 describe('local plugin source isolation', () => {
@@ -63,9 +71,20 @@ describe('local plugin source isolation', () => {
   let failures: Set<string>
   let empty: Set<string>
   beforeEach(() => {
+    vi.mocked(getLocalCodexAuthStatus).mockReset().mockResolvedValue({
+      runtime: 'codex',
+      targetPath: 'auth.json',
+      exists: true,
+      updatedAt: null,
+      sha256: 'test-account',
+      catalogScope: null,
+      sizeBytes: null,
+      error: null,
+    })
     clearPluginMarketplaceCache()
     clearLocalCodexPluginsReadStateCache()
     mocks.deviceId = 'device-a'
+    mocks.runtimeInstanceId = 'runtime-a'
     mocks.bundled = null
     failures = new Set()
     empty = new Set()
@@ -84,6 +103,128 @@ describe('local plugin source isolation', () => {
       throw new Error(`Unexpected source ${source}`)
     })
   })
+
+  test('installs a disk-only personal plugin using its marketplace manifest', async () => {
+    const api = createLocalCodexPluginApi()
+    const [diskItem] = await listPersonalMarketplacePluginsFromDisk()
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation(async (method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'plugin/install') {
+        if (params.params.marketplacePath !== '/personal/.agents/plugins/marketplace.json')
+          throw new Error('failed to read marketplace file: Is a directory')
+        return {}
+      }
+      if (method === 'codex.app_server_request' && params.method === 'plugin/read')
+        return { plugin: { summary: marketplace.plugins[0] } }
+      if (method === 'executor.plugins.manifest.read') return {}
+      return original(method, params)
+    })
+
+    const onCommit = vi.fn()
+    await expect(api.installAvailablePlugin(diskItem!, onCommit)).resolves.toMatchObject({
+      spec: { source: { pluginKey: 'personal-tool' } },
+    })
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith({
+      pluginName: 'personal-tool',
+      marketplacePath: '/personal',
+    })
+  })
+
+  test.each([false, true])(
+    'reports an author source commit after its observer leaves only when committed=%s',
+    async localCommitted => {
+      const api = createLocalCodexPluginApi()
+      const [diskItem] = await listPersonalMarketplacePluginsFromDisk()
+      const native = Promise.withResolvers<{ localCommitted: boolean }>()
+      const dispatched = vi.fn()
+      const onCommit = vi.fn()
+      let current = true
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation((method, params) => {
+        if (method === 'executor.plugins.links.list')
+          return Promise.resolve([{ localPluginName: 'personal-tool', cloudPluginId: 17 }])
+        if (method === 'runtime.codex.plugin.install_local_first') {
+          dispatched()
+          return native.promise
+        }
+        return original(method, params)
+      })
+      const install = api.installPersonalPluginSource(
+        {
+          ...diskItem!,
+          id: 17,
+          accessRole: 'owner',
+          localPersonalSource: { pluginName: 'personal-tool', marketplacePath: '/personal' },
+        },
+        () => current,
+        onCommit
+      )
+      const rejected = expect(install).rejects.toThrow(
+        localCommitted ? 'Plugin account changed' : 'did not commit'
+      )
+      await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce())
+      current = false
+      native.resolve({ localCommitted })
+      await rejected
+      expect(onCommit.mock.calls).toEqual(
+        localCommitted
+          ? [
+              [
+                expect.objectContaining({
+                  pluginName: 'personal-tool',
+                  marketplacePath: '/personal',
+                }),
+              ],
+            ]
+          : []
+      )
+    }
+  )
+
+  test.each([false, true])(
+    'passes the existing-release link guard to Native when device changed=%s',
+    async deviceChanged => {
+      const api = createLocalCodexPluginApi()
+      const { items } = await api.listInstalledPlugins({ requireComplete: true })
+      const plugin = items.find(item => item.spec.source.pluginKey === 'personal-tool')!
+      const originalRequest = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.links.link') return null
+        return originalRequest(method, params)
+      })
+      const migrate = vi.spyOn(api, 'ensureCreatedPluginInWeworkPersonal')
+      if (deviceChanged) mocks.deviceId = 'device-b'
+      const link = api.linkPersonalPluginRelease(plugin, 17, 42, {
+        isCurrent: () => mocks.deviceId === 'device-a',
+        accountInstall: 'keepRelease',
+      })
+      if (deviceChanged) {
+        await expect(link).rejects.toThrow('Plugin account changed')
+      } else {
+        await link
+      }
+      expect(migrate).not.toHaveBeenCalled()
+      const writes = mocks.request.mock.calls.filter(
+        ([method]) => method === 'executor.plugins.links.link'
+      )
+      expect(writes).toEqual(
+        !deviceChanged
+          ? [
+              [
+                'executor.plugins.links.link',
+                {
+                  marketplacePath: '/personal',
+                  localPluginName: 'personal-tool',
+                  cloudPluginId: 17,
+                  cloudReleaseId: 42,
+                  accountInstall: 'keepRelease',
+                },
+              ],
+            ]
+          : []
+      )
+    }
+  )
 
   function consumeSnapshot(state: LocalCodexPluginsState, expected: string[]) {
     expected = [...expected].sort()
@@ -109,6 +250,84 @@ describe('local plugin source isolation', () => {
     expect(shared.localInstalledSourceStatus).toEqual(local.localInstalledSourceStatus)
     return local
   }
+
+  test.each([false, true])(
+    'lists manageable sources without catalog or auth dependencies (auth unavailable: %s)',
+    async authUnavailable => {
+      if (authUnavailable)
+        vi.mocked(getLocalCodexAuthStatus).mockRejectedValue(new Error('Auth status unavailable'))
+      const source = {
+        id: 'custom',
+        sourceType: 'git',
+        sourceRevision: 'rev',
+        installationsRevision: 'inventory-rev',
+        installed: [],
+      }
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation((method, args) => {
+        if (method === 'runtime.codex.marketplace.list_configured') return Promise.resolve([source])
+        if (method === 'codex.app_server_request' && args.method === 'plugin/installed')
+          return new Promise(() => {})
+        return original(method, args)
+      })
+
+      await expect(createLocalCodexPluginApi().listConfiguredMarketplaces()).resolves.toEqual([
+        { ...source, name: source.id },
+      ])
+    }
+  )
+
+  test.each(['account', 'device', 'runtime'] as const)(
+    'discards configured sources after their %s owner changes',
+    async owner => {
+      const entered = Promise.withResolvers<void>()
+      const configured = Promise.withResolvers<unknown[]>()
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation((method, args) => {
+        if (method === 'runtime.codex.marketplace.list_configured') {
+          entered.resolve()
+          return configured.promise
+        }
+        return original(method, args)
+      })
+      const listing = createLocalCodexPluginApi().listConfiguredMarketplaces()
+      await entered.promise
+      if (owner === 'account') clearPluginMarketplaceCache()
+      if (owner === 'device') mocks.deviceId = 'device-b'
+      if (owner === 'runtime') mocks.runtimeInstanceId = 'runtime-b'
+      configured.resolve([])
+      await expect(listing).rejects.toBeInstanceOf(ExpiredPluginInventoryRequest)
+    }
+  )
+
+  test.each([false, true])(
+    'preserves marketplace removal outcome when browser storage is unavailable (native failure: %s)',
+    async nativeFailure => {
+      const failure = new Error('marketplace_source_changed')
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation((method, params) => {
+        if (method === 'codex.app_server_request' && params.method === 'marketplace/remove')
+          return nativeFailure ? Promise.reject(failure) : Promise.resolve({})
+        return original(method, params)
+      })
+      const storage = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+        throw new Error('Browser storage unavailable')
+      })
+      try {
+        const removal = createLocalCodexPluginApi().deleteMarketplace(
+          'custom',
+          'source',
+          'packages',
+          []
+        )
+        if (nativeFailure) await expect(removal).rejects.toBe(failure)
+        else await expect(removal).resolves.toBeUndefined()
+        expect(peekLocalInstalledPluginInventory()).toBeNull()
+      } finally {
+        storage.mockRestore()
+      }
+    }
+  )
 
   test.each(['membership-only', 'catalog-pending'] as const)(
     'observes live %s inventory without selecting or mutating a catalog',
@@ -497,6 +716,44 @@ describe('local plugin source isolation', () => {
     expect(
       (await api.listInstalledPlugins()).items.map(item => item.spec.source.pluginKey).sort()
     ).toEqual(['managed-tool', 'personal-tool'])
+  })
+
+  test('shares concurrent disk inventory reads and reads disk again after they settle', async () => {
+    const method = 'executor.plugins.personal.list'
+    const readCount = () => mocks.request.mock.calls.filter(([name]) => name === method).length
+    const [first, second] = await Promise.all([
+      readLocalInstalledInventoryFromDisk(),
+      readLocalInstalledInventoryFromDisk(),
+    ])
+    expect(first.items).toEqual(second.items)
+    expect(readCount()).toBe(1)
+
+    await readLocalInstalledInventoryFromDisk()
+    expect(readCount()).toBe(2)
+  })
+
+  test('starts a fresh disk inventory read if the local Runtime changes', async () => {
+    const method = 'executor.plugins.store.list'
+    const original = mocks.request.getMockImplementation()!
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    mocks.request.mockImplementation(async (name, params) => {
+      if (name === method && mocks.runtimeInstanceId === 'runtime-a') {
+        started.resolve()
+        await release.promise
+      }
+      return original(name, params)
+    })
+    const previous = readLocalInstalledInventoryFromDisk()
+    await started.promise
+    mocks.runtimeInstanceId = 'runtime-b'
+    try {
+      await readLocalInstalledInventoryFromDisk()
+      expect(mocks.request.mock.calls.filter(([name]) => name === method)).toHaveLength(2)
+    } finally {
+      release.resolve()
+      await previous
+    }
   })
 
   test.each([false, true])(

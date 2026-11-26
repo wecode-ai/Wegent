@@ -35,6 +35,7 @@ export function selectPendingRuntimeInteractions({
   acceptancePrefix,
   isDismissed,
 }: PendingProjection): RuntimeInteraction[] {
+  if (!issueInteractions.items.length && !Object.keys(loaded).length) return []
   const visible = new Map(
     [...(source?.items ?? []), ...inventory]
       .filter(item => !isStandInMemoryReviewTask(item.task))
@@ -47,6 +48,7 @@ export function selectPendingRuntimeInteractions({
         !item.answered &&
         !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item)) &&
         !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
+        !isResolvedIssueQuestion(item, issueInteractions.transferred) &&
         !hasRecordedIssueResolution(item, history) &&
         !submitted.has(item.id) &&
         localStorage.getItem(acceptancePrefix + item.id) === null &&

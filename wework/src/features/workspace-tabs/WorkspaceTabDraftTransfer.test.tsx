@@ -1,3 +1,4 @@
+import { useScopedDraft } from '@/features/workbench/scopedDraftStore'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, Suspense } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -16,12 +17,13 @@ vi.mock('@/desktop/appPreferences', async importOriginal => ({
 }))
 
 function DraftProbe({ tabId }: { tabId: string }) {
-  const { inputs, setInput } = useWorkspaceTabDraftInput(tabId)
+  const { draftStore } = useWorkspaceTabDraftInput(tabId)
+  const draft = useScopedDraft(draftStore, 'blank:0')
   return (
     <input
       data-testid={`draft-${tabId}`}
-      value={inputs['blank:0'] ?? ''}
-      onChange={event => setInput('blank:0', event.target.value)}
+      value={draft.value}
+      onChange={event => draftStore.write('blank:0', event.target.value)}
     />
   )
 }
@@ -102,9 +104,10 @@ test('keeps the transfer available until a suspended destination commits', async
     resume = resolve
   })
   function SuspendedDraft() {
-    const { inputs } = useWorkspaceTabDraftInput('suspended-tab')
+    const { draftStore } = useWorkspaceTabDraftInput('suspended-tab')
+    const draft = useScopedDraft(draftStore, 'blank:0')
     if (!ready) throw pending
-    return <input data-testid="suspended-draft" value={inputs['blank:0'] ?? ''} readOnly />
+    return <input data-testid="suspended-draft" value={draft.value} readOnly />
   }
   render(
     <Suspense fallback={<span>Loading</span>}>

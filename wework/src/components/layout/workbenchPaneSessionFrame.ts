@@ -53,7 +53,7 @@ export interface PaneSessionExternal {
   draftEditVersions: Map<string, number>
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled: boolean
-  queueDiagnosticSessionId: string
+  presentationActive: boolean
   workbench: ReturnType<typeof useWorkbenchPaneContext>
   lifecycleStore: ReturnType<typeof useRuntimeTaskLifecycleStore>
   attachmentState: ReturnType<typeof useScopedComposerAttachments>
@@ -69,7 +69,6 @@ export function createPaneSessionFrame(
   readConversation: typeof getRuntimeConversationSnapshot
 ) {
   const { currentRuntimeTask, debugSnapshotEnabled } = external
-  const queueDiagnosticSessionId = external.queueDiagnosticSessionId
   const runtimeTranscriptPageSize = resolveRuntimeTranscriptPageSize()
   const {
     state: workbenchState,
@@ -121,12 +120,9 @@ export function createPaneSessionFrame(
     resetAttachments,
     dismissAttachmentError,
   } = attachmentState
-  const input = projectChat.inputByScope[inputScopeKey] ?? ''
-  const setInputForScope = projectChat.setInputForScope
-  const getInputRevisionForScope = projectChat.getInputRevisionForScope
-  const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
-  const inputRevision = state.inputRevision
-  const replaceDraftKey = state.replaceDraftKey
+  const { draftStore, setInputForScope } = projectChat
+  const getInput = () => draftStore.read(inputScopeKey).value
+  const getInputRevisionForScope = (scope: string) => draftStore.read(scope).revision
   const localError = state.localError
   const error = projectChat.composerErrorByScope
     ? (projectChat.composerErrorByScope[inputScopeKey] ?? null)
@@ -208,9 +204,6 @@ export function createPaneSessionFrame(
       currentRuntimeTask,
       lifecycle: taskLifecycle,
     }))()
-  const diagnosticTaskId = lifecycleAddress?.taskId
-  const diagnosticDeviceId = lifecycleAddress?.deviceId
-  const diagnosticHasActiveAssistant = Boolean(paneStatus.activeAssistantMessage)
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = (() => {
     let resolvedGoal: RuntimeGoal | null
@@ -244,7 +237,6 @@ export function createPaneSessionFrame(
   return {
     currentRuntimeTask,
     debugSnapshotEnabled,
-    queueDiagnosticSessionId,
     runtimeTranscriptPageSize,
     workbenchState,
     projectChat,
@@ -280,12 +272,10 @@ export function createPaneSessionFrame(
     removeAttachment,
     resetAttachments,
     dismissAttachmentError,
-    input,
+    draftStore,
+    getInput,
     setInputForScope,
     getInputRevisionForScope,
-    sharedInputRevision,
-    inputRevision,
-    replaceDraftKey,
     localError,
     error,
     answeredRequestUserInputIds,
@@ -324,9 +314,6 @@ export function createPaneSessionFrame(
     quotaWaitPending,
     currentRuntime,
     paneStatus,
-    diagnosticTaskId,
-    diagnosticDeviceId,
-    diagnosticHasActiveAssistant,
     activeAssistantMessage,
     goal,
     goalContinuing,

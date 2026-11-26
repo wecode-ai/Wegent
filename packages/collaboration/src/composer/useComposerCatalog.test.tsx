@@ -74,31 +74,53 @@ describe('shared composer catalog lifecycle', () => {
     await act(async () => root.render(<Harness apps={apps} skills={skills} />))
   }
 
-  it('clears the previous task and rejects its pending response when the store changes', async () => {
-    let resolveOld!: (apps: App[]) => void
-    const oldStore = store
-    store.replace([{ id: 'old', name: 'Old task' }])
-    const oldApps = vi.fn(
-      () =>
-        new Promise<App[]>(resolve => {
-          resolveOld = resolve
-        })
-    )
-    await mount(oldApps, async () => ['old skill'])
-    await act(async () => current.loadLocalMentions())
-    expect(current.skills).toEqual(['old skill'])
-    store = createStore()
-    const newApps = vi.fn().mockResolvedValue([{ id: 'new', name: 'New task' }])
-    await mount(newApps, async () => ['new skill'])
-    expect(current.apps).toEqual([])
-    expect(current.skills).toEqual([])
-    await act(async () => resolveOld([{ id: 'late-old', name: 'Old response' }]))
-    expect(store.get()).toEqual([])
-    expect(oldStore.get()).toEqual([{ id: 'old', name: 'Old task' }])
-    await act(async () => current.loadLocalMentions())
-    expect(current.apps).toEqual([{ id: 'new', name: 'New task' }])
-    expect(current.skills).toEqual(['new skill'])
-  })
+  it.each([false, true])(
+    'isolates changed catalog stores and reloads only an open menu (open=%s)',
+    async open => {
+      let resolveOld!: (apps: App[]) => void
+      const oldStore = store
+      store.replace([{ id: 'old', name: 'Old task' }])
+      const oldApps = vi.fn(
+        () =>
+          new Promise<App[]>(resolve => {
+            resolveOld = resolve
+          })
+      )
+      await mount(oldApps, async () => ['old skill'])
+      await act(async () => current.loadLocalMentions())
+      expect(current.skills).toEqual(['old skill'])
+      menuOpen = open
+      store = createStore()
+      let finishApps!: (apps: App[]) => void
+      let finishSkills!: (skills: string[]) => void
+      const pendingApps = new Promise<App[]>(resolve => {
+        finishApps = resolve
+      })
+      const pendingSkills = new Promise<string[]>(resolve => {
+        finishSkills = resolve
+      })
+      await mount(
+        () => pendingApps,
+        () => pendingSkills
+      )
+      expect(current.apps).toEqual([])
+      expect(current.skills).toEqual([])
+      await act(async () => resolveOld([{ id: 'late-old', name: 'Old response' }]))
+      expect(store.get()).toEqual([])
+      expect(oldStore.get()).toEqual([{ id: 'old', name: 'Old task' }])
+      await act(async () => {
+        finishApps([{ id: 'new', name: 'New task' }])
+        finishSkills(['new skill'])
+      })
+      if (!open) {
+        expect(current.apps).toEqual([])
+        expect(current.skills).toEqual([])
+        await act(async () => current.loadLocalMentions())
+      }
+      expect(current.apps).toEqual([{ id: 'new', name: 'New task' }])
+      expect(current.skills).toEqual(['new skill'])
+    }
+  )
 
   it('refreshes metadata and accessibility when an installed app keeps its ID', async () => {
     const apps = vi.fn().mockResolvedValue([{ id: 'plugin', name: 'Old name', isEnabled: true }])

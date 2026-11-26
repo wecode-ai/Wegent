@@ -1,10 +1,27 @@
 import { TextField as ControlInput } from '../controls/TextField'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import type { ComponentProps } from 'react'
 import type { TodoEditorProps } from './issueEditorSupport'
 import { Popover, PopoverTrigger, PopoverContent } from '../controls/Popover'
 import { Calendar, ChevronDown, File, Trash2 } from 'lucide-react'
 import { IssueDetailAttachments, type IssueDetailAttachment } from './index'
 import { useCollaborationPortalTheme } from '../theme'
 import { cn, scheduleRangeLabel, avatarPalette, type AttachmentRow } from './issueEditorSupport'
+export function IssueTitleField({ className, ...props }: ComponentProps<typeof ControlTextarea>) {
+  return (
+    <ControlTextarea
+      {...props}
+      aria-required="true"
+      rows={1}
+      maxLength={255}
+      className={cn(
+        'block w-full resize-none overflow-hidden border-0 bg-transparent font-medium tracking-tight text-text-primary outline-none placeholder:text-text-secondary',
+        className
+      )}
+    />
+  )
+}
+
 export function ScheduleRangeControl({
   startDate,
   dueDate,
@@ -28,7 +45,7 @@ export function ScheduleRangeControl({
   showLabel?: boolean
   startTestId: string
   dueTestId: string
-  onStartDateChange(value: string): void
+  onStartDateChange?(value: string): void
   onDueDateChange(value: string): void
   translate: NonNullable<TodoEditorProps['translate']>
 }) {
@@ -75,17 +92,19 @@ export function ScheduleRangeControl({
         style={portalTheme.style}
       >
         <div className="grid gap-3">
-          <label className="grid gap-1.5 text-xs text-text-secondary">
-            {translate('todo.start_date', '开始时间')}
-            <ControlInput
-              data-testid={startTestId}
-              type={inputType}
-              value={startDate}
-              onClick={event => event.currentTarget.showPicker?.()}
-              onChange={event => onStartDateChange(event.target.value)}
-              className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
-            />
-          </label>
+          {onStartDateChange ? (
+            <label className="grid gap-1.5 text-xs text-text-secondary">
+              {translate('todo.start_date', '开始时间')}
+              <ControlInput
+                data-testid={startTestId}
+                type={inputType}
+                value={startDate}
+                onClick={event => event.currentTarget.showPicker?.()}
+                onChange={event => onStartDateChange(event.target.value)}
+                className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
+              />
+            </label>
+          ) : null}
           <label className="grid gap-1.5 text-xs text-text-secondary">
             {translate('todo.due_date', '结束时间')}
             <ControlInput
@@ -134,6 +153,8 @@ export function TodoAttachmentSection({
   error,
   editable,
   compactRail = false,
+  openTestId,
+  openLabel,
   totalCount,
   downloadingId,
   onAdd,
@@ -148,6 +169,8 @@ export function TodoAttachmentSection({
   error: string | null
   editable: boolean
   compactRail?: boolean
+  openTestId?: (id: string) => string
+  openLabel?: (name: string) => string
   totalCount?: number
   downloadingId?: string | null
   onAdd: (files: FileList | null) => Promise<void>
@@ -160,6 +183,7 @@ export function TodoAttachmentSection({
   const sharedAttachments: IssueDetailAttachment[] = attachments.map(attachment => ({
     id: attachment.id,
     displayName: attachment.display_name,
+    removable: attachment.removable,
     contentType: attachment.content_type,
     sizeBytes: attachment.size_bytes,
   }))
@@ -180,10 +204,12 @@ export function TodoAttachmentSection({
         empty: translate('todo.no_attachments', '暂无附件'),
         dropzone: translate('todo.attachment_dropzone', '点击上传或拖拽文件到这里'),
         downloading: translate('todo.file_downloading', '下载中…'),
-        open: name =>
-          translate('todo.preview_task_attachment', '预览任务附件 {{name}}', {
-            name,
-          }),
+        open:
+          openLabel ??
+          (name =>
+            translate('todo.preview_task_attachment', '预览任务附件 {{name}}', {
+              name,
+            })),
         expand: count =>
           translate('todo.view_all_count', '查看全部 {{count}} 个', {
             count,
@@ -193,6 +219,7 @@ export function TodoAttachmentSection({
         remove: name => translate('todo.remove_name', '删除 {{name}}', { name }),
       }}
       testIdPrefix="cloud-todo-attachment"
+      openTestId={openTestId}
       icons={{
         file: <File className="icon" />,
         remove: <Trash2 className="icon" />,

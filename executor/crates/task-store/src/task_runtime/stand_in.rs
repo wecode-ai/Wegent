@@ -105,7 +105,7 @@ impl LocalTaskStore {
         value["id"] = json!(id);
         value["name"] = value.get("name").cloned().unwrap_or_else(|| json!(""));
         value["collaboration"] = source;
-        super::personal_stand_in::migrate_agent_binding(&mut value)?;
+        super::personal_stand_in::normalize_stand_in_identity(&mut value, true)?;
         super::personal_stand_in::stamp_stand_in_connections(
             &mut value,
             before.unwrap_or(&Value::Null),
@@ -144,16 +144,16 @@ impl LocalTaskStore {
 
 pub(super) fn validate_execution_settings(value: &Value) -> Result<(), TaskRuntimeError> {
     if let Some(workspace) = value.get("workspace").filter(|value| !value.is_null()) {
-        if !["projectKey", "workspacePath"].iter().all(|key| {
-            workspace[*key]
-                .as_str()
-                .is_some_and(|value| !value.trim().is_empty())
-        }) || !matches!(
-            workspace["executionMode"].as_str(),
-            Some("current_workspace" | "git_worktree")
-        ) || workspace
-            .get("branch")
-            .is_some_and(|branch| !branch.is_null() && !branch.is_string())
+        if !workspace["projectKey"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty())
+            || !matches!(
+                workspace["executionMode"].as_str(),
+                Some("current_workspace" | "git_worktree")
+            )
+            || workspace
+                .get("branch")
+                .is_some_and(|branch| !branch.is_null() && !branch.is_string())
         {
             return Err(TaskRuntimeError::Invalid(
                 "invalid Stand-in workspace".into(),

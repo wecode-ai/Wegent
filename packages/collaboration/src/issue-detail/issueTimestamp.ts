@@ -40,6 +40,11 @@ export function formatIssueTimestamp(value: string, timeZone?: string): string {
   const date = parseBackendTimestamp(value);
   if (!date) return "--";
 
+  if (timeZone === undefined) {
+    const twoDigits = (part: number) => String(part).padStart(2, "0");
+    return `${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
+  }
+
   const parts = new Intl.DateTimeFormat("en-US", {
     month: "2-digit",
     day: "2-digit",

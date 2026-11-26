@@ -34,8 +34,14 @@ export function IssueActivityContent({
     const observer = new ResizeObserver(measure)
     observer.observe(content)
     observer.observe(root)
-    return () => observer.disconnect()
-  }, [children])
+    // The preview limit can also change at a viewport breakpoint while expanded.
+    const view = root.ownerDocument.defaultView
+    view?.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      view?.removeEventListener('resize', measure)
+    }
+  }, [])
 
   useLayoutEffect(() => {
     if (!collapsingRef.current) return

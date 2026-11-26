@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.adapter.attachments import _build_content_disposition
+from app.api.endpoints.issue_assignment_actions import assign_project_issue
 from app.core.security import (
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
@@ -360,34 +361,14 @@ async def assign_loop_item(
     there is no separate queue storage.
     """
 
-    if external_loop_item_provider.is_external_item(db, item_id):
-        response = external_loop_item_provider.assign(
-            db, item_id, current_user.id, values
-        )
-        from app.tasks.robot_queue_tasks import consume_queues_background
-
-        background_tasks.add_task(consume_queues_background)
-        return LoopItemResponse.model_validate(response)
-    source = loop_item_service.get(db, item_id, current_user.id)
-    access = loop_item_service._require_item_access(db, source, current_user.id)
-    item = loop_item_service.assign(
+    values = values.model_copy(update={"notify_self": values.notify_assignee})
+    return assign_project_issue(
         db,
         project_id=project_id,
         item_id=item_id,
         user_id=current_user.id,
         values=values,
-    )
-    from app.tasks.robot_queue_tasks import consume_queues_background
-
-    background_tasks.add_task(consume_queues_background)
-    publish_loop_item_changed(
-        db,
-        item=item,
-        reason="assignment",
-        actor_user_id=current_user.id,
-    )
-    return LoopItemResponse.model_validate(
-        loop_item_service.response_values(db, item, current_user.id, access=access)
+        background_tasks=background_tasks,
     )
 
 

@@ -223,6 +223,7 @@ class RagRuntimeResolver:
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
         authorized_resources: list[RemoteAuthorizedRetrievalResources] | None = None,
+        deduplicate_by_document: bool = False,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
         if context_window is not None:
@@ -254,6 +255,7 @@ class RagRuntimeResolver:
             query=query,
             search_hints=search_hints,
             max_results=max_results,
+            deduplicate_by_document=deduplicate_by_document,
             route_mode=route_mode,
             scope=scope
             or (RetrievalScope(document_ids=document_ids) if document_ids else None),

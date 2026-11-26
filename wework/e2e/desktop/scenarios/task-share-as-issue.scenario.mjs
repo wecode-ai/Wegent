@@ -1,3 +1,4 @@
+import { standInRoleFixture } from '../modules/stand-in-role-fixture.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -262,7 +263,10 @@ export function createDesktopScenario({
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="false"]')
       await verifyIssueCreationColumns(control)
       await wait(control, selector('issue-participant-self'), { visible: true })
-      assert.match(await control.command('getText', dialog), /仅邀请用户可见|invitees only/)
+      assert.match(
+        await control.command('getText', selector('task-issue-share-visibility')),
+        /仅自己可见|Only you can see this issue/
+      )
       await captureScreenshot(control, '02-task-share-dialog.png')
       await click(control, selector('independent-issue-options'))
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="true"]')
@@ -270,7 +274,7 @@ export function createDesktopScenario({
       await wait(control, '[data-testid="independent-issue-options"][aria-expanded="false"]')
       await control.command('fill', title, { value: 'Private model error notes' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const privateIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Private model error notes'
       )
@@ -296,7 +300,7 @@ export function createDesktopScenario({
       await wait(control, selector('task-issue-share-excerpts'), { text: prompt })
       await control.command('fill', title, { value: 'Selected model error excerpt' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const selectionIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Selected model error excerpt'
       )
@@ -311,10 +315,13 @@ export function createDesktopScenario({
       await click(control, selector('share-selection-as-issue-button'))
       await wait(control, dialog, { visible: true })
       await click(control, selector('task-issue-share-whole-message'))
-      await click(control, selector('task-issue-share-select-first'))
+      await click(
+        control,
+        `${selector('task-issue-share-excerpt')}:has(${selector('task-issue-share-excerpt-content-0')})`
+      )
       await control.command('fill', title, { value: 'Whole message with context' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const wholeIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Whole message with context'
       )
@@ -354,7 +361,7 @@ export function createDesktopScenario({
       })
       const excerpt = '[data-e2e-anchor-id="share-selected-reply"]'
       const userExcerpt = `${dialog} ${selector('task-issue-share-excerpt')}:not(${excerpt})`
-      await click(control, selector('task-issue-share-select-last'))
+      await click(control, excerpt)
       await wait(
         control,
         `${excerpt}[aria-pressed="true"] ${selector('task-issue-share-excerpt-check')}`
@@ -377,7 +384,7 @@ export function createDesktopScenario({
       await click(control, expand)
       await wait(control, `${expand}[aria-expanded="false"]`)
       assert.equal((await metrics(replyContent)).height, collapsedHeight)
-      await click(control, selector('task-issue-share-select-first'))
+      await click(control, userExcerpt)
       await wait(control, `${userExcerpt}[aria-pressed="false"]`)
       await click(control, excerpt)
       await wait(control, `${excerpt}[aria-pressed="false"]`)
@@ -399,7 +406,14 @@ export function createDesktopScenario({
       try {
         await control.command('scrollIntoView', gallery)
         const [narrowGallery] = JSON.parse(await control.command('getElementMetrics', gallery))
-        assert.ok(narrowGallery.scrollWidth <= narrowGallery.clientWidth + 1)
+        assert.ok(narrowGallery.scrollWidth > narrowGallery.clientWidth)
+        const localPreview = selector('task-issue-share-preview-local-file-0')
+        await control.command('scrollIntoView', localPreview)
+        const [scrolledGallery] = JSON.parse(await control.command('getElementMetrics', gallery))
+        assert.ok(scrolledGallery.scrollLeft > 0, 'Last attachment must be reachable in the row')
+        const previewBounds = await metrics(localPreview)
+        const removeBounds = await metrics(selector('task-issue-share-remove-file-0'))
+        assert.ok(removeBounds.right <= previewBounds.left, 'Attachment actions must not overlap')
         await captureScreenshot(control, '03f-task-share-narrow-gallery.png')
       } finally {
         await control.command('setMainWindowSize', 'body', { value: previousSize })
@@ -463,7 +477,7 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, '03-task-share-selected-content.png')
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       await captureScreenshot(control, '04-task-share-independent-result.png')
       const mine = await request('/v1/personal-issues?scope=created')
       const issue = mine.items.find(item => item.title === 'Model error follow-up')
@@ -493,12 +507,39 @@ export function createDesktopScenario({
         [generatedFilename]
       )
       assert.ok(!Object.hasOwn(files[0], 'object_key'))
+      const card = selector(`independent-issue-attachment-${files[0].id}`)
+      const [tile] = JSON.parse(
+        await control.command('getElementMetrics', `.task-detail-rail-file:has(${card})`)
+      )
+      const [preview] = JSON.parse(
+        await control.command('getElementMetrics', `${card} .task-detail-rail-preview`)
+      )
+      assert.ok(
+        Math.abs(preview.width - (tile.width - 2)) <= 1,
+        'The shared attachment thumbnail must fill its card between the two borders'
+      )
       const attachment = `/v1/personal-issues/${issue.id}/attachments/${files[0].id}`
       await assertAttachment(attachment, colleagueToken, 200, generatedContent)
       await assertAttachment(attachment, outsiderToken, 404)
+      const issueAttachments = await request(`/v1/loop-items/${issue.id}/attachments`, {
+        token: colleagueToken,
+      })
+      assert.deepEqual(issueAttachments.map(file => file.id), [files[0].id])
+      const attachmentContent = `/v1/loop-item-attachments/${files[0].id}/content`
+      await assertAttachment(attachmentContent, colleagueToken, 200, generatedContent)
+      await assertAttachment(attachmentContent, outsiderToken, 404)
       const sourcePath = `/v1/personal-issues/${issue.id}/source`
       const source = await request(sourcePath)
       assert.ok(source.device_id && source.task_id)
+      await click(control, selector('issue-link-existing-task'))
+      await control.command('fill', selector('issue-existing-task-search'), {
+        value: source.task_id,
+      })
+      const knownTask = `${selector('issue-existing-task-picker')} button[data-testid$="-${source.task_id}"]`
+      await click(control, knownTask)
+      await wait(control, selector('cloud-todo-execution-task-count'), { text: '1' })
+      const [binding] = await request(`/v1/loop-items/${issue.id}/tasks`)
+      assert.equal(binding.task_id, source.task_id)
       const oldest = JSON.parse(
         await control.command('getLocalRuntimeTranscript', 'body', {
           value: JSON.stringify({
@@ -701,7 +742,10 @@ export function createDesktopScenario({
       const lastMessage = await metrics(selector('task-issue-share-excerpt-content-1'))
       const loadGap = await metrics(earlierMessages)
       assert.ok(firstMessage.bottom <= loadGap.top && loadGap.bottom <= lastMessage.top)
-      await click(control, selector('task-issue-share-select-last'))
+      await click(
+        control,
+        `${historyExcerpt}:has(${selector('task-issue-share-excerpt-content-1')})`
+      )
       await captureScreenshot(control, '10a-task-share-real-history-start.png')
       await click(control, selector('task-issue-share-all-excerpts'))
       await wait(control, '[data-testid="task-issue-share-all-excerpts"][aria-expanded="true"]')
@@ -751,7 +795,7 @@ export function createDesktopScenario({
       })
       await control.command('fill', title, { value: 'Historical search excerpt' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const searchIssue = (await request('/v1/personal-issues?scope=created')).items.find(
         row => row.title === 'Historical search excerpt'
       )
@@ -776,13 +820,15 @@ export function createDesktopScenario({
         { userId },
         uiTimeoutMs
       )
-      Object.assign(settings.roles[0], {
+      const reviewer = standInRoleFixture(settings.executionDeviceId)
+      settings.roles.push(reviewer)
+      Object.assign(reviewer, {
         enabled: true,
         name: reviewerName,
         prompt: reviewPrompt,
         model,
         collaboration: {
-          ...settings.roles[0].collaboration,
+          ...reviewer.collaboration,
           enabled: true,
           includeIndependentIssues: true,
           allProjects: false,
@@ -929,7 +975,7 @@ export function createDesktopScenario({
         'The range toggle must stay visible beside a long selected message'
       )
       await captureScreenshot(control, '13-selection-story-partial.png')
-      await click(control, partialRow)
+      await click(control, selector('task-issue-share-whole-message'))
       await wait(control, '[data-testid="task-issue-share-excerpt"][aria-pressed="true"]', {
         text: 'End of the original source message.',
       })
@@ -942,10 +988,14 @@ export function createDesktopScenario({
       await wait(control, `${sourcePreview}[aria-pressed="false"]`)
       await click(control, sourcePreview)
       await wait(control, `${sourcePreview}[aria-pressed="mixed"]`)
-      await click(control, selector('task-issue-share-select-last'))
+      await control.command('markElementWithText', selector('task-issue-share-excerpt'), {
+        text: selectionStoryLast,
+        value: 'selection-story-last-message',
+      })
+      await click(control, '[data-e2e-anchor-id="selection-story-last-message"]')
       await control.command('fill', title, { value: 'Middle-message fragment with later context' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const storyIssue = (
         await request('/v1/personal-issues?scope=created', { token: colleagueToken })
       ).items.find(row => row.title === 'Middle-message fragment with later context')
@@ -980,7 +1030,7 @@ export function createDesktopScenario({
       await captureScreenshot(control, '15-selection-story-dark.png')
       await control.command('fill', title, { value: 'User fragment in dark mode' })
       await click(control, save)
-      await wait(control, selector('independent-issue-edit'), { visible: true })
+      await wait(control, selector('independent-issue-actions'), { visible: true })
       const userIssue = (
         await request('/v1/personal-issues?scope=created', { token: colleagueToken })
       ).items.find(row => row.title === 'User fragment in dark mode')

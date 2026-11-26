@@ -26,6 +26,11 @@ import {
   forEachTaskFixtureBatch,
   settleMentionTasks,
 } from '../../utils/mention-task-fixtures'
+import {
+  inspectExecutorSessionProof,
+  prepareIsolatedDatabaseState,
+  removeExecutorSessionProof,
+} from '../../utils/isolated-database-state'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -150,6 +155,7 @@ test.describe('Agent conversation regression', () => {
   const toolScenarioMatchTexts = new Set<string>()
 
   test.beforeAll(async ({ request }) => {
+    await test.step('Prepare isolated database dependencies', prepareIsolatedDatabaseState)
     apiClient = createApiClient(request)
     const loginResponse = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
     token = loginResponse.data?.access_token || ''
@@ -559,6 +565,45 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('legacy ClaudeCode completion without session proof starts a new session', async ({
+    page,
+    request,
+  }) => {
+    const contextToken = makeContextToken('claude_legacy_proof')
+    const firstPrompt = `Remember this context token for the next turn: ${contextToken}`
+    const followUpPrompt = 'Continue without asking for the previous turn.'
+
+    await openTaskPage(page, '/chat', claudeChatTeam.id, 'chat')
+
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await waitForBackendTerminal(request, taskId)
+    const firstRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(firstPrompt),
+      `ClaudeCode model request containing ${firstPrompt}`
+    )
+    expect(extractText(firstRequest.body)).toContain(contextToken)
+    const user = await getCurrentUser(request)
+    const before = await inspectExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    expect(before.sessions.length).toBeGreaterThan(0)
+    const previousSession = before.sessions[0]
+    const removal = await removeExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    expect(removal.removed).toBeGreaterThan(0)
+
+    // The real Socket.IO continuation, request builder, executor, native Home
+    // marker, and model service all run. Removing only the persisted proof
+    // reproduces a historical successful completion from before proof saving.
+    await sendMessage(page, followUpPrompt)
+    await waitForBackendTerminal(request, taskId)
+    const after = await inspectExecutorSessionProof({ task_id: taskId, user_id: user.id })
+    expect(after.sessions.length).toBeGreaterThan(0)
+    // The fixture returns completed subtasks newest first.
+    expect(after.sessions[0]).not.toEqual(previousSession)
   })
 
   test('ClaudeCode clarification submits the selected option to the resumed model turn', async ({
@@ -3192,6 +3237,15 @@ test.describe('Agent conversation regression', () => {
         }
       )
       .toBe('COMPLETED')
+  }
+
+  async function getCurrentUser(request: APIRequestContext): Promise<{ id: number }> {
+    const response = await request.get(`${API_BASE_URL}/api/users/me`, { headers: authHeaders() })
+    expect(response.status()).toBe(200)
+    const payload = (await response.json()) as { user_id?: number; id?: number }
+    const id = payload.user_id ?? payload.id
+    expect(id, 'The current user response should contain an id').toBeTruthy()
+    return { id: id! }
   }
 
   async function waitForCapturedModelRequest(

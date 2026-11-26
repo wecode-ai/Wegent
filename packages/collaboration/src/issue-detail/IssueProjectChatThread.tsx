@@ -151,11 +151,11 @@ export function IssueProjectChatThread({
   }
   const activityThread = (
     <IssueActivityThread
+      thread={thread}
+      renderMessage={message => renderMessage(message)}
       cardAttributes={{
         'data-testid': `collaboration-chat-card-${rootId}`,
       }}
-      message={renderMessage(thread.root)}
-      replies={displayReplies.length ? displayReplies.map(message => renderMessage(message)) : null}
       repliesTestId={`collaboration-chat-replies-${rootId}`}
       composer={
         canComment && runtimeReplies ? (

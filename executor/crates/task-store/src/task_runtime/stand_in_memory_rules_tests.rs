@@ -198,6 +198,10 @@ fn forgetting_rule_recall_reuses_role_scope_isolation() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["roles"] = json!([crate::task_runtime::personal_stand_in::empty_role(
+        "default", "mac"
+    )]);
+    let mut settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     let role = settings["roles"][0]["id"].as_str().unwrap().to_owned();
     let row = store
         .save_stand_in_memory(

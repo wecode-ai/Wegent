@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -134,11 +135,17 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
       await control.command('waitFor', tree)
       await control.command('click', `${tree} .collaboration-workspace-identity`)
       await openDirectProjectCreation(control, CONTENT)
+      await verifyProjectFieldFocus(control, 'collaboration-project-name-input', {
+        previousButtonId: 'collaboration-project-create-close',
+      })
       await control.command('fill', selector('collaboration-project-name-input'), {
         value: projectName,
       })
       await control.command('click', selector('collaboration-project-create-add-collaborator'))
       await assertCollaboratorMenuGeometry(control)
+      await verifyProjectFieldFocus(control, 'collaboration-project-create-people-search', {
+        includeParent: true,
+      })
       await control.command('fill', selector('collaboration-project-create-people-search'), {
         value: `project-invitee-${process.pid}-`,
       })

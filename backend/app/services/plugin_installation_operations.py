@@ -103,6 +103,7 @@ def update_account_plugin(
             user_id=user_id,
             installed_id=installed_id,
             release_id=request.releaseId,
+            expected_current_release_id=request.expectedCurrentReleaseId,
         )
     return installed_plugin_service.update_installed_plugin(
         db=db, user_id=user_id, installed_id=installed_id, request=request

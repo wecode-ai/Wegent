@@ -287,6 +287,12 @@ class ConnectorConnectionResponse(BaseModel):
     tool_count: int = 0
 
 
+class ConnectorOAuthSessionCreateRequest(BaseModel):
+    authorization_ticket: str | None = Field(
+        default=None, min_length=1, max_length=2048
+    )
+
+
 class ConnectorOAuthSessionCreateResponse(BaseModel):
     session_id: str
     poll_token: str

@@ -60,7 +60,7 @@ OpenAI Responses upstreams in `auto` and `standard` receive Codex subagent items
 
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
-The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.
+The local router and cloud gateway map the top-level `model` before forwarding. Explicit passthrough preserves the remaining JSON bytes, including tool descriptions, history IDs, numeric representations and whitespace. The built-in ChatGPT subscription separately normalizes foreign reasoning history so conversations can continue after switching providers.
 
 For example, configure Kimi Responses with:
 
@@ -183,7 +183,9 @@ automatic continuation, no duplicate user messages, and cancellation.
 
 ### Codex external context conversion
 
-When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
+When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. When adapting requests for Responses, Chat Completions, or Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID stay linked to the original call through the destination protocol's call ID.
+
+The Responses adapter adds the `[tool_result without a matching tool_call]` marker and preserves native `input_image` and `input_file` content parts.
 
 ### Codex subagent message conversion
 

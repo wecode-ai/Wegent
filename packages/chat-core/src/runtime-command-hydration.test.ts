@@ -118,6 +118,34 @@ describe("command completion during an active turn", () => {
     expectCompleted(mergeRuntimeConversationTurns(local, snapshot)[0], "done");
   });
 
+  test.each(["done", "error"] as const)(
+    "applies a late command %s after cancellation without reopening the turn",
+    (status) => {
+      const cancelled = reduceRuntimeConversationTurns([runningCommand()], {
+        type: "assistant_cancelled",
+        subtaskId: "turn",
+      })[0];
+      const result = reduceRuntimeConversationTurns(
+        [cancelled],
+        completed(status),
+      )[0];
+
+      expect(result).toMatchObject({
+        status: "cancelled",
+        stoppedNotice: true,
+        completedAt: cancelled.completedAt,
+      });
+      expect(result.items[0]).toMatchObject({
+        block: {
+          status,
+          completedAt: 120,
+          toolOutput: "/workspace\n",
+          renderPayload: { status: status === "done" ? "completed" : "failed" },
+        },
+      });
+    },
+  );
+
   test("does not mark a background process complete when only the turn finishes", () => {
     const result = hydrateRuntimeConversationTurns(
       [runningCommand()],

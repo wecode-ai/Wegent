@@ -6,7 +6,7 @@ import {
   SortableRoot,
   type SortableChangeDetails,
 } from '@wegent/collaboration/controls/Sortable'
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useMemo, useRef, useState, type ReactNode } from 'react'
 import { isSidebarDragActivatorTarget } from './sidebarDragActivator'
 import { useSidebarSortablePaneDrag } from './useSidebarSortablePaneDrag'
 import type { WorkbenchSidebarPaneDragData } from './workbenchPaneDrag'
@@ -24,6 +24,23 @@ interface SidebarSortableListProps<T> {
   accessibleLabel: string
 }
 
+const SidebarReorderHandle = memo(function SidebarReorderHandle({
+  label,
+  testId,
+}: {
+  label: string
+  testId: string
+}) {
+  const { t } = useTranslation('common')
+  return (
+    <SortableHandle
+      aria-label={t('workbench.reorder_item', { name: label })}
+      data-testid={testId}
+      className="sr-only pointer-events-none"
+    />
+  )
+})
+
 export function SidebarSortableList<T>({
   items,
   getId,
@@ -36,7 +53,6 @@ export function SidebarSortableList<T>({
   testId,
   accessibleLabel,
 }: SidebarSortableListProps<T>) {
-  const { t } = useTranslation('common')
   const sourceIds = useMemo(() => items.map(getId), [getId, items])
   const sourceSignature = sourceIds.join('\0')
   const itemById = useMemo(
@@ -99,6 +115,7 @@ export function SidebarSortableList<T>({
           const item = itemById.get(id)
           if (!item) return null
           const reorderable = canDrag(item)
+          const label = getLabel(item)
           return (
             <div
               key={id}
@@ -108,16 +125,12 @@ export function SidebarSortableList<T>({
             >
               <SortableItem
                 value={id}
-                label={getLabel(item)}
+                label={label}
                 disabled={!reorderable && !getExternalDragData?.(item)}
                 className="rounded-lg has-[>[data-slot=sortable-handle]:focus-visible]:outline has-[>[data-slot=sortable-handle]:focus-visible]:outline-2 has-[>[data-slot=sortable-handle]:focus-visible]:-outline-offset-2 has-[>[data-slot=sortable-handle]:focus-visible]:outline-focus"
               >
                 {reorderable && (
-                  <SortableHandle
-                    aria-label={t('workbench.reorder_item', { name: getLabel(item) })}
-                    data-testid={`${testId}-handle-${id}`}
-                    className="sr-only pointer-events-none"
-                  />
+                  <SidebarReorderHandle label={label} testId={`${testId}-handle-${id}`} />
                 )}
                 <SortableDragArea className="touch-none">{renderItem(item)}</SortableDragArea>
               </SortableItem>

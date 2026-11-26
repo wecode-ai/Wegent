@@ -97,3 +97,18 @@ it('retains host event attribution when a later native snapshot omits it', () =>
     message: { source: original.source },
   })
 })
+
+it('normalizes the executor’s numeric message timestamp for transcript consumers', () => {
+  const original = { ...snapshot(), createdAt: Date.parse('2026-11-05T09:00:00Z') }
+  const [turn] = runtimeTranscriptTurnsToConversationTurns([
+    {
+      id: 'native-turn',
+      status: 'done',
+      items: [{ id: original.id, type: 'user_message', message: original }],
+    },
+  ])
+  expect(turn.items[0]).toMatchObject({
+    type: 'user_message',
+    message: { createdAt: '2026-11-05T09:00:00.000Z' },
+  })
+})

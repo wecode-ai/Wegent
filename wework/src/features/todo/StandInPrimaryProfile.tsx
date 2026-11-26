@@ -2,12 +2,18 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DingTalkDelegationControls } from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
+import {
+  defaultDingTalkDelegation,
+  dingTalkDelegationModel,
+  isDingTalkSource,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { createTagDraft } from '@wegent/collaboration'
-import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
 import { dequal } from 'dequal'
 import type { ReactNode, Ref } from 'react'
@@ -17,12 +23,15 @@ import type { StandInConnectionNavigationHandle } from './StandInConnectionSetti
 import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
+import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import {
   StandInSettingsActions,
-  StandInSettingsDisclosure,
   StandInSettingsEntry,
   StandInSettingsError,
   StandInSettingsHeader,
+  StandInSettingsPanel,
+  StandInSettingsShortcuts,
+  type StandInSettingsShortcut,
 } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
@@ -47,14 +56,17 @@ export function StandInPrimaryProfile({
   initialCalendar = false,
   onCalendarViewChange,
   onReload,
-  management,
+  shortcuts,
   footerLeading,
 }: {
   settings: PersonalStandInSettings
   saving: boolean
   loading?: boolean
   error: string | null
-  onSave(settings: PersonalStandInSettings): Promise<void>
+  onSave(
+    settings: PersonalStandInSettings,
+    stayOpen?: boolean
+  ): Promise<PersonalStandInSettings | void>
   onClose(): void
   ref?: Ref<StandInSettingsHandle>
   api?: StandInExecutorApi
@@ -67,10 +79,11 @@ export function StandInPrimaryProfile({
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
-  management?: ReactNode
+  shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
+  const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
   const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
@@ -82,6 +95,7 @@ export function StandInPrimaryProfile({
   const separatePrompt = saved.selfLearningEnabled !== undefined
   const original = {
     ...saved,
+    delegation: saved.delegation,
     collaboration: saved.collaboration ?? defaultCollaboration,
     calendar: saved.calendar,
     connections: saved.connections ?? [],
@@ -96,7 +110,12 @@ export function StandInPrimaryProfile({
     setBaseline(original)
     if (dequal(draft, baseline)) setDraft(original)
   }
-  const [connections, setConnections] = useState(initialCalendar)
+  const [view, setView] = useState<
+    'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
+  >(initialCalendar ? 'connections' : 'main')
+  if (view === 'revision' && !experimental) setView('main')
+  const connections = view === 'connections'
+  const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
@@ -111,7 +130,8 @@ export function StandInPrimaryProfile({
   const [discard, setDiscard] = useState(false)
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
-    settings.executionDeviceId
+    settings.executionDeviceId,
+    view === 'advanced'
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [tagOwner, setTagOwner] = useState(() => ({
@@ -140,19 +160,55 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot,
     tagDraft.getDirtySnapshot
   )
-  const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
+  const profileDirty = !dequal(
+    { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
+    { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
+  )
+  const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
     draft.selfLearningEnabled === true &&
     draft.preferences === original.preferences
-
+  const ordinarySubmission = dingTalkDelegationModel(original, draft).submission()
+  const savePrimary = (submission: typeof ordinarySubmission) =>
+    onSave({
+      ...settings,
+      primary: {
+        ...submission,
+        ...(preserveLegacyInstructions
+          ? { prompt: saved.prompt, preferences: saved.preferences }
+          : {}),
+        collaboration:
+          saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+            ? draft.collaboration
+            : undefined,
+      },
+    })
+  const changeDelegationPause = async (action: 'pause' | 'resume') => {
+    if (!saved.delegation) return
+    const next = await onSave(
+      {
+        ...settings,
+        primary: { ...saved, delegation: { ...saved.delegation, action } },
+      },
+      true
+    )
+    const delegation = next?.primary?.delegation
+    if (delegation) {
+      setDraft(current => ({
+        ...current,
+        delegation: {
+          ...delegation,
+          templates: current.delegation?.templates ?? delegation.templates,
+        },
+      }))
+    }
+  }
   const role = {
     ...defaultRole,
     ...draft,
   }
-  const navigation = useStandInPanelNavigation(!dequal(original, draft), blocked, () =>
-    setDiscard(true)
-  )
+  const navigation = useStandInPanelNavigation(profileDirty, blocked, () => setDiscard(true))
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const requestLeave = (action: () => void) => {
     if (connectionRef.current)
@@ -162,35 +218,32 @@ export function StandInPrimaryProfile({
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const backToSettings = () => {
+    const back = () => {
+      setCalendarEntry(false)
+      setView('main')
+    }
+    if (connectionRef.current) connectionRef.current.requestLeave(back)
+    else back()
+  }
+  const back = () => {
+    if (connections && connectionDetailOpen) connectionRef.current?.back()
+    else backToSettings()
+  }
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave }))
   return (
-    <DialogSurface
-      onClose={close}
+    <StandInSettingsPanel
+      testId="stand-in-primary-profile"
+      onClose={view === 'main' ? close : back}
       suspended={discard}
-      render={
-        <div
-          ref={dialogRef}
-          className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
-          data-testid="stand-in-primary-profile"
-        />
-      }
+      calendarOpen={calendarOpen}
     >
       <StandInSettingsHeader
         path={[
           {
             label: t('standIn.workspace.primary_profile'),
             testId: 'stand-in-path-settings',
-            onClick: connections
-              ? () => {
-                  const back = () => {
-                    setCalendarEntry(false)
-                    setConnections(false)
-                  }
-                  if (connectionRef.current) connectionRef.current.requestLeave(back)
-                  else back()
-                }
-              : undefined,
+            onClick: view === 'main' ? undefined : backToSettings,
           },
           ...(connections
             ? [
@@ -200,7 +253,16 @@ export function StandInPrimaryProfile({
                   onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
                 },
               ]
-            : []),
+            : view === 'advanced'
+              ? [
+                  {
+                    label: t('standIn.workspace.execution_settings'),
+                    testId: 'stand-in-path-advanced',
+                  },
+                ]
+              : shortcutPage
+                ? [{ label: shortcutPage.label, testId: 'stand-in-path-tool' }]
+                : []),
           ...(connections && connectionTitle
             ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
             : []),
@@ -210,25 +272,19 @@ export function StandInPrimaryProfile({
         )}
         disabled={blocked}
         back={
-          connections
-            ? {
-                testId: connectionDetailOpen
-                  ? 'stand-in-connections-back'
-                  : 'stand-in-primary-back-to-settings',
-                onClick: () => {
-                  if (connectionDetailOpen) {
-                    connectionRef.current?.back()
-                    return
-                  }
-                  setCalendarEntry(false)
-                  setConnections(false)
-                },
+          view === 'main'
+            ? { testId: 'stand-in-primary-back', onClick: close }
+            : {
+                testId:
+                  connections && connectionDetailOpen
+                    ? 'stand-in-connections-back'
+                    : 'stand-in-primary-back-to-settings',
+                onClick: back,
               }
-            : { testId: 'stand-in-primary-back', onClick: close }
         }
         close={{ testId: 'stand-in-primary-profile-close', onClick: close }}
       />
-      {!connections && (
+      {view === 'main' && (
         <>
           {separatePrompt && (
             <label className="mb-4 grid gap-2">
@@ -250,17 +306,19 @@ export function StandInPrimaryProfile({
                   : 'standIn.workspace.profile_instructions'
               )}
             </span>
-            <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
-              <ControlTextarea
-                data-testid="stand-in-preferences"
-                value={draft.preferences}
-                disabled={blocked}
-                onChange={event => setDraft({ ...draft, preferences: event.target.value })}
-                placeholder={t('standIn.workspace.profile_instructions_placeholder')}
-                rows={5}
-                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none placeholder:text-text-secondary"
-              />
-            </div>
+            <ControlTextarea
+              data-testid="stand-in-preferences"
+              value={draft.preferences}
+              disabled={blocked}
+              onChange={event => setDraft({ ...draft, preferences: event.target.value })}
+              placeholder={t(
+                separatePrompt
+                  ? 'standIn.workspace.ghost_private_preferences_placeholder'
+                  : 'standIn.workspace.profile_instructions_placeholder'
+              )}
+              rows={5}
+              className="block resize-y"
+            />
             <span className="text-xs text-text-secondary">
               {t(
                 separatePrompt
@@ -269,21 +327,13 @@ export function StandInPrimaryProfile({
               )}
             </span>
           </label>
-          <StandInSelfLearningSetting
-            enabled={draft.selfLearningEnabled}
-            savedEnabled={saved.selfLearningEnabled}
-            disabled={blocked}
-            onChange={selfLearningEnabled =>
-              setDraft(current => ({ ...current, selfLearningEnabled }))
-            }
-          />
           <div className="mt-6">
             <StandInSettingsEntry
               label={t('standIn.workspace.connections')}
               description={t('standIn.workspace.connections_help')}
               testId="stand-in-primary-connections-open"
               disabled={blocked}
-              onClick={() => setConnections(true)}
+              onClick={() => setView('connections')}
             />
           </div>
         </>
@@ -315,10 +365,49 @@ export function StandInPrimaryProfile({
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
             disabled={blocked}
+            dingTalkDelegation={original.delegation}
+            renderDingTalkDelegation={provider => (
+              <DingTalkDelegationControls
+                account={provider.availability}
+                saved={original}
+                draft={draft}
+                disabled={blocked || scheduleDirty || connectionDraftDirty}
+                dirty={dirty}
+                onToggleTemplate={(template, enabled) =>
+                  setDraft(current => {
+                    const delegation = current.delegation ?? defaultDingTalkDelegation
+                    return {
+                      ...current,
+                      delegation: {
+                        ...delegation,
+                        templates: { ...delegation.templates, [template]: enabled },
+                      },
+                    }
+                  })
+                }
+                onEnable={() =>
+                  void savePrimary(
+                    dingTalkDelegationModel(original, draft, provider.availability).submission(true)
+                  )
+                }
+                onPause={action => void changeDelegationPause(action)}
+              />
+            )}
             onChange={value =>
               setDraft({
                 ...draft,
-                enabled: original.enabled || connectionChangeEnablesIdentity(original, value),
+                enabled:
+                  original.enabled ||
+                  connectionChangeEnablesIdentity(
+                    {
+                      ...original,
+                      connections: original.connections.filter(row => !isDingTalkSource(row)),
+                    },
+                    {
+                      ...value,
+                      connections: value.connections?.filter(row => !isDingTalkSource(row)),
+                    }
+                  ),
                 collaboration: value.collaboration,
                 calendar: value.calendar,
                 connections: value.connections ?? [],
@@ -327,55 +416,65 @@ export function StandInPrimaryProfile({
           />
         </div>
       )}
-      {!connections && (
-        <div className="mt-4">
-          <StandInSettingsDisclosure
-            testId="stand-in-primary-execution"
+      {view === 'main' && (
+        <div className="mt-4" data-testid="stand-in-primary-execution">
+          <StandInSettingsEntry
+            testId="stand-in-primary-execution-toggle"
             label={t('standIn.workspace.execution_settings')}
             description={t('standIn.workspace.execution_settings_help')}
-          >
-            <StandInComposer
-              draft={role}
-              showPrompt={false}
-              onChange={update => {
-                setDraft(current => {
-                  const next =
-                    typeof update === 'function' ? update({ ...role, ...current }) : update
-                  return {
-                    ...current,
-                    model: next.model,
-                    modelOptions: next.modelOptions,
-                    workspace: next.workspace,
-                  }
-                })
-              }}
-              onSave={async () => {}}
-              disabled={blocked}
-              submitDisabled={blocked}
-              services={services}
-              devices={devices}
-              runtimeWork={runtimeWork}
-              deviceControl={
-                <StandInDeviceSelect
-                  readOnly={deviceReadOnly}
-                  value={settings.executionDeviceId}
-                  currentDeviceId={localDeviceId}
-                  devices={devices}
-                  disabled={blocked || dirty}
-                  onChange={onSelectDevice}
-                />
-              }
-            />
-            <p className="text-xs text-text-secondary">
-              {t('standIn.workspace.execution_device_help')}
-            </p>
-            <StandInSettingsError
-              error={runtimeError}
-              retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
-            />
-          </StandInSettingsDisclosure>
+            disabled={blocked}
+            onClick={() => setView('advanced')}
+          />
         </div>
       )}
+      {view === 'advanced' && (
+        <div data-testid="stand-in-primary-execution" className="space-y-3">
+          <StandInComposer
+            draft={role}
+            showPrompt={false}
+            onChange={update => {
+              setDraft(current => {
+                const next = typeof update === 'function' ? update({ ...role, ...current }) : update
+                return {
+                  ...current,
+                  model: next.model,
+                  modelOptions: next.modelOptions,
+                  workspace: next.workspace,
+                }
+              })
+            }}
+            onSave={async () => {}}
+            disabled={blocked}
+            submitDisabled={blocked}
+            services={services}
+            devices={devices}
+            runtimeWork={runtimeWork}
+            deviceControl={
+              <StandInDeviceSelect
+                readOnly={deviceReadOnly}
+                value={settings.executionDeviceId}
+                currentDeviceId={localDeviceId}
+                devices={devices}
+                disabled={blocked || dirty}
+                onChange={onSelectDevice}
+              />
+            }
+          />
+          <StandInTaskPermissionSettings
+            value={draft.taskPermissions}
+            disabled={blocked}
+            onChange={taskPermissions => setDraft(current => ({ ...current, taskPermissions }))}
+          />
+          <p className="text-xs text-text-secondary">
+            {t('standIn.workspace.execution_device_help')}
+          </p>
+          <StandInSettingsError
+            error={runtimeError}
+            retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
+          />
+        </div>
+      )}
+      {shortcutPage?.content}
       <ConfirmDialog
         open={discard}
         destructive
@@ -394,31 +493,36 @@ export function StandInPrimaryProfile({
           navigation.confirmLeave(onClose)
         }}
       />
-      {!connections && management}
-      {!scheduleDirty && (
+      {view === 'main' && (
+        <StandInSettingsShortcuts shortcuts={shortcuts} disabled={blocked} onOpen={setView} />
+      )}
+      {view === 'main' && experimental && (
+        <StandInSelfLearningSetting
+          enabled={draft.selfLearningEnabled}
+          disabled={blocked}
+          onChange={selfLearningEnabled =>
+            setDraft(current => ({ ...current, selfLearningEnabled }))
+          }
+          report={shortcuts?.find(shortcut => shortcut.id === 'revision')}
+          onOpenReport={() => setView('revision')}
+        />
+      )}
+      {!scheduleDirty && !shortcutPage && (
         <StandInSettingsActions
           prefix="stand-in-primary"
           leading={footerLeading}
           busy={blocked}
           saveLabel={saving ? t('standIn.saving') : loading ? t('standIn.loading') : undefined}
           disabled={blocked}
-          saveDisabled={blocked || !dirty || scheduleDirty || connectionDraftDirty}
-          onCancel={close}
-          onSave={() =>
-            void onSave({
-              ...settings,
-              primary: {
-                ...draft,
-                ...(preserveLegacyInstructions
-                  ? { prompt: saved.prompt, preferences: saved.preferences }
-                  : {}),
-                collaboration:
-                  saved.collaboration || !dequal(draft.collaboration, original.collaboration)
-                    ? draft.collaboration
-                    : undefined,
-              },
-            })
+          saveDisabled={
+            blocked ||
+            !profileDirty ||
+            scheduleDirty ||
+            connectionDraftDirty ||
+            dequal(original, ordinarySubmission)
           }
+          onCancel={close}
+          onSave={() => void savePrimary(ordinarySubmission)}
         >
           {error && (
             <div className="w-full">
@@ -438,6 +542,6 @@ export function StandInPrimaryProfile({
           )}
         </StandInSettingsActions>
       )}
-    </DialogSurface>
+    </StandInSettingsPanel>
   )
 }

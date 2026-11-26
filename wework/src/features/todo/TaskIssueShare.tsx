@@ -10,7 +10,7 @@ import type {
 } from '@wegent/chat-core/runtime-conversation'
 import {
   type ConversationShareSelectionContext,
-  getAssistantRenderProjection,
+  getAssistantContentPresentation,
   getUserMessageTextProjection,
 } from '@wegent/collaboration/conversation'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -47,7 +47,7 @@ function shareExcerpts(
       return []
     const content =
       message.role === 'assistant'
-        ? getAssistantRenderProjection(message).content.trim()
+        ? getAssistantContentPresentation(message).content.trim()
         : getUserMessageTextProjection(message.content).content.trim()
     const itemId = message.runtimeItemId ?? message.runtimeDisplayItems?.[0]?.id
     const order = positions.get(`${message.turnId}:${itemId}`)
@@ -111,8 +111,7 @@ export function TaskIssueShare({
   shareRef,
   toolbarContainer,
   title,
-  messages,
-  turns,
+  readTranscript,
   address,
   readWorkspaceFileChunk,
   readHistoryPage,
@@ -120,8 +119,7 @@ export function TaskIssueShare({
   toolbarContainer: HTMLElement | null
   shareRef?: Ref<TaskIssueShareHandle>
   title: string
-  messages: WorkbenchMessage[]
-  turns: RuntimeConversationTurn[]
+  readTranscript: () => { messages: WorkbenchMessage[]; turns: RuntimeConversationTurn[] }
   address: { deviceId: string; taskId: string; workspacePath?: string | null }
   readWorkspaceFileChunk?: ReadWorkspaceFileChunk
   readHistoryPage?(
@@ -158,6 +156,7 @@ export function TaskIssueShare({
     setDraft(null)
   }
   const openShare = (selection?: string, context?: ConversationShareSelectionContext) => {
+    const { messages, turns } = readTranscript()
     setLinksOpen(false)
     setProjectIssue(null)
     const sourceTitle = Array.from(title.trim()).slice(0, 255).join('')
@@ -337,9 +336,13 @@ export function TaskIssueShare({
         <IndependentIssueDialog
           key={`${cloud.apiBaseUrl ?? ''}:${cloud.user.id}`}
           api={apis.personal}
+          collaborationApi={apis.collaboration}
           userId={Number(cloud.user.id)}
           issueId={null}
           shareDraft={draft}
+          onOpenChildTask={issue => {
+            if (openWeworkScheme(weworkPersonalIssueScheme(issue.id))) close()
+          }}
           onSaved={() => void refreshLinks()}
           onOpenProjectIssue={(projectId, issueId, restricted) => {
             setProjectIssue({

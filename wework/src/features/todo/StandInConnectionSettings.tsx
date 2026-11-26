@@ -1,4 +1,8 @@
-import type { StandInRole } from '@/api/personalStandIn'
+import {
+  STAND_IN_DINGTALK_PROVIDER,
+  type StandInDingTalkDelegation,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import {
   AutomationsPage,
@@ -17,6 +21,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
   type Ref,
 } from 'react'
 import { StandInConnectionCatalog } from './StandInConnectionCatalog'
@@ -55,6 +60,8 @@ export function StandInConnectionSettings({
   projectScopeConfigured,
   ref,
   onNavigate,
+  renderDingTalkDelegation,
+  dingTalkDelegation,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -76,6 +83,8 @@ export function StandInConnectionSettings({
   projectScopeConfigured?: boolean
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
+  renderDingTalkDelegation?(provider: ConnectionProviderDescriptor): ReactNode
+  dingTalkDelegation?: StandInDingTalkDelegation
 }) {
   const { t, i18n } = useTranslation('common')
   const pending = Boolean(
@@ -192,7 +201,7 @@ export function StandInConnectionSettings({
                       testId: 'stand-in-calendar-policy',
                       policy: role.calendar?.policy ?? {
                         automatic: true,
-                        askBeforeAct: true,
+                        askBeforeAct: false,
                         immediate: role.id !== '@primary',
                       },
                       onChange: policy => onChange({ ...role, calendar: { policy } }),
@@ -260,6 +269,9 @@ export function StandInConnectionSettings({
                   disabled={disabled || loading}
                   onChange={onChange}
                   onReady={() => model.reload()}
+                  delegatedDingTalk={
+                    role.id === '@primary' && provider.id === STAND_IN_DINGTALK_PROVIDER
+                  }
                 />
               ) : null}
               {provider.id !== EMAIL_PROVIDER &&
@@ -271,6 +283,8 @@ export function StandInConnectionSettings({
                     onChange={onChange}
                   />
                 )}
+              {provider.id === STAND_IN_DINGTALK_PROVIDER &&
+                renderDingTalkDelegation?.(provider)}
             </>
           ) : (
             <div className="space-y-3">
@@ -292,8 +306,8 @@ export function StandInConnectionSettings({
             projectScopeConfigured={projectScopeConfigured}
             projects={projects}
             providers={providers}
+            dingTalkDelegation={dingTalkDelegation}
             loading={loading}
-            local={deviceId === localDeviceId}
             disabled={disabled}
             scheduling={Boolean(scheduling)}
             onSelect={setView}

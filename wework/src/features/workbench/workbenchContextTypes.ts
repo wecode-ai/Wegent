@@ -41,6 +41,7 @@ import type {
   RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeTranscriptSearchResponse,
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
@@ -75,7 +76,6 @@ import type {
 } from '@/types/workbench'
 import type { ReactNode } from 'react'
 import type { RuntimeTaskStreamHandlers } from './runtimePaneMessages'
-import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 import type { WorkbenchServices } from './workbenchServices'
 
 export type ProjectMutationOptions = {
@@ -193,6 +193,8 @@ export interface RuntimePaneActionOptions {
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
+  onAccepted?: (response: RuntimeSendResponse) => void
+  onGuided?: () => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }
@@ -222,11 +224,10 @@ export interface WorkbenchContextValue {
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
-  runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     scopeKey: string
-    inputByScope: Readonly<Record<string, string>>
+    draftStore: import('./scopedDraftStore').ScopedDraftStore
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
     personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
@@ -241,7 +242,6 @@ export interface WorkbenchContextValue {
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
     onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
-    input: string
     composerError?: string | null
     composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
@@ -264,7 +264,8 @@ export interface WorkbenchContextValue {
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
     resolveRuntimeTaskModelSelection: (
-      address: RuntimeTaskAddress
+      address: RuntimeTaskAddress,
+      task?: RuntimeTaskSummary | null
     ) => RuntimeTaskModelSelectionControls
     setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
     setRuntimeTaskSelectedModelAndOptions: (
@@ -280,7 +281,7 @@ export interface WorkbenchContextValue {
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
-    getInputRevisionForScope: (scopeKey: string) => number
+    replaceInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
@@ -290,8 +291,19 @@ export interface WorkbenchContextValue {
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
     addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
+    replaceImageAttachmentForScope: (
+      scopeKey: string,
+      attachmentId: number,
+      file: File,
+      comments: NonNullable<Attachment['image_markup_comments']>,
+      signal: AbortSignal
+    ) => Promise<Attachment | null>
+    getAttachment: (attachmentId: number) => Attachment | undefined
+    getAttachmentForScope: (scopeKey: string, attachmentId: number) => Attachment | undefined
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
+    releaseAttachment: (attachmentId: number) => void
+    releaseAttachmentForScope: (scopeKey: string, attachmentId: number) => void
     dismissAttachmentError: (filename: string) => void
     dismissAttachmentErrorForScope: (scopeKey: string, filename: string) => void
     resetAttachments: () => void
@@ -321,7 +333,7 @@ export interface WorkbenchContextValue {
     projectRoots?: string[],
     launchOptions?: WorkbenchWorkspaceLaunchOptions
   ) => Promise<void>
-  startNewChat: () => void
+  startNewChat: (options?: import('@/lib/workbenchComposerFocus').NewWorkbenchChatOptions) => void
   startNewSkillChat: (
     skillNames: string[],
     options?: { allowLocalSkills?: boolean }

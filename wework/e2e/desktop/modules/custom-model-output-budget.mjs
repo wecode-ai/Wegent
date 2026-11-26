@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 /** Verify output-budget validation, persistence, editing and clearing through the real host. */
 export async function verifyCustomModelOutputBudget(control) {
@@ -124,6 +125,12 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   assert.equal(await control.command('getValue', output), '')
   await control.command('click', '[data-testid="provider-editor-cancel"]')
   await control.command('click', `[data-testid="provider-delete-${id}"]`)
+  await waitForValue(
+    () => control.command('getActiveElementTestId', 'body'),
+    id => id === 'provider-action-confirm-cancel-button',
+    'Deleting a provider should initially focus Cancel',
+    5_000
+  )
   await control.command('clickWhenEnabled', '[data-testid="provider-action-confirm"]')
   await waitForSnapshot(control, snapshot => !snapshot.testIds.includes(row))
 }

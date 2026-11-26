@@ -2,8 +2,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::{agents::model_gateway, server::local_model_proxy::GatewayCredentials};
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn model_gateway_credentials(
+        &self,
+        local_task_id: &str,
+        request: &mut ExecutionRequest,
+        restore_saved_profile: bool,
+    ) -> Result<Option<GatewayCredentials>, String> {
+        let saved = self
+            .store
+            .read_task(local_task_id, |link| link.gateway_binding.clone())
+            .flatten();
+        let Some((credentials, binding)) = model_gateway::credentials(
+            &self.backend_connection,
+            request,
+            saved.as_ref(),
+            restore_saved_profile,
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        if saved.as_ref() != Some(&binding) {
+            self.store
+                .try_update_task(local_task_id, |link| {
+                    store_runtime_execution_request(&mut link.runtime_handle, request);
+                    link.gateway_binding = Some(binding);
+                })
+                .map_err(|error| {
+                    format!("Could not save the verified model gateway binding: {error}")
+                })?;
+        }
+        Ok(Some(credentials))
+    }
+
     pub(super) async fn prepare_goal_model_route(
         &self,
         link: &RuntimeTaskLink,
@@ -34,6 +68,14 @@ impl RuntimeWorkRpcHandler {
         );
         self.apply_backend_connection(&mut request);
         self.resolve_local_model_reference(&mut request, &link.local_task_id)?;
+        let gateway_credentials = self
+            .model_gateway_credentials(
+                &link.local_task_id,
+                &mut request,
+                payload.get("modelConfig").is_none(),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("model_route_failed", error))?;
         self.register_thread_event_route(
             thread_id,
             link.local_task_id.clone(),
@@ -48,6 +90,7 @@ impl RuntimeWorkRpcHandler {
         self.codex_app_server
             .resume_thread_for_model_action(
                 &request,
+                gateway_credentials,
                 thread_id,
                 thread_path.as_deref(),
                 |registration| {

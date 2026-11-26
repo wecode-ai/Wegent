@@ -1,0 +1,11 @@
+{
+  "order": 193515,
+  "scenario": "./scenarios/initial-goal-image.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 141515, "shard": 2, "position": 7515 } },
+  "paths": [
+    "executor/src/agents/codex.rs",
+    "wework/e2e/desktop/catalog/initial-goal-image.json",
+    "wework/e2e/desktop/scenarios/initial-goal-image.scenario.mjs"
+  ]
+}

@@ -490,6 +490,47 @@ const HELD_RESPONSE_SCENARIOS = new Set([
   'cloud_device_restart_busy',
 ])
 
+const IMAGE_EDIT_COMPLETION_TEXT = {
+  image_preview_resize: 'Image resize received',
+  side_chat_image_preview_resize: 'Image resize received',
+  image_preview_comment: 'Image comment received',
+  image_preview_markup_save: 'Saved markup received',
+  image_preview_markup_instructions: 'Markup instructions received',
+  image_erase: 'Image erase received',
+}
+
+async function verifyCloudRuntimeIdentity(endpoint, expectedUserId) {
+  const fail = message => {
+    console.error(message)
+    process.exitCode = 1
+  }
+  const token = process.env.WEGENT_RUNTIME_AUTH_TOKEN?.trim()
+  const username = process.env.WEGENT_SKILL_USER_NAME
+  if (!token) return fail('Cloud task Shell did not receive a runtime token')
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Authorization: 'Bearer ' + token },
+      redirect: 'error',
+      signal: AbortSignal.timeout(3000),
+    })
+    if (response.status !== 200)
+      return fail('CI Backend did not accept the task runtime token (HTTP ' + response.status + ')')
+    const { user } = await response.json()
+    if (typeof user !== 'string' || !user) return fail('CI Backend did not return a runtime user')
+    const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'))
+    if (
+      claims.type !== 'task_token' ||
+      claims.user_id !== expectedUserId ||
+      !username ||
+      claims.user_name !== username
+    )
+      return fail('CI Backend accepted a task runtime token for a different identity')
+    process.stdout.write(username)
+  } catch {
+    fail('Cloud task Shell could not verify its runtime token with the CI Backend')
+  }
+}
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -584,16 +625,6 @@ class DesktopE2EServer {
     })
     this.followUpRelease = new Promise(resolvePromise => {
       this.releaseFollowUp = resolvePromise
-    })
-    this.guidanceScrollStage = 'setup'
-    this.guidanceScrollToolRelease = new Promise(resolvePromise => {
-      this.releaseGuidanceScrollTool = resolvePromise
-    })
-    this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
-      this.releaseGuidanceScrollResponse = resolvePromise
-    })
-    this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
-      this.releaseGuidanceScrollGuidanceArrival = resolvePromise
     })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
@@ -899,6 +930,18 @@ class DesktopE2EServer {
     )
   }
 
+  setPersonalRemoteCloudInitialScenario(backendUrl, expectedUserId) {
+    const backend = new URL(backendUrl)
+    assert.ok(
+      backend.protocol === 'http:' && backend.hostname === '127.0.0.1' && backend.port,
+      'The cloud identity probe must use the isolated CI Backend'
+    )
+    assert.ok(Number.isSafeInteger(expectedUserId) && expectedUserId > 0, 'Invalid CI user ID')
+    const endpoint = `${backend.origin}/api/users/me/wegent-runtime`
+    this.personalRemoteCloudIdentityCommand = `node -e "(${verifyCloudRuntimeIdentity})('${endpoint}', ${expectedUserId})"`
+    this.setScenario('cloud_initial')
+  }
+
   setScenario(scenario) {
     assert.ok(
       [
@@ -926,6 +969,7 @@ class DesktopE2EServer {
         'cancellation',
         'send_rejection',
         'guidance_scroll',
+        'guidance_attachment',
         'queue_management',
         'retry',
         'rate_limit',
@@ -941,6 +985,12 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'pasted_zip_attachment',
+        'image_preview_resize',
+        'side_chat_image_preview_resize',
+        'image_preview_comment',
+        'image_preview_markup_save',
+        'image_preview_markup_instructions',
+        'image_erase',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
         'workspace_selection_streaming',
@@ -964,6 +1014,18 @@ class DesktopE2EServer {
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+    if (scenario === 'guidance_scroll' || scenario === 'guidance_attachment') {
+      this.guidanceScrollStage = scenario === 'guidance_scroll' ? 'setup' : 'active'
+      this.guidanceScrollToolRelease = new Promise(resolvePromise => {
+        this.releaseGuidanceScrollTool = resolvePromise
+      })
+      this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
+        this.releaseGuidanceScrollResponse = resolvePromise
+      })
+      this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
+        this.releaseGuidanceScrollGuidanceArrival = resolvePromise
+      })
+    }
   }
 
   holdScenarioResponse(scenario) {
@@ -1235,6 +1297,7 @@ class DesktopE2EServer {
 
   async commandForClient(clientId, action, selector, options = {}) {
     const {
+      onStarted,
       expectClientReplacement = false,
       exitProcessId,
       preserveResultAcrossClientReplacement = false,
@@ -1312,6 +1375,7 @@ class DesktopE2EServer {
         DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
         `Timed out delivering UI action ${action} for ${selector}`
       )
+      onStarted?.()
       const completion = await withTimeout(
         this.guard(
           exitProcessId === undefined
@@ -3019,8 +3083,8 @@ class DesktopE2EServer {
       assert.fail(`Unexpected desktop E2E model stage: ${this.modelStage}`)
     }
 
-    if (this.scenario === 'guidance_scroll') {
-      this.recordScenarioRequest('guidance_scroll', modelRequest)
+    if (this.scenario === 'guidance_scroll' || this.scenario === 'guidance_attachment') {
+      this.recordScenarioRequest(this.scenario, modelRequest)
       if (this.guidanceScrollStage === 'setup') {
         assert.ok(
           JSON.stringify(body).includes(GUIDANCE_SCROLL_PROMPT),
@@ -3072,10 +3136,12 @@ class DesktopE2EServer {
         return
       }
       if (this.guidanceScrollStage === 'awaiting_guidance') {
-        assert.ok(
-          JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
-          'The active turn did not apply the queued guidance'
-        )
+        if (this.scenario === 'guidance_scroll') {
+          assert.ok(
+            JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
+            'The active turn did not apply the queued guidance'
+          )
+        }
         this.guidanceScrollStage = 'complete'
         this.releaseGuidanceScrollGuidanceArrival()
         await this.guidanceScrollCompletionRelease
@@ -3162,7 +3228,8 @@ class DesktopE2EServer {
       )
       const tool = selectShellToolCommand(
         body,
-        `node -e "process.stdout.write(process.env.WEGENT_SKILL_USER_NAME || '')"`,
+        this.personalRemoteCloudIdentityCommand ??
+          `node -e "process.stdout.write(process.env.WEGENT_SKILL_USER_NAME || '')"`,
         this.cloudWorkspacePath,
         { yieldTimeMs: 10_000 }
       )
@@ -3185,10 +3252,14 @@ class DesktopE2EServer {
         'The real cloud Codex request did not report its tool output to the model service'
       )
       const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
-      assert.match(identityToolOutput, /Process exited with code 0\b/)
-      assert.equal(
-        identityToolOutput.trim().split('\n').at(-1),
-        CLOUD_AUTHENTICATED_USER_NAME,
+      assert.ok(
+        /Process exited with code 0\b/.test(identityToolOutput),
+        this.personalRemoteCloudIdentityCommand
+          ? 'The remote personal task Shell did not authenticate to the CI Backend'
+          : 'The cloud task Shell did not return its authenticated username'
+      )
+      assert.ok(
+        identityToolOutput.trim().split('\n').at(-1) === CLOUD_AUTHENTICATED_USER_NAME,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
       const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)
@@ -4457,6 +4528,55 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (
+      this.scenario === 'image_preview_resize' ||
+      this.scenario === 'side_chat_image_preview_resize' ||
+      this.scenario === 'image_preview_comment' ||
+      this.scenario === 'image_preview_markup_save' ||
+      this.scenario === 'image_preview_markup_instructions' ||
+      this.scenario === 'image_erase'
+    ) {
+      const turn = body.input?.findLast?.(item => item.role === 'user')
+      const parts = turn?.content ?? []
+      const editText = parts
+        .filter(part => part.type === 'input_text')
+        .map(part => part.text)
+        .join('\n')
+      const isComment = this.scenario === 'image_preview_comment'
+      const isSavedMarkup = this.scenario === 'image_preview_markup_save'
+      const isMarkupInstructions = this.scenario === 'image_preview_markup_instructions'
+      const isErase = this.scenario === 'image_erase'
+      if (isSavedMarkup) {
+        assert.match(editText, /Preserve this unsent image-edit draft/)
+        assert.match(editText, /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the saved mark/)
+        assert.match(
+          editText,
+          /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the mark saved in Files/
+        )
+      } else if (isComment) {
+        assert.match(editText, /(?:Image|图像) 1[:：]/)
+        assert.match(
+          editText,
+          /1\.\s*[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Inspect this area/
+        )
+      } else if (isMarkupInstructions) {
+        assert.match(editText, /Compare the highlighted regions before editing/)
+      } else if (isErase) {
+        assert.match(editText, /remove the area marked in white/i)
+      } else {
+        assert.match(editText, /aspect ratio 16:9/)
+      }
+      assert.equal(parts.filter(part => part.type === 'input_image').length, isErase ? 2 : 1)
+      if (!isSavedMarkup) assert.doesNotMatch(editText, /Preserve this unsent image-edit draft/)
+      this.recordScenarioRequest(this.scenario, modelRequest)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(IMAGE_EDIT_COMPLETION_TEXT[this.scenario]),
         responseCompleted(responseId),
       ])
       return
