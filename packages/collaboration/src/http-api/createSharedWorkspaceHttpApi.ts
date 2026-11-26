@@ -71,6 +71,8 @@ export interface SharedWorkspaceHttpApi {
   issues: Required<
     Pick<
       SharedWorkspaceApi["issues"],
+      | "submitRound"
+      | "decideRound"
       | "listAssistantParticipations"
       | "readAssistantParticipation"
       | "backfillAssistantParticipations"
@@ -554,6 +556,12 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     issues: {
+      async submitRound(projectId, input) {
+        await transport.post(`/v1/cloud-projects/${encoded(projectId)}/executions/batch`, input);
+      },
+      async decideRound(projectId, input) {
+        await transport.post(`/v1/cloud-projects/${encoded(projectId)}/executions/manager-decision`, input);
+      },
       listAssistantParticipations(issueId) {
         return transport.get<AssistantParticipation[]>(
           `/v1/loop-items/${encoded(issueId)}/assistant-participations`,

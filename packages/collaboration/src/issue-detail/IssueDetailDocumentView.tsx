@@ -28,6 +28,7 @@ import { ExecutionConfigurationNotice } from '../runtime-profile/ExecutionConfig
 import { IssueLinkedTasks, IssueDeliveries } from './IssueExecutionLists'
 import { taskDeviceLabel } from './taskBindingPresentation'
 import { cn, columnDotClasses, memberNameById } from './issueEditorSupport'
+import { IssueCoordinationActions } from './IssueCoordinationActions'
 import { IssueTitleField, TodoAttachmentSection } from './IssueEditorControls'
 import type { IssueDetailViewModel } from './IssueDetailMainView'
 export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel }) {
@@ -790,6 +791,25 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
           </>
         ) : null}
 
+        {editProps &&
+          item?.coordination &&
+          (item.coordination.canCoordinate || item.coordination.waitingForMembers) &&
+          editorPort.issues.submitRound &&
+          editorPort.issues.decideRound && (
+            <IssueCoordinationActions
+              key={JSON.stringify([
+                item.id,
+                item.coordination.dispatchId,
+                item.coordination.roundId,
+              ])}
+              issue={item}
+              round={item.coordination}
+              submitRound={editorPort.issues.submitRound}
+              decideRound={editorPort.issues.decideRound}
+              t={t}
+              refresh={async () => editProps.onUpdated(await editorPort.issues.get(item.id))}
+            />
+          )}
         {twoColumn && item && editProps?.project?.task_provider !== 'dingtalk_aitable'
           ? (activityView ?? (
               <section

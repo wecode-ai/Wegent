@@ -617,7 +617,28 @@ export interface SharedWorkspaceMyWorkApi {
   }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
 }
 
+export interface CoordinationRound {
+  loopItemId: string;
+  dispatchId: string;
+  roundId: string;
+}
+export interface CoordinationAssignment {
+  assignmentId: string;
+  title: string;
+  instructions: string;
+  assigneeType: "agent" | "human";
+  assigneeId: string;
+  workflowStageId?: string;
+  modelId?: string;
+}
 export interface SharedWorkspaceIssuesApi {
+  submitRound?(projectId: string, input: CoordinationRound & { items: CoordinationAssignment[] }): Promise<void>;
+  decideRound?(projectId: string, input: CoordinationRound & {
+    targetStatus: "inbox" | "pending" | "in_progress" | "in_review" | "completed";
+    idempotencyKey: string;
+    reason: string;
+    comment?: string;
+  }): Promise<void>;
   list(
     projectId: string,
     filters?: WorkspaceIssueListFilters,

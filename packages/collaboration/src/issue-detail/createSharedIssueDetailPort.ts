@@ -141,7 +141,7 @@ export interface SharedIssueDetailUpdateInput {
 
 export interface SharedIssueDetailPort {
   milestones?: SharedWorkspaceApi["milestones"];
-  issues: {
+  issues: Pick<SharedWorkspaceApi["issues"], "submitRound" | "decideRound"> & {
     get(issueId: string): Promise<CollaborationIssue>;
     create(
       projectId: string,
@@ -333,6 +333,8 @@ export function createSharedIssueDetailPort(
   return {
     milestones: api.milestones,
     issues: {
+      submitRound: api.issues.submitRound,
+      decideRound: api.issues.decideRound,
       get: api.issues.get,
       create: (projectId, input) =>
         api.issues.create(projectId, {

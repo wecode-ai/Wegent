@@ -3,6 +3,20 @@ export const activityMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "todo.coordinate_round": "办理本轮派工",
+    "todo.round_waiting": "等待成员交付本轮结果",
+    "todo.round_recorded": "本轮已提交",
+    "todo.round_no_members": "本次指派没有可分派的成员。你仍可提交事项决定。",
+    "todo.delegate_round": "派发工作",
+    "todo.decide_round": "提交决定",
+    "todo.workflow_stage": "流程阶段",
+    "todo.no_workflow_stage": "不指定阶段",
+    "todo.assignment_instructions": "工作要求",
+    "todo.remove_assignment": "移除这项工作",
+    "todo.add_assignment": "添加工作",
+    "todo.decision_reason": "决定理由",
+    "todo.refresh_round": "刷新",
+
     "todo.status_action_create": "创建",
     "todo.status_action_user_update": "用户更新",
     "todo.status_action_ai_started": "AI 开始执行",
@@ -149,6 +163,20 @@ export const activityMessages: Record<
     "activity.task_activity_view_execution": "查看执行",
   },
   en: {
+    "todo.coordinate_round": "Coordinate this round",
+    "todo.round_waiting": "Waiting for members to deliver this round",
+    "todo.round_recorded": "Round recorded",
+    "todo.round_no_members": "This assignment has no eligible members. You can still submit an Issue decision.",
+    "todo.delegate_round": "Dispatch work",
+    "todo.decide_round": "Submit decision",
+    "todo.workflow_stage": "Workflow stage",
+    "todo.no_workflow_stage": "No stage",
+    "todo.assignment_instructions": "Work instructions",
+    "todo.remove_assignment": "Remove assignment",
+    "todo.add_assignment": "Add assignment",
+    "todo.decision_reason": "Decision reason",
+    "todo.refresh_round": "Refresh",
+
     "todo.status_action_create": "Created",
     "todo.status_action_user_update": "User updated",
     "todo.status_action_ai_started": "AI started",
