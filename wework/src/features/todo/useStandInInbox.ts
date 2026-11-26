@@ -6,6 +6,7 @@ import {
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
+import { isOrdinaryDelegationSkip } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 
 export function inboxRuntimeItem(
@@ -80,7 +81,10 @@ export function useStandInInbox(
       query.data?.items.filter(
         work =>
           !work.source.delegated ||
-          (work.delegationResult && work.delegationResult.action !== 'skip')
+          !!work.takenOverAt ||
+          (work.delegationResult
+            ? !isOrdinaryDelegationSkip(work.delegationResult)
+            : work.status === 'pending')
       ) ?? [],
     sourceErrors: query.data?.sourceErrors ?? [],
     error: query.status === 'error' ? getStandInErrorMessage(query.error) : null,

@@ -97,8 +97,16 @@ export interface ConnectionReadiness {
 
 export interface StandInDelegationResult {
   action: 'reply' | 'needs_user' | 'skip'
-  status: 'complete' | 'submitting' | 'sent' | 'unknown'
+  status: 'complete' | 'submitting' | 'sent' | 'failed' | 'unknown'
   reason: string
+  reasonCode?: 'owner_intervened' | 'model_skipped'
+  deliveryReason?: string
+  deliveryReasonCode?: string
+  attemptId?: string
+  recordId?: string
+  channelTaskId?: string
+  receiptId?: string
+  takenOver?: boolean
 }
 
 export interface StandInInboxMessage {
@@ -123,6 +131,7 @@ export interface StandInInboxWork {
   messageCount: number
   latestMessage: StandInInboxMessage | null
   delegationResult?: StandInDelegationResult
+  takenOverAt?: string
   task?: RuntimeTaskSummary | null
   error?: string | null
 }
@@ -499,6 +508,13 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string
   ): Promise<{ messages: StandInInboxMessage[] }>
+  takeOverWork(userId: number, deviceId: string, workId: string): Promise<void>
+  verifyWorkDelivery(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    recordId: string
+  ): Promise<void>
   runWork(
     userId: number,
     deviceId: string,
@@ -806,6 +822,12 @@ export function createStandInExecutorApi(
     },
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
+    takeOverWork: async (userId, deviceId, workId) => {
+      await request('runtime.stand_in.work.takeover', { userId, workId }, deviceId)
+    },
+    verifyWorkDelivery: async (userId, deviceId, workId, recordId) => {
+      await request('runtime.stand_in.work.verify_delivery', { userId, workId, recordId }, deviceId)
+    },
     runWork: (userId, deviceId, workId, options) =>
       request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>

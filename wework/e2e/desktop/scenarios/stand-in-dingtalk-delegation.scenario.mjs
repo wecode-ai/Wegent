@@ -21,11 +21,14 @@ import {
   createDingTalkDelegationMailbox,
   DINGTALK_DELEGATION_IDS as ids,
 } from '../modules/stand-in-dingtalk-delegation-fixture.mjs'
+import { verifyDingTalkDelivery } from '../modules/stand-in-dingtalk-delivery.mjs'
 import { STORY_USER, storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const COLLECTION_PROBE_ROLE = 'dingtalk-account-switch-probe'
 const REPLY_LIMIT_MS = 120_000
+// The positive batch queues 18 model decisions and can span multiple collection ticks.
+const BATCH_DELIVERY_TIMEOUT_MS = 90_000
 // The first transient failure retries after 30s on the next 15s collection tick.
 const COLLECTION_RECOVERY_WAIT_MS = 60_000
 const TEMPLATE_CONTENT = {
@@ -193,11 +196,11 @@ export function createDesktopScenario(options) {
       const sourceState = (kind, id = kind === 'direct' ? ids.peer : ids.group) =>
         rows('stand_in_source').find(row => row.source.kind === kind && row.source.id === id)
       const records = () => new Map(rows('stand_in_message').map(row => [row.id, row]))
-      const awaitOutcomes = (ids, expected, label, waitMs = timeout) =>
+      const awaitOutcomes = (ids, expected, label, timeoutMs = timeout) =>
         storyUntil(
           () => ids.map(id => records().get(id)?.delegationResult),
           outcomes => outcomes.every(outcome => outcome?.status === expected),
-          waitMs,
+          timeoutMs,
           label
         )
       const visibleSourceError = (kind, predicate) =>
@@ -219,14 +222,14 @@ export function createDesktopScenario(options) {
           }
         }
       }
-      async function assertDelivered(samples) {
+      async function assertDelivered(samples, timeoutMs = timeout) {
         const idsToCheck = samples.map(sample => sample.question.id)
         // Wait for delivery receipts up to the same deadline that each reply must meet.
         const outcomes = await awaitOutcomes(
           idsToCheck,
           'sent',
           'Every reply must reach its channel receipt',
-          REPLY_LIMIT_MS
+          timeoutMs
         )
         const replies = await mailbox.replies()
         samples.forEach((sample, index) => {
@@ -251,6 +254,7 @@ export function createDesktopScenario(options) {
           assert.equal(external[0].aiTag, true, 'Outgoing reply must have the native AI tag')
           assert.equal(external[0].offline, false)
           assert.match(external[0].uuid, /^[0-9a-f]{64}$/)
+          assert.equal(external[0].uuid, result.attemptId)
           assert.equal(result.action, 'reply')
           assert.equal(result.template, sample.decision.template)
           assert.deepEqual(
@@ -259,6 +263,11 @@ export function createDesktopScenario(options) {
           )
           assert.match(result.contextFingerprint, /^[0-9a-f]{64}$/)
           assert.equal(result.receiptId, `accepted-${question.id}`)
+          const submitted = Date.parse(result.submittedAt)
+          assert.ok(
+            Date.parse(question.at) <= submitted && submitted <= Date.parse(result.finishedAt),
+            `${question.id}: submission must be recorded between arrival and receipt`
+          )
           const latency = Date.parse(result.finishedAt) - Date.parse(question.at)
           assert.ok(latency >= 0 && latency <= REPLY_LIMIT_MS, `${question.id}: ${latency}ms`)
           results.push({
@@ -266,6 +275,9 @@ export function createDesktopScenario(options) {
             template: result.template,
             kind: question.kind,
             latency,
+            policyVersion: result.policyVersion,
+            attemptId: result.attemptId,
+            submittedAt: result.submittedAt,
             receiptId: result.receiptId,
             aiTag: external[0].aiTag,
           })
@@ -347,8 +359,12 @@ export function createDesktopScenario(options) {
             )
           )
         )
+        const automatic = positive
+          .filter(sample => sample.question.id.endsWith('-document-1'))
+          .map(sample => sample.question)
+        await mailbox.configureDelivery({ automatic })
         await publishCases(positive)
-        await assertDelivered(positive)
+        await assertDelivered(positive, Math.max(timeout, BATCH_DELIVERY_TIMEOUT_MS))
         assert.equal(results.length, 18)
         assert.ok(
           (await work()).items.every(row => !row.task),
@@ -509,7 +525,14 @@ export function createDesktopScenario(options) {
         })
         const followup = replyCase('receipt-followup', 'group', 'document', Date.now() + 500)
         followup.question.quotedMessageId = unknown.question.id
-        await publishCases([followup])
+        const pending = replyCase('pending-task-receipt', 'group', 'document', Date.now() + 500)
+        const rejected = replyCase('rejected-submit', 'direct', 'schedule', Date.now() + 500)
+        await mailbox.configureDelivery({
+          automatic,
+          pending: pending.question,
+          rejected: rejected.question,
+        })
+        await publishCases([followup, pending, rejected])
         const [followupResult] = await awaitOutcomes(
           [followup.question.id],
           'complete',
@@ -522,6 +545,19 @@ export function createDesktopScenario(options) {
           1
         )
         await assertSilent([followup])
+
+        await Promise.all([
+          awaitOutcomes([pending.question.id], 'unknown', 'Channel task must stay unconfirmed'),
+          awaitOutcomes([rejected.question.id], 'failed', 'Explicit channel refusal must fail'),
+        ])
+        const delivery = await verifyDingTalkDelivery(control, {
+          mailbox,
+          work,
+          automaticallyConfirmed: automatic.map(question => records().get(question.id)),
+          pending: records().get(pending.question.id),
+          rejected: records().get(rejected.question.id),
+          timeout: options.uiTimeoutMs,
+        })
 
         async function testRecoveryGap(kind, reason, makeGapSamples) {
           await mailbox.setOffline(true)
@@ -669,11 +705,23 @@ export function createDesktopScenario(options) {
               modelBoundary: 'synthetic structured decisions',
               channelBoundary: 'native DingTalk CLI protocol fixture',
               results,
+              delivery,
               negatives: [
                 ...negative.map((sample, index) => ({
                   id: sample.question.id,
                   action: denied[index].action,
+                  reason: denied[index].reason,
                 })),
+                {
+                  id: forged.question.id,
+                  action: denied.at(-1).action,
+                  reason: denied.at(-1).reason,
+                },
+                {
+                  id: changed.question.id,
+                  action: changedResult.action,
+                  reason: changedResult.reason,
+                },
                 ...excluded.map(item => ({ id: item.id, action: 'uncollected' })),
               ],
               recovery: {

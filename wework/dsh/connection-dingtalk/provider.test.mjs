@@ -361,13 +361,18 @@ function readinessFixture() {
             corp_id: state.tokenOrganization ?? selected.corpId,
           }
         }
-        if (input.tool === 'conversationInfo') return { result: { openConversationId: 'direct' } }
+        if (input.tool === 'conversationInfo')
+          return {
+            success: true,
+            result: state.conversationInfo ?? { openConversationId: 'direct' },
+          }
         if (input.tool === 'listMentions' || input.tool === 'searchMessages') {
           if (state.denied)
             throw Object.assign(new Error('Read permission missing'), {
               code: 'dingtalk_permissions_required',
             })
           state.afterMessageRead?.()
+          if (input.tool === 'searchMessages' && state.scopedSearch) return state.scopedSearch
           return {
             success: true,
             result: {
@@ -503,6 +508,86 @@ test('search and collection keep using the explicitly selected organization prof
   assert.equal(calls.find(call => call.tool === 'searchMessages').arguments.profile, profile)
   state.tokenOrganization = 'org-a'
   await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_account_changed' })
+})
+
+test('verifies private scope using the conversation ID nested by native DWS', async () => {
+  const { ctx, provider, calls, state } = readinessFixture()
+  const profile = 'org-a:owner'
+  const input = { readiness: true, profile, sources: [{ id: 'peer', kind: 'direct' }] }
+  state.conversationInfo = { conversationInfo: { openConversationId: 'native-direct' } }
+
+  const ready = await provider.check(ctx, input)
+  assert.equal(ready.status, 'ready')
+  assert.equal(ready.permissions.read, 'verified')
+  assert.deepEqual(calls.find(call => call.tool === 'conversationInfo').arguments, {
+    profile,
+    peer: 'peer',
+  })
+  const read = calls.find(call => call.tool === 'searchMessages').arguments
+  assert.equal(read.profile, profile)
+  assert.equal(read.conversationIds, 'native-direct')
+  assert.equal(read.senderIds, 'peer')
+
+  calls.length = 0
+  state.conversationInfo.conversationInfo.openConversationId = '*'
+  const invalid = await provider.check(ctx, input)
+  assert.equal(invalid.status, 'error')
+  assert.equal(invalid.code, 'dingtalk_response_invalid')
+  assert.ok(!calls.some(call => call.tool === 'searchMessages'))
+})
+
+test('verifies and collects complete scoped pages from the native DingTalk search', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-24T00:10:00Z') })
+  const { ctx, provider, state } = readinessFixture()
+  const input = {
+    readiness: true,
+    profile: 'org-a:owner',
+    sources: [{ id: 'peer', kind: 'direct' }],
+  }
+  state.scopedSearch = {
+    result: {
+      complete: true,
+      conversationMessagesList: [],
+      hasMore: false,
+      pagesFetched: 1,
+    },
+    scope: {
+      filterApplied: true,
+      filterMode: 'local',
+      requestedConversationIds: ['direct'],
+      resultsWithinScope: true,
+      sourceComplete: true,
+      targetsValidated: true,
+    },
+  }
+
+  const ready = await provider.check(ctx, input)
+  assert.equal(ready.status, 'ready')
+  assert.equal(ready.permissions.read, 'verified')
+
+  const source = {
+    ...input.sources[0],
+    ...ready.identity,
+    delegated: true,
+    enabledAfter: '2026-11-24T00:05:00Z',
+  }
+  const chat = conversation('direct', true, 'peer')
+  chat.messages[0].createTime = '2026-11-24T00:09:00Z'
+  state.scopedSearch.result.conversationMessagesList = [chat]
+  const result = await provider.collect(ctx, { source })
+  assert.deepEqual(
+    result.events.map(event => event.id),
+    ['direct:peer']
+  )
+
+  chat.openConversationId = 'foreign'
+  await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_response_invalid' })
+  chat.openConversationId = 'direct'
+  state.scopedSearch.result.complete = false
+  const incomplete = await provider.check(ctx, input)
+  assert.equal(incomplete.status, 'error')
+  assert.equal(incomplete.code, 'dingtalk_response_invalid')
+  await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_response_invalid' })
 })
 
 test('requires reauthorization before contact search when the legacy token cannot refresh', async () => {

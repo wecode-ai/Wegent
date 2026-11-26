@@ -8,10 +8,14 @@ function nonEmptyString(value) {
   return typeof value === 'string' && value.trim() ? value : undefined
 }
 
-export function activeAccountIdentity(response) {
+function activeProfile(response) {
   const profile = nonEmptyString(response.currentProfile)
   if (!profile) throw authenticationRequired()
-  const account = response.profiles?.find(row => row.profile === profile)
+  return { profile, account: response.profiles?.find(row => row.profile === profile) }
+}
+
+export function activeAccountIdentity(response) {
+  const { profile, account } = activeProfile(response)
   return accountIdentity(account, profile)
 }
 
@@ -111,7 +115,8 @@ export async function boundAccount(ctx, source, readTool) {
       throw accountChanged()
     return identity
   }
-  const active = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
+  const { profile, account } = activeProfile(await readTool(ctx, 'listProfiles'))
+  const active = accountIdentity(account, profile)
   if (
     active.profile !== source.profile ||
     (active.accountId && active.accountId !== source.accountId)
@@ -129,7 +134,8 @@ export async function exactConversation(ctx, source, until, readTool, validateNa
       profile: source.profile,
     })
     const conversation = Array.isArray(result) && result.length === 1 ? result[0] : result
-    return exactId(conversation?.openConversationId)
+    const info = conversation?.conversationInfo ?? conversation
+    return exactId(info?.openConversationId)
   }
   const page = await readTool(ctx, 'listDirectConversation', {
     peer: source.id,
@@ -171,7 +177,7 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
       page => normalize(page, false),
       readTool
     )
-    if (!mentions.some(row => row.id === trigger.id && !row.recalled))
+    if (!mentions.items.some(row => row.id === trigger.id && !row.recalled))
       throw invalid('The original message is no longer confirmed as a group mention')
   }
   // Older history is evidence for an answer, not the authorization boundary.
@@ -205,13 +211,13 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
     readTool
   )
   const target =
-    later.find(row => row.id === trigger.id && !row.isOwn) ??
-    history.find(row => row.id === trigger.id && !row.isOwn)
+    later.items.find(row => row.id === trigger.id && !row.isOwn) ??
+    history.items.find(row => row.id === trigger.id && !row.isOwn)
   if (!target || target.recalled || Date.parse(target.at) !== at)
     throw invalid('The original message is missing or changed')
-  const laterMessages = later.filter(row => row.id !== target.id && Date.parse(row.at) >= at)
+  const laterMessages = later.items.filter(row => row.id !== target.id && Date.parse(row.at) >= at)
   const related = group ? relatedGroupMessages(target, laterMessages) : laterMessages
-  const messages = history.filter(row => Date.parse(row.at) < at)
+  const messages = history.items.filter(row => Date.parse(row.at) < at)
   return {
     items: messages,
     hasMore: false,
@@ -223,20 +229,97 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
   }
 }
 
+export async function delegatedRecoveryEvents(ctx, source, window, ownId, provider) {
+  const { readTool, validateNativePage, normalizeMessages } = provider
+  const { start, end, after, limit } = window
+  const gap = reason => ({ events: [], reason })
+  try {
+    const conversationId = await exactConversation(ctx, source, end, readTool, validateNativePage)
+    if (!conversationId) return { events: [] }
+    const normalize = (page, sourceEvents) =>
+      normalizeMessages(source, page, ownId, undefined, {
+        conversationId,
+        delegated: true,
+        includeOwn: sourceEvents,
+        sourceEvents,
+      })
+    const query = { profile: source.profile, start, end }
+    const until = Date.parse(end)
+    const records = await contextPages(
+      ctx,
+      'searchMessages',
+      { ...query, conversationIds: conversationId },
+      page =>
+        normalize(page, true).filter(({ at }) => {
+          const time = Date.parse(at)
+          return time > after && time <= until
+        }),
+      readTool,
+      { limit: limit + 1, maxItems: limit }
+    )
+    if (!records) return gap('volume')
+    const candidates = records.items.filter(row => row.eligible && row.textMessage && !row.recalled)
+    const events =
+      source.kind === 'group' && candidates.length
+        ? await verifiedRecoveredMentions(
+            ctx,
+            query,
+            conversationId,
+            candidates,
+            normalize,
+            readTool
+          )
+        : candidates
+    return {
+      events: events.map(({ eligible: _eligible, ...event }) => event),
+    }
+  } catch (error) {
+    if (error.code !== 'dingtalk_response_invalid') throw error
+    return gap('coverage')
+  }
+}
+
+async function verifiedRecoveredMentions(
+  ctx,
+  query,
+  conversationId,
+  candidates,
+  normalize,
+  readTool
+) {
+  const mentions = await contextPages(
+    ctx,
+    'listMentions',
+    { ...query, start: candidates[0].at, group: conversationId },
+    page => normalize(page, false),
+    readTool
+  )
+  const byId = new Map(mentions.items.map(row => [row.id, row]))
+  return candidates.filter(row => {
+    const mention = byId.get(row.id)
+    if (!mention || mention.recalled) return false
+    if (row.at !== mention.at || row.senderId !== mention.senderId || row.text !== mention.text)
+      throw invalid('DingTalk recovery mention changed during collection')
+    return true
+  })
+}
+
 async function contextPages(
   ctx,
   tool,
   query,
   normalize,
   readTool,
-  { allowIncomplete = false } = {}
+  { allowIncomplete = false, limit = 100, maxItems } = {}
 ) {
   let cursor = '0'
   const seen = new Set([cursor])
   const items = new Map()
   let bytes = 0
   for (let index = 0; index < MAX_CONTEXT_PAGES; index += 1) {
-    const page = await readTool(ctx, tool, { ...query, limit: '100', cursor })
+    const page = await readTool(ctx, tool, { ...query, limit: String(limit), cursor })
+    if (page.partial === true || page.result?.partial === true)
+      throw invalid('DingTalk returned partial conversation history')
     for (const item of normalize(page)) {
       const previous = items.get(item.id)
       if (previous && JSON.stringify(previous) !== JSON.stringify(item))
@@ -245,8 +328,16 @@ async function contextPages(
       if (item.text.length > 20_000 || bytes > MAX_CONTEXT_BYTES)
         throw invalid('The bounded DingTalk context is too large')
       items.set(item.id, item)
+      if (maxItems !== undefined && items.size > maxItems) return null
     }
-    if (page.result?.hasMore === false) break
+    if (page.result?.hasMore === false)
+      return {
+        items: [...items.values()].sort(
+          (left, right) =>
+            Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+        ),
+        complete: true,
+      }
     const next = nonEmptyString(page.result?.nextCursor)
     if (page.result?.hasMore !== true || !next || seen.has(next))
       throw invalid('Incomplete DingTalk context pagination')
@@ -255,9 +346,15 @@ async function contextPages(
     cursor = next
     seen.add(cursor)
   }
-  return [...items.values()].sort(
-    (left, right) => Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
-  )
+  if (allowIncomplete)
+    return {
+      items: [...items.values()].sort(
+        (left, right) =>
+          Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+      ),
+      complete: false,
+    }
+  throw invalid('The bounded DingTalk context is incomplete')
 }
 
 function relatedGroupMessages(target, later) {

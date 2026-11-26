@@ -3,6 +3,7 @@ import {
   activeAccountIdentity,
   boundAccount,
   delegatedMessageContext,
+  delegatedRecoveryEvents,
   exactConversation,
   validateDelegatedSource,
   verifiedProfile,
@@ -15,6 +16,9 @@ const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 const GROUP_CATCH_UP_WINDOW_MINUTES = 15
 const DELEGATION_CATCH_UP_MS = 30 * 60_000
 const DELEGATION_CATCH_UP_MESSAGES = 50
+// A durable checkpoint older than four normal 15s polls also detects a restart
+// or a missed poll when the process could not persist a transient error.
+const DELEGATION_MISSED_POLLS_MS = 60_000
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
 const READINESS_ERRORS = new Map([
   ['connector_auth_required', 'auth_required'],
@@ -205,7 +209,7 @@ export function createProvider() {
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const now = Date.now()
       if (source.delegated === true) {
-        const page = await collectDelegatedMessages(ctx, source, start, now, selfId)
+        const page = await collectDelegatedMessages(ctx, source, start, now, selfId, checkpoint)
         await boundAccount(ctx, source, readTool)
         return page
       }
@@ -239,7 +243,7 @@ export function createProvider() {
   }
 }
 
-async function collectDelegatedMessages(ctx, source, from, now, ownId) {
+async function collectDelegatedMessages(ctx, source, from, now, ownId, checkpoint) {
   const fromTime = Date.parse(from)
   if (!Number.isFinite(fromTime) || fromTime > now)
     throw invalid('Invalid DingTalk delegation checkpoint')
@@ -251,6 +255,21 @@ async function collectDelegatedMessages(ctx, source, from, now, ownId) {
     nextCheckpoint: { ...nextCheckpoint, delegationGap: { reason, from, until } },
   })
   if (now - fromTime > DELEGATION_CATCH_UP_MS) return gap('duration')
+  if (source.kind === 'direct' && source.id === ownId)
+    return { events: [], hasMore: false, nextCheckpoint }
+  if (
+    checkpoint?.recover === true ||
+    (fromTime !== Date.parse(source.enabledAfter) && now - fromTime > DELEGATION_MISSED_POLLS_MS)
+  ) {
+    const { events, reason } = await delegatedRecoveryEvents(
+      ctx,
+      source,
+      { start: from, end: until, after: fromTime, limit: DELEGATION_CATCH_UP_MESSAGES },
+      ownId,
+      { readTool, validateNativePage, normalizeMessages }
+    )
+    return reason ? gap(reason) : { events, hasMore: false, nextCheckpoint }
+  }
 
   const events = new Map()
   const cursors = new Set()
@@ -600,6 +619,9 @@ function messagePage(source, response, ownId, cursor, options) {
 
 export function normalizeMessages(source, response, ownId, selfConversationId, options = {}) {
   const { reportFilter } = options
+  const strictScope =
+    (options.conversationId && verifyScopedMessagePage(response, options.conversationId)) ||
+    options.sourceEvents
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -614,6 +636,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     if (typeof conversation.singleChat !== 'boolean') throw invalid('Missing conversation kind')
     const direct = conversation.singleChat
     if (direct !== (source.kind === 'direct')) {
+      if (strictScope) throw invalid('Search events belong to another conversation kind')
       reportFilter?.({
         conversationId: diagnosticId(conversation.openConversationId),
         reason: 'conversation_kind_mismatch',
@@ -621,10 +644,13 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
       continue
     }
     const conversationId = required(conversation, 'openConversationId')
-    if (
-      (!direct && source.scope !== 'all' && conversationId !== source.id) ||
-      (options.conversationId && conversationId !== options.conversationId)
-    ) {
+    if (strictScope && conversationId !== options.conversationId)
+      throw invalid('Search events belong to another conversation')
+    if (!direct && source.scope !== 'all' && conversationId !== source.id) {
+      reportFilter?.({ conversationId, reason: 'group_mismatch' })
+      continue
+    }
+    if (options.conversationId && conversationId !== options.conversationId) {
       reportFilter?.({
         conversationId,
         reason: direct ? 'conversation_mismatch' : 'group_mismatch',
@@ -634,7 +660,8 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       // Bot notifications can come from another account and feed our own task output back in.
-      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) {
+      const automated = message.sendType === 'robot' || message.messageAiSendFlag !== undefined
+      if (automated && !options.sourceEvents) {
         reportFilter?.({
           conversationId,
           messageId: diagnosticId(message.openMessageId),
@@ -648,21 +675,19 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
         message.sendType === 'user' &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
-      if (isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)) {
-        reportFilter?.({
-          conversationId,
-          messageId: diagnosticId(message.openMessageId),
-          reason: options.delegated ? 'own_delegated_message' : 'non_manual_own_message',
-        })
+      const filteredOwn = isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)
+      const outsideIntake =
+        filteredOwn ||
+        (direct && source.scope !== 'all' && sender !== source.id && !(isOwn && options.includeOwn))
+      if (outsideIntake && !options.sourceEvents) {
+        if (filteredOwn)
+          reportFilter?.({
+            conversationId,
+            messageId: diagnosticId(message.openMessageId),
+            reason: options.delegated ? 'own_delegated_message' : 'non_manual_own_message',
+          })
         continue
       }
-      if (
-        direct &&
-        source.scope !== 'all' &&
-        sender !== source.id &&
-        !(isOwn && options.includeOwn)
-      )
-        continue
       const at = messageSentAt(message)
       const content =
         typeof message.content === 'string' && message.content.trim() ? message.content : undefined
@@ -682,6 +707,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
           textMessage: content !== undefined && isTextMessage(message),
           recalled: message.recalled === true || message.isRecalled === true,
         }),
+        ...(options.sourceEvents && { eligible: !automated && !isOwn && !outsideIntake }),
         ...(source.scope === 'all'
           ? {
               resource: {
@@ -695,6 +721,44 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     }
   }
   return events
+}
+
+function verifyScopedMessagePage(response, conversationId) {
+  const { result, scope } = response
+  if (response.partial === true || result?.partial === true)
+    throw invalid('DingTalk returned partial conversation history')
+  if (scope === undefined && result?.complete === undefined) return false
+
+  // DWS verifies the requested conversation and aggregates scoped searches without a success flag.
+  const requested = scope?.requestedConversationIds
+  if (
+    response.success === false ||
+    response.ok === false ||
+    response.error != null ||
+    response.errorCode != null ||
+    scope?.filterApplied !== true ||
+    scope.targetsValidated !== true ||
+    scope.resultsWithinScope !== true ||
+    !Array.isArray(requested) ||
+    requested.length !== 1 ||
+    requested[0] !== conversationId ||
+    !Array.isArray(result?.conversationMessagesList) ||
+    !Number.isSafeInteger(result.pagesFetched) ||
+    result.pagesFetched < 1
+  )
+    throw invalid('DingTalk could not verify the exact search scope')
+
+  if (result.hasMore === false && result.complete === true && scope.sourceComplete === true)
+    return true
+  if (
+    result.hasMore === true &&
+    typeof result.complete === 'boolean' &&
+    typeof scope.sourceComplete === 'boolean' &&
+    typeof result.nextCursor === 'string' &&
+    result.nextCursor.trim()
+  )
+    return true
+  throw invalid('DingTalk scoped search did not finish or supply a continuation')
 }
 
 function isTextMessage(message) {
@@ -774,6 +838,7 @@ async function verifyMessageRead(ctx, identity, sources) {
     const { tool, args, conversationId } = request
     const response = await readTool(ctx, tool, args)
     const { hasMore, conversationMessagesList, nextCursor } = response.result ?? {}
+    const scoped = verifyScopedMessagePage(response, conversationId)
     if (
       response.success === true &&
       hasMore === false &&
@@ -782,7 +847,7 @@ async function verifyMessageRead(ctx, identity, sources) {
     )
       continue
     if (
-      response.success !== true ||
+      (!scoped && response.success !== true) ||
       typeof hasMore !== 'boolean' ||
       !Array.isArray(conversationMessagesList) ||
       conversationMessagesList.some(

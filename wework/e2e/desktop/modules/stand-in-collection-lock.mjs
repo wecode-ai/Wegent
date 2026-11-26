@@ -14,7 +14,9 @@ export async function verifyCollectionLockRecovery({ database, rpc, root, userId
     id: roleId,
     name: 'Collection lock recovery',
     enabled: true,
+    tags: [],
     executionDeviceId: settings.executionDeviceId,
+    version: 0,
     collaboration: {
       enabled: false,
       allProjects: false,
