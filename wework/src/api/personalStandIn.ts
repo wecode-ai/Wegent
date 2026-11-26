@@ -4,6 +4,21 @@ import type {
   RuntimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
 
+export const STAND_IN_DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
+
+export type StandInDelegationTemplate = 'document' | 'schedule' | 'process'
+
+export interface StandInDingTalkDelegation {
+  version: number
+  authorized?: boolean
+  paused: boolean
+  profile?: string
+  accountId?: string
+  accountInvalidated?: boolean
+  templates: Record<StandInDelegationTemplate, boolean>
+  action?: 'enable' | 'pause' | 'resume'
+}
+
 export interface StandInProjectRef {
   id: string
   store: 'local' | 'cloud'
@@ -22,6 +37,9 @@ export interface StandInSourceConnection {
   profile: string
   name: string
   kind: string
+  accountId?: string
+  paused?: boolean
+  delegated?: boolean
   scope?: 'all'
   /** Resources excluded from this account and kind's continuous intake. */
   excludedResources?: { id: string; name: string }[]
@@ -58,6 +76,7 @@ export interface StandInIdentity extends Partial<
   prompt: string
   preferences: string
   taskPermissions?: StandInTaskPermissions
+  delegation?: StandInDingTalkDelegation
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']

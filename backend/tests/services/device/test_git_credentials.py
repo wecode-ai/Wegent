@@ -556,9 +556,7 @@ def test_legacy_cli_preference_timeout_keeps_git_credentials_active(
     home.mkdir()
     command_path = _isolated_command_path(tmp_path, tool="glab")
     account = {**_synthetic_account(), "provider": "gitlab"}
-    script = (
-        GIT_CREDENTIAL_SYNC_SCRIPT.removesuffix("main()")
-        + """
+    script = GIT_CREDENTIAL_SYNC_SCRIPT.removesuffix("main()") + """
 original_run = subprocess.run
 
 def run_with_preference_timeout(command, *args, **kwargs):
@@ -569,7 +567,6 @@ def run_with_preference_timeout(command, *args, **kwargs):
 subprocess.run = run_with_preference_timeout
 main()
 """
-    )
     monkeypatch.setattr(
         sys.modules[__name__],
         "SYNC_GIT_CREDENTIALS_COMMAND",
