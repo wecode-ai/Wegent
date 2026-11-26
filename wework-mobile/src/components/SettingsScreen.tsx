@@ -13,6 +13,7 @@ import { AuthorizationScreen } from './AuthorizationScreen'
 import { LocalRuntimeSettings } from './LocalRuntimeSettings'
 import { ErrorNotice } from './errors/ErrorNotice'
 import { DiagnosticsSettings } from './DiagnosticsSettings'
+import { TelemetryPrivacySettings } from './TelemetryPrivacySettings'
 
 export function SettingsPage({
   title,
@@ -313,6 +314,7 @@ export function SettingsScreen({
         />
       </SettingsGroup>
       <SettingsGroup title="隐私">
+        <TelemetryPrivacySettings />
         <SettingsRow
           icon="shield-checkmark-outline"
           label="隐私政策"

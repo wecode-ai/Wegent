@@ -14,6 +14,7 @@ import type {
   RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
 } from '@/types/runtime'
+import { recordMobileTaskOutcome } from '@/telemetry/taskOutcome'
 import { sameRuntimeAddress } from './mobileRuntimeHelpers'
 
 const noListRefresh = () => {}
@@ -79,6 +80,7 @@ export function useRuntimeLifecycleEvents({
         if (isRunningRuntimeEvent(event.name) && lifecycle.executorStarted(address)) {
           publishTaskLifecycle()
         }
+        if (isTerminalRuntimeEvent(event.name)) recordMobileTaskOutcome(address, event.name)
         if (
           isTerminalRuntimeEvent(event.name) &&
           current &&

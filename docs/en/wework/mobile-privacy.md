@@ -4,7 +4,7 @@ sidebar_position: 100
 
 # WeWork Mobile Privacy Policy
 
-Last updated: November 15, 2026
+Last updated: November 26, 2026
 
 This notice covers WeWork Mobile, the Wegent mobile client published and maintained by the developer identified on its App Store page. The app supports phone-local execution and optional connections to user-provided Wegent deployments. Execution tools and AI model inference can run in different locations.
 
@@ -14,7 +14,7 @@ Phone-local projects, working files, conversations and execution records are sto
 
 Custom model settings are stored on the device, with API keys held in device secure storage. Settings needed by local tasks may be supplied to the local execution environment. OpenAI / Codex credentials are stored by that environment. Tasks granted full access may read files in the same local environment; it is not a security boundary between projects.
 
-The app does not send local projects, conversations or model keys to the developer's analytics server by default, and has no built-in advertising tracking.
+After you explicitly opt in, the app sends the PostHog analytics service an anonymous installation identifier, app version, platform and OS version, foreground usage duration, startup duration, jank summaries, and bounded session and task outcomes. This supports installation, usage and stability reporting. The first launch asks for permission, collection is disabled by default, and you can change the choice in Settings > Privacy. The app does not send chats, prompts, model responses, code, file names, file paths, terminal contents or credentials, and has no built-in advertising tracking.
 
 ## Model providers you choose
 

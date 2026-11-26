@@ -45,6 +45,8 @@ For Backend models and cloud devices, use **Settings → Sign in to Wegent (登�
 the Backend address and authorize. Device filters appear after login. Settings is a full-screen page
 with a top-right **×** close button; the existing new-chat layout remains unchanged.
 
+The first launch separately asks whether to share anonymous usage data. If allowed, the app sends bounded installation, foreground-duration, startup, jank and task-outcome data for installation, usage and stability reporting. Chats, code, file paths and credentials are excluded. Sharing is off by default and can be changed in **Settings → Privacy → Help improve WeWork**.
+
 Upgrades adopt existing local data. If multiple legacy environments exist, select one in
 **Settings → Local execution**. An explicit switch stops current execution first, without merging or
 deleting either environment's files or conversations.

@@ -39,6 +39,12 @@ import { conversationPinTarget } from '@/domain/conversationActions'
 import { NativeErrorAlert } from '@/components/errors/NativeErrorAlert'
 import { PrivacyPolicyScreen } from '@/components/PrivacyPolicyScreen'
 import { beginMobileDiagnostic } from '@/services/mobileDiagnostics'
+import { mobileTelemetry } from '@/telemetry/mobileTelemetry'
+import { parseMobileScreen } from '@/telemetry/events'
+import { mobileStartupElapsedMs } from '@/telemetry/startup'
+import { useMobileTelemetryRuntime } from '@/telemetry/useMobileTelemetry'
+import { useMobileTaskTelemetry } from '@/telemetry/useMobileTaskTelemetry'
+import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 
 type RuntimeStackParamList = {
   conversationList: undefined
@@ -62,7 +68,11 @@ const mountDiagnostic = beginMobileDiagnostic('app-mount')
 
 export default function App() {
   useMobileDiagnostics()
-  useEffect(() => mountDiagnostic.complete(), [])
+  const telemetry = useMobileTelemetryRuntime()
+  useEffect(() => {
+    mountDiagnostic.complete()
+    mobileTelemetry.recordStartup(mobileStartupElapsedMs())
+  }, [])
   const auth = useWegentAuth()
   const colorScheme = useColorScheme()
   const theme = colorScheme === 'dark' ? darkTheme : lightTheme
@@ -73,6 +83,12 @@ export default function App() {
         <PaperProvider theme={theme}>
           <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
           <RuntimeApplication auth={auth} />
+          {telemetry.ready && telemetry.available && !telemetry.asked && (
+            <TelemetryConsentDialog
+              snapshot={telemetry}
+              onChoose={enabled => mobileTelemetry.choose(enabled)}
+            />
+          )}
         </PaperProvider>
       </KeyboardProvider>
     </SafeAreaProvider>
@@ -89,6 +105,11 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
     userId,
     local.runtime ? { runtime: local.runtime, models: phoneLocalModels } : undefined
   )
+  useMobileTaskTelemetry({
+    work: runtime.work,
+    taskRunningByKey: runtime.taskRunningByKey,
+    devices: runtime.devices,
+  })
   const refreshLocal = useCallback(async () => {
     await runtime.loadLocalModels()
   }, [runtime.loadLocalModels])
@@ -149,7 +170,13 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
         backendSession={config ? `${config.apiBaseUrl}\0${userId}` : null}
         target={runtime.fileTarget}
       >
-        <NavigationContainer>
+        <NavigationContainer
+          onStateChange={state => {
+            const route = state?.routes[state.index]
+            const screen = parseMobileScreen(route?.name)
+            if (screen) mobileTelemetry.recordScreen(screen)
+          }}
+        >
           <RuntimeStack.Navigator
             screenOptions={{ headerShown: false, keyboardHandlingEnabled: true }}
           >

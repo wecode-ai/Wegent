@@ -38,6 +38,7 @@ import { useRuntimeCloudConnection } from './useRuntimeCloudConnection'
 import { useRuntimeCacheHydration } from './useRuntimeCacheHydration'
 import { useRuntimeFailures } from './useRuntimeFailures'
 import { useMobileUserInput } from './useMobileUserInput'
+import { recordMobileTaskOutcome } from '@/telemetry/taskOutcome'
 import { useConversationActions } from './useConversationActions'
 import {
   runtimeTaskRunning,
@@ -712,7 +713,11 @@ export function useMobileRuntime(
         dispatchToAddress(resolvedAddress, { type: 'user-delivered', id: userMessageId })
         return true
       } catch (cause) {
-        if (sendTransition && lifecycle.sendRejected(sendTransition)) publishTaskLifecycle()
+        if (sendTransition && lifecycle.sendRejected(sendTransition)) {
+          const failedAddress = currentAddressRef.current ?? provisionalAddress
+          if (failedAddress) recordMobileTaskOutcome(failedAddress, 'runtime.task.failed')
+          publishTaskLifecycle()
+        }
         if (
           sendTransition &&
           (!currentAddressRef.current ||
@@ -908,6 +913,7 @@ export function useMobileRuntime(
     api,
     fileTarget,
     work,
+    taskRunningByKey,
     devices: visibleDevices,
     listSnapshotReady,
     cloudConnected: cloudConnection.connected,

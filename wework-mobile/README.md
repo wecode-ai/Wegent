@@ -81,6 +81,14 @@ the app asks the user for the Backend address before login and remembers a succe
 address on the device. The app reads the Web and Socket.IO origins from `/api/auth/wework/config`;
 users never enter or copy an access token.
 
+Anonymous PostHog telemetry is embedded at package time through `app.config.ts`. Use the same
+`WEWORK_POSTHOG_HOST` and `WEWORK_POSTHOG_KEY` variables as the desktop build, plus
+`WEWORK_TELEMETRY_SAMPLE_RATE` (default `1`), `WEWORK_TELEMETRY_ENVIRONMENT` and
+`WEWORK_RELEASE_CHANNEL`. `EXPO_PUBLIC_WEWORK_*` fallbacks are supported for local Expo builds.
+The app asks for consent on first launch and stays silent without a project key. See
+[中文](../docs/zh/wework/developer-guide/mobile-telemetry.md) ·
+[English](../docs/en/wework/developer-guide/mobile-telemetry.md).
+
 The existing cloud `workspace-attachments` CI checkpoint covers the real file chunk protocol,
 including full-file integrity beyond 512 KiB. It does not validate native mobile UI, and E2E was not
 run for this change. Android physical-device behavior remains unverified; component tests and Expo
