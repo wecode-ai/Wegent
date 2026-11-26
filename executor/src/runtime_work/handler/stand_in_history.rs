@@ -347,8 +347,13 @@ impl RuntimeWorkRpcHandler {
         if work["taskId"] != identity.task_id {
             return Err(denied());
         }
+        let settings = store
+            .personal_stand_in(identity.user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
         let visible = self.validate_history_source(&store, identity.user, &scope.role, &work)?;
         if !source_bindings_visible(
+            &settings,
+            &visible.work["roleId"],
             actor.runtime_handle["executionRequest"].get("standInSourceBindings"),
             &visible.messages,
         ) {
@@ -447,12 +452,17 @@ impl RuntimeWorkRpcHandler {
             if work["roleId"].as_str() != identity.role.as_deref() {
                 return false;
             }
+            let Ok(settings) = store.personal_stand_in(identity.user, &self.device_id) else {
+                return false;
+            };
             let Ok(visible) =
                 self.validate_history_source(store, identity.user, &scope.role, &work)
             else {
                 return false;
             };
             return source_bindings_visible(
+                &settings,
+                &visible.work["roleId"],
                 link.runtime_handle["executionRequest"].get("standInSourceBindings"),
                 &visible.messages,
             ) && scope.source.as_ref().map_or(true, |source| {
@@ -1044,6 +1054,72 @@ mod tests {
         assert_eq!(item["title"], "current mailbox content");
         assert!(!page.to_string().contains("old private title"));
         assert!(!page.to_string().contains("hidden old-account"));
+    }
+
+    #[test]
+    fn primary_chat_reads_a_connection_work_with_current_source_bindings() {
+        let (_root, handler, _) = fixture();
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let source = json!({
+            "providerId":"connection/email",
+            "profile":"mailbox",
+            "kind":"mailbox",
+            "id":"mailbox",
+            "name":"Mailbox",
+            "policy":{"automatic":true,"askBeforeAct":true,"immediate":false}
+        });
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["primary"] = json!({
+            "enabled":true,"prompt":"","preferences":"","connections":[source.clone()]
+        });
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "@primary",
+                &source,
+                &json!({"id":"mail","text":"current mailbox content","at":"2026-01-02T00:00:00Z"}),
+                None,
+            )
+            .unwrap();
+        let work_id = work["id"].as_str().unwrap();
+        let message = store.stand_in_messages(7, work_id).unwrap().remove(0);
+        let mut actor = link(
+            work_id,
+            7,
+            json!({"type":"connection_work","userId":7,"deviceId":"mac","standInId":"@primary","workId":work_id}),
+        );
+        actor.runtime_handle["executionRequest"]["standInSourceBindings"] = json!([{
+            "recordId":message["recordId"],
+            "source":message["source"]
+        }]);
+        handler.upsert_local_task(actor.clone());
+        let primary = StandInMcpIdentity {
+            task_id: "primary-chat".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            ask_before_act: false,
+            coordinator_batch: None,
+            project: None,
+            review: false,
+            memory_review: false,
+            readonly_worker: false,
+        };
+        handler.upsert_local_task(link(
+            "primary-chat",
+            7,
+            json!({"type":"stand_in_identity","userId":7,"deviceId":"mac","standInId":"@primary"}),
+        ));
+        let scope = handler.conversation_scope(&primary, &store).unwrap();
+
+        assert!(handler.conversation_visible(&actor, &primary, &scope, &store));
+        actor.runtime_handle["executionRequest"]["standInSourceBindings"] = json!([{
+            "recordId":"moved-record",
+            "source":message["source"]
+        }]);
+        assert!(handler.conversation_visible(&actor, &primary, &scope, &store));
     }
 
     #[tokio::test]

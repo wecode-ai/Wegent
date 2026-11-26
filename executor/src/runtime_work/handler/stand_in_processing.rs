@@ -987,6 +987,8 @@ impl RuntimeWorkRpcHandler {
                 ));
             };
             if !source_bindings_visible(
+                &settings,
+                &visible.work["roleId"],
                 link.runtime_handle["executionRequest"].get("standInSourceBindings"),
                 &visible.messages,
             ) {

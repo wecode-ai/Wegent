@@ -174,10 +174,18 @@ pub(crate) fn message_visible_to_account(
 
 /// Legacy tasks may have no bindings. When bindings exist, every record must
 /// still be present in the account-scoped message projection.
-pub(crate) fn source_bindings_visible(bindings: Option<&Value>, messages: &[Value]) -> bool {
+pub(crate) fn source_bindings_visible(
+    settings: &Value,
+    work_role: &Value,
+    bindings: Option<&Value>,
+    messages: &[Value],
+) -> bool {
     match bindings {
         None => true,
         Some(Value::Array(bindings)) => bindings.iter().all(|binding| {
+            if binding["source"].is_object() {
+                return source_visible_to_account(settings, work_role, &binding["source"]);
+            }
             binding["recordId"].as_str().is_some_and(|record_id| {
                 messages
                     .iter()
@@ -445,16 +453,46 @@ mod tests {
     #[test]
     fn source_bindings_reject_records_outside_the_visible_message_set() {
         let visible = vec![email_message()];
-        assert!(source_bindings_visible(None, &visible));
+        let settings = settings();
+        let role = json!("@primary");
+        let mail_source = email_message()["source"].clone();
+        let old_source = old_account_message()["source"].clone();
+        assert!(source_bindings_visible(&settings, &role, None, &visible));
         assert!(source_bindings_visible(
+            &settings,
+            &role,
             Some(&json!([{"recordId":"mail-record"}])),
             &visible
         ));
+        assert!(source_bindings_visible(
+            &settings,
+            &role,
+            Some(&json!([{"recordId":"moved-record","source":mail_source}])),
+            &visible
+        ));
         assert!(!source_bindings_visible(
+            &settings,
+            &role,
+            Some(&json!([{"recordId":"old-record","source":old_source}])),
+            &visible
+        ));
+        assert!(!source_bindings_visible(
+            &settings,
+            &role,
             Some(&json!([{"recordId":"mail-record"},{"recordId":"old-record"}])),
             &visible
         ));
-        assert!(source_bindings_visible(Some(&json!([])), &visible));
-        assert!(!source_bindings_visible(Some(&json!({})), &visible));
+        assert!(source_bindings_visible(
+            &settings,
+            &role,
+            Some(&json!([])),
+            &visible
+        ));
+        assert!(!source_bindings_visible(
+            &settings,
+            &role,
+            Some(&json!({})),
+            &visible
+        ));
     }
 }
