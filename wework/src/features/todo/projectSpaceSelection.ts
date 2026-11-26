@@ -1,4 +1,5 @@
 import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
   isDefaultWorkItemProject,
   type CloudLoopItem,
   type CloudProject,
@@ -7,6 +8,7 @@ import {
 import { canEditCollaborationIssue } from '@wegent/collaboration'
 import { ApiError } from '@/api/http'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import { ProjectSpaceTaskContextIncompleteError } from '@/features/workbench/projectTaskTracking'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
@@ -55,6 +57,7 @@ export interface ProjectSpaceTaskChange {
 
 export interface ProjectSpaceTaskBindingChange extends ProjectSpaceTaskChange {
   type: 'bound' | 'unbound'
+  itemId?: string | null
 }
 
 const projectSpaceByRuntimeTask = new Map<string, RuntimeProjectSpaceRef>()
@@ -90,16 +93,18 @@ export function projectSpaceForRuntimeTask(
   return projectSpaceByRuntimeTask.get(runtimeTaskKey(task))
 }
 
+function rememberedUserProjectSpace(task: RuntimeTaskAddress | null) {
+  const project = task ? projectSpaceForRuntimeTask(task) : undefined
+  // The system Issue remains linked even when a user selects another project.
+  return project?.projectId === DEFAULT_WORK_ITEM_PROJECT_ID ? undefined : project
+}
+
 export function projectSpaceTaskContextApisForTask<TApi extends ProjectSpaceTaskContextApi>(
   task: RuntimeTaskAddress | null,
   local: TApi | undefined,
   backend: TApi | undefined
 ): TApi[] {
-  const store = task?.projectSession
-    ? 'backend'
-    : task
-      ? projectSpaceForRuntimeTask(task)?.projectStore
-      : undefined
+  const store = task?.projectSession ? 'backend' : rememberedUserProjectSpace(task)?.projectStore
   const candidates =
     store === 'local' ? [local] : store === 'backend' ? [backend] : [local, backend]
   return candidates.filter(
@@ -121,6 +126,15 @@ export class ProjectSpaceTaskContextLookupTimeoutError extends Error {
   }
 }
 
+export function isIncompleteProjectSpaceTaskContextLookup(error: unknown): boolean {
+  return (
+    error instanceof ProjectSpaceTaskContextIncompleteError ||
+    error instanceof ProjectSpaceTaskContextLookupTimeoutError ||
+    (error instanceof AggregateError &&
+      error.errors.some(isIncompleteProjectSpaceTaskContextLookup))
+  )
+}
+
 function isMissingProjectTaskContext(error: unknown): boolean {
   if (error instanceof AggregateError)
     return error.errors.length > 0 && error.errors.every(isMissingProjectTaskContext)
@@ -138,7 +152,7 @@ export async function findProjectSpaceContextForTaskInStores<
   local: TApi | undefined,
   backend: TApi | undefined
 ): ReturnType<ProjectSpaceTaskContextApi['findCloudContextForTask']> {
-  const expected = task.projectSession ? undefined : projectSpaceForRuntimeTask(task)
+  const expected = task.projectSession ? undefined : rememberedUserProjectSpace(task)
   const store = task.projectSession ? 'backend' : expected?.projectStore
   const apis = projectSpaceTaskContextApisForTask(task, local, backend)
   if (store && apis.length === 0) throw new ProjectSpaceTaskContextUnavailableError(store)
@@ -319,8 +333,8 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
     }).then(() => ({ kind: 'timeout' as const })),
   ])
   if (timeoutId !== undefined) clearTimeout(timeoutId)
-  // A timeout without a usable result remains a transient lookup failure. The
-  // caller retries it instead of treating the task as permanently unbound.
+  // A system Issue is only conclusive once the other stores have responded.
+  // An incomplete lookup remains transient so the caller can retry.
   if (outcome.kind === 'timeout' && waitForLateResult) outcome = await lookup
   if (outcome.kind === 'user-context') return outcome.context
   const settledResults = results.filter(result => result !== undefined)
@@ -329,14 +343,20 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
   )
   const userContext = sources.find(source => !isDefaultWorkItemProject(source.context.project))
   if (userContext) return userContext
-  if (sources[0]) return sources[0]
   const errors = settledResults.flatMap(result =>
     result.status === 'rejected' ? [result.reason] : []
   )
   if (settledResults.length < apis.length) {
     errors.push(new ProjectSpaceTaskContextLookupTimeoutError(timeoutMs))
   }
-  throw new AggregateError(errors, 'Task is not linked to a project space')
+  const incomplete = errors.some(isIncompleteProjectSpaceTaskContextLookup)
+  if (sources[0] && !incomplete) return sources[0]
+  throw new AggregateError(
+    errors,
+    incomplete
+      ? 'Project-space task context lookup incomplete'
+      : 'Task is not linked to a project space'
+  )
 }
 
 export async function findProjectSpaceContextForTask(

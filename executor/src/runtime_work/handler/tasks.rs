@@ -2786,8 +2786,17 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
+        let gateway_credentials = crate::agents::model_gateway::credentials(
+            &self.backend_connection,
+            &mut request,
+            link.gateway_binding.as_ref(),
+            false,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("model_route_failed", error))?
+        .map(|(credentials, _)| credentials);
         self.register_thread_event_route(
             thread_id,
             link.local_task_id.clone(),
@@ -2804,6 +2813,7 @@ impl RuntimeWorkRpcHandler {
             client
                 .resume_thread_for_model_action(
                     &request,
+                    gateway_credentials,
                     thread_id,
                     thread_path.as_deref(),
                     |prepared| {
