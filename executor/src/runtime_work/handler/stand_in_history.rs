@@ -2,6 +2,9 @@
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
 use crate::task_runtime::personal_stand_in::{connection_memory_scope, stand_in_connection};
+use crate::task_runtime::stand_in_projection::{
+    project_visible_work, source_bindings_visible, VisibleWork,
+};
 
 fn denied() -> AppIpcError {
     AppIpcError::new(
@@ -295,8 +298,8 @@ impl RuntimeWorkRpcHandler {
                 if work["roleId"].as_str() != identity.role.as_deref() {
                     return Err(denied());
                 }
-                self.validate_history_source(store, identity.user, role, &work)?;
-                Ok(source_scope(&work["source"]))
+                let visible = self.validate_history_source(store, identity.user, role, &work)?;
+                Ok(source_scope(&visible.work["source"]))
             })
             .transpose()?;
         if matches!(
@@ -344,6 +347,14 @@ impl RuntimeWorkRpcHandler {
         if work["taskId"] != identity.task_id {
             return Err(denied());
         }
+        let visible = self.validate_history_source(&store, identity.user, &scope.role, &work)?;
+        if !source_bindings_visible(
+            actor.runtime_handle["executionRequest"].get("standInSourceBindings"),
+            &visible.messages,
+        ) {
+            return Err(denied());
+        }
+        let work = visible.work;
         let mut source = stand_in_connection(&scope.role, &work["source"])
             .ok_or_else(denied)?
             .clone();
@@ -373,21 +384,26 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         role: &Value,
         work: &Value,
-    ) -> Result<(), AppIpcError> {
-        if stand_in_connection(role, &work["source"]).is_none() {
+    ) -> Result<VisibleWork, AppIpcError> {
+        let messages = store
+            .stand_in_messages(user, work["id"].as_str().ok_or_else(denied)?)
+            .map_err(super::stand_in::settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
+        let visible = project_visible_work(&settings, work.clone(), messages).ok_or_else(denied)?;
+        let source = visible.work["source"].clone();
+        if stand_in_connection(role, &source).is_none() {
             return Err(denied());
         }
-        for message in store
-            .stand_in_messages(user, work["id"].as_str().ok_or_else(denied)?)
-            .map_err(super::stand_in::settings_error)?
-        {
+        for message in &visible.messages {
             if stand_in_connection(role, &message["source"]).is_none()
-                || source_scope(&message["source"]) != source_scope(&work["source"])
+                || source_scope(&message["source"]) != source_scope(&source)
             {
                 return Err(denied());
             }
         }
-        Ok(())
+        Ok(visible)
     }
 
     fn conversation_visible(
@@ -414,10 +430,38 @@ impl RuntimeWorkRpcHandler {
         {
             return false;
         }
-        let Some(source) = &scope.source else {
+        let origin = &link.runtime_handle["origin"];
+        if matches!(
+            origin["type"].as_str(),
+            Some("connection_work" | "dingtalk_work")
+        ) {
+            if origin["standInId"].as_str() != identity.role.as_deref() {
+                return false;
+            }
+            let Ok(work) = store.stand_in_work(
+                identity.user,
+                origin["workId"].as_str().unwrap_or(&link.local_task_id),
+            ) else {
+                return false;
+            };
+            if work["roleId"].as_str() != identity.role.as_deref() {
+                return false;
+            }
+            let Ok(visible) =
+                self.validate_history_source(store, identity.user, &scope.role, &work)
+            else {
+                return false;
+            };
+            return source_bindings_visible(
+                link.runtime_handle["executionRequest"].get("standInSourceBindings"),
+                &visible.messages,
+            ) && scope.source.as_ref().map_or(true, |source| {
+                source_scope(&visible.work["source"]) == *source
+            });
+        }
+        let Some(_source) = &scope.source else {
             return true;
         };
-        let origin = &link.runtime_handle["origin"];
         if origin["type"] == "stand_in_task"
             && origin["sourceTaskId"] == identity.task_id
             && link.runtime_handle["executionRequest"]["standInDelegation"]["sourceMessageId"]
@@ -425,24 +469,37 @@ impl RuntimeWorkRpcHandler {
         {
             return self.source_task_parent(link).is_ok();
         }
+        false
+    }
+
+    fn conversation_title(
+        &self,
+        link: &RuntimeTaskLink,
+        identity: &StandInMcpIdentity,
+        scope: &ReadScope,
+        store: &LocalTaskStore,
+    ) -> String {
+        let origin = &link.runtime_handle["origin"];
         if !matches!(
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work")
-        ) || origin["standInId"].as_str() != identity.role.as_deref()
-        {
-            return false;
+        ) {
+            return link.title.clone();
         }
         let Ok(work) = store.stand_in_work(
             identity.user,
             origin["workId"].as_str().unwrap_or(&link.local_task_id),
         ) else {
-            return false;
+            return link.title.clone();
         };
-        work["roleId"].as_str() == identity.role.as_deref()
-            && source_scope(&work["source"]) == *source
-            && self
-                .validate_history_source(store, identity.user, &scope.role, &work)
-                .is_ok()
+        self.validate_history_source(store, identity.user, &scope.role, &work)
+            .map(|visible| {
+                visible.work["title"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .unwrap_or_else(|_| link.title.clone())
     }
 
     pub(super) fn memory_review_source_visible(
@@ -591,7 +648,7 @@ impl RuntimeWorkRpcHandler {
             .then(|| page.last().map(|link| link.local_task_id.clone()))
             .flatten();
         Ok(
-            json!({"items":page.iter().map(|link|json!({"taskId":link.local_task_id,"title":link.title,"status":link.status,
+            json!({"items":page.iter().map(|link|json!({"taskId":link.local_task_id,"title":self.conversation_title(link,identity,&scope,&store),"status":link.status,
             "interactionStatus":link.interaction_status,"createdAt":link.created_at,"updatedAt":link.updated_at,"kind":if link.runtime_handle["origin"]["type"]=="stand_in_identity" {"identity"} else {"task"},
             "canContinue":scope.can_orchestrate && super::stand_in_tasks::owns_task(link,identity.user) && link.status!="archived" && link.interaction_status.is_none() && is_codex_runtime(&link.runtime)})).collect::<Vec<_>>(),"hasMore":has_more,"nextCursor":next,"windowStart":scope.window.and_then(|(start,_)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(start)),"windowEnd":scope.window.and_then(|(_,end)|chrono::DateTime::<chrono::Utc>::from_timestamp_millis(end))}),
         )
@@ -601,6 +658,35 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn append_hidden_old_message(database: &std::path::Path, work_id: &str) -> Value {
+        let message = json!({
+            "id":"hidden-old-message",
+            "recordId":"hidden-old-record",
+            "userId":7,
+            "roleId":"default",
+            "text":"hidden old-account content",
+            "at":"2026-01-03T00:00:00Z",
+            "workId":work_id,
+            "source":{
+                "providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+                "profile":"current",
+                "accountId":"account-old",
+                "kind":"direct",
+                "id":"old-peer",
+                "delegated":true
+            }
+        });
+        let connection = rusqlite::Connection::open(database).unwrap();
+        connection
+            .execute(
+                "INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at)
+                 VALUES (?1,'stand_in_message',?2,?3,?3)",
+                rusqlite::params!["hidden-old-message", message.to_string(), "9999-12-31"],
+            )
+            .unwrap();
+        message
+    }
 
     fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, StandInMcpIdentity) {
         let root = tempfile::tempdir().unwrap();
@@ -890,6 +976,74 @@ mod tests {
         assert!(handler
             .authorize_work_source_read(&identity, &Value::Null)
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn connection_task_bindings_and_list_titles_follow_visible_work_messages() {
+        let (_root, handler, mut identity) = fixture();
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let settings = store.personal_stand_in(7, "mac").unwrap();
+        let email = json!({
+            "providerId":"connection/email",
+            "profile":"mailbox",
+            "kind":"mailbox",
+            "id":"mailbox",
+            "name":"Mailbox",
+            "policy":{"automatic":true,"askBeforeAct":true,"immediate":false}
+        });
+        let mut saved = settings.clone();
+        saved["roles"][0]["enabled"] = json!(true);
+        saved["roles"][0]["connections"] = json!([email.clone()]);
+        store.save_personal_stand_in(7, "mac", saved).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "default",
+                &email,
+                &json!({"id":"mail","text":"current mailbox content","at":"2026-01-02T00:00:00Z"}),
+                None,
+            )
+            .unwrap();
+        let work_id = work["id"].as_str().unwrap();
+        let hidden = append_hidden_old_message(handler.task_store_path.as_ref(), work_id);
+        let mut actor = link(
+            work_id,
+            7,
+            json!({"type":"connection_work","userId":7,"deviceId":"mac","standInId":"default","workId":work_id}),
+        );
+        actor.title = "old private title".into();
+        actor.runtime_handle["executionRequest"]["standInSourceBindings"] =
+            json!([{"recordId":hidden["recordId"]}]);
+        handler.upsert_local_task(actor.clone());
+        identity.task_id = work_id.into();
+        identity.work = Some(work_id.into());
+        let scope = handler.conversation_scope(&identity, &store).unwrap();
+        assert!(!handler.conversation_visible(&actor, &identity, &scope, &store));
+        let denied = handler
+            .read_stand_in_conversations(&identity, "read_task", &json!({"taskId":work_id}))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "permission_denied");
+
+        let email_message = store.stand_in_messages(7, work_id).unwrap()[0].clone();
+        actor.runtime_handle["executionRequest"]["standInSourceBindings"] =
+            json!([{"recordId":email_message["recordId"]}]);
+        handler.upsert_local_task(actor.clone());
+        assert!(handler.conversation_visible(&actor, &identity, &scope, &store));
+
+        let page = handler
+            .read_stand_in_conversations(&identity, "list_tasks", &json!({}))
+            .await
+            .unwrap();
+        let item = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["taskId"] == work_id)
+            .unwrap();
+        assert_eq!(item["title"], "current mailbox content");
+        assert!(!page.to_string().contains("old private title"));
+        assert!(!page.to_string().contains("hidden old-account"));
     }
 
     #[tokio::test]

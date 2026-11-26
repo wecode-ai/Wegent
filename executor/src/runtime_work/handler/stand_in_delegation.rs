@@ -5,6 +5,7 @@ use crate::task_runtime::personal_stand_in::{
     active_delegated_source, permits_delegated_message, permits_delegated_reply,
     stand_in_identities, DINGTALK_PROVIDER,
 };
+use crate::task_runtime::stand_in_projection::project_visible_work;
 use sha2::{Digest, Sha256};
 
 impl RuntimeWorkRpcHandler {
@@ -39,10 +40,19 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         self.verify_local_stand_in_owner(user)?;
         let work_id = work["id"].as_str().unwrap_or_default();
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
         let messages = store
             .stand_in_messages(user, work_id)
             .map_err(settings_error)?;
-        for message in &messages {
+        let visible = project_visible_work(&settings, work.clone(), messages).ok_or_else(|| {
+            AppIpcError::new(
+                "permission_denied",
+                "This work has no source events visible to the current account",
+            )
+        })?;
+        for message in &visible.messages {
             let record_id = message["recordId"].as_str().unwrap_or_default();
             if message["delegationResult"]["status"] == "submitting" {
                 // The dispatch gate is held. An interrupted submission cannot be retried safely.

@@ -1,7 +1,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
-import { useStandInInbox } from './useStandInInbox'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
 function inboxWork(id: string): StandInInboxWork {
   return {
@@ -23,6 +24,49 @@ function inboxWork(id: string): StandInInboxWork {
     latestMessage: null,
   }
 }
+
+it('prefers the backend-filtered task summary over a stale runtime snapshot', () => {
+  const work = {
+    ...inboxWork('visible'),
+    messageCount: 1,
+    task: {
+      taskId: 'task-visible',
+      title: 'Visible title',
+      runtime: 'codex' as const,
+      workspacePath: '',
+      running: false,
+      error: null,
+    },
+  }
+  const runtimeItem = {
+    key: 'mac\0task-visible',
+    address: { deviceId: 'mac', taskId: 'task-visible' },
+    task: {
+      taskId: 'task-visible',
+      title: 'Hidden account title',
+      error: 'Hidden account error',
+      runtime: 'codex',
+      workspacePath: '',
+      status: 'running',
+      updatedAt: 1,
+    },
+    workspace: { deviceId: 'mac', available: true, workspacePath: '', tasks: [] },
+    projectName: 'Stale project',
+  } as unknown as RuntimeTaskReminderItem
+
+  const item = inboxRuntimeItem(work, 'mac', runtimeItem)
+
+  expect(item.task.title).toBe('Visible title')
+  expect(item.task.error).toBeUndefined()
+
+  const fallback = inboxRuntimeItem(
+    { ...inboxWork('fallback'), messageCount: 1 },
+    'mac',
+    runtimeItem
+  )
+  expect(fallback.task.title).toBe('Incoming work')
+  expect(fallback.task.error).toBeUndefined()
+})
 
 it('retains same-scope inbox data on failures and owns polling only while enabled', async () => {
   vi.useFakeTimers()
