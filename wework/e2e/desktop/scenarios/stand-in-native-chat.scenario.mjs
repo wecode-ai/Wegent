@@ -259,6 +259,10 @@ export function createDesktopScenario(options) {
         })
         assert.equal(automaticallyGuided, true)
         assert.equal(released, false)
+        // Renderer controls can remain usable even after macOS gives focus to another app.
+        // Establish that all foreground replies have been read before leaving the conversation.
+        await control.command('focusMainWindow', 'body')
+        await control.command('waitFor', badge, { visible: false })
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('closeMainWindowToTray', 'body')
         releaseChild()

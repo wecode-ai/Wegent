@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { DEFAULT_MODEL_ID } from '../modules/shared.mjs'
+import { modelRequestTexts } from '../modules/model-tool-output.mjs'
 import {
   assistantMessage,
   createSse,
@@ -20,10 +24,16 @@ const TASK = `stand-in-chat-${USER}-primary`
 const FIRST = 'STAND_IN_SESSION_FIRST_QUESTION'
 const SECOND = 'STAND_IN_SESSION_SECOND_CLEAN_CONTEXT'
 const FOLLOWUP = 'STAND_IN_SESSION_FOLLOWUP'
+const ASYNC_PROMPT = 'STAND_IN_SESSION_ASYNC_QUESTION'
+const ASYNC_QUESTION = 'STAND_IN_SESSION_ASYNC_QUESTION_TEXT'
+const ASYNC_ANSWER = 'STAND_IN_SESSION_ASYNC_ANSWER'
+const ASYNC_WAITING = 'STAND_IN_SESSION_ASYNC_WAITING'
+const ASYNC_RESULT = 'STAND_IN_SESSION_ASYNC_RESULT'
 const CHILD = 'STAND_IN_SESSION_CHILD_RESULT'
 const CHAT = '[data-testid="stand-in-conversation"]'
 
 export function createDesktopScenario({
+  executorHome,
   workspacePath,
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -32,6 +42,8 @@ export function createDesktopScenario({
   let cleanContextObserved = false
   let followupObserved = false
   let questionCalls = 0
+  let asyncQuestionAccepted = false
+  let asyncAnswerObserved = false
   let resultDelivered = false
   let heldPhase = 'question'
   let releaseHeldResponse
@@ -70,6 +82,20 @@ export function createDesktopScenario({
   }
 
   return {
+    async prepareApp() {
+      const capabilities = join(executorHome, 'capabilities')
+      await mkdir(capabilities, { recursive: true })
+      await writeFile(
+        join(capabilities, 'model-catalog-overrides.json'),
+        JSON.stringify([
+          {
+            slug: DEFAULT_MODEL_ID,
+            fields: { experimental_supported_tools: ['request_user_input_async'] },
+          },
+        ])
+      )
+      await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -85,6 +111,22 @@ export function createDesktopScenario({
         events = [assistantMessage('独立工作的结果已回到同一个助理入口。')]
       } else if (input.includes(CHILD)) {
         events = [assistantMessage('独立工作已完成。')]
+      } else if (!asyncAnswerObserved && input.includes(ASYNC_PROMPT)) {
+        const answer = toolOutputText(body, 'session-async-question')
+        if (answer === null) {
+          assert.equal(asyncQuestionAccepted, false, 'The assistant question must not be repeated')
+          events = selectedToolCall(
+            'session-async-question',
+            selectTool(body, 'request_user_input_async', {
+              questions: [{ title: ASYNC_QUESTION }],
+            })
+          )
+        } else {
+          assert.deepEqual(JSON.parse(answer), { accepted: true })
+          asyncQuestionAccepted = true
+          asyncAnswerObserved = modelRequestTexts(body, 'user').includes(ASYNC_ANSWER)
+          events = [assistantMessage(asyncAnswerObserved ? ASYNC_RESULT : ASYNC_WAITING)]
+        }
       } else if (input.includes(FOLLOWUP)) {
         followupObserved = true
         events = [assistantMessage('后续消息仍在第二段执行会话中。')]
@@ -340,6 +382,47 @@ export function createDesktopScenario({
       assert.ok(JSON.stringify(retained.messages).includes('第一段问题已回答'))
       await send(FOLLOWUP, { clientUserMessageId: 'session-followup' })
       assert.equal((await settled(control, () => followupObserved)).threadId, current.threadId)
+      const activeChat = `[data-workspace-tab-content][aria-hidden="false"] ${CHAT}`
+      await control.command(
+        'fill',
+        `${activeChat} [data-testid="chat-message-input"][contenteditable="true"]`,
+        { value: ASYNC_PROMPT }
+      )
+      await control.command('clickWhenEnabled', `${activeChat} [data-testid="send-message-button"]`)
+      const card = `${activeChat} [data-testid="request-user-input-card"]:has([data-testid="request-user-input-custom-question_1"])`
+      await control.command('waitFor', card, {
+        text: ASYNC_QUESTION,
+        visible: true,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('waitFor', `${activeChat} [data-testid="message-assistant"]`, {
+        text: ASYNC_WAITING,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const awaitingAnswer = await settled(
+        control,
+        task => task.interactionStatus === 'awaitingUserReply'
+      )
+      assert.equal(awaitingAnswer.threadId, current.threadId)
+      assert.equal(asyncQuestionAccepted, true)
+      await control.command(
+        'fill',
+        `${card} [data-testid="request-user-input-custom-question_1"]`,
+        {
+          value: ASYNC_ANSWER,
+        }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        `${card} [data-testid="request-user-input-submit-button"]`
+      )
+      await control.command('waitFor', `${activeChat} [data-testid="message-assistant"]`, {
+        text: ASYNC_RESULT,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.equal(asyncAnswerObserved, true)
+      const answered = await settled(control, task => !task.interactionStatus)
+      assert.equal(answered.threadId, current.threadId)
       const origin = {
         type: 'stand_in_task',
         initiatedBy: 'stand_in',
@@ -390,11 +473,12 @@ export function createDesktopScenario({
         text: '后续消息仍在第二段',
         timeoutMs: modelResponseTimeoutMs,
       })
-      // The history boundary disappears once automatic pagination finishes.
-      // The current session's first request remains a stable user-scroll anchor.
-      await control.command('scrollIntoViewAsUser', `${CHAT} [data-testid="message-user"]`, {
-        text: SECOND,
-      })
+      // Older messages may be virtualized out of the viewport after restart.
+      await control.command(
+        'scrollToRatioAsUser',
+        `${activeChat} [data-testid="right-workspace-chat-scroll-area"]`,
+        { value: '0' }
+      )
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: '第一段问题已回答',
       })
@@ -413,7 +497,13 @@ export function createDesktopScenario({
       )
     },
     diagnostics() {
-      return { cleanContextObserved, questionCalls, resultDelivered }
+      return {
+        cleanContextObserved,
+        questionCalls,
+        asyncQuestionAccepted,
+        asyncAnswerObserved,
+        resultDelivered,
+      }
     },
   }
 }
