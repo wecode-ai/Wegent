@@ -24,6 +24,7 @@ impl LocalTaskStore {
                 device,
                 settings,
                 Some(backend),
+                false,
             )?;
         }
         for entry in std::iter::once(&snapshot.root).chain(&snapshot.assistants) {

@@ -108,16 +108,16 @@ export function renderPluginCatalogWorkspace({
           data-testid="plugins-topbar"
           className="plugin-market-header relative flex items-start justify-between gap-6"
         >
-          {!topBarLeftActions ? (
-            <div
-              data-testid="plugins-topbar-drag-region"
-              className="pointer-events-none absolute inset-x-0 top-0 hidden min-h-[52px] md:block"
-              aria-hidden="true"
-            >
-              <MacOSTitleBarDragRegion className="h-full w-full" />
-            </div>
-          ) : null}
-          <div className="min-w-0 flex-1">
+          <div className="relative min-w-0 flex-1">
+            {!topBarLeftActions ? (
+              <div
+                data-testid="plugins-topbar-drag-region"
+                className="pointer-events-none absolute inset-x-0 top-0 hidden min-h-[52px] md:block"
+                aria-hidden="true"
+              >
+                <MacOSTitleBarDragRegion className="h-full w-full" />
+              </div>
+            ) : null}
             <h2 className="sr-only">{t('workbench.plugin_management_tab_plugins', '插件')}</h2>
             <h1 className="plugin-market-title text-text-primary">
               {t('workbench.plugins_marketplace_title', '插件市场')}
