@@ -1444,9 +1444,28 @@ jobs:
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
       - name: Enforce renderer performance budgets
+        id: renderer-profile
         if: needs.changes.outputs.wework_desktop_renderer_profile == 'true'
         timeout-minutes: 8
         run: node wework/scripts/profile-renderer.mjs --check
+
+      - name: Capture renderer thread timing after performance failure
+        if: failure() && steps.renderer-profile.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 8
+        env:
+          WEWORK_E2E_RESULT_ROOT: ${{ runner.temp }}/wework-renderer-capture
+        run: node wework/scripts/profile-renderer.mjs --capture --thread-timing
+
+      - name: Upload renderer thread timing
+        if: failure() && steps.renderer-profile.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-macos-renderer-thread-timing
+          path: ${{ runner.temp }}/wework-renderer-capture/*/renderer-performance-timing.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')

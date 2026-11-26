@@ -352,7 +352,7 @@ export function analyzeNetwork(events) {
   }
 }
 
-export async function stopPerformanceRecording(client, directory, target, outputPath) {
+export async function stopPerformanceRecording(client, directory, target, outputPath, formatTrace) {
   const statePath = join(directory, `performance-${target}.json`)
   const state = JSON.parse(await readFile(statePath, 'utf8'))
   const command = (method, params) => client({ action: 'command', target, method, params })
@@ -362,7 +362,15 @@ export async function stopPerformanceRecording(client, directory, target, output
   try {
     await command('Tracing.end')
     tracingEnded = true
-    return await finishPerformanceRecording(client, command, target, state, profile, outputPath)
+    return await finishPerformanceRecording(
+      client,
+      command,
+      target,
+      state,
+      profile,
+      outputPath,
+      formatTrace
+    )
   } catch (error) {
     failure = error
     throw error
@@ -374,7 +382,15 @@ export async function stopPerformanceRecording(client, directory, target, output
   }
 }
 
-async function finishPerformanceRecording(client, command, target, state, profile, outputPath) {
+async function finishPerformanceRecording(
+  client,
+  command,
+  target,
+  state,
+  profile,
+  outputPath,
+  formatTrace
+) {
   const events = [...(state.events ?? [])]
   let cursor = state.after
   let lost = state.lostEvents ?? 0
@@ -392,6 +408,14 @@ async function finishPerformanceRecording(client, command, target, state, profil
   }
   if (!complete.params.stream) throw new Error('Trace did not return a stream')
   const trace = JSON.parse(await readProtocolStream(command, complete.params.stream))
+  if (formatTrace) {
+    const report = {
+      ...formatTrace(trace),
+      traceDataLoss: complete.params.dataLossOccurred ?? false,
+    }
+    await writeDiagnosticFile(outputPath, report)
+    return report
+  }
   const metrics = await command('Performance.getMetrics')
   // Read source maps after measurement so the debugging domain does not affect
   // the recorded workload or lose its script metadata to later stream traffic.
