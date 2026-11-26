@@ -1,5 +1,3 @@
-import { saveStandInRoleDevice } from './saveStandInRoleDevice'
-import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import {
   standInConversationTaskId,
@@ -504,50 +502,6 @@ export function StandInOverviewPage({
             }
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
             device={props.devices.find(item => item.device_id === conversationDevice) ?? device}
-            deviceControl={
-              onBindDevice &&
-              definition &&
-              localDeviceId &&
-              conversationDevice && (
-                <>
-                  <StandInDeviceSelect
-                    value={conversationDevice}
-                    currentDeviceId={localDeviceId}
-                    devices={props.devices}
-                    disabled={bindingPending}
-                    testId="personal-assistant-execution-device"
-                    onChange={async next => {
-                      setBindingPending(true)
-                      setBindingError('')
-                      try {
-                        if (role && saved && api && deviceId) {
-                          const moved = { ...role, executionDeviceId: next }
-                          await saveStandInRoleDevice(api, {
-                            userId: props.userId,
-                            sourceDevice: deviceId,
-                            source: saved,
-                            draft: {
-                              ...saved,
-                              roles: saved.roles.map(row => (row.id === role.id ? moved : row)),
-                            },
-                            role: moved,
-                            definitionChange: { kind: 'update', roleId: role.id },
-                          })
-                          onSelectLocation?.(next, role.id)
-                        } else {
-                          await onBindDevice(definition.roleId, next)
-                        }
-                      } catch (error) {
-                        setBindingError(getStandInErrorMessage(error))
-                      } finally {
-                        setBindingPending(false)
-                      }
-                    }}
-                  />
-                  {bindingError && <p role="alert">{bindingError}</p>}
-                </>
-              )
-            }
             items={roleItems.filter(
               item =>
                 !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
@@ -953,12 +907,25 @@ export function StandInOverviewPage({
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     settings={state.draft}
-                    saving={state.saving}
+                    saving={state.saving || bindingPending}
                     loading={state.loading}
                     services={props.services}
                     devices={props.devices}
-                    deviceReadOnly={!!primaryDeviceId}
-                    onSelectDevice={device => {
+                    executionDeviceId={conversationDevice}
+                    deviceReadOnly={!!primaryDeviceId && !(definition && onBindDevice)}
+                    onSelectDevice={async device => {
+                      if (definition && onBindDevice) {
+                        setBindingPending(true)
+                        setBindingError('')
+                        try {
+                          await onBindDevice(definition.roleId, device)
+                        } catch (error) {
+                          setBindingError(getStandInErrorMessage(error))
+                        } finally {
+                          setBindingPending(false)
+                        }
+                        return
+                      }
                       if (onSelectLocation) onSelectLocation(device, '@primary', true)
                       else state.setDeviceId(device)
                     }}
@@ -972,7 +939,7 @@ export function StandInOverviewPage({
                         if (initialPrimaryProfile) props.onCancel?.()
                       }
                     }}
-                    error={state.error}
+                    error={bindingError || state.error}
                     onReload={state.reload}
                     api={api}
                     localDeviceId={state.currentDeviceId}

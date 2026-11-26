@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
+import { openStandInDetails, openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -412,9 +412,15 @@ export function createDesktopScenario({
       const initialAssistant = (await readInitialAssistant()).assistant
       assert.equal(initialAssistant.definitions[0].roleId, '@primary')
       const executionDevice = testId('personal-assistant-execution-device')
+      async function openExecutionSettings() {
+        await openStandInDetails(control)
+        assert.equal(await control.command('getElementCount', executionDevice), '0')
+        await openStandInSettings(control)
+        await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
+      }
       const activeBinding = await binding(control)
       assert.equal(await control.command('getElementCount', executionDevice), '0')
-      await openStandInDetails(control)
+      await openExecutionSettings()
       await control.command('clickWhenEnabled', executionDevice)
       await control.command('waitFor', '[role="listbox"] [role="option"]', {
         text: '当前设备',
@@ -451,7 +457,7 @@ export function createDesktopScenario({
           .environment_id,
         localDevice
       )
-      await openStandInDetails(control)
+      await openExecutionSettings()
       await control.command('clickWhenEnabled', executionDevice)
       await control.command(
         'clickWhenEnabled',
@@ -465,6 +471,7 @@ export function createDesktopScenario({
           .environment_id,
         firstUse.target.deviceId
       )
+      await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
       await stop(control)
       if (firstUse.target.deviceId !== CLOUD_DEVICE_ID) {
         await bind(control, USER, CLOUD_DEVICE_ID)

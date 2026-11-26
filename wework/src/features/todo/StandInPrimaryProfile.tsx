@@ -34,6 +34,7 @@ import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
   settings,
+  executionDeviceId = settings.executionDeviceId,
   saving,
   loading = false,
   error,
@@ -54,6 +55,7 @@ export function StandInPrimaryProfile({
   footerLeading,
 }: {
   settings: PersonalStandInSettings
+  executionDeviceId?: string
   saving: boolean
   loading?: boolean
   error: string | null
@@ -77,7 +79,7 @@ export function StandInPrimaryProfile({
   const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
-  const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
+  const defaultRole = newStandInRole(executionDeviceId, '@primary')
   const defaultCollaboration = {
     ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
@@ -120,7 +122,7 @@ export function StandInPrimaryProfile({
   const [discard, setDiscard] = useState(false)
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
-    settings.executionDeviceId,
+    executionDeviceId,
     view === 'advanced'
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
@@ -367,7 +369,8 @@ export function StandInPrimaryProfile({
             deviceControl={
               <StandInDeviceSelect
                 readOnly={deviceReadOnly}
-                value={settings.executionDeviceId}
+                value={executionDeviceId}
+                testId="personal-assistant-execution-device"
                 currentDeviceId={localDeviceId}
                 devices={devices}
                 disabled={blocked || dirty}
