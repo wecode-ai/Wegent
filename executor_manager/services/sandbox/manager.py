@@ -85,6 +85,10 @@ class SandboxTerminationError(RuntimeError):
     """The sandbox could not be fully terminated and cleanup can be retried."""
 
 
+class SandboxExecutionStorageError(RuntimeError):
+    """The execution could not be recorded in sandbox storage."""
+
+
 class SandboxManager(metaclass=SingletonMeta):
     """Manager for sandbox lifecycle and execution management.
 
@@ -1455,9 +1459,13 @@ class SandboxManager(metaclass=SingletonMeta):
             )
             current.add_execution(execution)
             if not self._repository.save_sandbox(current):
-                return None, f"Could not refresh Sandbox {sandbox_id}"
+                raise SandboxExecutionStorageError(
+                    f"Could not refresh Sandbox {sandbox_id}"
+                )
             if not self._repository.save_execution(execution, update_activity=True):
-                return None, f"Could not record execution for Sandbox {sandbox_id}"
+                raise SandboxExecutionStorageError(
+                    f"Could not record execution for Sandbox {sandbox_id}"
+                )
 
         # Start execution asynchronously using ExecutionRunner
         asyncio.create_task(self._run_execution(current, execution, timeout))

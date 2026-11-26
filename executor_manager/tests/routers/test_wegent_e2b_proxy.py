@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +11,29 @@ import pytest
 from fastapi import HTTPException
 
 from executor_manager.routers import wegent_e2b_proxy
+from executor_manager.services.sandbox import SandboxExecutionStorageError
+
+
+@pytest.mark.asyncio
+async def test_proxy_execution_storage_failure_returns_503(mocker):
+    sandbox = SimpleNamespace(sandbox_id="123", metadata={"task_id": 123})
+    create = AsyncMock(
+        side_effect=SandboxExecutionStorageError("Could not record execution")
+    )
+    mocker.patch.object(
+        wegent_e2b_proxy,
+        "get_sandbox_manager",
+        return_value=SimpleNamespace(create_execution=create),
+    )
+
+    response = await wegent_e2b_proxy._proxy_sandbox_execute(
+        "http://sandbox", sandbox, b'{"code":"test"}', MagicMock()
+    )
+
+    assert response.status_code == 503
+    assert json.loads(await anext(response.body_iterator))["name"] == (
+        "execution_storage_unavailable"
+    )
 
 
 @pytest.mark.asyncio

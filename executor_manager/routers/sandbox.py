@@ -37,6 +37,7 @@ from executor_manager.schemas.sandbox import (
     TerminateSandboxResponse,
 )
 from executor_manager.services.sandbox import (
+    SandboxExecutionStorageError,
     SandboxTerminationError,
     get_sandbox_manager,
 )
@@ -342,12 +343,15 @@ async def execute(
     )
 
     manager = get_sandbox_manager()
-    execution, error = await manager.create_execution(
-        sandbox_id=sandbox_id,
-        prompt=request.prompt,
-        timeout=request.timeout,
-        metadata=request.metadata,
-    )
+    try:
+        execution, error = await manager.create_execution(
+            sandbox_id=sandbox_id,
+            prompt=request.prompt,
+            timeout=request.timeout,
+            metadata=request.metadata,
+        )
+    except SandboxExecutionStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if execution is None:
         raise HTTPException(

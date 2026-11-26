@@ -25,7 +25,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from executor_manager.common.config import ROUTE_PREFIX, get_config
-from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox import (
+    SandboxExecutionStorageError,
+    get_sandbox_manager,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -403,12 +406,16 @@ async def _proxy_sandbox_execute(
     except json.JSONDecodeError as e:
         logger.error(f"[SandboxProxy] Failed to parse execute request: {e}")
         return _error_response("invalid_request", f"Invalid JSON: {str(e)}")
+    except SandboxExecutionStorageError as exc:
+        return _error_response(
+            "execution_storage_unavailable", str(exc), status_code=503
+        )
     except Exception as e:
         logger.error(f"[SandboxProxy] Sandbox proxy error: {e}")
         return _error_response("proxy_error", str(e))
 
 
-def _error_response(code: str, message: str):
+def _error_response(code: str, message: str, *, status_code: int = 200):
     """Generate E2B standard error response in NDJSON format."""
 
     async def generate():
@@ -417,4 +424,6 @@ def _error_response(code: str, message: str):
         ) + "\n"
         yield json.dumps({"type": "end_of_execution"}) + "\n"
 
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        generate(), status_code=status_code, media_type="application/x-ndjson"
+    )

@@ -8,7 +8,36 @@ import pytest
 from fastapi import HTTPException
 
 from executor_manager.routers import sandbox as sandbox_routes
-from executor_manager.services.sandbox import SandboxTerminationError
+from executor_manager.services.sandbox import (
+    SandboxExecutionStorageError,
+    SandboxTerminationError,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("storage_failed", "status"), [(True, 503), (False, 404)])
+async def test_execute_distinguishes_storage_failure_from_missing_sandbox(
+    mocker, storage_failed, status
+):
+    create = mocker.AsyncMock(return_value=(None, "Sandbox 123 not found"))
+    if storage_failed:
+        create.side_effect = SandboxExecutionStorageError("Could not record execution")
+    mocker.patch.object(
+        sandbox_routes,
+        "get_sandbox_manager",
+        return_value=SimpleNamespace(create_execution=create),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await sandbox_routes.execute(
+            sandbox_id="123",
+            request=sandbox_routes.ExecuteRequest(
+                prompt="test", metadata={"subtask_id": 1}
+            ),
+            http_request=SimpleNamespace(client=None),
+        )
+
+    assert exc.value.status_code == status
 
 
 @pytest.mark.asyncio

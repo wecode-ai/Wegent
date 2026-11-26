@@ -1621,6 +1621,16 @@ class TestSandboxManager:
         # Mock _run_execution to avoid actual HTTP call
         run = mocker.patch.object(manager, "_run_execution", new_callable=AsyncMock)
 
+        if condition == "storage_failed":
+            from executor_manager.services.sandbox import SandboxExecutionStorageError
+
+            with pytest.raises(SandboxExecutionStorageError):
+                await manager.create_execution(
+                    sandbox_id="12345", prompt="Test prompt", metadata={"subtask_id": 1}
+                )
+            run.assert_not_called()
+            return
+
         execution, error = await manager.create_execution(
             sandbox_id="12345", prompt="Test prompt", metadata={"subtask_id": 1}
         )
