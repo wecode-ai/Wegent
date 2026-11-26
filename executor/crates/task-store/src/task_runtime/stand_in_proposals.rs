@@ -132,7 +132,7 @@ impl LocalTaskStore {
         }
         // Validate with the same writer, then roll back its savepoint. Nothing is enabled.
         connection.execute_batch("SAVEPOINT validate_stand_in_proposal")?;
-        self.save_personal_stand_in_on(&connection, user, device, settings.clone(), None)?;
+        self.save_personal_stand_in_on(&connection, user, device, settings.clone(), None, false)?;
         connection.execute_batch(
             "ROLLBACK TO validate_stand_in_proposal; RELEASE validate_stand_in_proposal",
         )?;
@@ -187,7 +187,7 @@ impl LocalTaskStore {
         let saved = if accept {
             let mut next = prepared.unwrap_or_else(|| proposal["settings"].clone());
             preserve_owner_choices(&previous, &mut next);
-            self.save_personal_stand_in_on(&connection, user, device, next, backend)?
+            self.save_personal_stand_in_on(&connection, user, device, next, backend, false)?
         } else {
             previous
         };

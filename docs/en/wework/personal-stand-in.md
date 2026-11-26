@@ -252,7 +252,21 @@ Under **My assistants → Assistant details → Manage assistant → Connections
 
 Open a source to install its plugin or sign in, then choose the receive scope and handling. Sources on remote execution devices require authorization on that device. Existing scopes remain visible and removable when a source is unavailable. Returning to Connections or the role settings home retains the draft; save to apply it, or cancel and confirm discarding it. Press Enter to add a project tag. Unfinished or overlong tags prevent saving and retain the input; leaving or disabling intake requires confirmation before discarding the draft. Scope and handling changes take effect after saving stand-in settings; verifying a mailbox account also requires saving those settings before receiving new mail.
 
-Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
+<a id="dingtalk-delegation"></a>
+
+### DingTalk delegation for the default assistant
+
+Open **My assistants → Default assistant → Assistant details → Manage assistant → Connections → DingTalk**. Confirm the account and organization, then search for and add individual direct or group chats. Groups only process new messages that @mention you. You can choose sources during onboarding. Select **Enable delegation** here to create the first delegation version.
+
+After an interruption longer than 30 minutes or a backlog of over 50 eligible messages in a selected chat, DingTalk delegation skips the backlog and continues handling new messages. Open **Connection and runtime status** to see the affected source, then select **Dismiss** to close the notice.
+
+**Document links**, **Confirmed times and locations**, and **Existing standard procedures** are enabled by default. You can turn off any category. The assistant can use multiple earlier messages when they provide verifiable evidence about the same subject in the same authorized conversation. Document replies return one exact link previously shared in the conversation. Time, location and procedure replies can combine confirmed facts or steps. Before sending, the assistant rechecks the evidence and current delegation. If the evidence is missing, ambiguous or conflicting, the assistant hands the question to you and records the reason in its activity.
+
+Select **Save** after editing a scope or category. Removed sources and disabled categories stop matching replies that are still awaiting submission. Added sources and enabled categories apply to new messages once the version takes effect. Removing every source pauses delegation. Saving keeps existing pauses in effect. Select **Resume delegation** to continue. After switching DingTalk accounts, select the new account's conversations and enable delegation again.
+
+### DingTalk intake for assistants you add
+
+Select DingTalk in the connection sources for an assistant you added. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
 <a id="dingtalk-blacklist"></a>
 
@@ -260,7 +274,7 @@ In these DingTalk source settings, both all-group mentions and all-contact direc
 
 <a id="dingtalk-group-message-scope"></a>
 
-Open **Sidebar → My assistants → select primary or role → Assistant details → Manage assistant → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
+Open **Sidebar → My assistants → select an assistant you added → Assistant details → Manage assistant → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
 
 DingTalk groups set to **All messages** catch up in windows of up to 15 minutes. After a timeout, collection retries from the same starting point with a five-minute window. If that also times out, collection skips backlog older than five minutes and uses one-minute windows for recent messages. If timeouts continue, collection keeps advancing as time passes. Skipped messages remain available in DingTalk.
 

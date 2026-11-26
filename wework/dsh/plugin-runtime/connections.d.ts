@@ -157,6 +157,10 @@ export interface ConnectionAvailability {
   status: 'ready' | 'auth_required' | 'error'
   code?: string
   authTarget?: { pluginKey: string; connectorSlug: string; instance?: string }
+  profile?: string
+  accountId?: string
+  accountName?: string
+  organizationName?: string
 }
 
 export interface ConnectionContext {
