@@ -1034,6 +1034,7 @@ async fn envd_process_start_runs_foreground_command_via_connect_stream() {
                 .method(Method::POST)
                 .uri("/process.Process/Start")
                 .header(header::CONTENT_TYPE, "application/connect+json")
+                .header("connect-timeout-ms", "30000")
                 .body(Body::from(connect_envelope(0, payload.as_bytes())))
                 .unwrap(),
         )
@@ -1054,6 +1055,43 @@ async fn envd_process_start_runs_foreground_command_via_connect_stream() {
     assert!(messages
         .iter()
         .any(|message| message["event"]["end"]["exitCode"] == json!(0)));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn envd_process_start_returns_a_connect_error_on_deadline() {
+    let _lock = env_lock().lock().await;
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let payload = json!({
+        "process": {"cmd": "/bin/bash", "args": ["-c", "sleep 30; exit 0"]}
+    })
+    .to_string();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/process.Process/Start")
+        .header(header::CONTENT_TYPE, "application/connect+json")
+        .header("connect-timeout-ms", "100")
+        .body(Body::from(connect_envelope(0, payload.as_bytes())))
+        .unwrap();
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), app.oneshot(request))
+        .await
+        .expect("envd must return before the foreground command exits")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/connect+json"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let error = json!({"error": {
+        "code": "deadline_exceeded",
+        "message": "Sandbox command exceeded its 100 ms deadline"
+    }});
+    assert_eq!(
+        body.as_ref(),
+        connect_envelope(2, error.to_string().as_bytes())
+    );
 }
 
 #[tokio::test]
