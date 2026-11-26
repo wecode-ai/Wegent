@@ -17,6 +17,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -78,6 +79,12 @@ class _TaskLifecycleLease:
     owner_token: str
     lost: asyncio.Event = field(default_factory=asyncio.Event)
     renew_task: Optional[asyncio.Task[None]] = None
+
+
+class _SandboxArchiveOutcome(Enum):
+    ARCHIVED = auto()
+    EMPTY = auto()
+    FAILED = auto()
 
 
 class SandboxManager(metaclass=SingletonMeta):
@@ -854,7 +861,8 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 continue
 
-            if not await self._archive_sandbox_before_cleanup(sandbox):
+            archive = await self._archive_sandbox_before_cleanup(sandbox)
+            if archive is _SandboxArchiveOutcome.FAILED:
                 result["failed"].append(
                     {"sandbox_id": sandbox.sandbox_id, "reason": "archive_failed"}
                 )
@@ -911,8 +919,12 @@ class SandboxManager(metaclass=SingletonMeta):
             return {**result, "skipped": True, "reason": "dry_run"}
 
         if sandbox is not None and archive_before_delete:
-            result["archived"] = await self._archive_sandbox_before_cleanup(sandbox)
-            if not result["archived"] and not delete_on_archive_failure:
+            archive = await self._archive_sandbox_before_cleanup(sandbox)
+            result["archived"] = archive is _SandboxArchiveOutcome.ARCHIVED
+            if (
+                archive is _SandboxArchiveOutcome.FAILED
+                and not delete_on_archive_failure
+            ):
                 logger.warning(
                     "[SandboxManager] Skipping sandbox deletion after archive "
                     "failure: task_id=%s",
@@ -967,27 +979,41 @@ class SandboxManager(metaclass=SingletonMeta):
 
         return result
 
-    async def _archive_sandbox_before_cleanup(self, sandbox: Sandbox) -> bool:
-        """Request backend to archive a sandbox runtime before deletion."""
+    async def _archive_sandbox_before_cleanup(
+        self, sandbox: Sandbox
+    ) -> _SandboxArchiveOutcome:
+        """Request a backup and distinguish an empty sandbox from a failure."""
         task_id = sandbox.metadata.get("task_id")
         if task_id is None:
             logger.info(
                 "[SandboxManager] Skipping sandbox archive without task_id: %s",
                 sandbox.sandbox_id,
             )
-            return False
+            return _SandboxArchiveOutcome.FAILED
 
         url = (
             f"{TASK_API_DOMAIN.rstrip('/')}/api/internal/workspace-archives/"
             f"{task_id}/archive-sandbox"
         )
         payload = self._build_sandbox_archive_payload(sandbox)
-        return await self._post_workspace_archive_callback(
+        data = await self._post_workspace_archive_callback(
             url=url,
             payload=payload,
             action="archive",
             sandbox=sandbox,
         )
+        if data is None or data.get("success") is not True:
+            return _SandboxArchiveOutcome.FAILED
+        archive = data.get("archive")
+        if "archive" in data and archive is None:
+            return _SandboxArchiveOutcome.EMPTY
+        if isinstance(archive, dict) and archive.get("storageKey"):
+            return _SandboxArchiveOutcome.ARCHIVED
+        logger.warning(
+            "[SandboxManager] Invalid archive result for sandbox %s",
+            sandbox.sandbox_id,
+        )
+        return _SandboxArchiveOutcome.FAILED
 
     async def _restore_sandbox_after_create(self, sandbox: Sandbox) -> bool:
         """Request backend to restore a sandbox runtime after creation."""
@@ -1000,12 +1026,13 @@ class SandboxManager(metaclass=SingletonMeta):
             f"{task_id}/restore-sandbox"
         )
         payload = self._build_sandbox_archive_payload(sandbox)
-        return await self._post_workspace_archive_callback(
+        data = await self._post_workspace_archive_callback(
             url=url,
             payload=payload,
             action="restore",
             sandbox=sandbox,
         )
+        return data is not None
 
     @trace_async(
         span_name="sandbox.ensure_workspace",
@@ -1081,7 +1108,7 @@ class SandboxManager(metaclass=SingletonMeta):
         payload: Dict[str, str],
         action: str,
         sandbox: Sandbox,
-    ) -> bool:
+    ) -> Dict[str, Any] | None:
         """Post a sandbox archive/restore request to backend without raising."""
         try:
             async with httpx.AsyncClient(timeout=130.0) as client:
@@ -1101,7 +1128,7 @@ class SandboxManager(metaclass=SingletonMeta):
                         sandbox.sandbox_id,
                         data,
                     )
-                return success
+                return data if success else None
         except httpx.HTTPStatusError as exc:
             logger.warning(
                 "[SandboxManager] Sandbox %s callback failed sandbox_id=%s "
@@ -1111,7 +1138,7 @@ class SandboxManager(metaclass=SingletonMeta):
                 exc.response.status_code,
                 exc.response.text[:500],
             )
-            return False
+            return None
         except Exception as exc:
             logger.warning(
                 "[SandboxManager] Sandbox %s callback error sandbox_id=%s error=%s",
@@ -1119,7 +1146,7 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox.sandbox_id,
                 exc,
             )
-            return False
+            return None
 
     def _normalize_sandbox_id(self, sandbox_id: Any) -> str:
         """Normalize Redis sandbox IDs to strings."""
@@ -1763,9 +1790,15 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox.sandbox_id,
             )
             return True
-        archived = await self._archive_sandbox_before_cleanup(sandbox)
+        archive = await self._archive_sandbox_before_cleanup(sandbox)
 
-        if archived:
+        if archive is _SandboxArchiveOutcome.EMPTY:
+            logger.info(
+                "[SandboxManager] No workspace data to archive before terminating sandbox %s",
+                sandbox.sandbox_id,
+            )
+            return True
+        if archive is _SandboxArchiveOutcome.ARCHIVED:
             logger.info(
                 "[SandboxManager] Archived workspace before terminating sandbox %s",
                 sandbox.sandbox_id,

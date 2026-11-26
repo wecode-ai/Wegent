@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 
+from executor_manager.services.sandbox.manager import _SandboxArchiveOutcome
+
 
 class TestSandboxManager:
     """Test cases for SandboxManager class."""
@@ -181,7 +183,9 @@ class TestSandboxManager:
         )
 
         mocker.patch.object(
-            manager, "_archive_sandbox_before_cleanup", new=AsyncMock(return_value=True)
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
         )
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
 
@@ -206,7 +210,7 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
         )
         mocker.patch.object(
             manager,
@@ -237,7 +241,7 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=_SandboxArchiveOutcome.FAILED,
         )
         terminate = mocker.patch.object(
             manager,
@@ -2201,7 +2205,7 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=_SandboxArchiveOutcome.FAILED,
         )
         mock_terminate = mocker.patch.object(
             manager,
@@ -2233,7 +2237,7 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=_SandboxArchiveOutcome.FAILED,
         )
         mock_terminate = mocker.patch.object(
             manager,
@@ -2269,7 +2273,7 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
         )
         mock_terminate = mocker.patch.object(
             manager,
@@ -2283,18 +2287,40 @@ class TestSandboxManager:
         mock_terminate.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_archive_before_cleanup_posts_internal_endpoint(
+    @pytest.mark.parametrize(
+        ("body", "deleted", "archived"),
+        [
+            (
+                {"success": True, "archive": {"storageKey": "archive.tar.gz"}},
+                True,
+                True,
+            ),
+            ({"success": True, "archive": None}, True, False),
+            ({"success": True}, False, False),
+            ({"archive": None}, False, False),
+        ],
+    )
+    async def test_cleanup_distinguishes_empty_sandbox_from_written_backup(
         self,
         sandbox_manager_with_mock_redis,
         sample_sandbox,
         mocker,
+        body,
+        deleted,
+        archived,
     ):
-        """GC asks the backend to archive the workspace before deletion."""
         manager = sandbox_manager_with_mock_redis
         sample_sandbox.executor_namespace = "wb-plat-ide"
-        response = MagicMock()
-        response.status_code = 200
-        response.text = "ok"
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+        ).return_value
+        executor.delete_executor.return_value = {"status": "success"}
+        response = httpx.Response(
+            200, json=body, request=httpx.Request("POST", "http://backend")
+        )
         client = MagicMock()
         client.post = AsyncMock(return_value=response)
         client.__aenter__ = AsyncMock(return_value=client)
@@ -2304,7 +2330,13 @@ class TestSandboxManager:
             return_value=client,
         )
 
-        assert await manager._archive_sandbox_before_cleanup(sample_sandbox) is True
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+
+        assert result["deleted"] is deleted
+        assert result["archived"] is archived
+        if not deleted:
+            assert result["reason"] == "archive_failed"
+            executor.delete_executor.assert_not_called()
 
         url = client.post.await_args.args[0]
         assert url.endswith("/api/internal/workspace-archives/12345/archive-sandbox")

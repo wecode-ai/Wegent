@@ -41,7 +41,7 @@ use crate::{
     callback::CallbackSink,
     envd::archive::{
         create_runtime_archive_with_roots, restore_runtime_archive_with_roots, ArchiveError,
-        ArchiveMode, ArchiveOptions,
+        ArchiveMode, ArchiveOptions, RuntimeArchive,
     },
     envd::archive_sessions::SessionArchiveRoots,
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
@@ -779,6 +779,15 @@ async fn archive_workspace(Json(request): Json<ArchiveRequest>) -> Result<Respon
     .map_err(|error| archive_error_to_http(std::io::Error::other(error).into()))?
     .map_err(archive_error_to_http)?;
 
+    upload_workspace_archive(request, mode, archive, started).await
+}
+
+async fn upload_workspace_archive(
+    request: ArchiveRequest,
+    mode: ArchiveMode,
+    archive: RuntimeArchive,
+    started: std::time::Instant,
+) -> Result<Response, HttpError> {
     if mode == ArchiveMode::Sandbox && archive.is_empty {
         log_executor_event(
             "sandbox archive empty",
@@ -1879,6 +1888,43 @@ mod tests {
         fs::write(&marker, "preserved").unwrap();
         prepare_runtime_directories(&workspace, &home, &roots).unwrap();
         assert_eq!(fs::read_to_string(marker).unwrap(), "preserved");
+    }
+
+    #[tokio::test]
+    async fn empty_prepared_sandbox_returns_no_content_without_uploading() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("sandbox-home");
+        let workspace = temp.path().join("workspace/42");
+        let roots = SessionArchiveRoots::for_home(&temp.path().join("runtime-home"));
+        prepare_runtime_directories(&workspace, &home, &roots).unwrap();
+        let archive = create_runtime_archive_with_roots(
+            ArchiveOptions {
+                mode: ArchiveMode::Sandbox,
+                task_id: "42".to_owned(),
+                workspace_path: workspace,
+                home_path: home,
+                max_size_bytes: 1024 * 1024,
+            },
+            None,
+            &roots,
+        )
+        .unwrap();
+
+        let response = upload_workspace_archive(
+            ArchiveRequest {
+                task_id: 42,
+                upload_url: "invalid-upload-url".to_owned(),
+                max_size_mb: 1,
+                runtime_type: "sandbox".to_owned(),
+            },
+            ArchiveMode::Sandbox,
+            archive,
+            std::time::Instant::now(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 
     #[test]
