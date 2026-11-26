@@ -5776,6 +5776,9 @@
     "connect": "Connect to the cloud to view notifications"
   },
   "standIn": {
+    "preference_loading": "Loading assistant preferences…",
+    "preference_error": "Couldn't load assistant preferences",
+    "preference_retry": "Try again",
     "dingtalk_delegation": {
       "title": "DingTalk delegation",
       "version": "Delegation V{{version}}",

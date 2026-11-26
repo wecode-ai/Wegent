@@ -5,13 +5,7 @@
   "unavailable": "This task is unavailable. Check your connection and access, then retry.",
   "shell": {
     "back": "Back",
-    "navigation": "Collaboration navigation",
-    "resize": "Resize adjacent panes",
-    "assistant": "Assistant",
-    "tasks": "Tasks",
-    "projects": "Projects",
-    "account": "User menu",
-    "settings": "Settings"
+    "resize": "Resize adjacent panes"
   },
   "tasks": {
     "rhythm": {
@@ -180,6 +174,21 @@
     "continueDiscussion": "Continue discussion"
   },
   "assistant": {
+    "entry": {
+      "back": "Return to my assistant",
+      "linkTitle": "This assistant link cannot open",
+      "loadTitle": "The assistant could not load",
+      "loadFailed": "Retry to load your assistant.",
+      "errors": {
+        "missing_identity": "This link does not identify an assistant.",
+        "conflict": "The assistant and device in this link do not identify the same assistant.",
+        "not_found": "The assistant in this link is unavailable.",
+        "forbidden": "This link points to an assistant or device you cannot access.",
+        "ambiguous": "This link matches more than one assistant.",
+        "lookup_failed": "The assistant in this link could not be verified. Retry to check again.",
+        "unsupported": "This discussion or page is unavailable from the current assistant view."
+      }
+    },
     "availability": {
       "online": "Online",
       "offline": "Offline",

@@ -16,6 +16,9 @@ import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnersh
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { getWorkbenchBackground, useOptionalAppearance } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Settings } from 'lucide-react'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import {
   getDesktopWindowLabel,
@@ -33,6 +36,7 @@ import { createHttpClient } from '@/api/http'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { KEYBINDINGS_CHANGED_EVENT } from '@/lib/keybindings'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { navigateTo } from '@/lib/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { createWorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
@@ -83,6 +87,7 @@ function AppShellContent() {
   const telemetryEnabled = useTelemetryEnabled()
   const sessionConsent = useSessionTelemetryConsent()
   const { pathname: path, search } = useCurrentLocation()
+  const assistantPreferenceFailed = path === '/stand-in' && appPreferences?.loadStatus === 'error'
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
@@ -241,6 +246,7 @@ function AppShellContent() {
         isPopoutWindow,
         isLoading,
         path,
+        assistantPreferenceFailed,
         idleMaintenanceEligible,
         imPresence: {
           enabled: isMainWindow && isElectron && cloudConnection.isConnected,
@@ -266,6 +272,7 @@ function AppShellContent() {
       isPopoutWindow,
       isLoading,
       path,
+      assistantPreferenceFailed,
       idleMaintenanceEligible,
       cloudConnection.isConnected,
       updateImNotificationPresence,
@@ -381,7 +388,25 @@ function AppShellContent() {
             )}
           >
             {showChromeTitlebar && (
-              <ChromeTitlebar showWorkspacePortals={activeAppKey !== 'wework'} />
+              <ChromeTitlebar
+                showWorkspacePortals={activeAppKey !== 'wework'}
+                afterTabs={
+                  isCollaborationExpPath(path) &&
+                  appPreferences?.preferences.collaborationExperienceEnabled ? (
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+                      aria-label={t('workbench.settings')}
+                      title={t('workbench.settings')}
+                      data-testid="collaboration-host-settings"
+                      onClick={() => navigateTo('/settings')}
+                    >
+                      <Settings aria-hidden="true" />
+                    </ControlButton>
+                  ) : undefined
+                }
+              />
             )}
             {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
             <CloudModelCatalogSyncDialogHost />

@@ -38,6 +38,7 @@ type StandInOnboardingProps = {
   onGuideClose?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
+  onActivate?(): Promise<boolean>
   configuration: StandInOnboardingConfiguration
   children: ReactNode
 }
@@ -63,6 +64,7 @@ function StandInOnboardingContent({
   onGuideClose,
   onExampleSelect,
   onClose,
+  onActivate,
   children,
   configuration,
 }: StandInOnboardingProps) {
@@ -139,6 +141,7 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
+      if (onActivate && !(await onActivate())) return false
       resource.update(() => completed)
       onGuideClose?.()
       return true

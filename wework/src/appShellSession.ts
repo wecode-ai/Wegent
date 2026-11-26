@@ -43,6 +43,7 @@ interface AppShellInput {
   isPopoutWindow: boolean
   isLoading: boolean
   path: string
+  assistantPreferenceFailed?: boolean
   idleMaintenanceEligible: boolean
   imPresence: { enabled: boolean; scopeKey: string; updatePresence?: PresenceUpdater }
 }
@@ -215,15 +216,16 @@ export function createAppShellSession() {
       } else if (ownershipChanged && next.isDesktop && !next.isPopoutWindow) {
         void loadKeybindings()
       }
-      const startupRouteReady = ['/login', '/login/oidc', '/auth/wework/authorize'].includes(
-        next.path
-      )
+      const startupRouteReady =
+        next.assistantPreferenceFailed ||
+        ['/login', '/login/oidc', '/auth/wework/authorize'].includes(next.path)
       if (
         startupRouteReady &&
         !next.isLoading &&
         next.isMainWindow &&
         (!previous ||
           previous.path !== next.path ||
+          previous.assistantPreferenceFailed !== next.assistantPreferenceFailed ||
           previous.isLoading !== next.isLoading ||
           previous.isMainWindow !== next.isMainWindow)
       ) {

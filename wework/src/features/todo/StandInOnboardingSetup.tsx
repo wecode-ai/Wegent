@@ -33,7 +33,7 @@ export interface StandInOnboardingConfiguration {
   projects: CollaborationProject[]
   localDeviceId: string
   devices?: DeviceInfo[]
-  services?: WorkbenchServices
+  services: WorkbenchServices
   onSelectDevice?(deviceId: string): void
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
   onReload(): void

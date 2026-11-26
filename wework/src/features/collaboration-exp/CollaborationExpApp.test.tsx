@@ -8,8 +8,6 @@ import type { ProjectSpaceApis } from '@/features/workbench/workbenchServices'
 import { navigateTo } from '@/lib/navigation'
 import type { ExperiencePanesProps } from './shell/types'
 import type { PrivateDiscussionPaneProps } from './private/PrivateDiscussionPane'
-import type { AssistantHomeProps } from './assistant/types'
-import type { AssistantConversationPaneProps } from './assistant/AssistantConversationPane'
 import type { AssistantTeamRelayProps } from './assistant/AssistantTeamRelay'
 import {
   experienceBindingFixture,
@@ -23,8 +21,6 @@ import '@/i18n'
 let workbench: WorkbenchContextValue
 let cloudBaseUrl = ''
 const privateProps = vi.hoisted(() => vi.fn())
-const assistantProps = vi.hoisted(() => vi.fn())
-const assistantConversationProps = vi.hoisted(() => vi.fn())
 const teamRelayProps = vi.hoisted(() => vi.fn())
 const issueDetailsProps = vi.hoisted(() => vi.fn())
 type IssueDetailsProps = ComponentProps<
@@ -45,44 +41,6 @@ vi.mock('./assistant', async importOriginal => {
     AssistantTeamRelay: (props: AssistantTeamRelayProps) => {
       teamRelayProps(props)
       return <div data-testid="team-relay-leaf" />
-    },
-    AssistantHome: (props: AssistantHomeProps) => {
-      assistantProps(props)
-      return (
-        <div data-testid="assistant-leaf">
-          {props.conversations?.map(conversation => (
-            <button
-              type="button"
-              key={conversation.key}
-              data-testid={`recent-${conversation.address.taskId}`}
-              onClick={() => props.onOpenConversation?.(conversation)}
-            >
-              {conversation.title}
-            </button>
-          ))}
-          <button
-            type="button"
-            data-testid="open-ordinary-conversation"
-            onClick={() =>
-              props.onOpenConversation?.({
-                key: JSON.stringify(['assistant-device', 'ordinary-conversation']),
-                address: { deviceId: 'assistant-device', taskId: 'ordinary-conversation' },
-                bindingIds: [],
-                sourceNodeIds: [],
-                ownerUserId: 7,
-                title: 'Ordinary conversation',
-                linkedAt: null,
-              })
-            }
-          >
-            Open ordinary conversation
-          </button>
-        </div>
-      )
-    },
-    AssistantConversationPane: (props: AssistantConversationPaneProps) => {
-      assistantConversationProps(props)
-      return <div data-testid="assistant-conversation-leaf">{props.address.taskId}</div>
     },
   }
 })
@@ -115,15 +73,10 @@ vi.mock('./shell', async importOriginal => {
   const original = await importOriginal<typeof import('./shell')>()
   return {
     ...original,
-    ExperiencePanes: ({ panes, navigation }: ExperiencePanesProps) => (
+    ExperiencePanes: ({ panes }: ExperiencePanesProps) => (
       <div>
-        {navigation}
         {panes.map(pane => (
-          <section
-            key={pane.id}
-            data-testid={`pane-${pane.id}`}
-            data-back-visibility={pane.backVisibility}
-          >
+          <section key={pane.id} data-testid={`pane-${pane.id}`}>
             {pane.header === null
               ? null
               : (pane.header ?? (
@@ -289,8 +242,6 @@ describe('CollaborationExpApp integration', () => {
   beforeEach(() => {
     cloudBaseUrl = 'https://first-backend.example'
     privateProps.mockClear()
-    assistantProps.mockClear()
-    assistantConversationProps.mockClear()
     teamRelayProps.mockClear()
     issueDetailsProps.mockClear()
     currentIssue = issue
@@ -420,10 +371,6 @@ describe('CollaborationExpApp integration', () => {
     plan.scrollTop = 240
     fireEvent.click(screen.getByTestId('open-project-task'))
     await screen.findByTestId('collaboration-exp-timeline')
-    expect(screen.getByTestId('pane-timeline')).toHaveAttribute(
-      'data-back-visibility',
-      'collapsed-parent'
-    )
     fireEvent.click(screen.getByTestId('back-timeline'))
     expect(screen.queryByTestId('collaboration-exp-timeline')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-leaf')).toBe(plan)
@@ -687,13 +634,21 @@ describe('CollaborationExpApp integration', () => {
     expect(api.issues.list).not.toHaveBeenCalled()
     expect(api.myWork?.page).not.toHaveBeenCalled()
     expect(api.activity?.subscribeLoopItemChanges).not.toHaveBeenCalled()
-    expect(assistantProps).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }))
+    expect(teamRelayProps).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }))
   })
 
-  test('a recent bound discussion opens the same Issue and owned private identity while retaining list scope', async () => {
+  test('a bound discussion route opens the same Issue and owned private identity while retaining list scope', async () => {
     const scope = JSON.stringify(['backend', otherProject.id])
-    open({ view: 'assistant', projectScope: scope, search: 'Release', future: 'keep' })
-    fireEvent.click(await screen.findByTestId('recent-task-1'))
+    const discussion = JSON.stringify(['device-1', 'task-1'])
+    open({
+      projectStore: 'backend',
+      projectId: project.id,
+      issueId: issue.id,
+      discussion,
+      projectScope: scope,
+      search: 'Release',
+      future: 'keep',
+    })
 
     expect(await screen.findByTestId('private-leaf')).toHaveTextContent('task-1')
     const selected = new URLSearchParams(window.location.search)
@@ -701,7 +656,7 @@ describe('CollaborationExpApp integration', () => {
     expect(selected.get('projectStore')).toBe('backend')
     expect(selected.get('projectId')).toBe(project.id)
     expect(selected.get('issueId')).toBe(issue.id)
-    expect(selected.get('discussion')).toBe(JSON.stringify(['device-1', 'task-1']))
+    expect(selected.get('discussion')).toBe(discussion)
     expect(selected.get('projectScope')).toBe(scope)
     expect(selected.get('search')).toBe('Release')
     expect(selected.get('future')).toBe('keep')
@@ -718,44 +673,11 @@ describe('CollaborationExpApp integration', () => {
       })
     )
     fireEvent.click(screen.getByTestId('back-discussion'))
-    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-assistant'))
-    fireEvent.click(await screen.findByTestId('recent-task-1'))
-    await screen.findByTestId('private-leaf')
-    expect(privateProps).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        project,
-        issue,
-        conversation: expect.objectContaining({
-          ownerUserId: 7,
-          address: { deviceId: 'device-1', taskId: 'task-1' },
-        }),
-      })
-    )
-  })
-
-  test('an ordinary assistant callback uses its own URL and pane without an Issue or project write', async () => {
-    open({ view: 'assistant', future: 'keep' })
-    fireEvent.click(await screen.findByTestId('open-ordinary-conversation'))
-
-    expect(await screen.findByTestId('assistant-conversation-leaf')).toHaveTextContent(
-      'ordinary-conversation'
-    )
-    const selected = new URLSearchParams(window.location.search)
-    expect(selected.get('view')).toBe('assistant')
-    expect(selected.get('assistantDeviceId')).toBe('assistant-device')
-    expect(selected.get('assistantTaskId')).toBe('ordinary-conversation')
-    expect(selected.get('future')).toBe('keep')
-    expect(selected.has('issueId')).toBe(false)
-    expect(selected.has('discussion')).toBe(false)
     expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()
-    expect(api.issues.get).not.toHaveBeenCalled()
-    expect(assistantConversationProps).toHaveBeenLastCalledWith({
-      active: true,
-      address: { deviceId: 'assistant-device', taskId: 'ordinary-conversation' },
-    })
-    fireEvent.click(screen.getByTestId('back-assistant-conversation'))
-    expect(screen.queryByTestId('assistant-conversation-leaf')).not.toBeInTheDocument()
-    expect(new URLSearchParams(window.location.search).has('assistantTaskId')).toBe(false)
+    const closed = new URLSearchParams(window.location.search)
+    expect(closed.get('issueId')).toBe(issue.id)
+    expect(closed.get('projectScope')).toBe(scope)
+    expect(closed.has('discussion')).toBe(false)
   })
 
   test('opens the current work through the same task selection and retains the task team source', async () => {
@@ -780,7 +702,6 @@ describe('CollaborationExpApp integration', () => {
     expect(selected.get('projectScope')).toBe(scope)
     expect(selected.get('search')).toBe('Release')
     expect(selected.get('future')).toBe('keep')
-    expect(assistantProps).not.toHaveBeenCalled()
   })
 
   test('controls the same timeline filter from both the header attachment action and filter tabs', async () => {
@@ -937,7 +858,7 @@ describe('CollaborationExpApp integration', () => {
     expect(selected.has('issueId')).toBe(false)
   })
 
-  test('returns both navigation entries to their home while retaining project scope and list filters', async () => {
+  test('returns to the task home while retaining project scope and list filters', async () => {
     const scope = JSON.stringify(['backend', project.id])
     open({
       projectStore: 'backend',
@@ -951,34 +872,14 @@ describe('CollaborationExpApp integration', () => {
       future: 'keep',
     })
     await screen.findByTestId('issue-details-leaf')
-    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-tasks'))
+    fireEvent.click(screen.getByTestId('back-timeline'))
     expect(await screen.findByTestId('collaboration-exp-task-home')).toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-exp-timeline')).not.toBeInTheDocument()
     expect(screen.queryByTestId('issue-details-leaf')).not.toBeInTheDocument()
-    let selected = new URLSearchParams(window.location.search)
+    const selected = new URLSearchParams(window.location.search)
     expect(selected.get('view')).toBe('tasks')
     expect(selected.has('issueId')).toBe(false)
     expect(selected.has('inspector')).toBe(false)
-    for (const [key, value] of Object.entries({
-      projectScope: scope,
-      search: 'Release',
-      status: 'pending',
-      future: 'keep',
-    }))
-      expect(selected.get(key)).toBe(value)
-    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-assistant'))
-    expect(await screen.findByTestId('assistant-leaf')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-toolbar-recent'))
-    expect(assistantProps).toHaveBeenLastCalledWith(expect.objectContaining({ panel: 'recent' }))
-    fireEvent.click(screen.getByTestId('open-ordinary-conversation'))
-    await screen.findByTestId('assistant-conversation-leaf')
-    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-assistant'))
-    expect(screen.queryByTestId('assistant-conversation-leaf')).not.toBeInTheDocument()
-    expect(assistantProps).toHaveBeenLastCalledWith(expect.objectContaining({ panel: null }))
-    selected = new URLSearchParams(window.location.search)
-    expect(selected.get('view')).toBe('assistant')
-    expect(selected.has('assistantTaskId')).toBe(false)
-    expect(selected.has('assistantDeviceId')).toBe(false)
     for (const [key, value] of Object.entries({
       projectScope: scope,
       search: 'Release',
