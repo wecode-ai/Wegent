@@ -114,6 +114,26 @@ def _manager_board_context(db: Session, token_info: MCPAuthInfo) -> dict[str, st
     if token_info.auth_type != "task" or token_info.task_id is None:
         raise ValueError("Dispatch management requires Task authentication")
     context = _board_context(db, token_info)
+    labels = _task_labels(db, token_info)
+    execution_id = labels.get("projectRobotExecutionId")
+    if execution_id:
+        from app.models.loop_item_execution import LoopItemExecution
+
+        execution = db.get(LoopItemExecution, int(execution_id))
+        if (
+            execution is None
+            or execution.optional_backend_task_id != token_info.task_id
+            or execution.executor_owner_user_id != token_info.user_id
+        ):
+            raise ValueError("Authenticated Task is not bound to this execution")
+        origin = execution.runtime_origin_context
+        context.update(
+            space_id=str(execution.cloud_project_id),
+            item_id=execution.loop_item_id,
+            dispatch_role=origin.get("dispatch_role", ""),
+            dispatch_id=origin.get("dispatch_id", ""),
+            manager_agent_id=origin.get("manager_agent_id", ""),
+        )
     if context.get("dispatch_role") != "manager":
         raise ValueError("Authenticated Task is not a dispatch manager")
     return context
@@ -319,6 +339,34 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
             "space_ref": {"project_store": "backend", "space_id": str(project.id)},
             "item": _read_item(db, project, context["item_id"], token_info.user_id),
         }
+
+
+@mcp_tool(server="wework_space")
+def submit_workflow_plan(
+    token_info: MCPAuthInfo, plan: dict[str, Any]
+) -> dict[str, Any]:
+    """Assign a round of Issue work from the authenticated manager Task."""
+    from app.api.endpoints.loop_item_executions import admit_collaboration_batch
+    from app.schemas.project_chat import LoopItemExecutionBatchCreate
+
+    with SessionLocal() as db:
+        context = _manager_board_context(db, token_info)
+        values = LoopItemExecutionBatchCreate(
+            loop_item_id=context["item_id"],
+            dispatch_id=context["dispatch_id"],
+            round_id=plan.get("round_id"),
+            items=plan.get("items"),
+            manager_agent_id=context["manager_agent_id"],
+            manager_runtime_task_id=str(token_info.subtask_id),
+        )
+        return admit_collaboration_batch(
+            db,
+            int(context["space_id"]),
+            values,
+            _user(db, token_info.user_id),
+            signed_in=False,
+            task_id=token_info.task_id,
+        )
 
 
 @mcp_tool(server="wework_space")

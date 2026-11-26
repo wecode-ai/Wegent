@@ -218,9 +218,12 @@ def execution_scope_for(
     agent_id: str,
     team_id: int | None = None,
     automation_run_id: str,
+    assignment_id: str | None = None,
 ) -> str:
     """Return the concurrency and retry scope for one execution attempt."""
 
+    if assignment_id and automation_run_id:
+        return f"assignment:{automation_run_id}"
     if agent_id:
         return f"project_robot:{loop_item_id}"
     if team_id:
@@ -522,7 +525,7 @@ def _execution_is_claimable_by_device(
     from app.services.device.identity import resolve_owned_device_alias
     from app.services.runner_routing import execution_device_authorized
 
-    if execution.assignment_pending:
+    if execution.assignment_pending or execution.execution_environment == "wegent":
         return False
 
     runner = resolve_owned_device_alias(
@@ -738,54 +741,6 @@ class LoopItemExecutionService:
             requires_approval=False,
         )
 
-    def enqueue_collaboration_group_dispatch(
-        self,
-        db: Session,
-        *,
-        loop_item_id: str,
-        cloud_project_id: str,
-        owner_user_id: int,
-        assigner_user_id: int,
-        environment: str,
-        execution_device_id: str | None,
-        priority: str | None,
-        dispatch_context: dict[str, Any],
-    ) -> LoopItemExecution:
-        """Persist one transport envelope for Executor-owned coordination.
-
-        This row does not represent a manager or member run. It only selects
-        the Runtime installation that will own the collaboration state machine.
-        """
-
-        return self._enqueue(
-            db,
-            loop_item_id=loop_item_id,
-            cloud_project_id=cloud_project_id,
-            executor_type="collaboration_group_dispatch",
-            owner_user_id=owner_user_id,
-            agent_id="",
-            team_id=None,
-            assigner_user_id=assigner_user_id,
-            environment=environment,
-            execution_device_id=execution_device_id,
-            priority=priority,
-            automation_context=dispatch_context,
-            requires_approval=False,
-            runtime_selection={
-                "executor_kind": "collaboration_group_dispatch",
-                **(
-                    {
-                        "runner_routing": dispatch_context["runner_routing"],
-                        "group_runner_requirements": dispatch_context[
-                            "group_runner_requirements"
-                        ],
-                    }
-                    if dispatch_context.get("runner_routing")
-                    else {}
-                ),
-            },
-        )
-
     def enqueue_generic_robot(
         self,
         db: Session,
@@ -925,6 +880,11 @@ class LoopItemExecutionService:
             agent_id=agent_id,
             team_id=team_id,
             automation_run_id=automation_run_id,
+            assignment_id=(
+                context.get("assignment_id")
+                if context.get("dispatch_role") == "member"
+                else None
+            ),
         )
         previous = (
             db.query(LoopItemExecution)
@@ -1038,6 +998,8 @@ class LoopItemExecutionService:
             "runtime_selection": runtime_selection,
             "origin_context": origin_context,
         }
+        if runtime_selection.get("executor_kind") == "collaboration_group_dispatch":
+            value["dispatch_request"] = {"kind": "collaboration_group"}
         if runtime_request is not None:
             value["runtime_request"] = runtime_request
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -3681,14 +3643,20 @@ class LoopItemExecutionService:
                 request=request,
                 **execution_actor_options(execution),
             ).payload
-            member_runtime_profiles = self._collaboration_member_runtime_profiles(
-                db,
-                execution=execution,
-                task=task,
-                origin_context=origin_context,
-                executor_device_id=executor_device_id,
+            version = origin_context.get("dispatch_protocol_version", 1)
+            member_runtime_profiles = (
+                []
+                if version == 2
+                else self._collaboration_member_runtime_profiles(
+                    db,
+                    execution=execution,
+                    task=task,
+                    origin_context=origin_context,
+                    executor_device_id=executor_device_id,
+                )
             )
             return {
+                "dispatchProtocolVersion": version,
                 "dispatchKind": "collaboration_group",
                 "dispatchTaskId": execution.runtime_task_id,
                 "managerRuntimeRequest": manager_request,

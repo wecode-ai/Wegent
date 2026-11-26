@@ -84,9 +84,12 @@ def test_cp10_project_maintainer_does_not_gain_shared_source_edit_authority(
     assert response.status_code == 201, response.text
     agent = response.json()
     stored = test_db.get(ProjectChatAgent, agent["id"])
-    original_metadata = {**stored.metadata_json, "wegent_team_id": 12345}
-    stored.metadata_json = original_metadata
+    stored.metadata_json = {**stored.metadata_json, "wegent_team_id": 12345}
     test_db.commit()
+    test_db.refresh(stored)
+    assert stored.metadata_json["wegent_team_id"] == 12345
+    assert "teamRef" not in stored.metadata_json
+    original_metadata = dict(stored.metadata_json)
     response = test_client.patch(
         f"{base}/{agent['id']}",
         headers=scope["member"],

@@ -186,6 +186,23 @@ async fn migrate_agent(
 }
 
 pub(super) async fn execute(tx: &mut impl MysqlTransaction, down: bool) -> MysqlResult<()> {
+    if down {
+        let pending: Option<(i64,)> = tx.fetch_optional(
+            "SELECT msg.id FROM project_chat_messages msg JOIN loop_items issue ON issue.id=JSON_UNQUOTE(JSON_EXTRACT(msg.metadata,'$.issue_id'))
+             WHERE msg.message_type='coordination' AND msg.status='active' AND JSON_EXTRACT(msg.metadata,'$.protocol')=2
+             AND issue.resource_type='task' AND issue.cloud_project_id=JSON_UNQUOTE(JSON_EXTRACT(msg.metadata,'$.project_id'))
+             AND JSON_EXTRACT(issue.metadata,'$.collaboration_group_assignment_key')=JSON_EXTRACT(msg.metadata,'$.assignment_key') LIMIT 1", ()
+        ).await?;
+        let running: Option<(i64,)> = tx.fetch_optional(
+            "SELECT id FROM loop_item_executions WHERE status IN ('waiting_runtime','pending_approval','queued','claimed','running','cancel_requested')
+             AND JSON_EXTRACT(IF(JSON_VALID(execution_payload),execution_payload,'{}'),'$.origin_context.dispatch_protocol_version')=2 LIMIT 1", ()
+        ).await?;
+        if pending.is_some() || running.is_some() {
+            return Err(MysqlError::InvalidQuery {
+                reason: "Finish active v2 Issue coordination before downgrading".into(),
+            });
+        }
+    }
     let mut report = Report::default();
     let mut cursor = String::new();
     loop {

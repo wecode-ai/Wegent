@@ -299,25 +299,22 @@ def collaboration_human_assignment_status(
     project_id: int,
     issue_id: str,
     human_assignment_id: str,
+    include_result: bool = True,
 ) -> dict[str, object]:
     """Project the personal Task and its Delivery onto one round assignment."""
 
-    bindings = (
+    assignment_bindings = (
         db.query(LoopItemTaskBinding)
         .filter(
             LoopItemTaskBinding.cloud_project_id == str(project_id),
             LoopItemTaskBinding.loop_item_id == issue_id,
             loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            LoopItemTaskBinding.metadata_json["human_assignment_id"].as_string()
+            == human_assignment_id,
         )
         .order_by(LoopItemTaskBinding.linked_at.desc())
         .all()
     )
-    assignment_bindings = [
-        row
-        for row in bindings
-        if isinstance(row.metadata_json, dict)
-        and row.metadata_json.get("human_assignment_id") == human_assignment_id
-    ]
     if not assignment_bindings:
         return {
             "assignee_type": "human",
@@ -349,7 +346,11 @@ def collaboration_human_assignment_status(
         if delivery is not None
         else assignment_bindings[0]
     )
-    result = delivery_service.read_markdown(delivery) if delivery is not None else ""
+    result = (
+        delivery_service.read_markdown(delivery)
+        if delivery is not None and include_result
+        else ""
+    )
     return {
         "assignee_type": "human",
         "work_id": f"human_assignment:{human_assignment_id}",

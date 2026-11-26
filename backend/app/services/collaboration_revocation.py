@@ -115,9 +115,29 @@ def _members(group: dict) -> list[dict]:
 def _require_group(
     db: Session, access: CloudProjectAccess, execution: LoopItemExecution
 ) -> None:
-    group = execution.execution_intent.get("origin_context", {}).get(
-        "collaboration_group"
-    )
+    context = execution.runtime_origin_context
+    delegated = context.get("dispatch_protocol_version") == 2
+    group = context.get("collaboration_group")
+    if delegated and context.get("dispatch_role") == "member":
+        from app.services.issue_coordination import coordination_activity
+
+        item = db.get(LoopItem, execution.loop_item_id)
+        metadata = item.metadata_json if item else {}
+        if (
+            not item
+            or not context.get("assignment_key")
+            or (
+                metadata.get("collaboration_group_assignment_key")
+                != context["assignment_key"]
+                or str((metadata.get("collaboration_group") or {}).get("id"))
+                != str(context.get("collaboration_group_id"))
+            )
+        ):
+            raise HTTPException(403, "Collaboration group assignment was superseded")
+        root = coordination_activity(db, item, context["dispatch_id"])
+        if not root or root.status != "active":
+            raise HTTPException(403, "Collaboration dispatch is no longer active")
+        group = root.metadata_json["group"]
     if not isinstance(group, dict):
         return
     current = collaboration_permission_service.require_project_group(
@@ -134,7 +154,22 @@ def _require_group(
         if (member.get("kind"), str(member.get("id"))) not in current_members:
             raise HTTPException(422, "Collaboration group membership was revoked")
         if member.get("kind") == "agent":
-            _require_agent_use(db, execution, str(member["id"]))
+            member_id = str(member["id"])
+            if not delegated:
+                _require_agent_use(db, execution, member_id)
+            elif db.get(ProjectChatAgent, member_id) is not None:
+                collaboration_permission_service.require_project_agent(
+                    db,
+                    execution.cloud_project_id,
+                    member_id,
+                    user_id=execution.assigner_user_id,
+                )
+            elif member_id.isdecimal():
+                collaboration_permission_service.require_project_team(
+                    db, execution.cloud_project_id, int(member_id)
+                )
+            else:
+                raise HTTPException(422, "Collaboration group Agent unavailable")
         elif member.get("kind") != "human" or int(member["id"]) not in humans:
             raise HTTPException(422, "Collaboration group participant cannot execute")
 

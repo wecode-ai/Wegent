@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
+from sqlalchemy import JSON, case, func, type_coerce
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -21,7 +23,7 @@ from app.models.delivery import (
 )
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
-from app.schemas.delivery import LoopItemUpdate
+from app.schemas.delivery import LoopItemResponse, LoopItemUpdate
 from app.services.collaboration_group_execution import (
     collaboration_group_agent_matches,
     collaboration_group_snapshot_for_dispatch,
@@ -38,12 +40,7 @@ logger = logging.getLogger(__name__)
 class CollaborationManagerDecision:
     item: LoopItem
     comment: ProjectChatMessage | None
-
-
-def _dispatch_context(execution: LoopItemExecution) -> dict[str, object]:
-    intent = execution.execution_intent
-    context = intent.get("origin_context") if isinstance(intent, dict) else None
-    return dict(context) if isinstance(context, dict) else {}
+    response: dict
 
 
 def _require_manager_dispatch(
@@ -55,50 +52,41 @@ def _require_manager_dispatch(
     manager_agent_id: str,
 ) -> tuple[ProjectChatAgent, LoopItemExecution]:
     """Authorize the manager against a current, locked dispatch record."""
-    dispatches = (
-        db.query(LoopItemExecution)
+    payload = LoopItemExecution.execution_payload
+    intent = type_coerce(case((func.json_valid(payload), payload), else_="{}"), JSON)
+    matched = (
+        db.query(LoopItemExecution.id)
         .filter(
             LoopItemExecution.loop_item_id == item.id,
             LoopItemExecution.cloud_project_id == str(project_id),
+            intent["origin_context"]["dispatch_id"].as_string() == dispatch_id,
+            intent["runtime_selection"]["executor_kind"].as_string()
+            == "collaboration_group_dispatch",
         )
-        .all()
+        .order_by(LoopItemExecution.id.desc())
+        .limit(1)
+        .scalar()
     )
-    dispatch = next(
+    dispatch = (
         (
-            execution
-            for execution in dispatches
-            if execution.executor_type == "collaboration_group_dispatch"
-            and str(_dispatch_context(execution).get("dispatch_id") or "")
-            == dispatch_id
-        ),
-        None,
-    )
-    if dispatch is not None:
-        # A device scan may have advanced the version since the initial read.
-        # Lock only the existing primary-key row, avoiding absent-row gap locks.
-        dispatch = (
             db.query(LoopItemExecution)
-            .filter(LoopItemExecution.id == dispatch.id)
+            .filter_by(id=matched)
             .populate_existing()
             .with_for_update()
             .one_or_none()
         )
+        if matched is not None
+        else None
+    )
     if dispatch is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Collaboration dispatch is unavailable",
         )
-    # Snapshot reconciliation can advance the execution version independently.
-    # Lock and refresh the aggregate before authorizing and completing it, so
-    # the Issue decision cannot commit after losing its terminal transition.
-    dispatch = (
-        db.query(LoopItemExecution)
-        .filter(LoopItemExecution.id == dispatch.id)
-        .populate_existing()
-        .with_for_update()
-        .one()
-    )
-    if "project_coordination" in dispatch.runtime_origin_context:
+    if (
+        "project_coordination" in dispatch.runtime_origin_context
+        or dispatch.runtime_origin_context.get("dispatch_protocol_version") == 2
+    ):
         from app.services.collaboration_revocation import execution_authorized
 
         if not execution_authorized(db, dispatch):
@@ -109,7 +97,8 @@ def _require_manager_dispatch(
         manager is None
         or str(manager.cloud_project_id) != str(project_id)
         or manager.status != "active"
-        or str(_dispatch_context(dispatch).get("manager_agent_id") or "") != manager.id
+        or str(dispatch.runtime_origin_context.get("manager_agent_id") or "")
+        != manager.id
         or not collaboration_group_agent_matches(group.get("leader"), manager)
     ):
         raise HTTPException(
@@ -131,12 +120,14 @@ def apply_collaboration_manager_decision(
     item_id: str,
     user_id: int,
     dispatch_id: str,
-    manager_agent_id: str,
+    manager_agent_id: str | None,
+    round_id: str | None = None,
     idempotency_key: str,
     target_status: str,
     reason: str,
     comment: str = "",
     manager_runtime_task_id: str | None = None,
+    request: Request | None = None,
 ) -> CollaborationManagerDecision:
     """Atomically persist the manager-owned status transition and comment."""
 
@@ -154,22 +145,103 @@ def apply_collaboration_manager_decision(
     )
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-    manager, dispatch = _require_manager_dispatch(
-        db,
-        project_id=project_id,
-        item=item,
-        dispatch_id=dispatch_id,
-        manager_agent_id=manager_agent_id,
+    from app.services.issue_coordination import (
+        coordination_activity,
+        human_authority,
+        require_finished_batch,
+        require_open_round,
     )
+
+    manager = dispatch = None
+    if manager_agent_id:
+        manager, dispatch = _require_manager_dispatch(
+            db,
+            project_id=project_id,
+            item=item,
+            dispatch_id=dispatch_id,
+            manager_agent_id=manager_agent_id,
+        )
+        if request is not None:
+            task_id = getattr(request.state, "execution_task_id", None)
+            if task_id is not None or dispatch.execution_environment == "wegent":
+                from app.services.issue_coordination import require_machine_task_scope
+
+                require_machine_task_scope(task_id, dispatch)
+        root = coordination_activity(
+            db,
+            item,
+            dispatch_id,
+            dispatch.runtime_origin_context["collaboration_group"],
+        )
+        sender_type, sender_id, sender_name = (
+            "agent",
+            manager.id,
+            manager.title or manager.name,
+        )
+        if (
+            dispatch.runtime_origin_context.get("dispatch_protocol_version") == 2
+            and dispatch.executor_owner_user_id != user_id
+        ):
+            raise HTTPException(
+                403, "Collaboration manager execution is owned by another user"
+            )
+    else:
+        from app.models.user import User
+
+        root, _ = human_authority(db, item, user_id, dispatch_id)
+        sender_type, sender_id, sender_name = (
+            "user",
+            str(user_id),
+            db.get(User, user_id).user_name,
+        )
     normalized_comment = comment.strip()
     client_message_id = _decision_message_key(dispatch_id, idempotency_key)
+    digest = hashlib.sha256(
+        json.dumps(
+            [
+                user_id,
+                sender_type,
+                sender_id,
+                round_id,
+                idempotency_key,
+                target_status,
+                reason,
+                normalized_comment,
+            ],
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    final = root.metadata_json.get("final_decision")
+    if final:
+        if final["digest"] != digest:
+            raise HTTPException(409, "Collaboration dispatch already finished")
+        prior = (
+            db.get(ProjectChatMessage, final["comment_id"])
+            if final["comment_id"]
+            else None
+        )
+        return CollaborationManagerDecision(
+            item=item, comment=prior, response=final["response"]
+        )
+    if (
+        manager
+        and dispatch.runtime_origin_context.get("dispatch_protocol_version") == 2
+    ):
+        if (
+            manager_runtime_task_id
+            and manager_runtime_task_id == root.metadata_json.get("last_manager_run")
+        ):
+            raise HTTPException(409, "Manager turn already submitted assignments")
+        require_finished_batch(db, root, item)
+    if not manager:
+        require_open_round(db, root, item, round_id)
     existing_comment = (
         db.query(ProjectChatMessage)
         .filter(
             ProjectChatMessage.project_id == str(project_id),
             ProjectChatMessage.task_id == item.id,
-            ProjectChatMessage.sender_type == "agent",
-            ProjectChatMessage.sender_id == manager.id,
+            ProjectChatMessage.sender_type == sender_type,
+            ProjectChatMessage.sender_id == sender_id,
             ProjectChatMessage.client_message_id == client_message_id,
         )
         .first()
@@ -177,7 +249,7 @@ def apply_collaboration_manager_decision(
     if item.status != target_status:
         automation_run = (
             db.get(ProjectAutomationRun, dispatch.automation_run_id)
-            if dispatch.automation_run_id
+            if dispatch and dispatch.automation_run_id
             else None
         )
         item = loop_item_service.update(
@@ -195,7 +267,7 @@ def apply_collaboration_manager_decision(
                 else None
             ),
         )
-    if dispatch.status not in {"completed", "failed", "cancelled"}:
+    if dispatch and dispatch.status not in {"completed", "failed", "cancelled"}:
         completed = loop_item_execution_service.complete(
             db,
             execution_id=dispatch.id,
@@ -219,9 +291,9 @@ def apply_collaboration_manager_decision(
             client_message_id=client_message_id,
             project_id=str(project_id),
             task_id=item.id,
-            sender_type="agent",
-            sender_id=manager.id,
-            sender_name=manager.title or manager.name or "AI manager",
+            sender_type=sender_type,
+            sender_id=sender_id,
+            sender_name=sender_name,
             message_type="text",
             content=normalized_comment,
             metadata_json={
@@ -231,7 +303,7 @@ def apply_collaboration_manager_decision(
                 "target_status": target_status,
                 "reason": reason,
             },
-            agent_id=manager.id,
+            agent_id=manager.id if manager else "",
             status="completed",
         )
         db.add(message)
@@ -245,9 +317,32 @@ def apply_collaboration_manager_decision(
                 **message.metadata_json,
                 "manager_runtime_task_id": manager_runtime_task_id,
             }
-        bind_collaboration_manager_activity(
-            db, dispatch=dispatch, activity=message, item=item
-        )
+        if dispatch and dispatch.execution_environment != "wegent":
+            bind_collaboration_manager_activity(
+                db, dispatch=dispatch, activity=message, item=item
+            )
+    root.status = "completed"
+    db.flush()
+    response = {
+        "item": LoopItemResponse.model_validate(
+            loop_item_service.response_values(db, item, user_id)
+        ).model_dump(mode="json"),
+        "comment": (
+            project_chat_service.to_view(message, db=db).model_dump(
+                mode="json", by_alias=True
+            )
+            if message is not None
+            else None
+        ),
+    }
+    root.metadata_json = {
+        **root.metadata_json,
+        "final_decision": {
+            "digest": digest,
+            "comment_id": message.id if message else None,
+            "response": response,
+        },
+    }
     db.commit()
     db.refresh(item)
     if message is not None:
@@ -268,4 +363,4 @@ def apply_collaboration_manager_decision(
         message is not None and existing_comment is None,
         message.message_id if message is not None else "",
     )
-    return CollaborationManagerDecision(item=item, comment=message)
+    return CollaborationManagerDecision(item=item, comment=message, response=response)

@@ -297,7 +297,9 @@ def compiled_bot_config(
         )
 
     if config["runtime"] != "wegent":
-        return config
+        from app.services.project_agent_teams import project_team_config
+
+        return project_team_config(db, row, config)
 
     team_id = config.get("wegent_team_id")
     if not isinstance(team_id, int):
@@ -3037,7 +3039,11 @@ class ProjectChatService:
             },
             type=row.message_type,
             content=row.content,
-            metadata=row.metadata_json if isinstance(row.metadata_json, dict) else {},
+            metadata={
+                key: value
+                for key, value in metadata.items()
+                if key not in {"submission_result", "request_digest"}
+            },
             trigger_message_id=row.trigger_message_id or None,
             reply_to_message_id=row.reply_to_message_id or None,
             root_message_id=row.thread_root_message_id or None,
@@ -3077,7 +3083,7 @@ class ProjectChatService:
                     else view.type
                 ),
                 "metadata": shared_message_metadata(
-                    row.metadata_json, include_runtime=runtime_shared
+                    view.metadata, include_runtime=runtime_shared
                 ),
                 "runtime_address": view.runtime_address if runtime_shared else None,
                 "trace_state": (

@@ -210,6 +210,48 @@ def migrate(
     from app.models.loop_item_execution import LoopItemExecution
     from app.services.loop_item_executions.service import ACTIVE_STATUSES
 
+    if rollback:
+        from app.models.delivery import LoopItem
+        from app.models.project_chat_message import ProjectChatMessage
+
+        metadata = ProjectChatMessage.metadata_json
+        pending = (
+            db.query(ProjectChatMessage.id)
+            .join(LoopItem, LoopItem.id == metadata["issue_id"].as_string())
+            .filter(
+                ProjectChatMessage.message_type == "coordination",
+                ProjectChatMessage.status == "active",
+                metadata["protocol"].as_integer() == 2,
+                LoopItem.cloud_project_id == metadata["project_id"].as_string(),
+                LoopItem.metadata_json["collaboration_group_assignment_key"].as_string()
+                == metadata["assignment_key"].as_string(),
+            )
+            .first()
+        )
+        from sqlalchemy import JSON, case, func, type_coerce
+
+        payload = type_coerce(
+            case(
+                (
+                    func.json_valid(LoopItemExecution.execution_payload) == 1,
+                    LoopItemExecution.execution_payload,
+                ),
+                else_="{}",
+            ),
+            JSON,
+        )
+        running = (
+            db.query(LoopItemExecution.id)
+            .filter(
+                LoopItemExecution.status.in_(ACTIVE_STATUSES),
+                payload["origin_context"]["dispatch_protocol_version"].as_integer()
+                == 2,
+            )
+            .first()
+        )
+        if pending or running:
+            raise ValueError("Finish active v2 Issue coordination before downgrading")
+
     counts = {
         "created": 0,
         "reused": 0,
