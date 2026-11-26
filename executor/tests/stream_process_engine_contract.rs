@@ -303,6 +303,57 @@ async fn stream_process_engine_emits_child_agent_text_as_nested_block() {
 }
 
 #[tokio::test]
+async fn stream_process_engine_reports_background_bash_separately_from_its_launch() {
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("sh").arg("-c").arg(
+            r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"bash-call","name":"Bash","input":{"description":"Start preview","run_in_background":true}}]}}' '{"type":"system","subtype":"task_started","task_type":"local_bash","task_id":"shell-1","tool_use_id":"bash-call"}' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-call","content":"Started"}]}}' '{"type":"system","subtype":"task_notification","task_id":"shell-1","status":"stopped","summary":"Background command reached its time limit"}' '{"type":"result","subtype":"success","is_error":false,"result":"done"}'"#,
+        ),
+        TEST_PROCESS_TIMEOUT_SECONDS,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
+    );
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let outcome = engine
+        .run_with_events(
+            ExecutionRequest::default(),
+            RecordingSlowSink {
+                delay: Duration::ZERO,
+                events: Arc::clone(&events),
+            },
+            ResponsesEventBuilder::new("task", "subtask", "model"),
+        )
+        .await;
+    assert!(matches!(outcome, ExecutionOutcome::Completed { .. }));
+    let events = events.lock().await;
+    let created = events
+        .iter()
+        .position(|event| {
+            event.data["block"]["id"] == "claude-background-shell-1"
+                && event.data["block"]["tool_name"] == "Bash"
+                && event.data["block"]["tool_input"]["description"] == "Start preview"
+                && event.data["block"]["tool_input"]["background"] == true
+                && event.data["block"]["status"] == "pending"
+        })
+        .expect("background command is visible as soon as it starts");
+    let launch = events
+        .iter()
+        .position(|event| {
+            event.data["block_id"] == "bash-call" && event.data["updates"]["status"] == "done"
+        })
+        .expect("the Bash invocation acknowledges launch");
+    let finished = events
+        .iter()
+        .position(|event| {
+            event.data["block_id"] == "claude-background-shell-1"
+                && event.data["updates"]["status"] == "error"
+                && event.data["updates"]["tool_output"]
+                    == "Background command reached its time limit"
+        })
+        .expect("the timeout updates the named background command");
+    assert!(created < launch && launch < finished);
+}
+
+#[tokio::test]
 async fn stream_process_engine_emits_claude_subagent_lifecycle() {
     let agent_tool = json!({
         "type": "assistant",

@@ -615,7 +615,12 @@ const MixedContentView = memo(function MixedContentView({
       if (item.type === 'tool') {
         // Check if we can merge with the previous item
         const lastItem = result[result.length - 1]
-        if (lastItem && lastItem.type === 'tool' && lastItem.tool.toolName === item.tool.toolName) {
+        if (
+          lastItem?.type === 'tool' &&
+          lastItem.tool.toolName === item.tool.toolName &&
+          !lastItem.tool.isBackground &&
+          !item.tool.isBackground
+        ) {
           // Merge: increment count and add to mergedTools array
           const mergedItem = lastItem as MergedToolItem
           mergedItem.count = (mergedItem.count || 1) + 1

@@ -28,6 +28,8 @@ const MessageBubble = dynamic(() => import('@/features/tasks/components/message/
   ssr: false,
 })
 
+const ACTIVE_SHARE_REFRESH_MS = 5000
+
 /**
  * Opaque shares are public; legacy locators require existing resource access.
  * Uses the same layout and styling as the chat page for consistency
@@ -77,6 +79,7 @@ function SharedTaskContent({
 
   useEffect(() => {
     let cancelled = false
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined
     setTaskData(null)
     setError(null)
     setAccessError(null)
@@ -88,17 +91,30 @@ function SharedTaskContent({
       return
     }
 
-    const fetchSharedTask = async () => {
+    const fetchSharedTask = async (refreshing = false) => {
       try {
         const data = await taskApis.getPublicSharedTask(token)
         if (cancelled) return
         setTaskData(data)
+        if (
+          data.subtasks.some(subtask =>
+            ['RUNNING', 'PENDING', 'PROCESSING'].includes(subtask.status)
+          )
+        ) {
+          refreshTimer = setTimeout(() => void fetchSharedTask(true), ACTIVE_SHARE_REFRESH_MS)
+        }
       } catch (err) {
         if (cancelled) return
         console.error('Failed to load shared task:', err)
         const errorMessage = (err as Error)?.message || ''
         const status = (err as Error & { status?: number }).status
 
+        if (refreshing && (status === undefined || status >= 500 || status === 429)) {
+          refreshTimer = setTimeout(() => void fetchSharedTask(true), ACTIVE_SHARE_REFRESH_MS)
+          return
+        }
+
+        setTaskData(null)
         // Map error messages to i18n keys
         if (status === 401 || status === 403) {
           setAccessError(status)
@@ -130,6 +146,7 @@ function SharedTaskContent({
     fetchSharedTask()
     return () => {
       cancelled = true
+      clearTimeout(refreshTimer)
     }
   }, [token, t, sessionToken])
 

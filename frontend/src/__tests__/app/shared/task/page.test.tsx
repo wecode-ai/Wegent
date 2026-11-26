@@ -167,6 +167,37 @@ describe('SharedTaskPage right panel', () => {
     expect(screen.getByRole('heading', { name: 'Shared task' })).toBeInTheDocument()
   })
 
+  it('refreshes an active share until its assistant response finishes', async () => {
+    jest.useFakeTimers()
+    const share = { task_title: 'Shared task', sharer_name: 'Owner', subtasks: [] }
+    const assistant = {
+      id: 1,
+      role: 'ASSISTANT',
+      created_at: '2026-08-31T00:00:00Z',
+    }
+    mockGetPublicSharedTask
+      .mockResolvedValueOnce({
+        ...share,
+        subtasks: [{ ...assistant, status: 'RUNNING', result: { value: 'Working' } }],
+      })
+      .mockResolvedValueOnce({
+        ...share,
+        subtasks: [{ ...assistant, status: 'COMPLETED', result: { value: 'Done' } }],
+      })
+    try {
+      await act(async () => {
+        render(<SharedTaskPage />)
+      })
+      expect(screen.getByText(/Working/)).toBeInTheDocument()
+      await act(() => jest.advanceTimersByTimeAsync(5000))
+      expect(screen.getByText(/Done/)).toBeInTheDocument()
+      await act(() => jest.advanceTimersByTimeAsync(5000))
+      expect(mockGetPublicSharedTask).toHaveBeenCalledTimes(2)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it.each(['link', 'session', 'logout'])(
     'never renders previous private content in a changed %s scope',
     async change => {

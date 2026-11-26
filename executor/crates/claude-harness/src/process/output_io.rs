@@ -299,6 +299,7 @@ where
     let mut line_number = 0usize;
     let mut json_buffer = ClaudeStdoutJsonBuffer::default();
     let mut async_tasks = ClaudeAsyncTaskTracker::default();
+    let mut background_commands = super::events::ClaudeBackgroundCommands::default();
     let mut diagnostics = stream_diagnostics::ClaudeStreamDiagnostics::new();
     let mut partial_messages = ClaudePartialMessages::default();
     let dispatcher = StreamingEventDispatcher::new(sink);
@@ -349,6 +350,15 @@ where
         };
         if value.get("type").and_then(Value::as_str) == Some("user") {
             output_text_state.finish_segment();
+        }
+        if background_commands.observe(
+            &value,
+            &dispatcher,
+            &builder,
+            &tool_uses,
+            (&task_id, &subtask_id),
+        ) {
+            continue;
         }
         if let Some(update) = extract_claude_subagent_update(&value) {
             let parent_tool_use_id = tool_uses

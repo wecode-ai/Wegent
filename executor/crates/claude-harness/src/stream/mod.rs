@@ -9,6 +9,7 @@ use serde_json::Value;
 mod partial_messages;
 pub(crate) use partial_messages::ClaudePartialMessages;
 mod async_tasks;
+pub(crate) use async_tasks::claude_notification_is_error;
 pub use async_tasks::{extract_claude_subagent_update, ClaudeAsyncTaskTracker};
 mod stdout_limits;
 use stdout_limits::{max_buffer_bytes, CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES};

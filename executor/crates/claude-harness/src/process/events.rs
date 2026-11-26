@@ -1,6 +1,76 @@
 //! Claude block-to-response event translation.
 use super::*;
 
+/// Bash returns when a background command is launched. Its eventual exit
+/// belongs to a separate block so the initial tool result cannot finish it.
+#[derive(Default)]
+pub(super) struct ClaudeBackgroundCommands {
+    commands: HashMap<String, ClaudeToolUse>,
+}
+
+impl ClaudeBackgroundCommands {
+    pub(super) fn observe(
+        &mut self,
+        value: &Value,
+        dispatcher: &StreamingEventDispatcher,
+        builder: &ResponsesEventBuilder,
+        tool_uses: &HashMap<String, ClaudeToolUse>,
+        (task_id, subtask_id): (&str, &str),
+    ) -> bool {
+        if value["type"] != "system" {
+            return false;
+        }
+        let Some(background_id) = value["task_id"].as_str().filter(|id| !id.is_empty()) else {
+            return false;
+        };
+        match value["subtype"].as_str() {
+            Some("task_started") if value["task_type"] == "local_bash" => {
+                let tool_use = value["tool_use_id"]
+                    .as_str()
+                    .and_then(|id| tool_uses.get(id));
+                self.commands
+                    .entry(background_id.to_owned())
+                    .or_insert_with(|| {
+                        let description = value["description"].as_str().or_else(|| {
+                            tool_use.and_then(|tool| tool.input["description"].as_str())
+                        });
+                        let command = ClaudeToolUse {
+                            id: format!("claude-background-{background_id}"),
+                            name: "Bash".to_owned(),
+                            input: serde_json::json!({
+                                "background": true,
+                                "description": description,
+                            }),
+                            parent_tool_use_id: tool_use
+                                .and_then(|tool| tool.parent_tool_use_id.clone()),
+                        };
+                        emit_claude_tool_use(dispatcher, builder, &command, task_id, subtask_id);
+                        command
+                    });
+                true
+            }
+            Some("task_notification") => {
+                let Some(command) = self.commands.get(background_id) else {
+                    return false;
+                };
+                if let Some(is_error) = crate::stream::claude_notification_is_error(value) {
+                    emit_claude_tool_result(
+                        dispatcher,
+                        builder,
+                        command,
+                        value["summary"].as_str(),
+                        is_error,
+                        task_id,
+                        subtask_id,
+                    );
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_claude_message_blocks(
     dispatcher: &StreamingEventDispatcher,
