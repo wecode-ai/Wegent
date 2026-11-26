@@ -2,6 +2,8 @@ import { dequal } from 'dequal'
 import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 
+import { checkTargetConnectionProviders, transferredConnection } from './standInConnectionTransfer'
+
 export class StandInMigrationError extends Error {
   readonly code: 'changed' | 'conflict' | 'same_device' | 'not_stopped'
   constructor(code: 'changed' | 'conflict' | 'same_device' | 'not_stopped') {
@@ -19,17 +21,19 @@ export async function migrateStandIn(
     roleId?: string
     targetUser: number
     targetDevice: string
+    targetApi?: StandInExecutorApi
     primaryName: string
     assertOwnership?(): void
   }
 ): Promise<StandInRole> {
   input.assertOwnership?.()
   const { sourceUser, sourceDevice, roleId, targetUser, targetDevice } = input
+  const targetApi = input.targetApi ?? api
   if (sourceDevice === targetDevice) throw new StandInMigrationError('same_device')
   const [source, memories, target] = await Promise.all([
     api.personalGet(sourceUser, sourceDevice),
     api.memories(sourceUser, sourceDevice),
-    api.personalGet(targetUser, targetDevice),
+    targetApi.personalGet(targetUser, targetDevice, { deviceSettingsOnly: true }),
   ])
   if (source.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
   const original = roleId ? source.roles.find(role => role.id === roleId) : source.primary
@@ -42,9 +46,7 @@ export async function migrateStandIn(
     .join('')
     .slice(0, 48)}`
   const role = roleId ? source.roles.find(role => role.id === roleId)! : undefined
-  const prompt = [source.primary?.prompt, source.primary?.preferences, role?.prompt]
-    .filter(Boolean)
-    .join('\n\n')
+  const prompt = [source.primary?.prompt, role?.prompt].filter(Boolean).join('\n\n')
   const migrated: StandInRole = {
     ...newStandInRole(targetDevice, id),
     name: role?.name || input.primaryName,
@@ -81,12 +83,22 @@ export async function migrateStandIn(
   )
     throw new StandInMigrationError('conflict')
   input.assertOwnership?.()
-  if (!existing)
-    await api.personalSave(
+  if (!existing) {
+    if (sourceUser === targetUser && original.connections?.length) {
+      await checkTargetConnectionProviders(api, targetDevice, original.connections)
+      migrated.connections = original.connections.map(transferredConnection)
+    }
+    input.assertOwnership?.()
+  }
+  if (!existing || targetApi !== api) {
+    await targetApi.personalSave(
       targetUser,
-      { ...target, roles: [...target.roles, migrated] },
-      targetDevice
+      { ...target, roles: existing ? target.roles : [...target.roles, migrated] },
+      targetDevice,
+      undefined,
+      { kind: 'create', roleId: id }
     )
+  }
   input.assertOwnership?.()
   const imported = await api.memories(targetUser, targetDevice)
   for (const memory of memories.filter(

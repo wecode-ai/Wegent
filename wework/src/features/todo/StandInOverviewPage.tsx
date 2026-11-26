@@ -7,6 +7,7 @@ import {
 } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
+import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -33,6 +34,7 @@ import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
 import type { activeStandInBranchRows } from './standInDelegatedBranches'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
@@ -73,6 +75,8 @@ export function StandInOverviewPage({
   entryRoute = '/stand-in',
   primaryDeviceId,
   roleLocations,
+  account,
+  onBindDevice,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -89,6 +93,8 @@ export function StandInOverviewPage({
   entryRoute?: string
   primaryDeviceId?: string
   roleLocations?: StandInRoleLocation[]
+  account?: PersonalAssistantAccount
+  onBindDevice?(roleId: string, device: string): Promise<void>
 }) {
   const { t } = useTranslation('common')
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
@@ -98,7 +104,7 @@ export function StandInOverviewPage({
     props.initialDeviceId,
     localDeviceId
   )
-  const { saved, setDraft, reload } = state
+  const { saved, reload } = state
   const [overview] = useState(() =>
     createStandInOverviewSource({
       roleId:
@@ -181,7 +187,18 @@ export function StandInOverviewPage({
     deviceId ?? '',
     active && !!deviceId
   )
-  const inbox = useStandInInbox(api, props.userId, deviceId, active)
+  const inbox = useStandInInbox(
+    api,
+    props.userId,
+    deviceId,
+    active,
+    dingTalkInboxScope(saved?.primary?.delegation)
+  )
+  const dingtalkSourceProblem = inbox.sourceErrors.find(
+    ({ source, error }) =>
+      source.delegated &&
+      (error.code === 'connector_auth_required' || error.code === 'dingtalk_permissions_required')
+  )?.error.code
   const observation = useMemo(
     () => ({
       api,
@@ -197,7 +214,6 @@ export function StandInOverviewPage({
       onSelectLocation,
       onOpenTask,
       reload,
-      setDraft,
       refreshInbox: inbox.refresh,
       rememberProfileTrigger,
       requestLeave: (action: () => void) =>
@@ -223,7 +239,6 @@ export function StandInOverviewPage({
       onSelectLocation,
       onOpenTask,
       reload,
-      setDraft,
       inbox.refresh,
       rememberProfileTrigger,
     ]
@@ -236,6 +251,13 @@ export function StandInOverviewPage({
   const { roleId, profile, calendarRequest, exampleDraft } = view
   const conversationRole = shared ? undefined : team ? teamLead : roleId
   const conversationScope = sharedScope ?? teamScope
+  const definition = account?.definitions.find(entry => entry.roleId === (roleId ?? '@primary'))
+  const boundDevice = definition?.bot.spec?.execution_policy?.environment_id
+  const conversationDevice = (!conversationScope && boundDevice) || deviceId
+  const conversationUser = props.userId
+  const [bindingPending, setBindingPending] = useState(false)
+  const [bindingError, setBindingError] = useState('')
+
   const sameOwner = view.api === api && view.userId === props.userId && view.deviceId === deviceId
   const proposal = sameOwner ? view.proposal : null
   const resolvedProposal = sameOwner ? view.resolvedProposal : null
@@ -288,7 +310,16 @@ export function StandInOverviewPage({
   ])
   const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
-  const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
+  const rolesById = new Map(state.draft?.roles.map(role => [role.id, role]))
+  const retiredRoles = new Set(account?.retiredRoleIds)
+  const roles = [
+    ...(roleLocations?.map(entry => {
+      const role = rolesById.get(entry.role.id)
+      rolesById.delete(entry.role.id)
+      return role ? { ...entry.role, name: role.name, prompt: role.prompt } : entry.role
+    }) ?? []),
+    ...rolesById.values(),
+  ]
   const role =
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
     state.draft?.roles.find(value => value.id === roleId)
@@ -482,7 +513,7 @@ export function StandInOverviewPage({
                 : t('standIn.personal.default_role')
             }
             enabled={role ? role.enabled : saved?.primary?.enabled !== false}
-            device={device}
+            device={props.devices.find(item => item.device_id === conversationDevice) ?? device}
             items={roleItems.filter(
               item =>
                 !(item.task.runtimeHandle?.origin as Record<string, unknown> | undefined)
@@ -551,6 +582,7 @@ export function StandInOverviewPage({
             projects={props.projects}
             roleId={roleId}
             deviceId={deviceId}
+            retiredRoles={retiredRoles}
             matchDevice={!!roleLocations}
             chooseRole={chooseRole}
             onCreate={trigger =>
@@ -636,10 +668,11 @@ export function StandInOverviewPage({
             >
               {t('standIn.reload')}
             </ControlButton>
+            {deviceId === primaryDeviceId && headerActions}
           </div>
         ) : (
           <>
-            {api && deviceId ? (
+            {api && conversationDevice ? (
               <StandInConversation
                 delegationPanelOpen={delegationPanelOpen}
                 sidebarTasks={
@@ -665,16 +698,26 @@ export function StandInOverviewPage({
                   setExampleDraft(current => (current?.id === id ? undefined : current))
                 }
                 active={active}
-                key={standInConversationTaskId(props.userId, conversationRole, conversationScope)}
+                key={JSON.stringify([
+                  conversationDevice,
+                  standInConversationTaskId(conversationUser, conversationRole, conversationScope),
+                ])}
                 api={api}
-                userId={props.userId}
-                deviceId={deviceId}
+                userId={conversationUser}
+                deviceId={conversationDevice}
                 roleId={conversationRole}
                 scope={conversationScope}
+                definition={
+                  conversationScope
+                    ? undefined
+                    : account?.definitions.find(item => item.roleId === (roleId ?? '@primary'))
+                }
                 settings={
-                  conversationRole
-                    ? saved?.roles.find(role => role.id === conversationRole)
-                    : saved?.primary
+                  conversationDevice !== deviceId
+                    ? undefined
+                    : conversationRole
+                      ? saved?.roles.find(role => role.id === conversationRole)
+                      : saved?.primary
                 }
                 services={props.services}
                 onOpenTask={onOpenTask}
@@ -881,12 +924,25 @@ export function StandInOverviewPage({
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
                     settings={state.draft}
-                    saving={state.saving}
+                    saving={state.saving || bindingPending}
                     loading={state.loading}
                     services={props.services}
                     devices={props.devices}
-                    deviceReadOnly={!!primaryDeviceId}
-                    onSelectDevice={device => {
+                    executionDeviceId={conversationDevice}
+                    deviceReadOnly={!!primaryDeviceId && !(definition && onBindDevice)}
+                    onSelectDevice={async device => {
+                      if (definition && onBindDevice) {
+                        setBindingPending(true)
+                        setBindingError('')
+                        try {
+                          await onBindDevice(definition.roleId, device)
+                        } catch (error) {
+                          setBindingError(getStandInErrorMessage(error))
+                        } finally {
+                          setBindingPending(false)
+                        }
+                        return
+                      }
                       if (onSelectLocation) onSelectLocation(device, '@primary', true)
                       else state.setDeviceId(device)
                     }}
@@ -902,7 +958,8 @@ export function StandInOverviewPage({
                       }
                       return saved ?? undefined
                     }}
-                    error={state.error}
+                    dingtalkSourceProblem={dingtalkSourceProblem}
+                    error={bindingError || state.error}
                     onReload={state.reload}
                     api={api}
                     localDeviceId={state.currentDeviceId}
@@ -965,6 +1022,7 @@ export function StandInOverviewPage({
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
         services: props.services,
+        dingtalkSourceProblem,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {

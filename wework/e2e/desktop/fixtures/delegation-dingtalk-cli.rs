@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const PROFILE: &str = "dots-e2e-account";
+const PROFILE: &str = "dots-org:dots-owner";
 const GROUP: &str = "dots-group";
 const OTHER_GROUP: &str = "dots-other-group";
 const PEER: &str = "dots-peer";
@@ -128,13 +128,16 @@ fn audit_read(root: &Path, operation: &str, conversation: &str, args: &[&str]) {
     }
 }
 
-fn native_direct(root: &Path, args: &[&str]) -> String {
-    let peer = required(args, "--open-dingtalk-id");
-    let conversation = match peer {
+fn direct_conversation(args: &[&str]) -> &'static str {
+    match required(args, "--open-dingtalk-id") {
         PEER => DIRECT,
         OTHER_PEER => OTHER_DIRECT,
-        _ => panic!("Unknown DingTalk test peer {peer}"),
-    };
+        peer => panic!("Unknown DingTalk test peer {peer}"),
+    }
+}
+
+fn native_direct(root: &Path, args: &[&str]) -> String {
+    let conversation = direct_conversation(args);
     audit_read(root, "list-direct", conversation, args);
     let until = timestamp(required(args, "--time"));
     let limit = required(args, "--limit").parse::<usize>().expect("limit");
@@ -215,6 +218,17 @@ fn search_messages(root: &Path, args: &[&str], mentions: bool) -> String {
     format!("{{\"success\":true,\"result\":{{\"hasMore\":{has_more},\"nextCursor\":\"{next_cursor}\",\"conversationMessagesList\":[{{\"singleChat\":{single},\"openConversationId\":{conversation},\"title\":{conversation},\"messages\":[{selected}]}}]}}}}")
 }
 
+fn delivery_for<'a>(config: &'a str, message: &str) -> Option<(&'a str, &'a str)> {
+    config.lines().find_map(|row| {
+        let (id, outcome) = row.split_once('\t').expect("Configured delivery id");
+        (id == message).then(|| {
+            outcome
+                .split_once('\t')
+                .expect("Configured delivery mode and conversation")
+        })
+    })
+}
+
 fn reply(root: &Path, args: &[&str]) -> String {
     let message = required(args, "--ref-msg-id");
     let profile = required(args, "--profile");
@@ -247,8 +261,59 @@ fn reply(root: &Path, args: &[&str]) -> String {
     if unknown {
         return r#"{"success":true,"result":{}}"#.into();
     }
+    let delivery = read(root, "delivery.tsv");
+    if let Some((mode, expected_conversation)) = delivery_for(&delivery, message) {
+        assert_eq!(conversation, expected_conversation);
+        if mode == "rejected" {
+            println!(
+                r#"{{"success":false,"code":"PAT_SCOPE_AUTH_REQUIRED","data":{{"errorType":"missing_scope"}}}}"#
+            );
+            process::exit(6);
+        }
+        assert!(matches!(mode, "automatic" | "manual"));
+        let task = quote(&format!("task-{message}"));
+        return match (mode, conversation) {
+            ("automatic", DIRECT) => format!(r#"{{"result":{{"openTaskId":{task}}}}}"#),
+            ("automatic", GROUP) => format!(r#"{{"openTaskId":{task}}}"#),
+            _ => format!(r#"{{"success":true,"result":{{"openTaskId":{task}}}}}"#),
+        };
+    }
     let receipt = quote(&format!("accepted-{message}"));
     format!("{{\"success\":true,\"result\":{{\"openMessageId\":{receipt}}}}}")
+}
+
+fn query_send_status(root: &Path, args: &[&str]) -> String {
+    let task_id = required(args, "--open-task-id");
+    let profile = required(args, "--profile");
+    let delivery = read(root, "delivery.tsv");
+    let message = task_id.strip_prefix("task-").expect("Fixture send task ID");
+    let (mode, conversation) = delivery_for(&delivery, message).expect("Configured channel task");
+    assert_eq!(profile, PROFILE);
+    assert_eq!(required(args, "--format"), "json");
+    let task = quote(task_id);
+    let matching = match mode {
+        "automatic" => read(root, "reads.jsonl").contains(&format!("\"taskId\":{task}")),
+        "manual" => read(root, "matching-receipt") == "true",
+        _ => panic!("Only a submitted channel task can be queried"),
+    };
+    append(
+        root,
+        "reads.jsonl",
+        format!(
+            "{{\"operation\":\"query-send-status\",\"taskId\":{task},\"profile\":{},\"matching\":{matching}}}",
+            quote(profile)
+        ),
+    );
+    if mode == "automatic" && !matching {
+        return format!(
+            r#"{{"contractVersion":"im.message-send-status.v1","openTaskId":{task},"readyForMessageActions":false}}"#
+        );
+    }
+    let conversation = quote(if matching { conversation } else { OTHER_GROUP });
+    let receipt = quote(&format!("accepted-{message}"));
+    format!(
+        r#"{{"contractVersion":"im.message-send-status.v1","openTaskId":{task},"readyForMessageActions":true,"messageRef":{{"openConversationId":{conversation},"openMessageId":{receipt}}}}}"#
+    )
 }
 
 fn matching_resources(args: &[&str], rows: &[(&str, String)]) -> String {
@@ -267,12 +332,17 @@ fn main() {
     let root = binary.parent().unwrap().join("delegation-dingtalk");
     let account = read(&root, "account.tsv");
     let (user, org) = account.split_once('\t').expect("DingTalk account fixture");
+    let profile = quote(&format!("{org}:{user}"));
     let owner = "Dots owner";
     let response = match args.as_slice() {
         ["health" | "login", ..] => r#"{"status":"ok"}"#.into(),
-        ["auth", "status", ..] => r#"{"success":true,"authenticated":true,"token_valid":true}"#.into(),
+        ["version", "--format", "json"] => r#"{"version":"1.0.58"}"#.into(),
+        ["auth", "status", ..] => format!(
+            "{{\"success\":true,\"authenticated\":true,\"token_valid\":true,\"user_id\":{},\"corp_id\":{}}}",
+            quote(user), quote(org)
+        ),
         ["profile", "list", ..] => format!(
-            "{{\"currentProfile\":\"{PROFILE}\",\"profiles\":[{{\"profile\":\"{PROFILE}\",\"userName\":\"{owner}\",\"userId\":{},\"corpId\":{},\"orgName\":\"Dots test organization\"}}]}}",
+            "{{\"currentProfile\":{profile},\"profiles\":[{{\"profile\":{profile},\"userName\":\"{owner}\",\"userId\":{},\"corpId\":{},\"orgName\":\"Dots test organization\",\"isCurrent\":true,\"isOrgCurrent\":true,\"status\":\"active\"}}]}}",
             quote(user), quote(org)
         ),
         ["chat", "search", ..] => {
@@ -297,10 +367,16 @@ fn main() {
             let matched = matching_resources(&args, &people);
             format!("{{\"success\":true,\"result\":[{matched}]}}")
         }
+        ["chat", "conversation-info", ..] => {
+            let conversation = direct_conversation(&args);
+            audit_read(&root, "conversation-info", conversation, &args);
+            format!("{{\"result\":{{\"openConversationId\":\"{conversation}\"}}}}")
+        }
         ["chat", "+messages-list-direct", ..] => native_direct(&root, &args),
         ["chat", "message", "list-mentions", ..] => search_messages(&root, &args, true),
         ["chat", "message", "search-advanced", ..] => search_messages(&root, &args, false),
         ["chat", "message", "reply", ..] => reply(&root, &args),
+        ["chat", "+messages-query-send-status", ..] => query_send_status(&root, &args),
         _ => panic!("Unrecognized isolated DingTalk command: {:?}", args.iter().take(3).collect::<Vec<_>>()),
     };
     println!("{response}");

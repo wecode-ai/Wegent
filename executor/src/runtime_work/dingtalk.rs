@@ -2,6 +2,12 @@
 use crate::local::app_ipc::AppIpcError;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
+mod delivery;
+pub(crate) use delivery::{
+    prepare_delegated_reply, verify_delegated_reply, PreparedDelegatedReply,
+};
+
 pub(crate) async fn reply(
     source: &Value,
     message: &Value,
@@ -20,12 +26,7 @@ fn reply_arguments(
     text: &str,
     mentions: &Value,
 ) -> Result<Vec<String>, AppIpcError> {
-    if text.trim().is_empty() || text.len() > 20000 {
-        return Err(AppIpcError::new(
-            "bad_request",
-            "Reply text is required and must fit the message size limit",
-        ));
-    }
+    validate_reply_text(text)?;
     let mention_ids = mention_ids(source, mentions)?;
     let identity = if mention_ids.is_empty() {
         json!([work, message["id"], text])
@@ -33,7 +34,30 @@ fn reply_arguments(
         json!([work, message["id"], text, mention_ids])
     };
     let uuid = format!("{:x}", Sha256::digest(identity.to_string().as_bytes()));
-    let mut args = [
+    let mut args = reply_args(required(source, "profile")?, message, text, &uuid)?;
+    if !mention_ids.is_empty() {
+        args.extend(["--at-open-dingtalk-ids".into(), mention_ids.join(",")]);
+    }
+    Ok(args)
+}
+
+fn validate_reply_text(text: &str) -> Result<(), AppIpcError> {
+    if text.trim().is_empty() || text.len() > 20000 {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "Reply text is required and must fit the message size limit",
+        ));
+    }
+    Ok(())
+}
+
+fn reply_args(
+    profile: &str,
+    message: &Value,
+    text: &str,
+    attempt: &str,
+) -> Result<Vec<String>, AppIpcError> {
+    Ok([
         "chat",
         "message",
         "reply",
@@ -47,19 +71,15 @@ fn reply_arguments(
         text,
         "--ai-tag=true",
         "--uuid",
-        &uuid,
+        attempt,
         "--profile",
-        required(source, "profile")?,
+        profile,
         "--format",
         "json",
     ]
     .into_iter()
     .map(str::to_owned)
-    .collect::<Vec<_>>();
-    if !mention_ids.is_empty() {
-        args.extend(["--at-open-dingtalk-ids".into(), mention_ids.join(",")]);
-    }
-    Ok(args)
+    .collect())
 }
 
 fn mention_ids(source: &Value, mentions: &Value) -> Result<Vec<String>, AppIpcError> {

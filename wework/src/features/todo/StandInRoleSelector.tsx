@@ -54,6 +54,7 @@ function StandInRoleSelector({
   projects,
   roleId,
   deviceId,
+  retiredRoles,
   matchDevice,
   chooseRole,
   onCreate,
@@ -62,6 +63,7 @@ function StandInRoleSelector({
   projects: CollaborationProject[]
   roleId?: string
   deviceId?: string
+  retiredRoles: ReadonlySet<string>
   matchDevice: boolean
   chooseRole(id?: string, device?: string): void
   onCreate(trigger: HTMLElement): void
@@ -115,6 +117,7 @@ function StandInRoleSelector({
               />
               <span className="max-w-40 truncate">
                 {standInRoleName(value, index, t('standIn.personal.unnamed_assistant'))}
+                {retiredRoles.has(value.id) ? ` · ${t('standIn.account.device_only')}` : ''}
               </span>
               {selected && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
               <span className="sr-only">{scope}</span>

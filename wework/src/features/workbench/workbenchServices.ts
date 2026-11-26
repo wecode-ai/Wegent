@@ -182,6 +182,9 @@ export interface WorkbenchServices {
   issueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   localIssueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   standInApi?: import('@/api/standIn').StandInExecutorApi
+  personalAssistantAccountApi?: ReturnType<
+    typeof import('@/api/personalAssistantAccount').createPersonalAssistantAccountApi
+  >
   /** Read the current healthy local IPC identity, independently of the device catalog. */
   getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>
   agentResourceApi?: ReturnType<typeof createAgentResourceApi>

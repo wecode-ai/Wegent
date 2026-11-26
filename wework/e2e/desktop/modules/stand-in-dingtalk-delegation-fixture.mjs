@@ -6,16 +6,19 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createStandInDingTalkFixture } from './stand-in-dingtalk-fixture.mjs'
 
+const org = 'dots-org'
+const owner = 'dots-owner'
+
 export const DINGTALK_DELEGATION_IDS = Object.freeze({
-  profile: 'dots-e2e-account',
-  owner: 'dots-owner',
+  profile: `${org}:${owner}`,
+  owner,
   peer: 'dots-peer',
   peer2: 'dots-other-peer',
   group: 'dots-group',
   otherGroup: 'dots-other-group',
   direct: 'dots-direct',
   otherDirect: 'dots-other-direct',
-  org: 'dots-org',
+  org,
 })
 
 /** Replace only the DingTalk transport boundary of the native desktop flow. */
@@ -56,6 +59,8 @@ export function createDingTalkDelegationMailbox(options) {
         publishFile('replies.jsonl', ''),
         publishFile('offline', 'false'),
         publishFile('unknown-receipt', ''),
+        publishFile('delivery.tsv', ''),
+        publishFile('matching-receipt', 'false'),
         setAccount({ userId: DINGTALK_DELEGATION_IDS.owner, orgId: DINGTALK_DELEGATION_IDS.org }),
       ])
       const preparedBinary = process.env.WEWORK_E2E_DWS_DELEGATION_FIXTURE_BIN
@@ -76,6 +81,18 @@ export function createDingTalkDelegationMailbox(options) {
     setAccount,
     setUnknownReceipt(messageId) {
       return publishFile('unknown-receipt', messageId == null ? '' : identity(messageId))
+    },
+    configureDelivery({ automatic, pending, rejected }) {
+      const outcomes = automatic.map(({ id, conversationId }) => [id, 'automatic', conversationId])
+      if (pending) outcomes.push([pending.id, 'manual', pending.conversationId])
+      if (rejected) outcomes.push([rejected.id, 'rejected', rejected.conversationId])
+      return publishFile(
+        'delivery.tsv',
+        outcomes.map(row => row.map(identity).join('\t')).join('\n')
+      )
+    },
+    releaseMatchingReceipt() {
+      return publishFile('matching-receipt', 'true')
     },
     replies: () => records('replies.jsonl'),
     reads: () => records('reads.jsonl'),

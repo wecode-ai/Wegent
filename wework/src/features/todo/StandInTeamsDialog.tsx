@@ -14,7 +14,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useState } from 'react'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { StandInNavigationButton } from './StandInRoleSelector'
+import { UsersRound } from 'lucide-react'
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
+import { Tooltip } from '@/components/ui/tooltip'
 
 type TeamControlProps = Omit<Parameters<typeof StandInTeamsDialog>[0], 'onClose'> & {
   active: boolean
@@ -33,14 +35,18 @@ export function StandInTeamControl({
   const [open, setOpen] = useState(false)
   return (
     <>
-      <StandInNavigationButton
-        selected={Boolean(selected)}
-        data-testid="stand-in-teams-open"
-        aria-haspopup="dialog"
-        onClick={() => beforeOpen(() => setOpen(true))}
-      >
-        {t('standIn.teams.title')}
-      </StandInNavigationButton>
+      <Tooltip label={t('standIn.teams.title')} side="bottom" align="end">
+        <IconButton
+          aria-label={t('standIn.teams.title')}
+          aria-expanded={open}
+          aria-current={selected ? 'page' : undefined}
+          data-testid="stand-in-teams-open"
+          aria-haspopup="dialog"
+          onClick={() => beforeOpen(() => setOpen(true))}
+        >
+          <UsersRound aria-hidden="true" className="size-4" />
+        </IconButton>
+      </Tooltip>
       {active && open && (
         <StandInTeamsDialog
           {...props}

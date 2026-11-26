@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
         "claude": None,
         "google": None,
     },
-    "default_model": "claude-3-5-sonnet-20241022",
+    "default_model": "claude-sonnet-4-6",
     "default_system_prompt": None,
     "storage": {
         "default": "sqlite",
