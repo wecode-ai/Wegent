@@ -1405,7 +1405,7 @@ class TestSandboxManager:
         mock_redis_client.delete.assert_called()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("lookup_status", ["failed", "not_found"])
+    @pytest.mark.parametrize("lookup_status", ["failed", "not_found", "success"])
     @pytest.mark.parametrize("admin_cleanup", [False, True])
     async def test_sandbox_removal_retries_without_clearing_live_credentials(
         self,
@@ -1429,6 +1429,9 @@ class TestSandboxManager:
         ]
         executor.delete_executor_by_task_id.return_value = {
             "status": lookup_status,
+            "deleted_containers": (
+                ["wegent-task-testuser-orphan"] if lookup_status == "success" else []
+            ),
         }
         revoke = mocker.spy(manager._repository, "delete_executor_binding")
 
@@ -1460,24 +1463,33 @@ class TestSandboxManager:
         )
 
     @pytest.mark.asyncio
-    async def test_cleanup_sandbox_by_task_id_deletes_by_label_when_saved_name_is_stale(
+    @pytest.mark.parametrize(
+        ("named_status", "deleted_name"),
+        [
+            ("unauthorized", "wegent-task-testuser-orphan"),
+            ("failed", "wegent-task-testuser-12345"),
+        ],
+    )
+    async def test_cleanup_sandbox_by_task_id_can_recover_via_label(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
+        named_status,
+        deleted_name,
     ):
-        """Test task cleanup removes labeled containers when Redis has a stale name."""
+        """Label lookup can recover from a stale name or retry the named removal."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
         mock_executor = MagicMock()
         mock_executor.delete_executor.return_value = {
-            "status": "unauthorized",
-            "error_msg": "stale saved container name",
+            "status": named_status,
+            "error_msg": "named removal unsuccessful",
         }
         mock_executor.delete_executor_by_task_id.return_value = {
             "status": "success",
-            "deleted_containers": ["wegent-task-testuser-orphan"],
+            "deleted_containers": [deleted_name],
         }
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
@@ -1492,9 +1504,7 @@ class TestSandboxManager:
 
         assert result["deleted"] is True
         assert result["redis_cleared"] is True
-        assert result["delete_result"]["deleted_containers"] == [
-            "wegent-task-testuser-orphan"
-        ]
+        assert result["delete_result"]["deleted_containers"] == [deleted_name]
         mock_executor.delete_executor.assert_called_once_with(
             "wegent-task-testuser-12345"
         )

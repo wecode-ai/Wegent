@@ -1027,15 +1027,16 @@ class SandboxManager(metaclass=SingletonMeta):
         """Remove the selected runtime while holding its task lifecycle lease."""
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            container_name = sandbox.container_name if sandbox else None
             delete_status = None
-            if sandbox is not None and sandbox.container_name:
+            if container_name:
                 delete_status = await asyncio.to_thread(
-                    executor.delete_executor, sandbox.container_name
+                    executor.delete_executor, container_name
                 )
                 result["delete_attempts"].append(
                     {
                         "mode": "container_name",
-                        "container_name": sandbox.container_name,
+                        "container_name": container_name,
                         "result": delete_status,
                     }
                 )
@@ -1053,12 +1054,15 @@ class SandboxManager(metaclass=SingletonMeta):
                         "result": fallback,
                     }
                 )
-                # Label lookup can miss the named container. It cannot override
-                # an explicit failure to remove that runtime.
-                if (
-                    fallback.get("status") != "not_found"
-                    or delete_status is None
-                    or delete_status.get("status") == "not_found"
+                # A successful label-based deletion may have removed a different
+                # container. Require proof that a failed named deletion was retried.
+                named_status = (delete_status or {}).get("status")
+                if named_status in {None, "not_found"} or (
+                    fallback.get("status") == "success"
+                    and (
+                        named_status == "unauthorized"
+                        or container_name in fallback.get("deleted_containers", [])
+                    )
                 ):
                     delete_status = fallback
             result["delete_result"] = delete_status
