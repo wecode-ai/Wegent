@@ -2190,6 +2190,18 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379/0
         run: uv run --no-sync python -m tests.e2e.responses_device_cancel
 
+      - name: Run cloud model gateway Goal recovery E2E
+        if: ${{ !matrix.suite || matrix.suite == 'device' }}
+        working-directory: ./backend
+        env:
+          E2E_API_URL: http://127.0.0.1:8000
+          E2E_MODEL_URL: http://127.0.0.1:9999
+          E2E_EXECUTOR_BINARY: ${{ github.workspace }}/executor/target/release/wegent-executor
+          CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+        run: uv run --no-sync python -m tests.e2e.cloud_gateway_goal_recovery
+
       # Keep normal executor coverage on production thresholds. Replace only the
       # Backend after that suite, retaining its binaries, ports and dependencies.
       - name: Restart Backend for stalled Chat SSE regression
