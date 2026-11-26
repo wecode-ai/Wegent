@@ -502,7 +502,9 @@ async fn insert_handoff<T: MysqlTransaction>(
     });
     let completed_id = subtask_column::<i64>(completed, "id").unwrap_or_default();
     if task_json["metadata"]["labels"]["projectAutomationManagerSubtaskId"]
-        == completed_id.to_string()
+        .as_str()
+        .and_then(|id| id.parse::<i64>().ok())
+        == Some(completed_id)
     {
         task_json["metadata"]["labels"]["projectAutomationManagerSubtaskId"] =
             json!(assistant_subtask_id.to_string());

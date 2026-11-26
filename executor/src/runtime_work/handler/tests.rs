@@ -206,7 +206,11 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             ("active-1".to_owned(), RuntimeTaskKind::Personal),
             ("active-2".to_owned(), RuntimeTaskKind::Personal),
         ]);
-        scheduler.queued_turns = VecDeque::from([SpawnTurnRequest::new("queued-1".to_owned(), "codex".to_owned(), ExecutionRequest::default())]);
+        scheduler.queued_turns = VecDeque::from([SpawnTurnRequest::new(
+            "queued-1".to_owned(),
+            "codex".to_owned(),
+            ExecutionRequest::default(),
+        )]);
     }
 
     let capacity = handler
@@ -285,7 +289,11 @@ async fn create_task_persists_collaboration_member_runtime_profiles() {
 #[test]
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut turn = SpawnTurnRequest::new("task-1".to_owned(), "codex".to_owned(), ExecutionRequest::default());
+    let mut turn = SpawnTurnRequest::new(
+        "task-1".to_owned(),
+        "codex".to_owned(),
+        ExecutionRequest::default(),
+    );
     turn.request.extra.insert(
         "deferred_worktree_source_path".to_owned(),
         Value::String("/tmp/source".to_owned()),
@@ -310,7 +318,11 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
 #[tokio::test]
 async fn archive_stop_waits_for_worktree_preparation_ack() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut turn = SpawnTurnRequest::new("task-1".to_owned(), "codex".to_owned(), ExecutionRequest::default());
+    let mut turn = SpawnTurnRequest::new(
+        "task-1".to_owned(),
+        "codex".to_owned(),
+        ExecutionRequest::default(),
+    );
     turn.request.extra.insert(
         "deferred_worktree_source_path".to_owned(),
         Value::String("/tmp/source".to_owned()),
@@ -1034,7 +1046,11 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         "deferred_worktree_path".to_owned(),
         Value::String(plan.path.display().to_string()),
     );
-    let interrupted = VecDeque::from([SpawnTurnRequest::new("task-queued".to_owned(), "codex".to_owned(), request)]);
+    let interrupted = VecDeque::from([SpawnTurnRequest::new(
+        "task-queued".to_owned(),
+        "codex".to_owned(),
+        request,
+    )]);
     write_runtime_turn_queue(&queue_path, &interrupted).unwrap();
     handler.store = RuntimeWorkStore::new(index_path);
     assert!(handler.reconcile_worktrees_once().await);

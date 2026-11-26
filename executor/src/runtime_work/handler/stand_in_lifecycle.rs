@@ -278,7 +278,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .queued_turns
-                .push_back(SpawnTurnRequest::new("worker".into(), "claudecode".into(), request));
+                .push_back(SpawnTurnRequest::new(
+                    "worker".into(),
+                    "claudecode".into(),
+                    request,
+                ));
         }
         let (cancel, cancelled) = oneshot::channel();
         let (stopped, stop) = oneshot::channel();

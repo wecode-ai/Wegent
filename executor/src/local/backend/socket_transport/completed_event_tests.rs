@@ -6,8 +6,8 @@ use crate::{
     config::device::UpdateConfig,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     local::backend::{
-        CapabilityReportProvider, LocalBackendClient, LocalBackendEventSink,
-        LocalTaskController, PlatformTaskAdapter,
+        CapabilityReportProvider, LocalBackendClient, LocalBackendEventSink, LocalTaskController,
+        PlatformTaskAdapter,
     },
     protocol::{ExecutionRequest, TaskStatus},
     runner::{AgentEngine, EventSink, ExecutionOutcome},
@@ -301,7 +301,9 @@ async fn send_managed_completions(cases: Vec<ScriptedCompletion>, root: &Path) -
     let runner = PlatformTaskAdapter::new(
         engine.clone(),
         LocalBackendEventSink::new(device.client.clone()),
-        Arc::new(crate::runtime_work::RuntimeWorkRpcHandler::new("test","unused")),
+        Arc::new(crate::runtime_work::RuntimeWorkRpcHandler::new(
+            "test", "unused",
+        )),
         uuid::Uuid::new_v4().to_string(),
     );
     let mut terminals = Vec::new();

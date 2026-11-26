@@ -47,7 +47,8 @@ impl LocalTaskStore {
             get_item_from(&tx, project_id, "project")?.ok_or(TaskRuntimeError::ProjectNotFound)?;
         let owned: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM loop_items WHERE id=?1 AND created_by_user_id=?2)",
-            params![team_ref, project.created_by_user_id], |row| row.get(0),
+            params![team_ref, project.created_by_user_id],
+            |row| row.get(0),
         )?;
         let source = get_item_from(&tx, team_ref, "chat_agent")?
             .filter(|agent| {
