@@ -49,6 +49,65 @@ export async function listKnowledgeBases(
   return apiClient.get<KnowledgeBaseListResponse>(endpoint)
 }
 
+export type KnowledgeCatalogSpace = 'personal' | 'group' | 'organization'
+
+export interface KnowledgeCatalogRow extends Pick<
+  KnowledgeBase,
+  | 'id'
+  | 'name'
+  | 'description'
+  | 'user_id'
+  | 'namespace'
+  | 'document_count'
+  | 'created_at'
+  | 'updated_at'
+> {
+  kb_type: NonNullable<KnowledgeBase['kb_type']>
+  namespace_level: KnowledgeCatalogSpace
+  namespace_display_name: string | null
+}
+
+export interface KnowledgeCatalogPage {
+  items: KnowledgeCatalogRow[]
+  total: number
+  returned_count: number
+  limit: number
+  offset: number
+  has_more: boolean
+  space_counts: Record<string, number>
+}
+
+export interface KnowledgeCatalogFilters {
+  query: string
+  category: 'all' | 'document' | 'code'
+  include_code: boolean
+  space_level?: KnowledgeCatalogSpace
+  space_namespace?: string
+  binding_group?: string
+  candidate_ids?: number[]
+  sort_by?: 'created' | 'updated' | 'name' | 'group'
+  ascending?: boolean
+}
+
+export function getKnowledgeCatalogPage(
+  filters: KnowledgeCatalogFilters,
+  offset: number,
+  signal: AbortSignal
+): Promise<KnowledgeCatalogPage> {
+  const search = new URLSearchParams({ catalog: 'true', offset: String(offset) })
+  for (const [key, value] of Object.entries(filters)) {
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, String(item))
+    } else if (value !== undefined && value !== '') {
+      search.set(key, String(value))
+    }
+  }
+  return apiClient.get<KnowledgeCatalogPage>(`/knowledge-bases?${search}`, {
+    signal,
+    cache: 'no-store',
+  })
+}
+
 /**
  * Get a knowledge base by ID
  */

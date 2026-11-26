@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
+from app.api.endpoints.knowledge import list_knowledge_bases
 from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import ExternalKnowledgeUser
@@ -96,6 +97,7 @@ def _create_kb(
     *,
     namespace: str = "default",
     description: str | None = None,
+    kb_type: str = "notebook",
 ):
     kb = Kind(
         id=kb_id,
@@ -106,6 +108,7 @@ def _create_kb(
         json={
             "spec": {
                 "name": name,
+                "kbType": kb_type,
                 "description": (
                     description if description is not None else f"{name} description"
                 ),
@@ -471,7 +474,7 @@ async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
         52,
         test_user.id,
         "Page",
-        now + timedelta(minutes=1),
+        now,
         namespace=namespace.name,
     )
     _create_kb(
@@ -482,7 +485,39 @@ async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
         now + timedelta(minutes=2),
         namespace=namespace.name,
     )
+    _create_kb(
+        test_db,
+        54,
+        test_user.id,
+        "Another Library",
+        now,
+        namespace=namespace.name,
+        description="page",
+    )
+    _create_kb(
+        test_db,
+        55,
+        test_user.id,
+        "Page Code",
+        now,
+        namespace=namespace.name,
+        kb_type="code_wiki",
+    )
+    _create_kb(test_db, 56, test_user.id, "Page Personal", now)
     test_db.commit()
+
+    web_page = list_knowledge_bases(
+        scope="all",
+        group_name=None,
+        query="  pAgE  ",
+        catalog=True,
+        include_code=False,
+        space_level="organization",
+        limit=1,
+        offset=1,
+        db=test_db,
+        current_user=test_user,
+    )
 
     token = _set_external_user(test_user)
     try:
@@ -496,8 +531,9 @@ async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
         ):
             result = await _call_tool(
                 "wegent_kb_list_knowledge_bases",
-                scope=ResourceScope.ORGANIZATION.value,
-                query="page",
+                space_level="organization",
+                query="  pAgE  ",
+                include_code=False,
                 limit=1,
                 offset=1,
             )
@@ -509,6 +545,13 @@ async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
     assert payload["total_returned"] == 1
     assert payload["has_more"] is True
     assert [item["knowledge_base_id"] for item in payload["items"]] == [52]
+    assert web_page.total == payload["total"]
+    assert web_page.has_more == payload["has_more"]
+    assert web_page.space_counts == {"default": 1, namespace.name: 3}
+    assert [(item.id, item.namespace_level) for item in web_page.items] == [
+        (item["knowledge_base_id"], item["namespace_level"])
+        for item in payload["items"]
+    ]
     get_counts.assert_called_once_with(test_db, [52])
 
 

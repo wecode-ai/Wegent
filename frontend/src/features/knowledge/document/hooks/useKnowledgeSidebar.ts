@@ -12,7 +12,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import client, { ApiError } from '@/apis/client'
 import { useTranslation } from '@/hooks/useTranslation'
-import { collectNavigationKnowledge, type NavigationKnowledgeBase } from '../navigation'
+import {
+  collectNavigationKnowledge,
+  toKnowledgeBase,
+  type NavigationKnowledgeBase,
+} from '../navigation'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
@@ -153,27 +157,6 @@ function saveRecentAccess(key: string, items: RecentAccessItem[]) {
     localStorage.setItem(key, JSON.stringify(items))
   } catch {
     // Ignore storage errors
-  }
-}
-
-/**
- * Convert KnowledgeBaseWithGroupInfo to KnowledgeBase
- */
-function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
-  return {
-    id: kb.id,
-    name: kb.name,
-    description: kb.description,
-    user_id: kb.user_id,
-    namespace: kb.namespace,
-    document_count: kb.document_count,
-    is_active: true,
-    summary_enabled: false,
-    kb_type: kb.kb_type || 'notebook',
-    max_calls_per_conversation: 10,
-    exempt_calls_before_check: 5,
-    created_at: kb.created_at,
-    updated_at: kb.updated_at,
   }
 }
 
@@ -393,7 +376,9 @@ export function useKnowledgeSidebar({
 
   const getKbGroupInfo = useCallback(
     (kb: KbDataItem): KbGroupInfo => {
-      const row = allKnowledgeBasesWithGroupInfo.find(item => item.id === kb.id)
+      const row =
+        allKnowledgeBasesWithGroupInfo.find(item => item.id === kb.id) ??
+        ('namespace_level' in kb ? (kb as NavigationKnowledgeBase) : undefined)
       return {
         groupId: kb.namespace,
         groupName:

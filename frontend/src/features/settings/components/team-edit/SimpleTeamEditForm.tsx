@@ -94,6 +94,7 @@ interface SimpleTeamEditFormProps {
   onReloadSkills: () => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
+  onInvalidKnowledgeBindingsChange?: (invalid: boolean) => void
   mcpConfig: string
   onMcpConfigChange: (value: string) => void
   mcpAgentType?: McpAgentType
@@ -199,6 +200,7 @@ export default function SimpleTeamEditForm({
   onReloadSkills,
   defaultKnowledgeBaseRefs,
   onDefaultKnowledgeBaseRefsChange,
+  onInvalidKnowledgeBindingsChange,
   mcpConfig,
   onMcpConfigChange,
   mcpAgentType,
@@ -559,6 +561,7 @@ export default function SimpleTeamEditForm({
                   <KnowledgeBaseMultiSelector
                     value={defaultKnowledgeBaseRefs}
                     onChange={onDefaultKnowledgeBaseRefsChange}
+                    onInvalidBindingsChange={onInvalidKnowledgeBindingsChange}
                     helperText={null}
                     allowedSources={
                       scope === 'group'

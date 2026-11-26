@@ -228,7 +228,9 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
       ).toBeInTheDocument()
     })
-    expect(screen.getByText('Fake Provider')).toBeInTheDocument()
+    expect(
+      screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+    ).toHaveTextContent('Fake Provider')
 
     fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
     await waitFor(() =>

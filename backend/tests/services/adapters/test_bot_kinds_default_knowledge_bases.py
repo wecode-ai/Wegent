@@ -228,22 +228,12 @@ def test_create_with_user_rejects_non_group_knowledge_bases_for_group_bots():
     duplicate_check_query.first.return_value = None
     db.query.return_value = duplicate_check_query
 
-    grouped_kbs = SimpleNamespace(
-        groups=[
-            SimpleNamespace(
-                group_name="platform",
-                knowledge_bases=[SimpleNamespace(id=202)],
-            )
-        ],
-        organization=SimpleNamespace(
-            knowledge_bases=[SimpleNamespace(id=303)],
-        ),
-    )
+    catalog_page = SimpleNamespace(items=[])
 
     with patch.object(service, "_encrypt_agent_config", return_value={}):
         with patch(
-            "app.services.adapters.bot_kinds.KnowledgeService.get_all_knowledge_bases_grouped",
-            return_value=grouped_kbs,
+            "app.services.adapters.bot_kinds.list_knowledge_catalog",
+            return_value=catalog_page,
         ):
             with patch(
                 "app.services.adapters.bot_kinds.get_shell_info_by_name",
@@ -335,21 +325,11 @@ def test_update_with_user_rejects_non_group_knowledge_bases_for_group_bots():
     query.first.return_value = bot
     db.query.return_value = query
 
-    grouped_kbs = SimpleNamespace(
-        groups=[
-            SimpleNamespace(
-                group_name="platform",
-                knowledge_bases=[SimpleNamespace(id=202)],
-            )
-        ],
-        organization=SimpleNamespace(
-            knowledge_bases=[SimpleNamespace(id=303)],
-        ),
-    )
+    catalog_page = SimpleNamespace(items=[])
 
     with patch(
-        "app.services.adapters.bot_kinds.KnowledgeService.get_all_knowledge_bases_grouped",
-        return_value=grouped_kbs,
+        "app.services.adapters.bot_kinds.list_knowledge_catalog",
+        return_value=catalog_page,
     ):
         with patch("app.services.adapters.bot_kinds.flag_modified"):
             with patch.object(

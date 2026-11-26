@@ -6,7 +6,8 @@ import userEvent from '@testing-library/user-event'
 import { KnowledgeDocumentPageDesktop } from '@/features/knowledge/document/components/KnowledgeDocumentPageDesktop'
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
+import { createKnowledgeBase, getKnowledgeBase, getKnowledgeCatalogPage } from '@/apis/knowledge'
+import { collectNavigationKnowledge } from '@/features/knowledge/document/navigation'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { codeWikiApi } from '@/apis/code-wiki'
 import type {
@@ -42,6 +43,7 @@ jest.mock('@/apis/client', () => ({
 jest.mock('@/apis/knowledge-base', () => ({ knowledgeBaseApi: { getAllGrouped: jest.fn() } }))
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  getKnowledgeCatalogPage: jest.fn(),
   createKnowledgeBase: jest.fn(),
   migrateKnowledgeBaseToGroup: jest.fn(),
 }))
@@ -234,6 +236,34 @@ beforeEach(() => {
     .mocked(knowledgeBaseApi.getAllGrouped)
     .mockReset()
     .mockImplementation(async () => JSON.parse(JSON.stringify(data)))
+  jest
+    .mocked(getKnowledgeCatalogPage)
+    .mockReset()
+    .mockImplementation(async (filters, offset) => {
+      const all = collectNavigationKnowledge(data)
+        .filter(row => row.name.toLowerCase().includes(filters.query.toLowerCase()))
+        .filter(row => filters.include_code || row.kb_type !== 'code_wiki')
+        .map(row => ({
+          ...row,
+          namespace_level: row.namespace_level ?? ('group' as const),
+        }))
+      const space_counts: Record<string, number> = {}
+      for (const row of all) space_counts[row.namespace] = (space_counts[row.namespace] ?? 0) + 1
+      const rows = all.filter(
+        row =>
+          (!filters.space_level || row.namespace_level === filters.space_level) &&
+          (!filters.space_namespace || row.namespace === filters.space_namespace)
+      )
+      return {
+        items: rows,
+        total: rows.length,
+        returned_count: rows.length,
+        limit: 50,
+        offset,
+        has_more: false,
+        space_counts,
+      }
+    })
   jest.mocked(getKnowledgeBase).mockReset().mockResolvedValue(baseKb)
   jest.mocked(createKnowledgeBase).mockReset().mockResolvedValue(baseKb)
   jest
@@ -479,10 +509,10 @@ it('keeps company libraries only in all and company entries and filters the dedu
   expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('2')
   await user.type(screen.getByTestId('knowledge-team-search'), 'companySpace')
   await user.click(screen.getByTestId('knowledge-space-option-company'))
-  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('2')
+  await waitFor(() => expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('2'))
   expect(screen.queryByTestId('kb-row-7')).not.toBeInTheDocument()
   await user.type(screen.getByTestId('knowledge-search'), 'Owned')
-  expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('1')
+  await waitFor(() => expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('1'))
   await user.click(screen.getByTestId('knowledge-team-filter'))
   expect(screen.getByTestId('knowledge-space-count-company')).toHaveTextContent('1')
   await user.keyboard('{Escape}')
@@ -655,7 +685,7 @@ it.each(
       await screen.findByText('Next library')
       if (mode === 'return') {
         await user.click(screen.getByTestId('knowledge-detail-back-button'))
-        await user.click(screen.getByTestId('more-kb-7'))
+        await user.click(await screen.findByTestId('more-kb-7'))
         await user.click(screen.getByTestId('permission-kb-7'))
         await screen.findByTestId('knowledge-authorization-objects')
       }

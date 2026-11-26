@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   Building2,
+  ChevronDown,
   ChevronRight,
   Cloud,
   Database,
@@ -23,9 +24,18 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { TruncatedText } from '@/components/common/long-text'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { KnowledgeBaseIcon } from '@/features/knowledge/document/components/KnowledgeBaseIcon'
+import {
+  KnowledgeBaseCategoryFilter,
+  type KnowledgeBaseCategory,
+} from '@/features/knowledge/document/components/KnowledgeBaseCategoryFilter'
+import { useAdvancedKnowledgeMode } from '@/features/knowledge/document/hooks/useAdvancedKnowledgeMode'
+import { toKnowledgeBase } from '@/features/knowledge/document/navigation'
+import { useKnowledgeCatalog } from '@/features/knowledge/useKnowledgeCatalog'
 import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
@@ -91,6 +101,9 @@ const DEFAULT_EXTERNAL_SCOPE_ICON = 'cloud'
 
 interface KnowledgeSourcePickerProps {
   groupedKnowledgeBases: GroupedKnowledgeBases
+  catalogAccountId?: number
+  excludeKnowledgeBaseId?: number
+  onOpenGroupSources?: () => void
   boundKnowledgeBases: BoundKnowledgeBaseDetail[]
   externalSources: ExternalKnowledgeSource[]
   selectedContexts: ContextItem[]
@@ -565,6 +578,9 @@ function toExternalDocumentContext(
 
 export function KnowledgeSourcePicker({
   groupedKnowledgeBases,
+  catalogAccountId,
+  excludeKnowledgeBaseId,
+  onOpenGroupSources,
   boundKnowledgeBases,
   externalSources,
   selectedContexts,
@@ -601,6 +617,44 @@ export function KnowledgeSourcePicker({
     openDingTalkSpace,
     back: navigateBack,
   } = useKnowledgePickerNavigation()
+  const { showAdvancedKnowledge } = useAdvancedKnowledgeMode()
+  const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
+  const [documentQuery, setDocumentQuery] = useState('')
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const returnFocus = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    if (activeKnowledgeBase || activeDingTalkSpace || !returnFocus.current) return
+    returnFocus.current.focus({ preventScroll: true })
+    returnFocus.current = null
+  }, [activeKnowledgeBase, activeDingTalkSpace])
+  const nativeSource =
+    activeSource === 'all' ||
+    activeSource === 'personal' ||
+    activeSource === 'organization' ||
+    (activeSource === 'group' && Boolean(activeGroup))
+  const catalogEnabled = catalogAccountId !== undefined && nativeSource
+  const catalog = useKnowledgeCatalog(
+    {
+      query: searchValue,
+      category: showAdvancedKnowledge ? category : 'all',
+      include_code: showAdvancedKnowledge,
+      space_level: nativeSource && activeSource !== 'all' ? activeSource : undefined,
+      space_namespace: activeGroup ?? undefined,
+    },
+    catalogEnabled ? catalogAccountId : undefined
+  )
+  const boundIds = useMemo(
+    () => new Set(boundKnowledgeBases.map(kb => kb.id)),
+    [boundKnowledgeBases]
+  )
+  const catalogItems = useMemo(
+    () =>
+      (catalog.page?.items ?? [])
+        .filter(row => row.id !== excludeKnowledgeBaseId && !boundIds.has(row.id))
+        .map(row => ({ ...toKnowledgeBase(row), spaceName: row.namespace_display_name })),
+    [catalog.page, excludeKnowledgeBaseId, boundIds]
+  )
   const dingtalkTrees = useDingTalkDocTrees({ enabled: activeSource.startsWith('dingtalk') })
   const {
     selectedIds: selectedDingTalkIds,
@@ -699,21 +753,27 @@ export function KnowledgeSourcePicker({
   const sourceRows = useMemo(
     () => [
       {
+        key: 'all' as KnowledgeSourceKey,
+        label: t('document.navigation.all'),
+        count: null,
+        icon: Database,
+      },
+      {
         key: 'personal' as KnowledgeSourceKey,
         label: t('picker.sources.personal'),
-        count: groupedKnowledgeBases.personal.length,
+        count: catalogAccountId === undefined ? groupedKnowledgeBases.personal.length : null,
         icon: User,
       },
       {
         key: 'group' as KnowledgeSourceKey,
         label: t('picker.sources.group'),
-        count: groupedKnowledgeBases.group.size,
+        count: catalogAccountId === undefined ? groupedKnowledgeBases.group.size : null,
         icon: Users,
       },
       {
         key: 'organization' as KnowledgeSourceKey,
         label: t('picker.sources.organization'),
-        count: groupedKnowledgeBases.organization.length,
+        count: catalogAccountId === undefined ? groupedKnowledgeBases.organization.length : null,
         icon: Building2,
       },
       {
@@ -731,6 +791,7 @@ export function KnowledgeSourcePicker({
     ],
     [
       browseableExternalSources,
+      catalogAccountId,
       externalKnowledgeBaseCounts,
       groupedKnowledgeBases.group.size,
       groupedKnowledgeBases.organization.length,
@@ -1190,7 +1251,11 @@ export function KnowledgeSourcePicker({
   )
 
   const selectInternalKb = (kb: KnowledgeBase) => {
-    onSearchValueChange('')
+    setDocumentQuery('')
+    returnFocus.current =
+      pickerRef.current?.querySelector<HTMLButtonElement>(
+        `[data-testid="knowledge-picker-kb-${kb.id}"]`
+      ) ?? null
     openInternalKnowledgeBase(kb)
     if (!internalTreeByKb.has(kb.id)) {
       void loadInternalTree(kb)
@@ -1198,7 +1263,7 @@ export function KnowledgeSourcePicker({
   }
 
   const selectExternalKb = (source: ExternalKnowledgeSource, kb: ExternalKnowledgeBase) => {
-    onSearchValueChange('')
+    setDocumentQuery('')
     openExternalKnowledgeBase(source, kb)
     const cacheKey = `${source.providerId}:${kb.knowledge_base_id}`
     if (!externalNodesByKb.has(cacheKey)) {
@@ -1289,8 +1354,86 @@ export function KnowledgeSourcePicker({
   )
 
   const renderMiddleColumn = () => {
-    const isInternalSource =
-      activeSource === 'personal' || activeSource === 'group' || activeSource === 'organization'
+    const isInternalSource = nativeSource || activeSource === 'group'
+
+    if (catalogEnabled || activeSource === 'all') {
+      if (catalogEnabled ? catalog.pending && !catalog.page : loading) {
+        return <PickerLoading label={t('picker.loading')} />
+      }
+      if (catalogEnabled && catalog.failed && !catalog.page) {
+        return <PickerError message={t('fetch_error')} onRetry={catalog.retry} />
+      }
+      if (!catalogEnabled && error) {
+        return <PickerError message={error} onRetry={onRetry} />
+      }
+      const currentId =
+        activeKnowledgeBase?.source === 'internal'
+          ? activeKnowledgeBase.knowledgeBase.id
+          : undefined
+      const fallbackItems = catalogEnabled
+        ? catalogItems
+        : [
+            ...new Map(
+              [
+                ...groupedKnowledgeBases.personal,
+                ...groupedKnowledgeBases.organization,
+                ...Array.from(groupedKnowledgeBases.group.values()).flatMap(group => group.items),
+              ].map(kb => [kb.id, kb])
+            ).values(),
+          ].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id)
+      return (
+        <div className="flex min-h-0 flex-col">
+          {activeSource === 'group' && activeGroup && (
+            <ResponsiveDrilldownHeader
+              label={groupedKnowledgeBases.group.get(activeGroup)?.displayName ?? activeGroup}
+              onBack={navigateBack}
+              testId="knowledge-picker-responsive-group-back"
+            />
+          )}
+          {(activeSource === 'all' || activeSource === 'personal') &&
+            boundKnowledgeBaseItems.length > 0 && (
+              <div className="border-b border-border pb-2">
+                <div className="px-3 pt-3 text-xs font-medium text-text-muted">
+                  {t('picker.boundKnowledgeBases')}
+                </div>
+                <KnowledgeBaseRows
+                  items={boundKnowledgeBaseItems}
+                  query={searchValue}
+                  selectedContexts={selectedContexts}
+                  activeId={currentId}
+                  onOpen={selectInternalKb}
+                  onToggle={toggleInternalKnowledgeBase}
+                />
+              </div>
+            )}
+          <KnowledgeBaseRows
+            items={fallbackItems}
+            query={catalogEnabled ? '' : searchValue}
+            selectedContexts={selectedContexts}
+            activeId={currentId}
+            onOpen={selectInternalKb}
+            onToggle={toggleInternalKnowledgeBase}
+          />
+          {catalogEnabled && (catalog.failed || catalog.page?.has_more) && (
+            <div className="p-2">
+              {catalog.failed ? (
+                <PickerError message={t('fetch_error')} onRetry={catalog.retry} />
+              ) : (
+                <Button
+                  variant="outline"
+                  className="min-h-11 w-full"
+                  onClick={catalog.loadMore}
+                  disabled={catalog.pending}
+                  data-testid="knowledge-picker-load-more"
+                >
+                  {t('document.groupList.loadMore')}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )
+    }
 
     if (isInternalSource && loading) {
       return <PickerLoading label={t('picker.loading')} />
@@ -1430,7 +1573,12 @@ export function KnowledgeSourcePicker({
           lastSyncedAt={dingtalkTrees.wikispaceLastSyncedAt}
           onRetry={dingtalkTrees.fetchWikispace}
           onSync={dingtalkTrees.syncWikispace}
-          onOpen={openDingTalkSpace}
+          onOpen={space => {
+            setDocumentQuery('')
+            returnFocus.current =
+              document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+            openDingTalkSpace(space)
+          }}
           onToggle={node => toggleDingTalkNode(node, node)}
         />
       )
@@ -1494,8 +1642,57 @@ export function KnowledgeSourcePicker({
     return <PickerEmpty label={t('picker.empty')} />
   }
 
-  const renderSourceColumn = () => (
-    <div className="flex gap-2 overflow-x-auto p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:block lg:space-y-1 lg:overflow-x-visible">
+  const currentSourceRow = sourceRows.find(
+    row =>
+      row.key === activeSource || (row.key === 'dingtalk' && activeSource.startsWith('dingtalk:'))
+  )
+  const openSource = (source: KnowledgeSourceKey) => {
+    if (source === 'group') onOpenGroupSources?.()
+    selectSource(source)
+  }
+  const renderMobileSourceMenu = () => (
+    <div className="p-2 lg:hidden">
+      <Popover open={sourceMenuOpen} onOpenChange={setSourceMenuOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 w-full justify-between"
+            data-testid="knowledge-picker-mobile-source"
+          >
+            <span className="truncate">
+              {currentSourceRow?.label ?? t('document.navigation.all')}
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="max-h-[min(55dvh,24rem)] w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1"
+        >
+          {sourceRows.map(row => (
+            <Button
+              type="button"
+              key={row.key}
+              variant="ghost"
+              className="min-h-11 w-full justify-start whitespace-normal text-left"
+              aria-current={currentSourceRow?.key === row.key ? 'true' : undefined}
+              data-testid={`knowledge-picker-mobile-source-${row.key}`}
+              onClick={() => {
+                openSource(row.key)
+                setSourceMenuOpen(false)
+              }}
+            >
+              {row.label}
+            </Button>
+          ))}
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+
+  const renderDesktopSources = () => (
+    <div className="hidden space-y-1 p-2 lg:block">
       {sourceRows.map(row => {
         const Icon = row.icon
         const active =
@@ -1517,7 +1714,7 @@ export function KnowledgeSourcePicker({
                 'lg:w-full lg:justify-between lg:rounded-md lg:px-3',
                 active ? 'bg-primary/10 text-primary' : 'hover:bg-surface text-text-primary'
               )}
-              onClick={() => selectSource(row.key)}
+              onClick={() => openSource(row.key)}
               data-testid={
                 row.key === 'dingtalk'
                   ? 'knowledge-picker-dingtalk-parent'
@@ -1528,9 +1725,11 @@ export function KnowledgeSourcePicker({
                 <Icon className="h-4 w-4 shrink-0" />
                 <TruncatedText text={row.label} focusable={false} className="text-sm font-medium" />
               </span>
-              <Badge variant="secondary" size="sm">
-                {row.count}
-              </Badge>
+              {row.count !== null && (
+                <Badge variant="secondary" size="sm">
+                  {row.count}
+                </Badge>
+              )}
             </button>
 
             {isGroupSource && active
@@ -1662,7 +1861,7 @@ export function KnowledgeSourcePicker({
           configured={dingtalkTrees.isConfigured}
           notConfiguredLabel={tChat('dingtalkDocs.notConfigured')}
           emptyLabel={tChat('dingtalkDocs.empty')}
-          query={searchValue}
+          query={documentQuery}
           selectedIds={selectedDingTalkIds}
           syncing={dingtalkTrees.syncing}
           onRetry={dingtalkTrees.fetchDocs}
@@ -1687,7 +1886,7 @@ export function KnowledgeSourcePicker({
           configured={dingtalkTrees.wikispaceConfigured}
           notConfiguredLabel={tChat('dingtalkDocs.wikispaceNotConfigured')}
           emptyLabel={tChat('dingtalkDocs.wikispaceEmpty')}
-          query={searchValue}
+          query={documentQuery}
           selectedIds={selectedDingTalkIds}
           syncing={dingtalkTrees.wikispaceSyncing}
           onRetry={dingtalkTrees.fetchWikispace}
@@ -1713,7 +1912,7 @@ export function KnowledgeSourcePicker({
         existing?.scope_restricted ? (existing.folder_ids ?? []) : []
       )
       const wholeKnowledgeBaseSelected = Boolean(existing && !existing.scope_restricted)
-      const query = searchValue.trim()
+      const query = documentQuery.trim()
       const searchResults = query
         ? flattenInternalSearchResults(state?.tree ?? []).filter(item =>
             matchesPathSearch(item.node.name, item.path, query)
@@ -1776,7 +1975,7 @@ export function KnowledgeSourcePicker({
     const wholeKnowledgeBaseSelected = Boolean(
       getExternalContext(selectedContexts, knowledgeBaseRef)
     )
-    const query = searchValue.trim()
+    const query = documentQuery.trim()
     const documentResults = query
       ? flattenExternalDocuments(state?.items ?? []).filter(item =>
           matchesPathSearch(item.node.name, item.path, query)
@@ -1831,13 +2030,54 @@ export function KnowledgeSourcePicker({
     (activeSource === 'dingtalk:wikispace' && activeDingTalkSpace !== null)
 
   return (
-    <KnowledgeSourcePickerLayout
-      hasDocumentView={hasResponsiveDocumentView}
-      sourceColumn={renderSourceColumn()}
-      knowledgeBaseColumn={renderMiddleColumn()}
-      documentColumn={renderDocumentColumn()}
-      onBack={navigateBack}
-    />
+    <div ref={pickerRef} className="flex min-h-0 flex-1 flex-col">
+      <div
+        className={cn(
+          'shrink-0 border-b border-border',
+          hasResponsiveDocumentView && 'hidden md:block'
+        )}
+      >
+        <Input
+          aria-label={t(nativeSource ? 'document.navigation.search' : 'search_placeholder')}
+          placeholder={t(nativeSource ? 'document.navigation.search' : 'search_placeholder')}
+          value={searchValue}
+          onChange={event => onSearchValueChange(event.target.value)}
+          className="h-11 rounded-none border-0 text-sm lg:h-9"
+          data-testid="context-selector-knowledge-search-input"
+        />
+        {nativeSource && showAdvancedKnowledge && (
+          <div className="px-2 pb-2">
+            <KnowledgeBaseCategoryFilter value={category} onValueChange={setCategory} showCode />
+          </div>
+        )}
+      </div>
+      <KnowledgeSourcePickerLayout
+        hasDocumentView={hasResponsiveDocumentView}
+        sourceColumn={
+          <>
+            {renderMobileSourceMenu()}
+            {renderDesktopSources()}
+          </>
+        }
+        knowledgeBaseColumn={renderMiddleColumn()}
+        documentColumn={
+          <div className="flex h-full min-h-0 flex-col">
+            {hasResponsiveDocumentView && (
+              <Input
+                aria-label={t('picker.searchDocuments')}
+                placeholder={t('picker.searchDocuments')}
+                value={documentQuery}
+                onChange={event => setDocumentQuery(event.target.value)}
+                className="h-11 shrink-0 rounded-none border-0 border-b border-border text-sm lg:h-9"
+                data-testid="knowledge-picker-document-search"
+              />
+            )}
+            <div className="min-h-0 flex-1">{renderDocumentColumn()}</div>
+          </div>
+        }
+        onBack={navigateBack}
+      />
+    </div>
   )
 }
 
@@ -1849,7 +2089,7 @@ function KnowledgeBaseRows({
   onOpen,
   onToggle,
 }: {
-  items: KnowledgeBase[]
+  items: (KnowledgeBase & { spaceName?: string | null })[]
   query: string
   selectedContexts: ContextItem[]
   activeId?: number
@@ -1857,9 +2097,7 @@ function KnowledgeBaseRows({
   onToggle: (kb: KnowledgeBase) => void
 }) {
   const { t } = useTranslation('knowledge')
-  const visibleItems = items.filter(item =>
-    groupMatchesSearch([item.name, item.description ?? '', item.namespace].join(' '), query)
-  )
+  const visibleItems = items.filter(item => groupMatchesSearch(item.name, query))
   if (visibleItems.length === 0) {
     return <PickerEmpty label={t('picker.emptyKnowledgeBases')} />
   }
@@ -1895,7 +2133,8 @@ function KnowledgeBaseRows({
                   className="text-sm font-medium text-text-primary"
                 />
                 <span className="block text-xs text-text-muted">
-                  {t('picker.count.documents', { count: item.document_count ?? 0 })}
+                  {item.spaceName ??
+                    (item.namespace === 'default' ? t('picker.sources.personal') : item.namespace)}
                 </span>
               </span>
               <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted lg:hidden" />

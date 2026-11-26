@@ -161,14 +161,18 @@ set_external_knowledge_creator_resolver(enterprise_creator_resolver)
 | --- | --- | --- | --- |
 | `scope` | `string` | `all` | 可见范围，取值与内部知识库列表一致，例如 `all`、`personal`、`group`、`organization` |
 | `group_name` | `string \| null` | `null` | 可选的空间或分组名称。`scope=group` 时必填，空字符串会被视为缺失 |
-| `query` | `string \| null` | `null` | 可选关键字，按知识库名称和描述做大小写不敏感过滤 |
+| `query` | `string \| null` | `null` | 去掉首尾空白后，按知识库名称做大小写不敏感的子串匹配 |
 | `owner_user_ids` | `list[int] \| null` | `null` | 可选创建者用户 ID 过滤，最多 `100` 个；空列表按未过滤处理 |
+| `category` | `all \| document \| code` | `all` | 知识库类型筛选 |
+| `include_code` | `bool` | `true` | 是否包含代码知识库。对比网页结果时使用网页当前的显示偏好 |
+| `space_level` | `personal \| group \| organization \| null` | `null` | 独立于权限范围的空间筛选 |
+| `space_namespace` | `string \| null` | `null` | 按命名空间筛选指定空间 |
 | `limit` | `int` | `50` | 返回数量，范围 `1..100` |
 | `offset` | `int` | `0` | 偏移量，必须大于等于 `0` |
 
 行为：
 
-- 结果按 `created_at` 倒序排序，业务方展示时不需要再次排序。
+- 结果按 `created_at` 倒序排序，创建时间相同时按知识库 ID 倒序。
 - `document_count` 统计知识库下的全部文档，包括 inactive 文档，保持与内部知识库列表口径一致。
 - 每个 `items[]` 会返回 `owner_user_id` 和 `creator`；`creator` 包含 `user_id`、`user_name` 和部署方可扩展的 `attributes`。
 - 每个 `items[]` 会返回 `namespace_level` 和 `namespace_display_name`：个人知识库为 `personal` / `personal`，群组知识库为 `group` / 群组展示名，公司知识库为 `organization` / 公司展示名。`namespace_display_name` 只表达空间展示名，不表达分享或创建者关系。

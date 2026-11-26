@@ -2,14 +2,50 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+from fastapi import HTTPException
+
 from app.api.endpoints.admin.public_bots import (
     _bot_to_response,
     _build_bot_json_from_form_data,
     _get_model_category_type,
     _validate_bot_resource_references,
+    _validate_public_knowledge_bindings,
 )
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.schemas.admin import PublicBotCreate, PublicBotUpdate
+
+
+def test_public_bot_default_bindings_require_company_knowledge(test_db, test_user):
+    company = Namespace(
+        name="public-bot-company",
+        owner_user_id=test_user.id,
+        level="organization",
+        is_active=True,
+    )
+    personal_base, company_base = (
+        Kind(
+            kind="KnowledgeBase",
+            name=f"public-bot-kb-{namespace}",
+            namespace=namespace,
+            user_id=test_user.id,
+            json={"spec": {"name": "Example library"}},
+            is_active=True,
+        )
+        for namespace in ("default", company.name)
+    )
+    test_db.add_all([company, personal_base, company_base])
+    test_db.flush()
+
+    _validate_public_knowledge_bindings(
+        test_db, [{"id": company_base.id, "name": "Company"}]
+    )
+    with pytest.raises(HTTPException, match="can only bind organization") as error:
+        _validate_public_knowledge_bindings(
+            test_db, [{"id": personal_base.id, "name": "Personal"}]
+        )
+    assert error.value.status_code == 400
 
 
 def _preload_skill_refs() -> dict:

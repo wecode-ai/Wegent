@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -65,6 +65,11 @@ from app.services.group_permission import (
     get_user_groups,
     get_view_role_in_group,
 )
+from app.services.knowledge.catalog import (
+    KnowledgeCatalogFilters,
+    get_document_counts,
+    list_knowledge_catalog,
+)
 from app.services.knowledge.content_scope import (
     assert_user_content_is_mutable,
     wiki_pages,
@@ -90,7 +95,6 @@ from app.services.knowledge.knowledge_visibility_query import (
     build_knowledge_base_visibility_query,
     collect_entity_authorized_kbs,
     filter_directly_accessible_knowledge_bases,
-    knowledge_base_json_text,
 )
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.knowledge.permission_policy import (
@@ -205,18 +209,6 @@ class ActiveDocumentTextStats:
     file_size_total: int
     text_length_total: int
     active_document_count: int
-
-
-@dataclass(frozen=True)
-class ExternalKnowledgeBaseListFilters:
-    """Normalized filters for external knowledge base listing."""
-
-    scope: ResourceScope
-    group_name: str | None = None
-    keyword: str | None = None
-    owner_user_ids: tuple[int, ...] = ()
-    offset: int = 0
-    limit: int = 50
 
 
 class KnowledgeService:
@@ -846,50 +838,11 @@ class KnowledgeService:
         db: Session,
         *,
         user_id: int,
-        filters: ExternalKnowledgeBaseListFilters,
+        filters: KnowledgeCatalogFilters,
     ) -> tuple[list[Kind], int]:
-        """List externally visible knowledge bases with SQL filtering and paging."""
-        permission_context = build_direct_access_query_context(db, user_id)
-        query = build_knowledge_base_visibility_query(
-            db,
-            user_id=user_id,
-            scope=filters.scope,
-            group_name=filters.group_name,
-            permission_context=permission_context,
-        )
-
-        if query is None:
-            return [], 0
-
-        if filters.owner_user_ids:
-            query = query.filter(Kind.user_id.in_(filters.owner_user_ids))
-
-        if filters.keyword:
-            keyword_pattern = f"%{_escape_sql_like(filters.keyword.lower())}%"
-            name_text = knowledge_base_json_text(db, "$.spec.name")
-            description_text = knowledge_base_json_text(db, "$.spec.description")
-            query = query.filter(
-                or_(
-                    func.lower(name_text).like(keyword_pattern, escape="\\"),
-                    func.lower(description_text).like(keyword_pattern, escape="\\"),
-                )
-            )
-
-        query = apply_direct_access_filter(
-            db,
-            query,
-            user_id,
-            permission_context,
-        )
-
-        total = query.order_by(None).count()
-        knowledge_bases = (
-            query.order_by(Kind.created_at.desc(), Kind.id.desc())
-            .offset(filters.offset)
-            .limit(filters.limit)
-            .all()
-        )
-        return knowledge_bases, total
+        """List external MCP results from the native catalog."""
+        page = list_knowledge_catalog(db, user_id, filters)
+        return page.items, page.total
 
     @staticmethod
     def update_knowledge_base(
@@ -1413,23 +1366,7 @@ class KnowledgeService:
         db: Session,
         knowledge_base_ids: list[int],
     ) -> dict[int, int]:
-        """Get total document counts for multiple knowledge bases in one query."""
-        from sqlalchemy import func
-
-        if not knowledge_base_ids:
-            return {}
-
-        results = (
-            db.query(
-                KnowledgeDocument.kind_id,
-                func.count(KnowledgeDocument.id).label("count"),
-            )
-            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
-            .group_by(KnowledgeDocument.kind_id)
-            .all()
-        )
-
-        return {kb_id: count for kb_id, count in results}
+        return get_document_counts(db, knowledge_base_ids)
 
     @staticmethod
     def _update_document_count_cache(

@@ -222,10 +222,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
   const [saving, setSaving] = useState(false)
+  const [invalidKnowledgeBindings, setInvalidKnowledgeBindings] = useState(false)
   const [creatingPublishTarget, setCreatingPublishTarget] = useState<CapabilityPublishTarget>(
     createTarget.scope === 'group' ? 'team' : 'personal'
   )
-  const [creatingGroupNames, setCreatingGroupNames] = useState<string[]>([])
+  const [creatingGroupNames, setCreatingGroupNames] = useState<string[] | null>(null)
   const [editingPublishTarget, setEditingPublishTarget] =
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
@@ -283,15 +284,14 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     () =>
       isEditing
         ? editingGroupNames
-        : creatingGroupNames.length > 0
-          ? creatingGroupNames
-          : createTarget.groupNames?.length
+        : (creatingGroupNames ??
+          (createTarget.groupNames?.length
             ? createTarget.groupNames
             : createTarget.groupName
               ? [createTarget.groupName]
               : groupName
                 ? [groupName]
-                : [],
+                : [])),
     [
       createTarget.groupName,
       createTarget.groupNames,
@@ -692,7 +692,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setTechnicalNameUnlocked(true)
       setIdentityConfirmVisible(false)
       setIdentityConfirmation('')
-      setCreatingGroupNames([])
+      setCreatingGroupNames(null)
       setCreatingPublishTarget(
         publishAfterCreate
           ? 'marketplace'
@@ -1138,7 +1138,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     identityConfirmed?: boolean
     publicationReductionConfirmed?: boolean
   } = {}) => {
-    if (useSimpleEditor && leaderBotPending) return
+    if (useSimpleEditor && (leaderBotPending || invalidKnowledgeBindings)) return
     if (!name.trim()) {
       toast({
         variant: 'destructive',
@@ -1360,7 +1360,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setEditingPublishTarget(target)
       if (target === 'team') {
         setEditingGroupNames(
-          nextGroupNames.length > 0
+          nextGroupNames.length > 0 || publishTarget === 'team'
             ? nextGroupNames
             : editingGroupNames.length > 0
               ? editingGroupNames
@@ -1374,7 +1374,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setCreatingPublishTarget(target)
     if (target === 'team') {
       const resolvedGroupNames =
-        nextGroupNames.length > 0
+        nextGroupNames.length > 0 || publishTarget === 'team'
           ? nextGroupNames
           : availableWritableGroups[0]?.name
             ? [availableWritableGroups[0].name]
@@ -1383,7 +1383,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       onCreateOptionsChange?.(
         {
           scope: 'group',
-          groupName: resolvedGroupNames[0] || availableWritableGroups[0]?.name,
+          groupName: resolvedGroupNames[0],
           groupNames: resolvedGroupNames,
         },
         false,
@@ -1391,7 +1391,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       )
       return
     }
-    setCreatingGroupNames([])
+    setCreatingGroupNames(null)
     onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace', marketplaceTags)
   }
 
@@ -1528,6 +1528,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   }}
                   onReloadSkills={reloadSimpleSkills}
                   defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
+                  onInvalidKnowledgeBindingsChange={setInvalidKnowledgeBindings}
                   onDefaultKnowledgeBaseRefsChange={value =>
                     setSimpleField('simpleDefaultKnowledgeBaseRefs', value)
                   }
@@ -1541,8 +1542,22 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     setSimpleField('simpleInheritBaseCapabilities', value)
                   }
                   toast={toast}
-                  scope={scope}
-                  groupName={groupName}
+                  scope={
+                    isEditing && scopedLeaderBot
+                      ? scopedLeaderBot.namespace === 'default'
+                        ? 'personal'
+                        : 'group'
+                      : creatingPublishTarget === 'team' && !isEditing
+                        ? 'group'
+                        : scope
+                  }
+                  groupName={
+                    isEditing && scopedLeaderBot
+                      ? scopedLeaderBot.namespace
+                      : creatingPublishTarget === 'team' && !isEditing
+                        ? publishGroupNames[0]
+                        : groupName
+                  }
                 />
               </>
             ) : (
@@ -1638,6 +1653,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     onChange={handlePublishTargetChange}
                     existingResource={isEditing}
                     multipleGroups
+                    sourceGroupName={!isEditing ? publishGroupNames[0] : undefined}
                     compact={useSimpleEditor}
                     groupsError={availableWritableGroupsError}
                     groupsLoading={availableWritableGroupsLoading}
@@ -1680,8 +1696,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               onClick={() => void handleSave()}
               disabled={
                 saving ||
+                (publishTarget === 'team' && publishGroupNames.length === 0) ||
                 (useSimpleEditor &&
-                  (leaderBotPending || loadingShells || (!!simpleModelName && simpleLoadingModels)))
+                  (leaderBotPending ||
+                    invalidKnowledgeBindings ||
+                    loadingShells ||
+                    (!!simpleModelName && simpleLoadingModels)))
               }
               variant="primary"
             >

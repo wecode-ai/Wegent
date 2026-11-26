@@ -63,6 +63,7 @@ import type {
 import { KnowledgeBaseActions } from './KnowledgeBaseActions'
 import { KnowledgeMobileList } from './KnowledgeMobileList'
 import { hasAdvancedKnowledgeBases } from '../hooks/useAdvancedKnowledgeMode'
+import { useKnowledgeCatalog } from '@/features/knowledge/useKnowledgeCatalog'
 
 /** Union type for KB data that can be either KnowledgeBase or KnowledgeBaseWithGroupInfo */
 export type KbDataItem = KnowledgeBase | KnowledgeBaseWithGroupInfo
@@ -80,6 +81,8 @@ export interface KnowledgeGroupListPageProps {
   knowledgeBasesWithGroupInfo?: KnowledgeBaseWithGroupInfo[]
   /** Whether data is loading */
   isLoading: boolean
+  catalogAccountId?: number
+  catalogRevision?: number
   /** Go back handler (optional, hidden in "All" mode) */
   onBack?: () => void
   /** Select a knowledge base */
@@ -194,6 +197,8 @@ export function KnowledgeGroupListPage({
   knowledgeBases,
   knowledgeBasesWithGroupInfo,
   isLoading,
+  catalogAccountId,
+  catalogRevision,
   onBack,
   onSelectKb,
   onCreateKb,
@@ -273,6 +278,26 @@ export function KnowledgeGroupListPage({
 
   const getKbRole = getListedPermission
   const showPermissionInfo = dataSource.some(kb => getListedPermission(kb) !== null)
+  const catalogEnabled = catalogAccountId !== undefined && sortBy !== 'permission'
+  const catalog = useKnowledgeCatalog(
+    {
+      query: search,
+      category: showCodeCategory ? category : 'all',
+      include_code: showAdvancedKnowledge,
+      space_level: !spaceFilter
+        ? undefined
+        : spaceFilter === PERSONAL_SPACE_FILTER
+          ? 'personal'
+          : spaceFilter === COMPANY_SPACE_FILTER
+            ? 'organization'
+            : 'group',
+      space_namespace: spaceFilter?.startsWith('group-') ? spaceFilter.slice(6) : undefined,
+      sort_by: sortBy === 'permission' ? 'created' : sortBy,
+      ascending: sortOrder === 'asc',
+    },
+    catalogEnabled ? catalogAccountId : undefined,
+    catalogRevision
+  )
 
   // Sort function for knowledge bases
   const sortKbs = useCallback(
@@ -319,6 +344,7 @@ export function KnowledgeGroupListPage({
 
   // Facet counts and rows share one deduplicated scope before the team filter.
   const candidateKbs = useMemo(() => {
+    if (catalogEnabled) return []
     const seen = new Set<number>()
     return filterByCategory(dataSource).filter(kb => {
       if (!kb.name.toLocaleLowerCase().includes(searchQuery)) return false
@@ -326,20 +352,43 @@ export function KnowledgeGroupListPage({
       seen.add(kb.id)
       return true
     })
-  }, [dataSource, filterByCategory, searchQuery])
+  }, [catalogEnabled, dataSource, filterByCategory, searchQuery])
 
-  const filterGroups = useMemo(
+  const sourceById = useMemo(() => new Map(dataSource.map(row => [row.id, row])), [dataSource])
+  const companyNamespaces = useMemo(
     () =>
-      (availableGroups ?? []).map(group => ({
-        ...group,
-        kbCount: candidateKbs.filter(kb => matchesSpaceFilter(kb, group.id)).length,
-      })),
-    [availableGroups, candidateKbs]
+      new Set(
+        dataSource
+          .filter(row => 'namespace_level' in row && row.namespace_level === 'organization')
+          .map(row => row.namespace)
+      ),
+    [dataSource]
   )
+  const countInSpace = (id: string) => {
+    if (!catalogEnabled) return candidateKbs.filter(kb => matchesSpaceFilter(kb, id)).length
+    const counts = catalog.page?.space_counts ?? {}
+    if (id === PERSONAL_SPACE_FILTER) return counts.default ?? 0
+    if (id !== COMPANY_SPACE_FILTER) return counts[id.replace(/^group-/, '')] ?? 0
+    return [...companyNamespaces].reduce((total, namespace) => total + (counts[namespace] ?? 0), 0)
+  }
+
+  const filterGroups = (availableGroups ?? []).map(group => ({
+    ...group,
+    kbCount: countInSpace(group.id),
+  }))
 
   const filteredKbs = useMemo(
-    () => sortKbs(candidateKbs.filter(kb => !spaceFilter || matchesSpaceFilter(kb, spaceFilter))),
-    [candidateKbs, spaceFilter, sortKbs]
+    (): KbDataItem[] =>
+      catalogEnabled
+        ? (catalog.page?.items ?? []).map(row => ({
+            ...sourceById.get(row.id),
+            ...row,
+            group_id: row.namespace,
+            group_name: row.namespace_display_name ?? row.namespace,
+            group_type: row.namespace_level,
+          }))
+        : sortKbs(candidateKbs.filter(kb => !spaceFilter || matchesSpaceFilter(kb, spaceFilter))),
+    [catalogEnabled, catalog.page, sourceById, candidateKbs, spaceFilter, sortKbs]
   )
   const hasActiveFilters = Boolean(searchQuery || category !== 'all' || spaceFilter)
   const canClearFilters = Boolean(
@@ -741,7 +790,7 @@ export function KnowledgeGroupListPage({
                 className="shrink-0 text-sm tabular-nums text-text-muted"
                 data-testid="knowledge-result-count"
               >
-                {filteredKbs.length}
+                {catalogEnabled ? (catalog.page?.total ?? 0) : filteredKbs.length}
               </span>
             </div>
           </div>
@@ -789,14 +838,8 @@ export function KnowledgeGroupListPage({
             <div className={mobile ? 'min-w-0 flex-1' : undefined}>
               <KnowledgeLibraryFilter
                 groups={filterGroups}
-                personalCount={
-                  candidateKbs.filter(kb => matchesSpaceFilter(kb, PERSONAL_SPACE_FILTER)).length
-                }
-                companyCount={
-                  showCompanySpace
-                    ? candidateKbs.filter(kb => matchesSpaceFilter(kb, COMPANY_SPACE_FILTER)).length
-                    : undefined
-                }
+                personalCount={countInSpace(PERSONAL_SPACE_FILTER)}
+                companyCount={showCompanySpace ? countInSpace(COMPANY_SPACE_FILTER) : undefined}
                 value={spaceFilter ?? null}
                 onValueChange={onFilterGroupChange}
                 mobile={mobile}
@@ -839,7 +882,7 @@ export function KnowledgeGroupListPage({
 
       {/* Content */}
       <div className="flex-1 overflow-auto min-w-0">
-        {isLoading ? (
+        {(catalogEnabled ? catalog.pending && !catalog.page : isLoading) ? (
           <div className="flex items-center justify-center py-12">
             <Spinner />
           </div>
@@ -850,7 +893,9 @@ export function KnowledgeGroupListPage({
           // Group section mode: show native and shared sub-sections
           renderGroupSectionContent()
         ) : filteredKbs.length === 0 ? (
-          renderEmptyState()
+          catalogEnabled && catalog.failed ? null : (
+            renderEmptyState()
+          )
         ) : mobile ? (
           <KnowledgeMobileList
             items={filteredKbs}
@@ -872,6 +917,19 @@ export function KnowledgeGroupListPage({
             {renderTableHeader(isAllMode, showFromColumn)}
             {renderTableRows(filteredKbs, isAllMode, showFromColumn)}
           </Table>
+        )}
+        {catalogEnabled && (catalog.failed || catalog.page?.has_more) && (
+          <div className="flex flex-col items-center gap-2 p-3">
+            {catalog.failed && <p role="alert">{t('fetch_error')}</p>}
+            <Button
+              variant="outline"
+              disabled={catalog.pending}
+              data-testid={catalog.failed ? 'knowledge-catalog-retry' : 'knowledge-catalog-more'}
+              onClick={catalog.failed ? catalog.retry : catalog.loadMore}
+            >
+              {t(catalog.failed ? 'picker.retry' : 'document.groupList.loadMore')}
+            </Button>
+          </div>
         )}
       </div>
     </div>

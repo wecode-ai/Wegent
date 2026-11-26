@@ -33,6 +33,10 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.capability_lookup import ExecutionCapabilityLookup
 from app.services.group_permission import check_group_permission
+from app.services.knowledge.catalog import (
+    KnowledgeCatalogFilters,
+    list_knowledge_catalog,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.skill_binding_policy import (
     SkillBindingPolicy,
@@ -244,18 +248,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if namespace == "default":
             return
 
-        grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(
-            db=db,
-            user_id=user_id,
+        candidate_ids = tuple(ref.id for ref in refs)
+        eligible = list_knowledge_catalog(
+            db,
+            user_id,
+            KnowledgeCatalogFilters(
+                binding_group=namespace,
+                candidate_ids=candidate_ids,
+                limit=len(candidate_ids),
+            ),
         )
-
-        allowed_ids = {kb.id for kb in grouped_kbs.organization.knowledge_bases}
-        current_group = next(
-            (group for group in grouped_kbs.groups if group.group_name == namespace),
-            None,
-        )
-        if current_group is not None:
-            allowed_ids.update(kb.id for kb in current_group.knowledge_bases)
+        allowed_ids = {kb.id for kb in eligible.items}
 
         invalid_refs = [ref.name for ref in refs if ref.id not in allowed_ids]
         if invalid_refs:

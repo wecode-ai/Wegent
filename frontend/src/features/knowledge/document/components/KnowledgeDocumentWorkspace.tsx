@@ -26,6 +26,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { parseKbUrl } from '@/utils/knowledgeUrl'
 import { useKnowledgeSidebar } from '../hooks/useKnowledgeSidebar'
+import { toKnowledgeBase } from '../navigation'
 import {
   hasAdvancedKnowledgeBases,
   useAdvancedKnowledgeMode,
@@ -50,7 +51,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { CodeWikiView, KnowledgeBase } from '@/types/knowledge'
+import type { CodeWikiView } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -107,6 +108,10 @@ function KnowledgeDocumentSession({
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar({ showAdvancedKnowledge })
+  const [catalogRevision, setCatalogRevision] = useState(0)
+  useEffect(() => {
+    setCatalogRevision(revision => revision + 1)
+  }, [sidebar.allKnowledgeBasesWithGroupInfo])
   const visibleKnowledgeBases = sidebar.visibleKnowledgeBases
   const accessKb = sidebar.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === accessKbId)
   useEffect(() => {
@@ -399,8 +404,10 @@ function KnowledgeDocumentSession({
   )
 
   const handleSelectKb = useCallback(
-    (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
-      const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+    (kb: KbDataItem | { id: number; name: string; namespace: string }) => {
+      const fullKb =
+        sidebar.allKnowledgeBases.find(k => k.id === kb.id) ??
+        ('group_type' in kb ? toKnowledgeBase(kb) : undefined)
       if (fullKb) {
         const isKbSwitch = fullKb.id !== sidebar.selectedKbId
         // Always update state and URL without causing a page remount to avoid UI flickering.
@@ -621,6 +628,8 @@ function KnowledgeDocumentSession({
         knowledgeBases={visibleKnowledgeBases.all}
         knowledgeBasesWithGroupInfo={rows}
         isLoading={sidebar.isGroupsLoading && !sidebar.hasLoaded}
+        catalogAccountId={sidebar.viewMode === 'all' ? user?.id : undefined}
+        catalogRevision={catalogRevision + permissionRevision}
         onSelectKb={handleSelectKb}
         onCreateKb={type => {
           createTrigger.current = document.activeElement as HTMLElement

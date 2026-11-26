@@ -38,6 +38,11 @@ from app.schemas.knowledge_external import (
     ExternalSearchContentRecord,
     ExternalSearchContentResponse,
 )
+from app.services.knowledge.catalog import (
+    KnowledgeCatalogFilters,
+    KnowledgeCategory,
+    get_document_counts,
+)
 from app.services.knowledge.document_download_policy import is_original_download_allowed
 from app.services.knowledge.document_text_sources import (
     DocumentTextSources,
@@ -56,12 +61,10 @@ from app.services.knowledge.external_document_access import (
 from app.services.knowledge.external_nodes import (
     ExternalKnowledgeInputError,
     count_nodes,
-    get_document_counts,
     list_direct_nodes,
     list_recursive_nodes,
 )
 from app.services.knowledge.knowledge_service import (
-    ExternalKnowledgeBaseListFilters,
     KnowledgeService,
 )
 from app.services.knowledge.namespace_utils import (
@@ -111,7 +114,7 @@ class SearchPreparation:
 class KnowledgeBaseListPreparation:
     """Validated and normalized knowledge base list parameters."""
 
-    filters: ExternalKnowledgeBaseListFilters
+    filters: KnowledgeCatalogFilters
 
 
 def _normalize_url_path(path: str) -> str:
@@ -218,6 +221,10 @@ def validate_knowledge_base_list_params(
     owner_user_ids: Optional[list[int]],
     limit: int,
     offset: int,
+    category: KnowledgeCategory = "all",
+    include_code: bool = True,
+    space_level: NamespaceLevel | None = None,
+    space_namespace: str | None = None,
 ) -> tuple[Optional[KnowledgeBaseListPreparation], Optional[str]]:
     """Validate and normalize list-knowledge-bases tool parameters."""
     if not isinstance(scope, str):
@@ -250,11 +257,15 @@ def validate_knowledge_base_list_params(
 
     return (
         KnowledgeBaseListPreparation(
-            filters=ExternalKnowledgeBaseListFilters(
+            filters=KnowledgeCatalogFilters(
                 scope=scope_enum,
                 group_name=normalized_group_name,
                 keyword=normalized_keyword,
                 owner_user_ids=normalized_owner_user_ids,
+                category=category,
+                include_code=include_code,
+                space_level=space_level,
+                space_namespace=(space_namespace or "").strip() or None,
                 limit=limit,
                 offset=offset,
             ),
@@ -294,7 +305,7 @@ def _resolve_external_namespace_fields(
 def _list_knowledge_bases_sync(
     *,
     user_id: int,
-    filters: ExternalKnowledgeBaseListFilters,
+    filters: KnowledgeCatalogFilters,
 ) -> dict[str, Any]:
     db = SessionLocal()
     try:
@@ -645,8 +656,12 @@ async def wegent_kb_list_knowledge_bases(
     limit: int = DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT,
     offset: int = 0,
     response_format: Literal["legacy", "structured"] = "legacy",
+    category: KnowledgeCategory = "all",
+    include_code: bool = True,
+    space_level: NamespaceLevel | None = None,
+    space_namespace: str | None = None,
 ) -> ExternalToolResult:
-    """List knowledge bases visible to the authenticated external user."""
+    """List visible knowledge bases, matching query against the library name."""
     format_response = partial(_format_tool_response, response_format=response_format)
     user = _get_external_user()
     if not user:
@@ -659,6 +674,10 @@ async def wegent_kb_list_knowledge_bases(
         owner_user_ids=owner_user_ids,
         limit=limit,
         offset=offset,
+        category=category,
+        include_code=include_code,
+        space_level=space_level,
+        space_namespace=space_namespace,
     )
     if error:
         return format_response(_json_error(error))

@@ -9,15 +9,26 @@ import { Building2, Clock3, Database, Loader2, Plus, User, Users, XIcon } from '
 import type { TFunction } from 'i18next'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { useKnowledgeCatalog } from '@/features/knowledge/useKnowledgeCatalog'
+import { KnowledgeBaseIcon } from '@/features/knowledge/document/components/KnowledgeBaseIcon'
+import {
+  KnowledgeBaseCategoryFilter,
+  type KnowledgeBaseCategory,
+} from '@/features/knowledge/document/components/KnowledgeBaseCategoryFilter'
+import { useAdvancedKnowledgeMode } from '@/features/knowledge/document/hooks/useAdvancedKnowledgeMode'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBaseDefaultRef } from '@/types/api'
 import {
   KnowledgeBaseOption,
   KnowledgeBaseOptionSource,
+  toCatalogKnowledgeBaseOption,
+  useInvalidKnowledgeBaseBindings,
   useKnowledgeBaseOptions,
 } from '../../hooks/useKnowledgeBaseOptions'
 
@@ -28,6 +39,7 @@ interface KnowledgeBaseMultiSelectorProps {
   allowedSources?: KnowledgeBaseOptionSource[]
   allowedGroupNamespaces?: string[]
   helperText?: string | null
+  onInvalidBindingsChange?: (invalid: boolean) => void
 }
 
 interface GroupedKnowledgeBaseOption {
@@ -62,10 +74,7 @@ function matchesSearch(option: KnowledgeBaseOption, search: string): boolean {
     return true
   }
 
-  return [option.name, option.description || '', option.groupName, option.namespace]
-    .join(' ')
-    .toLowerCase()
-    .includes(normalizedSearch)
+  return option.name.toLowerCase().includes(normalizedSearch)
 }
 
 function getSourceIcon(source: KnowledgeBaseOptionSource) {
@@ -174,11 +183,18 @@ function groupAvailableKnowledgeBases(
 interface KnowledgeBaseOptionRowProps {
   item: KnowledgeBaseOption
   disabled: boolean
+  selected?: boolean
   onSelect: (item: KnowledgeBaseOption) => void
   t: TFunction
 }
 
-function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOptionRowProps) {
+function KnowledgeBaseOptionRow({
+  item,
+  disabled,
+  selected,
+  onSelect,
+  t,
+}: KnowledgeBaseOptionRowProps) {
   const SourceIcon = getSourceIcon(item.source)
   const updatedAt = formatUpdatedAt(item.updatedAt)
   const documentText = formatDocumentCount(item.documentCount || 0, t)
@@ -195,6 +211,7 @@ function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOp
         }
       }}
       role="button"
+      aria-disabled={disabled}
       tabIndex={0}
       onKeyDown={event => {
         if (disabled) {
@@ -210,7 +227,7 @@ function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOp
     >
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
-          <Database className="h-4 w-4 flex-shrink-0 text-primary" />
+          <KnowledgeBaseIcon kbType={item.kbType} className="h-4 w-4 flex-shrink-0 text-primary" />
           <span className="text-sm font-medium text-text-primary">{item.name}</span>
           <Badge variant="info" size="sm" className="gap-1">
             <SourceIcon className="h-3 w-3" />
@@ -227,7 +244,7 @@ function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOp
             </Badge>
           ) : null}
           <Badge variant="secondary" size="sm">
-            {documentText}
+            {selected ? t('knowledge:picker.alreadySelected') : documentText}
           </Badge>
         </div>
 
@@ -252,15 +269,23 @@ interface SelectedKnowledgeBaseChipProps {
   item: KnowledgeBaseOption
   disabled: boolean
   onRemove: (knowledgeBaseId: number) => void
+  invalid: boolean
 }
 
-function SelectedKnowledgeBaseChip({ item, disabled, onRemove }: SelectedKnowledgeBaseChipProps) {
+function SelectedKnowledgeBaseChip({
+  item,
+  disabled,
+  invalid,
+  onRemove,
+}: SelectedKnowledgeBaseChipProps) {
+  const { t } = useTranslation('knowledge')
   return (
     <div
       className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
       data-testid={`default-knowledge-base-chip-${item.id}`}
     >
       <span>{item.name}</span>
+      {invalid && <span className="text-error">{t('picker.invalidBinding')}</span>}
       <button
         type="button"
         onClick={() => onRemove(item.id)}
@@ -270,8 +295,9 @@ function SelectedKnowledgeBaseChip({ item, disabled, onRemove }: SelectedKnowled
           disabled ? 'cursor-not-allowed opacity-50' : ''
         )}
         data-testid={`default-knowledge-base-remove-${item.id}`}
+        aria-label={t('picker.removeBinding', { name: item.name })}
       >
-        <XIcon className="h-3 w-3" />
+        {invalid ? t('picker.removeBinding', { name: item.name }) : <XIcon className="h-3 w-3" />}
       </button>
     </div>
   )
@@ -284,11 +310,42 @@ export function KnowledgeBaseMultiSelector({
   allowedSources,
   allowedGroupNamespaces,
   helperText,
+  onInvalidBindingsChange,
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
-  const { options, loading, error } = useKnowledgeBaseOptions()
+  const { user } = useUser()
+  const { showAdvancedKnowledge } = useAdvancedKnowledgeMode()
+  const { options, loading, error } = useKnowledgeBaseOptions(user?.id === undefined)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
+  const [space, setSpace] = useState<'personal' | 'group' | 'organization' | undefined>()
+  const organizationOnly = allowedSources?.length === 1 && allowedSources[0] === 'organization'
+  const bindingGroup = allowedGroupNamespaces?.[0]
+  const invalidIds = useInvalidKnowledgeBaseBindings(
+    value.map(item => item.id),
+    disabled ? undefined : user?.id,
+    bindingGroup,
+    organizationOnly
+  )
+  const hasInvalidBindings = invalidIds.size > 0
+  useEffect(() => {
+    onInvalidBindingsChange?.(hasInvalidBindings)
+  }, [hasInvalidBindings, onInvalidBindingsChange])
+  const catalog = useKnowledgeCatalog(
+    {
+      query: search,
+      include_code: showAdvancedKnowledge,
+      category: showAdvancedKnowledge ? category : 'all',
+      space_level: organizationOnly ? 'organization' : space,
+      binding_group: bindingGroup,
+    },
+    open && !disabled ? user?.id : undefined
+  )
+  const catalogOptions = useMemo(
+    () => (catalog.page?.items ?? []).map(row => toCatalogKnowledgeBaseOption(row, user?.id ?? 0)),
+    [catalog.page, user?.id]
+  )
   const [triggerWidth, setTriggerWidth] = useState<number>(0)
   const listRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -320,8 +377,14 @@ export function KnowledgeBaseMultiSelector({
 
   const selectedIds = useMemo(() => new Set(value.map(item => item.id)), [value])
   const optionsById = useMemo(
-    () => new Map(filteredOptions.map(option => [option.id, option])),
-    [filteredOptions]
+    () =>
+      new Map(
+        (user?.id === undefined ? filteredOptions : catalogOptions).map(option => [
+          option.id,
+          option,
+        ])
+      ),
+    [filteredOptions, catalogOptions, user?.id]
   )
 
   const selectedItems = useMemo(
@@ -341,9 +404,8 @@ export function KnowledgeBaseMultiSelector({
   )
 
   const handleSelect = (option: KnowledgeBaseOption) => {
+    if (selectedIds.has(option.id)) return
     onChange([...value, { id: option.id, name: option.name }])
-    setOpen(false)
-    setSearch('')
   }
 
   const handleRemove = (knowledgeBaseId: number) => {
@@ -369,7 +431,7 @@ export function KnowledgeBaseMultiSelector({
   }
 
   const renderListContent = () => {
-    if (loading) {
+    if (user?.id === undefined ? loading : catalog.pending && !catalog.page) {
       return (
         <div className="flex items-center justify-center gap-2 py-8 text-sm text-text-muted">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -378,11 +440,44 @@ export function KnowledgeBaseMultiSelector({
       )
     }
 
-    if (error) {
+    if (user?.id === undefined && error) {
       return (
         <div className="py-8 text-center text-sm text-text-muted">
           {t('common:bot.default_knowledge_bases_load_failed', '知识库加载失败')}
         </div>
+      )
+    }
+
+    if (user?.id !== undefined && (catalogOptions.length || catalog.failed)) {
+      return (
+        <>
+          {catalogOptions.map(option => (
+            <KnowledgeBaseOptionRow
+              key={option.id}
+              item={option}
+              disabled={disabled || selectedIds.has(option.id)}
+              selected={selectedIds.has(option.id)}
+              onSelect={handleSelect}
+              t={t}
+            />
+          ))}
+          {(catalog.failed || catalog.page?.has_more) && (
+            <div className="flex flex-col items-center gap-2 p-3">
+              {catalog.failed && <p role="alert">{t('knowledge:fetch_error')}</p>}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={catalog.pending}
+                data-testid={
+                  catalog.failed ? 'default-knowledge-base-retry' : 'default-knowledge-base-more'
+                }
+                onClick={catalog.failed ? catalog.retry : catalog.loadMore}
+              >
+                {t(catalog.failed ? 'common:actions.retry' : 'common:actions.loadMore')}
+              </Button>
+            </div>
+          )}
+        </>
       )
     }
 
@@ -462,9 +557,39 @@ export function KnowledgeBaseMultiSelector({
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder={t('common:bot.default_knowledge_bases_search_placeholder', '搜索知识库')}
-              disabled={disabled || loading}
+              disabled={disabled}
               data-testid="default-knowledge-base-search-input"
             />
+            {user?.id !== undefined && !organizationOnly && (
+              <select
+                aria-label={t('knowledge:document.navigation.filters')}
+                className="mt-2 min-h-11 w-full rounded-md border border-border bg-background px-2 text-sm"
+                value={space ?? ''}
+                onChange={event => {
+                  const value = event.target.value
+                  setSpace(
+                    value === 'personal' || value === 'group' || value === 'organization'
+                      ? value
+                      : undefined
+                  )
+                }}
+                data-testid="default-knowledge-base-space-filter"
+              >
+                <option value="">{t('knowledge:document.navigation.filters')}</option>
+                <option value="personal">{t('knowledge:document.navigation.personalSpace')}</option>
+                <option value="group">{t('knowledge:picker.sources.group')}</option>
+                <option value="organization">{t('knowledge:picker.sources.organization')}</option>
+              </select>
+            )}
+            {user?.id !== undefined && showAdvancedKnowledge && (
+              <div className="mt-2">
+                <KnowledgeBaseCategoryFilter
+                  value={category}
+                  onValueChange={setCategory}
+                  showCode
+                />
+              </div>
+            )}
           </div>
 
           <div ref={listRef} className="max-h-[320px] overflow-y-auto" onWheel={handleWheel}>
@@ -479,10 +604,16 @@ export function KnowledgeBaseMultiSelector({
             key={item.id}
             item={item}
             disabled={disabled}
+            invalid={invalidIds.has(item.id)}
             onRemove={handleRemove}
           />
         ))}
       </div>
+      {hasInvalidBindings && (
+        <p className="text-xs text-error" role="status">
+          {t('knowledge:picker.resolveBinding')}
+        </p>
+      )}
 
       {helperText === null ? null : (
         <p className="text-xs text-text-muted">

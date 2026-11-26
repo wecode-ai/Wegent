@@ -173,6 +173,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const { t, i18n } = useTranslation()
 
   const [botSaving, setBotSaving] = useState(false)
+  const [invalidKnowledgeBindings, setInvalidKnowledgeBindings] = useState(false)
   const [shells, setShells] = useState<UnifiedShell[]>([])
   const [loadingShells, setLoadingShells] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
@@ -200,6 +201,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null
+  const knowledgeBindingNamespace =
+    editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default'
 
   const baseBot = useMemo(() => {
     if (editingBot) {
@@ -723,6 +726,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Validate bot form data
   const validateBot = useCallback((): BotValidationResult => {
+    if (!isDifyAgent && invalidKnowledgeBindings) {
+      return { isValid: false, error: t('knowledge:picker.resolveBinding') }
+    }
     if (!botName.trim() || !agentName.trim()) {
       return { isValid: false, error: t('common:bot.errors.required') }
     }
@@ -808,6 +814,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return { isValid: true }
   }, [
     botName,
+    invalidKnowledgeBindings,
     agentName,
     isDifyAgent,
     agentConfig,
@@ -1250,7 +1257,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
               <Button
                 onClick={handleSave}
-                disabled={botSaving || targetGroupsLoading || targetGroupsError}
+                disabled={
+                  botSaving ||
+                  targetGroupsLoading ||
+                  targetGroupsError ||
+                  (!isDifyAgent && invalidKnowledgeBindings)
+                }
                 variant="primary"
                 data-testid="save-button"
               >
@@ -1788,18 +1800,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <KnowledgeBaseMultiSelector
                       value={defaultKnowledgeBaseRefs}
                       onChange={setDefaultKnowledgeBaseRefs}
+                      onInvalidBindingsChange={setInvalidKnowledgeBindings}
                       disabled={readOnly}
                       allowedSources={
                         scope === 'public'
                           ? ['organization']
-                          : scope === 'group'
-                            ? groupName
-                              ? ['group', 'organization']
-                              : ['organization']
-                            : ['personal', 'group', 'organization']
+                          : knowledgeBindingNamespace !== 'default'
+                            ? ['group', 'organization']
+                            : scope === 'group' && !editingBot
+                              ? ['organization']
+                              : ['personal', 'group', 'organization']
                       }
                       allowedGroupNamespaces={
-                        scope === 'group' && groupName ? [groupName] : undefined
+                        scope !== 'public' && knowledgeBindingNamespace !== 'default'
+                          ? [knowledgeBindingNamespace]
+                          : undefined
                       }
                     />
                   </div>

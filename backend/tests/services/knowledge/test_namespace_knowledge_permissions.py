@@ -29,9 +29,12 @@ from app.schemas.knowledge import (
 )
 from app.schemas.namespace import GroupRole
 from app.services.knowledge import knowledge_visibility_query
+from app.services.knowledge.catalog import (
+    KnowledgeCatalogFilters,
+    list_knowledge_catalog,
+)
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import (
-    ExternalKnowledgeBaseListFilters,
     KnowledgeService,
 )
 from app.services.knowledge.knowledge_visibility_query import (
@@ -722,7 +725,7 @@ def test_paginated_lists_do_not_materialize_all_entity_authorized_kbs(
         KnowledgeService.list_external_knowledge_bases(
             test_db,
             user_id=user.id,
-            filters=ExternalKnowledgeBaseListFilters(scope=ResourceScope.ALL),
+            filters=KnowledgeCatalogFilters(scope=ResourceScope.ALL),
         )
 
     collect_all.assert_not_called()
@@ -1826,6 +1829,32 @@ def test_kb_shown_in_all_target_groups_via_namespace_entity(
     }
     assert "group-a" in group_names_with_kb
     assert "group-b" in group_names_with_kb
+
+    secondary_only_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-to-secondary", namespace="default"),
+    )
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=secondary_only_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_b.id),
+    )
+    for group, expected_ids in (
+        (group_a, {knowledge_base_id}),
+        (group_b, {knowledge_base_id, secondary_only_id}),
+    ):
+        page = list_knowledge_catalog(
+            test_db,
+            member.id,
+            KnowledgeCatalogFilters(keyword="shared-to", binding_group=group.name),
+        )
+        assert {item.id for item in page.items} == expected_ids
+        assert page.total == len(expected_ids)
 
 
 @pytest.mark.unit
