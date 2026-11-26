@@ -91,7 +91,8 @@ export function IssueProjectChatThread({
     const target = messageRuntimeExecutionTarget(message, execution)
     const singleExecution = singleExecutionForMessage?.(target?.activityMessage ?? message) ?? false
     const dispatchRole =
-      message.sender.type === 'agent' && message.metadata.dispatch_role === 'manager'
+      message.metadata.dispatch_role === 'manager' &&
+      (message.sender.type === 'agent' || message.metadata.activity_type === 'manager_assignment')
         ? 'manager'
         : message.sender.type === 'agent'
           ? 'member'

@@ -277,6 +277,90 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 
+  test('human lead dispatches a member from the Issue and submits its decision', async ({
+    page,
+    request,
+  }, info) => {
+    test.setTimeout(150_000)
+    if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
+    const fixture = await createProjectFixture(
+      page,
+      Date.now().toString(36),
+      'Human release review'
+    )
+    const me = await apiRequest<{ id: number }>(request, model.token, '/api/users/me')
+    const agent = await createProjectAgent(page, 'Release reviewer', model.modelName)
+    const group = await createCollaborationGroup(page, 'Release group', {
+      agentIds: [String(agent.wegentTeamId)],
+      humanId: String(me.id),
+      leader: { id: String(me.id), type: 'human' },
+    })
+    const instruction = 'Check the release log ' + fixture.issueId
+    const clear = await configureIssueDispatchModelScenario(request, instruction, [
+      { responseContent: 'Release log checked.' },
+    ])
+    try {
+      await page.goto(fixture.projectPath + '/issues/' + fixture.issueId)
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId('cloud-todo-detail-assignee-option-group:' + group).click()
+      const submit = page.getByTestId('issue-coordination-submit')
+      await expect(submit).toBeDisabled()
+      await page.getByTestId(/^issue-dispatch-instructions-/).fill(instruction)
+      await captureEvidence(page, info, 'human-lead-round')
+      const posted = page.waitForResponse(
+        resp => resp.url().endsWith('/executions/batch') && resp.request().method() === 'POST'
+      )
+      await submit.click()
+      expect((await posted).ok()).toBe(true)
+      const executions = await waitForCollaborationExecutions(
+        request,
+        model.token,
+        fixture.projectId,
+        fixture.issueId,
+        1
+      )
+      expect(executions[0]).toMatchObject({
+        agentId: agent.id,
+        status: 'completed',
+        executionNote: 'Release log checked.',
+      })
+      await page.reload()
+      await page.getByTestId('issue-coordination-action').click()
+      await page.getByTestId('issue-coordination-action-option-decision').click()
+      await page.getByTestId('issue-decision-reason').fill('The reviewer verified the release log.')
+      await captureEvidence(page, info, 'human-lead-decision')
+      const decided = page.waitForResponse(
+        resp =>
+          resp.url().endsWith('/executions/manager-decision') && resp.request().method() === 'POST'
+      )
+      await submit.click()
+      expect((await decided).ok()).toBe(true)
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
+      const activity = page.locator('[data-testid^="cloud-task-activity-card-"]')
+      await expect(activity.filter({ hasText: instruction })).toContainText('Release reviewer')
+      await expect(activity.filter({ hasText: 'Release log checked.' })).toContainText(
+        'Release reviewer'
+      )
+      await captureEvidence(page, info, 'human-lead-delivered')
+    } finally {
+      await clear()
+      for (const path of [
+        '/api/v1/cloud-projects/' + fixture.projectId,
+        '/api/v1/workspaces/' + fixture.workspaceId,
+      ]) {
+        const current = await apiRequest<{ version: number }>(request, model.token, path)
+        const deleted = await request.delete(
+          `${PROVIDER_NATIVE_API_URL}${path}?version=${current.version}`,
+          { headers: authHeaders(model.token) }
+        )
+        expect(deleted.ok(), await deleted.text()).toBe(true)
+      }
+    }
+  })
+
   test('registers an assistant and creates an idempotent risk-scoped dispatch', async ({
     page,
     request,
