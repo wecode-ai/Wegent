@@ -12,6 +12,7 @@ import {
   activateLinuxMainWindow,
   clickLinuxPointer,
   moveLinuxWindowPointer,
+  moveWindowsWindowPointer,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -112,16 +113,24 @@ async function verifySearchOverlay(
   { control, bridgeCall, address, resultDir, command, read },
   inspectDialog
 ) {
-  // X11 owns the physical cursor while CDP injects independent mouse positions.
-  // Keep the Linux search interaction on one input path, including the guest.
+  // Keep pointer motion and clicks on the same native input path as the
+  // compositor when moving between the host and its embedded guest.
   const linuxWindow = process.platform === 'linux' ? await activateLinuxMainWindow(control) : null
-  const movePointer = point =>
-    linuxWindow
-      ? moveLinuxWindowPointer(linuxWindow, point)
-      : command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-  const pressAndRelease = point => (linuxWindow ? clickLinuxPointer() : clickPoint(command, point))
+  const onWindows = process.platform === 'win32'
+  if (onWindows) await control.command('focusMainWindow', 'body')
+  const movePointer = point => {
+    if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point)
+    if (onWindows) return moveWindowsWindowPointer(control, point)
+    return command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+  }
+  const pressAndRelease = point => {
+    if (linuxWindow) return clickLinuxPointer()
+    if (onWindows) return moveWindowsWindowPointer(control, point, true)
+    return clickPoint(command, point)
+  }
   const click = async point => {
     if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point, 1)
+    if (onWindows) return moveWindowsWindowPointer(control, point, true)
     await movePointer(point)
     await pressAndRelease(point)
   }
@@ -170,7 +179,7 @@ async function verifySearchOverlay(
   try {
     await read(`(() => {
       const abort = new AbortController()
-      const observation = { abort, event: null }
+      const observation = { abort, event: null, clicks: {} }
       window.__weworkSearchTriggerMotion = observation
       document.addEventListener('pointermove', event => {
         observation.event = {
@@ -179,6 +188,15 @@ async function verifySearchOverlay(
           onTrigger: event.target instanceof Element && Boolean(event.target.closest('[data-testid="runtime-search-button"]'))
         }
       }, { capture: true, signal: abort.signal })
+      for (const type of ['pointerdown', 'pointerup', 'click']) {
+        document.addEventListener(type, event => {
+          const target = event.target instanceof Element ? event.target : null
+          observation.clicks[type] = {
+            x: event.clientX, y: event.clientY, trusted: event.isTrusted,
+            target: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? target?.localName
+          }
+        }, { capture: true, signal: abort.signal })
+      }
       return true
     })()`)
     let offset = 1
@@ -208,6 +226,19 @@ async function verifySearchOverlay(
     )
     console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
     await pressAndRelease(ready.point)
+    await waitForValue(
+      () =>
+        read(`(() => {
+          const input = document.querySelector(${JSON.stringify(searchInput)})
+          const active = document.activeElement
+          return { open: Boolean(input), focused: Boolean(input && input === active),
+            active: active?.dataset.testid || active?.localName,
+            pointer: window.__weworkSearchTriggerMotion.clicks }
+        })()`),
+      state => state.focused,
+      'Opening search must focus its input',
+      5_000
+    )
   } finally {
     await read(`(() => {
       window.__weworkSearchTriggerMotion?.abort.abort()
@@ -215,18 +246,6 @@ async function verifySearchOverlay(
       return true
     })()`)
   }
-  await waitForValue(
-    () =>
-      read(`(() => {
-      const input = document.querySelector(${JSON.stringify(searchInput)})
-      const active = document.activeElement
-      return { open: Boolean(input), focused: Boolean(input && input === active),
-        active: active?.dataset.testid || active?.localName }
-    })()`),
-    state => state.focused,
-    'Opening search must focus its input',
-    5_000
-  )
   const focus = await inspectDialog?.()
   const overlap = await read(`(() => {
       const close = document.querySelector(${JSON.stringify(searchCloseButton)}).getBoundingClientRect()

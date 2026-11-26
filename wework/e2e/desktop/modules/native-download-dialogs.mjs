@@ -51,6 +51,13 @@ function downloadDialogsForApp(control, timeoutMs = 2_000) {
     : listVisibleDialogsForPid(control.applicationProcessId, timeoutMs)
 }
 
+export function moveWindowsWindowPointer(control, { x, y }, click = false) {
+  return windowsDownloadDialog(control, click ? 'click-pointer' : 'move-pointer', {
+    timeoutMs: 2_000,
+    args: ['-X', String(Math.round(x)), '-Y', String(Math.round(y))],
+  })
+}
+
 function isVanishedX11Window(error) {
   return error?.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? '')
 }

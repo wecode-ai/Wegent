@@ -1,6 +1,6 @@
 param(
     [int]$AppProcessId,
-    [ValidateSet('list', 'save', 'cancel', 'context-menu')][string]$Action,
+    [ValidateSet('list', 'save', 'cancel', 'context-menu', 'move-pointer', 'click-pointer')][string]$Action,
     [int]$TimeoutMs = 10000,
     [int]$X,
     [int]$Y
@@ -25,7 +25,7 @@ public static class DownloadDialogInput {
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window, uint flags);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
   [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
-  public static void RightClick(int pid, int x, int y) {
+  public static void MovePointer(int pid, int x, int y) {
     var window = GetForegroundWindow();
     int owner;
     GetWindowThreadProcessId(window, out owner);
@@ -34,20 +34,40 @@ public static class DownloadDialogInput {
     var point = new Point { X = (int)Math.Round(x * scale), Y = (int)Math.Round(y * scale) };
     if (!ClientToScreen(window, ref point) || !SetCursorPos(point.X, point.Y))
       throw new InvalidOperationException("Could not move the pointer into the isolated app");
+  }
+  public static void RightClick(int pid, int x, int y) {
+    MovePointer(pid, x, y);
     mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero);
     mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero);
+  }
+  public static void LeftClick(int pid, int x, int y) {
+    MovePointer(pid, x, y);
+    ClickLeftButton();
   }
   public static void ClickDialogButton(IntPtr dialog, int x, int y) {
     var target = WindowFromPoint(new Point { X = x, Y = y });
     if (GetForegroundWindow() != dialog || GetAncestor(target, 2) != dialog)
       throw new InvalidOperationException("The button is not exposed in the foreground download dialog");
     if (!SetCursorPos(x, y)) throw new InvalidOperationException("Could not move the pointer onto the download dialog button");
+    ClickLeftButton();
+  }
+  static void ClickLeftButton() {
     mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
     mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
   }
 }
 '@
 [void][DownloadDialogInput]::SetThreadDpiAwarenessContext([IntPtr](-4))
+
+if ($Action -eq 'move-pointer') {
+    [DownloadDialogInput]::MovePointer($AppProcessId, $X, $Y)
+    exit 0
+}
+
+if ($Action -eq 'click-pointer') {
+    [DownloadDialogInput]::LeftClick($AppProcessId, $X, $Y)
+    exit 0
+}
 
 function Find-OwnedWindows {
     $condition = [System.Windows.Automation.PropertyCondition]::new(
