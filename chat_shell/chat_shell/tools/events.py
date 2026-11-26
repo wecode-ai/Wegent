@@ -237,18 +237,20 @@ def _handle_tool_start(
         if should_display_tool_details(tool_name)
         else None
     )
+    started_at = int(time.time() * 1000)
 
-    if not event_data.get("tool_arguments_streamed"):
-        run_async(
-            emitter.tool_start(
-                call_id=tool_use_id,
-                name=tool_name,
-                arguments=arguments,
-                display_name=display_name,
-                tool_protocol=tool_protocol,
-                server_label=server_label,
-            )
+    run_async(
+        emitter.tool_start(
+            call_id=tool_use_id,
+            name=tool_name,
+            arguments=arguments,
+            display_name=display_name,
+            tool_protocol=tool_protocol,
+            server_label=server_label,
+            started_at=started_at,
+            skip_arguments=bool(event_data.get("tool_arguments_streamed")),
         )
+    )
 
 
 def _handle_tool_argument_start(
@@ -434,6 +436,7 @@ def _handle_tool_end(
             server_label=server_label,
             status=status,
             error=error,
+            completed_at=int(time.time() * 1000),
         )
     )
 

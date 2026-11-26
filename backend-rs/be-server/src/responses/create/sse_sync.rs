@@ -95,6 +95,16 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
 /// Package execution and automatic pipeline stages use the callback's durable
 /// terminal and notification path.
 impl<M: Mysql, R: Redis> sse_sync::ExecutionLifecycle for ConsumerContext<'_, M, R> {
+    async fn persist_timing(&self, event: &ExecutionEvent) {
+        if let Err(error) = crate::internal_callback::timing_spans::persist_callback_timing(
+            self.mysql, event, None, None,
+        )
+        .await
+        {
+            tracing::warn!(%error, "chat-shell timing span persistence failed");
+        }
+    }
+
     async fn emit_package_event(&self, event: &ExecutionEvent) -> Result<(), Failure> {
         let app = self.app.ok_or_else(|| {
             Failure::persisted("Chat Shell dispatch lost application state".to_owned())

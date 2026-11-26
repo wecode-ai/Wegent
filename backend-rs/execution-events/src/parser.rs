@@ -533,6 +533,9 @@ impl ResponsesApiEventParser {
                 event.tool_name = Some(name);
                 event.tool_input = Some(input);
                 let mut extra = Map::new();
+                if let Some(started_at) = data.get("startedAt").and_then(Value::as_i64) {
+                    extra.insert("startedAt".into(), json!(started_at));
+                }
                 extra.insert(
                     "blocks".into(),
                     data.get("blocks").cloned().unwrap_or_else(|| json!([])),
@@ -580,6 +583,9 @@ impl ResponsesApiEventParser {
                 event.tool_use_id = Some(item_id);
                 event.tool_name = Some(name);
                 let mut extra = Map::new();
+                if let Some(started_at) = data.get("startedAt").and_then(Value::as_i64) {
+                    extra.insert("startedAt".into(), json!(started_at));
+                }
                 extra.insert("tool_protocol".into(), Value::String("mcp_call".into()));
                 extra.insert("server_label".into(), Value::String(server_label));
                 event.data = extra;
@@ -607,6 +613,9 @@ impl ResponsesApiEventParser {
                 event.tool_name = Some(name);
                 event.tool_input = Some(arguments);
                 let mut extra = Map::new();
+                if let Some(started_at) = data.get("startedAt").and_then(Value::as_i64) {
+                    extra.insert("startedAt".into(), json!(started_at));
+                }
                 extra.insert(
                     "blocks".into(),
                     data.get("blocks").cloned().unwrap_or_else(|| json!([])),
@@ -667,6 +676,9 @@ impl ResponsesApiEventParser {
             event.tool_input = tool_input;
             event.tool_output = item.get("output").cloned();
             let mut extra = Map::new();
+            if let Some(completed_at) = data.get("completedAt").and_then(Value::as_i64) {
+                extra.insert("completedAt".into(), json!(completed_at));
+            }
             extra.insert(
                 "tool_protocol".into(),
                 Value::String("function_call".into()),
@@ -715,6 +727,9 @@ impl ResponsesApiEventParser {
         event.tool_use_id = Some(call_id);
         event.tool_input = tool_input;
         let mut extra = Map::new();
+        if let Some(completed_at) = data.get("completedAt").and_then(Value::as_i64) {
+            extra.insert("completedAt".into(), json!(completed_at));
+        }
         extra.insert("tool_protocol".into(), Value::String("shell_call".into()));
         extra.insert(
             "status".into(),

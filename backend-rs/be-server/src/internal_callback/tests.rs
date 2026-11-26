@@ -124,6 +124,51 @@ fn response_events_preserve_timing_metadata() {
 }
 
 #[test]
+fn tool_lifecycle_events_preserve_execution_boundaries() {
+    let added = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "response.output_item.added",
+            &json!({
+                "startedAt": 100,
+                "item": {
+                    "type": "function_call",
+                    "call_id": "tool-1",
+                    "name": "exec",
+                    "arguments": "{}"
+                }
+            }),
+        )
+        .expect("parse added")
+        .expect("added event");
+    assert_eq!(added.event_type, "tool_start");
+    assert_eq!(added.data.get("startedAt"), Some(&json!(100)));
+
+    let done = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "response.output_item.done",
+            &json!({
+                "completedAt": 250,
+                "item": {
+                    "type": "function_call",
+                    "call_id": "tool-1",
+                    "name": "exec",
+                    "status": "completed"
+                }
+            }),
+        )
+        .expect("parse done")
+        .expect("done event");
+    assert_eq!(done.event_type, "tool_result");
+    assert_eq!(done.data.get("completedAt"), Some(&json!(250)));
+}
+
+#[test]
 fn subagent_activity_maps_to_an_updatable_block_event() {
     let event = parser::shared()
         .parse(

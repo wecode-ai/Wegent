@@ -55,6 +55,7 @@ pub trait ExecutionLifecycle: Send + Sync {
     async fn complete(&self, event: &ExecutionEvent) -> Result<(), Failure>;
     async fn complete_failure(&self, request: &ExecutionRequest, failure: &Failure);
     async fn emit_package_event(&self, event: &ExecutionEvent) -> Result<(), Failure>;
+    async fn persist_timing(&self, event: &ExecutionEvent);
 }
 
 /// Transports, forwarding preferences, and lifecycle for one synchronous SSE consumer.
@@ -402,6 +403,9 @@ async fn open_and_consume<R: Redis, L: LocalEmit, H: ExecutionLifecycle>(
                 }
                 if parsed.event_type == "chunk" {
                     content.push_str(&parsed.content);
+                }
+                if !ctx.package_mode {
+                    ctx.host.persist_timing(&parsed).await;
                 }
                 if terminal_status(&parsed.event_type).is_some() {
                     if image_stream {

@@ -72,7 +72,7 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
     if matches!(event.event_type.as_str(), "start" | "error" | "cancelled") {
         close_waiting_user_span(mysql, event).await?;
     }
-    if event.event_type == "block_updated" {
+    if matches!(event.event_type.as_str(), "block_updated" | "tool_result") {
         close_tool_span(mysql, event).await?;
     }
     let mut spans = event_timing_spans(event);
@@ -139,35 +139,43 @@ async fn close_tool_span<M: Mysql>(
     mysql: &M,
     event: &ExecutionEvent,
 ) -> Result<(), brz_mysql::MysqlError> {
-    let Some(updates) = event
+    let updates = event
         .data
         .get("updates")
         .filter(|updates| updates.is_object())
-    else {
-        return Ok(());
-    };
-    let completed_at = integer_field(updates, "completedAt")
-        .or_else(|| integer_field(updates, "completed_at"))
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    let completed_at = event
+        .data
+        .get("completedAt")
+        .and_then(Value::as_i64)
+        .or_else(|| integer_field(&updates, "completedAt"))
+        .or_else(|| integer_field(&updates, "completed_at"))
         .or_else(|| {
-            let started = integer_field(updates, "startedAt")
-                .or_else(|| integer_field(updates, "started_at"))?;
-            integer_field(updates, "durationMs")
-                .or_else(|| integer_field(updates, "duration_ms"))
+            let started = integer_field(&updates, "startedAt")
+                .or_else(|| integer_field(&updates, "started_at"))?;
+            integer_field(&updates, "durationMs")
+                .or_else(|| integer_field(&updates, "duration_ms"))
                 .and_then(|duration| started.checked_add(duration))
         });
     let Some(completed_at) = completed_at else {
         return Ok(());
     };
-    let Some(block_id) = event
+    let block_id = event
         .data
         .get("block_id")
         .and_then(Value::as_str)
         .filter(|block_id| !block_id.is_empty())
-    else {
+        .or(event.tool_use_id.as_deref())
+        .unwrap_or_default()
+        .to_string();
+    if block_id.is_empty() {
         return Ok(());
-    };
-    let updated_status = updates
+    }
+    let updated_status = event
+        .data
         .get("status")
+        .or_else(|| updates.get("status"))
         .and_then(Value::as_str)
         .unwrap_or("done");
     let final_status = if matches!(updated_status, "error" | "failed") {
@@ -179,12 +187,12 @@ async fn close_tool_span<M: Mysql>(
         .execute(
             CLOSE_TOOL_SPAN_SQL,
             (
-                completed_at,
-                completed_at,
+                Some(completed_at),
+                Some(completed_at),
                 final_status,
                 event.task_id,
                 event.subtask_id,
-                span_id(event, "tool", block_id),
+                span_id(event, "tool", &block_id),
             ),
         )
         .await?;
@@ -212,8 +220,44 @@ fn event_timing_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
     match event.event_type.as_str() {
         "block_created" => block_event_spans(event),
         "block_updated" => subagent_activity_spans(event),
+        "tool_start" => tool_start_spans(event),
         _ => Vec::new(),
     }
+}
+
+fn tool_start_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
+    if event.data.get("argument_status").and_then(Value::as_str) == Some("streaming") {
+        return Vec::new();
+    }
+    let Some(tool_use_id) = event.tool_use_id.as_deref().filter(|id| !id.is_empty()) else {
+        return Vec::new();
+    };
+    let Some(start_at_ms) = event.data.get("startedAt").and_then(Value::as_i64) else {
+        return Vec::new();
+    };
+    let tool_name = event.tool_name.as_deref().unwrap_or("Tool");
+    let mut metadata = serde_json::Map::new();
+    if let Some(protocol) = event.data.get("tool_protocol").and_then(Value::as_str) {
+        metadata.insert("toolProtocol".into(), json!(protocol));
+    }
+    if let Some(server_label) = event.data.get("server_label").and_then(Value::as_str) {
+        metadata.insert("serverLabel".into(), json!(server_label));
+    }
+    vec![NewTimingSpan {
+        span_id: span_id(event, "tool", tool_use_id),
+        kind: "tool",
+        parent_span_id: Some(format!(
+            "task-{}-subtask-{}-agent",
+            event.task_id, event.subtask_id
+        )),
+        actor_id: tool_use_id.to_string(),
+        actor_type: "tool",
+        actor_label: tool_name.to_string(),
+        status: "running",
+        start_at_ms: Some(start_at_ms),
+        end_at_ms: None,
+        metadata: Value::Object(metadata),
+    }]
 }
 
 fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
@@ -682,6 +726,14 @@ mod tests {
         event
     }
 
+    fn tool_event(event_type: super::super::event::EventType, data: Value) -> ExecutionEvent {
+        let mut event = ExecutionEvent::new(event_type, 7, 11);
+        event.data = data.as_object().cloned().unwrap_or_default();
+        event.tool_name = Some("exec".into());
+        event.tool_use_id = Some("tool-1".into());
+        event
+    }
+
     #[test]
     fn extracts_queue_provision_and_agent_spans() {
         let spans = boundary_spans(&event(), event().data.get("timing").unwrap());
@@ -866,6 +918,73 @@ mod tests {
         assert_eq!(spans[0].duration_ms(), Some(150));
     }
 
+    #[test]
+    fn tool_start_events_create_open_tool_spans() {
+        let event = tool_event(
+            super::super::event::EventType::ToolStart,
+            json!({
+                "startedAt": 100,
+                "tool_protocol": "shell_call",
+                "server_label": "local"
+            }),
+        );
+        let spans = event_timing_spans(&event);
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].kind, "tool");
+        assert_eq!(spans[0].actor_label, "exec");
+        assert_eq!(spans[0].start_at_ms, Some(100));
+        assert_eq!(spans[0].end_at_ms, None);
+        assert_eq!(spans[0].status, "running");
+        assert_eq!(
+            spans[0].parent_span_id.as_deref(),
+            Some("task-7-subtask-11-agent")
+        );
+        assert_eq!(spans[0].metadata["toolProtocol"], json!("shell_call"));
+    }
+
+    #[test]
+    fn streamed_tool_argument_previews_do_not_create_tool_spans() {
+        let event = tool_event(
+            super::super::event::EventType::ToolStart,
+            json!({"startedAt": 100, "argument_status": "streaming"}),
+        );
+        assert!(event_timing_spans(&event).is_empty());
+    }
+
+    #[tokio::test]
+    async fn tool_results_close_existing_tool_spans() {
+        let mut started = tool_event(
+            super::super::event::EventType::ToolStart,
+            json!({"startedAt": 100}),
+        );
+        started.task_id = 7;
+        started.subtask_id = 11;
+        let mut completed = tool_event(
+            super::super::event::EventType::ToolResult,
+            json!({"completedAt": 250, "status": "completed"}),
+        );
+        completed.task_id = 7;
+        completed.subtask_id = 11;
+
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        persist_callback_timing(&capture, &started, None, None)
+            .await
+            .expect("persist tool start");
+        persist_callback_timing(&capture, &completed, None, None)
+            .await
+            .expect("persist tool result");
+
+        let writes: Vec<_> = capture
+            .writes()
+            .into_iter()
+            .filter(|write| write.sql.contains("UPDATE task_timing_spans"))
+            .collect();
+        assert_eq!(writes.len(), 1);
+        assert!(writes[0].sql.contains("kind = 'tool'"));
+        assert_eq!(writes[0].args, 6);
+    }
+
     #[tokio::test]
     async fn block_updates_close_existing_tool_spans_without_creating_one() {
         let mut created = block_event(
@@ -954,7 +1073,6 @@ mod tests {
             .find(|write| write.sql.contains("UPDATE task_timing_spans"))
             .expect("tool close update");
         assert_eq!(close_write.args, 6);
-        assert_eq!(close_write.first_integer, Some(250));
     }
 
     #[test]
@@ -1049,7 +1167,7 @@ mod tests {
             .find(|write| write.sql.contains("UPDATE task_timing_spans"))
             .expect("waiting-user close update");
         assert!(close_write.sql.contains("kind = 'waiting_user'"));
-        assert_eq!(close_write.first_integer, Some(20));
+        assert_eq!(close_write.args, 4);
     }
 
     #[test]

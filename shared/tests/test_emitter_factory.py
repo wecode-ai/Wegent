@@ -673,12 +673,14 @@ class TestResponsesAPIEmitter:
             name="exec",
             arguments={"command": "ls -la", "timeout_seconds": 5},
             tool_protocol="shell_call",
+            started_at=1_000,
         )
         await emitter.tool_done(
             call_id="shell_123",
             name="exec",
             arguments={"command": "ls -la", "timeout_seconds": 5},
             tool_protocol="shell_call",
+            completed_at=1_250,
         )
 
         events = transport.get_events()
@@ -689,9 +691,38 @@ class TestResponsesAPIEmitter:
             "response.output_item.done",
         ]
         assert events[0][1]["item"]["type"] == "shell_call"
+        assert events[0][1]["startedAt"] == 1_000
         assert events[0][1]["item"]["action"]["commands"] == ["ls -la"]
         assert events[1][1]["item"]["type"] == "shell_call"
         assert events[1][1]["item"]["status"] == "completed"
+        assert events[1][1]["completedAt"] == 1_250
+
+    @pytest.mark.asyncio
+    async def test_streamed_tool_arguments_do_not_duplicate_the_real_start(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="shell_stream",
+            name="exec",
+            arguments={"command": "ls"},
+            started_at=2_000,
+            skip_arguments=True,
+        )
+        await emitter.tool_done(
+            call_id="shell_stream",
+            name="exec",
+            arguments={"command": "ls"},
+            completed_at=2_100,
+        )
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.output_item.added",
+            "response.output_item.done",
+        ]
+        assert events[0][1]["startedAt"] == 2_000
+        assert events[1][1]["completedAt"] == 2_100
 
     @pytest.mark.asyncio
     async def test_exec_tool_infers_shell_call_and_reuses_context(self):
