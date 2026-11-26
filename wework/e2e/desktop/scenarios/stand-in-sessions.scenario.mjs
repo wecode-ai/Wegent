@@ -384,20 +384,15 @@ export function createDesktopScenario({
       assert.ok(JSON.stringify(retained.messages).includes('第一段问题已回答'))
       await send(FOLLOWUP, { clientUserMessageId: 'session-followup' })
       assert.equal((await settled(control, () => followupObserved)).threadId, current.threadId)
-      const activeChat = `[data-workspace-tab-content][aria-hidden="false"] ${CHAT}`
-      await control.command(
-        'fill',
-        `${activeChat} [data-testid="chat-message-input"][contenteditable="true"]`,
-        { value: ASYNC_PROMPT }
-      )
-      await control.command('clickWhenEnabled', `${activeChat} [data-testid="send-message-button"]`)
-      const card = `${activeChat} [data-testid="request-user-input-card"]:has([data-testid="request-user-input-custom-question_1"])`
+      await control.command('fill', editor, { value: ASYNC_PROMPT })
+      await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+      const card = `${CHAT} [data-testid="request-user-input-card"]:has([data-testid="request-user-input-custom-question_1"])`
       await control.command('waitFor', card, {
         text: ASYNC_QUESTION,
         visible: true,
         timeoutMs: modelResponseTimeoutMs,
       })
-      await control.command('waitFor', `${activeChat} [data-testid="message-assistant"]`, {
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: ASYNC_WAITING,
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -418,7 +413,7 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `${card} [data-testid="request-user-input-submit-button"]`
       )
-      await control.command('waitFor', `${activeChat} [data-testid="message-assistant"]`, {
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: ASYNC_RESULT,
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -478,7 +473,7 @@ export function createDesktopScenario({
       // Older messages may be virtualized out of the viewport after restart.
       await control.command(
         'scrollToRatioAsUser',
-        `${activeChat} [data-testid="right-workspace-chat-scroll-area"]`,
+        `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
         { value: '0' }
       )
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
