@@ -17,14 +17,14 @@ use std::{
 mod artifact_tests;
 pub(crate) use wegent_model_proxy::codex_model_catalog;
 mod config;
+mod file_upload;
 pub(crate) use wegent_model_proxy::harness_context;
 pub(crate) use wegent_model_proxy::local_decision_proxy;
 pub(crate) use wegent_model_proxy::local_model_proxy;
 
 use axum::{
     body::{Body, Bytes},
-    extract::multipart::MultipartError,
-    extract::{DefaultBodyLimit, Multipart, Query, State},
+    extract::{DefaultBodyLimit, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -156,8 +156,10 @@ where
         .route(
             "/files",
             get(download_envd_file)
-                .post(upload_envd_file)
-                .layer(DefaultBodyLimit::max(MAX_ENVD_FILE_UPLOAD_BYTES)),
+                .post(file_upload::upload_envd_file)
+                .layer(DefaultBodyLimit::max(
+                    file_upload::MAX_ENVD_FILE_UPLOAD_BYTES,
+                )),
         )
         .route("/api/archive", post(archive_workspace))
         .route("/api/runtime/prepare", post(prepare_runtime_workspace))
@@ -753,119 +755,6 @@ async fn zip_directory(path: &Path) -> Result<Vec<u8>, HttpError> {
 fn zip_download_semaphore() -> &'static Semaphore {
     static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
     SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
-}
-
-fn multipart_http_error(error: MultipartError) -> HttpError {
-    HttpError {
-        status: error.status(),
-        detail: error.body_text(),
-    }
-}
-
-async fn upload_envd_file(
-    headers: HeaderMap,
-    Query(query): Query<WorkspacePathQuery>,
-    mut multipart: Multipart,
-) -> Result<Json<Vec<EntryInfo>>, HttpError> {
-    log_executor_event(
-        "envd file upload request",
-        &[
-            ("path", query.path.clone().unwrap_or_default()),
-            ("username", query.username.clone().unwrap_or_default()),
-            ("content_type", header_value(&headers, header::CONTENT_TYPE)),
-        ],
-    );
-    let path = resolve_envd_path(&query)?;
-    let Some(parent) = path.parent() else {
-        return Err(HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: "Path is required".to_owned(),
-        });
-    };
-    fs::create_dir_all(parent).map_err(|error| {
-        log_executor_event(
-            "envd file upload parent create failed",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("parent", parent.to_string_lossy().to_string()),
-                ("error", error.to_string()),
-            ],
-        );
-        HttpError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: format!("failed to create parent directory: {error}"),
-        }
-    })?;
-    if let Some(usage) = disk_usage_bytes(parent) {
-        let free = usage.total.saturating_sub(usage.used);
-        log_executor_event(
-            "envd file upload disk check",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("parent", parent.to_string_lossy().to_string()),
-                ("free_bytes", free.to_string()),
-                ("required_bytes", MIN_UPLOAD_FREE_SPACE_BYTES.to_string()),
-            ],
-        );
-        if free < MIN_UPLOAD_FREE_SPACE_BYTES {
-            return Err(HttpError {
-                status: StatusCode::INSUFFICIENT_STORAGE,
-                detail: "Not enough disk space".to_owned(),
-            });
-        }
-    }
-
-    while let Some(field) = multipart.next_field().await.map_err(multipart_http_error)? {
-        let field_name = field.name().unwrap_or_default().to_owned();
-        let file_name = field.file_name().unwrap_or_default().to_owned();
-        log_executor_event(
-            "envd file upload multipart field",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("field_name", field_name.clone()),
-                ("file_name", file_name),
-            ],
-        );
-        if field_name != "file" {
-            continue;
-        }
-        let bytes = field.bytes().await.map_err(multipart_http_error)?;
-        let size = bytes.len();
-        fs::write(&path, &bytes).map_err(|error| {
-            log_executor_event(
-                "envd file upload write failed",
-                &[
-                    ("path", path.to_string_lossy().to_string()),
-                    ("size", size.to_string()),
-                    ("error", error.to_string()),
-                ],
-            );
-            HttpError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                detail: format!("failed to write uploaded file: {error}"),
-            }
-        })?;
-        log_executor_event(
-            "envd file upload succeeded",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("size", size.to_string()),
-            ],
-        );
-        return Ok(Json(vec![EntryInfo {
-            path: path.to_string_lossy().to_string(),
-            name: path
-                .file_name()
-                .map(|value| value.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            entry_type: "file".to_owned(),
-        }]));
-    }
-
-    Err(HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: "multipart field 'file' is required".to_owned(),
-    })
 }
 
 async fn archive_workspace(
@@ -1870,9 +1759,6 @@ fn default_runtime_type() -> String {
     "executor".to_owned()
 }
 
-const MIN_UPLOAD_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
-// The Backend accepts attachment files up to 100 MiB. Include multipart framing overhead.
-const MAX_ENVD_FILE_UPLOAD_BYTES: usize = 101 * 1024 * 1024;
 const DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB: u64 = 500;
 const MAX_WORKSPACE_ZIP_CONCURRENCY: usize = 2;
 const MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS: u64 = 120;
