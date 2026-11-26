@@ -7,7 +7,6 @@ import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { TaskSource } from './NotificationTaskSourceContext'
 
 const POLL_INTERVAL_MS = 15_000
-const DELIVERED_LIMIT = 300
 
 type Observation = {
   source: TaskSource | null
@@ -24,20 +23,22 @@ function baselineKey(accountKey: string) {
   return `${storageKey(accountKey)}:baseline`
 }
 
-function readDelivered(accountKey: string): string[] {
+function readDelivered(accountKey: string): Set<string> {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey(accountKey)) ?? '[]')
-    return Array.isArray(parsed)
-      ? parsed.filter((value): value is string => typeof value === 'string')
-      : []
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === 'string')
+        : []
+    )
   } catch {
-    return []
+    return new Set()
   }
 }
 
-function writeDelivered(accountKey: string, delivered: readonly string[]) {
+function writeDelivered(accountKey: string, delivered: ReadonlySet<string>) {
   try {
-    localStorage.setItem(storageKey(accountKey), JSON.stringify(delivered.slice(-DELIVERED_LIMIT)))
+    localStorage.setItem(storageKey(accountKey), JSON.stringify([...delivered]))
   } catch {
     // A blocked local store must not suppress delivery for the current process.
   }
@@ -53,14 +54,8 @@ export function createDelegatedStandInAlertDelivery(accountKey: string) {
   let observing = false
   let running: symbol | undefined
   let timer: ReturnType<typeof setInterval> | undefined
-  let delivered = readDelivered(accountKey)
+  const delivered = readDelivered(accountKey)
   let baselineReady = localStorage.getItem(baselineKey(accountKey)) === '1'
-
-  const remember = (key: string) => {
-    if (delivered.includes(key)) return
-    delivered = [...delivered, key].slice(-DELIVERED_LIMIT)
-    writeDelivered(accountKey, delivered)
-  }
 
   const reconcile = async () => {
     const current = observation
@@ -79,6 +74,7 @@ export function createDelegatedStandInAlertDelivery(accountKey: string) {
       return
     const owner = Symbol()
     running = owner
+    let deliveryChanged = false
     try {
       const local = await readIdentity()
       if (!local || !observing || observation !== current) return
@@ -88,24 +84,21 @@ export function createDelegatedStandInAlertDelivery(accountKey: string) {
         userId,
         deviceId: local.deviceId,
       })
-      if (!observing || observation !== current || !snapshot.identity) return
+      const identity = snapshot.identity
+      if (!observing || observation !== current || !identity) return
       const decisions = snapshot.records.filter(needsDecision)
+      const decisionKey = (record: MessageCenterRecord) =>
+        JSON.stringify([identity.id, record.id, record.reason ?? ''])
       if (!baselineReady) {
-        delivered = [
-          ...new Set(
-            decisions.map(record =>
-              JSON.stringify([snapshot.identity!.id, record.id, record.reason ?? ''])
-            )
-          ),
-        ].slice(-DELIVERED_LIMIT)
+        for (const record of decisions) delivered.add(decisionKey(record))
         writeDelivered(accountKey, delivered)
         localStorage.setItem(baselineKey(accountKey), '1')
         baselineReady = true
         return
       }
       for (const record of decisions) {
-        const key = JSON.stringify([snapshot.identity.id, record.id, record.reason ?? ''])
-        if (delivered.includes(key)) continue
+        const key = decisionKey(record)
+        if (delivered.has(key)) continue
         const copy = current.describe(record)
         const sent = await sendSystemNotification({
           ...copy,
@@ -115,11 +108,13 @@ export function createDelegatedStandInAlertDelivery(accountKey: string) {
           }),
         })
         if (!sent) break
-        remember(key)
+        delivered.add(key)
+        deliveryChanged = true
       }
     } catch (error) {
       console.warn('[Stand-in] Delegated message alert check failed', error)
     } finally {
+      if (deliveryChanged) writeDelivered(accountKey, delivered)
       if (running === owner) running = undefined
     }
   }

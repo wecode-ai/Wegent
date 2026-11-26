@@ -76,6 +76,83 @@ describe('delegated stand-in alerts', () => {
     delivery.release()
   })
 
+  test.each([
+    { name: 'baselined', firstDeliveryCount: 0 },
+    { name: 'notified', firstDeliveryCount: 301 },
+  ])(
+    'remembers more than 300 $name decisions across polls and restarts',
+    async ({ firstDeliveryCount }) => {
+      vi.useFakeTimers()
+      if (firstDeliveryCount === 0) {
+        localStorage.removeItem('wework.delegated-stand-in-alerts:account-key:baseline')
+      }
+      const identity = { id: 'account', account: 'Owner', organization: 'Org' }
+      const records = Array.from({ length: 301 }, (_, index) => ({
+        ...record,
+        id: `record-${index}`,
+      }))
+      mocks.read.mockResolvedValue({ identity, records })
+      const observation = {
+        source: source(),
+        userId: 7,
+        systemEnabled: true,
+        describe: () => ({ title: 'Needs you', body: 'Confirm the date' }),
+      }
+      let delivery = createDelegatedStandInAlertDelivery('account-key')
+      try {
+        delivery.observe(observation)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mocks.send).toHaveBeenCalledTimes(firstDeliveryCount)
+
+        await vi.advanceTimersByTimeAsync(15_000)
+        expect(mocks.read).toHaveBeenCalledTimes(2)
+        expect(mocks.send).toHaveBeenCalledTimes(firstDeliveryCount)
+
+        delivery.release()
+        delivery = createDelegatedStandInAlertDelivery('account-key')
+        mocks.read.mockResolvedValue({ identity, records: [...records, record] })
+        delivery.observe(observation)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mocks.read).toHaveBeenCalledTimes(3)
+        expect(mocks.send).toHaveBeenCalledTimes(firstDeliveryCount + 1)
+      } finally {
+        delivery.release()
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  test('only retries the undelivered decision when the host refuses a notification', async () => {
+    mocks.read.mockResolvedValue({
+      identity: { id: 'account', account: 'Owner', organization: 'Org' },
+      records: [record, { ...record, id: 'second', title: 'Second question' }],
+    })
+    mocks.send.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const observation = {
+      source: source(),
+      userId: 7,
+      systemEnabled: true,
+      describe: ({ title }: { title: string }) => ({ title, body: 'Confirm the date' }),
+    }
+    let delivery = createDelegatedStandInAlertDelivery('account-key')
+    try {
+      delivery.observe(observation)
+      await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(2))
+      delivery.release()
+
+      delivery = createDelegatedStandInAlertDelivery('account-key')
+      delivery.observe(observation)
+      await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(3))
+      expect(mocks.send.mock.calls.map(([notification]) => notification.title)).toEqual([
+        'Question',
+        'Second question',
+        'Second question',
+      ])
+    } finally {
+      delivery.release()
+    }
+  })
+
   test('does not send when desktop notifications are disabled or the owner took over', async () => {
     const delivery = createDelegatedStandInAlertDelivery('account-key')
     const input = source()
