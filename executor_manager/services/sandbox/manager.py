@@ -1481,6 +1481,16 @@ class SandboxManager(metaclass=SingletonMeta):
                     return False
                 if state.status == ExecutionStatus.RUNNING and not current.is_active():
                     return False
+                stored = self._repository.load_execution(
+                    int(current.sandbox_id), state.metadata["subtask_id"]
+                )
+                if (
+                    stored is None
+                    or stored.execution_id != state.execution_id
+                    or stored.status
+                    not in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING)
+                ):
+                    return False
                 return self._repository.save_execution(state)
 
         success = await self._execution_runner.run_with_timeout(

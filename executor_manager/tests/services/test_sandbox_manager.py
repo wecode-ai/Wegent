@@ -1625,7 +1625,9 @@ class TestSandboxManager:
     # ----- get_execution Tests -----
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("change", ["removed_before", "removed_during", "paused"])
+    @pytest.mark.parametrize(
+        "change", ["removed_before", "removed_during", "paused", "retried", "completed"]
+    )
     async def test_background_execution_rechecks_sandbox_before_dispatch_and_write(
         self,
         sandbox_manager_with_mock_redis,
@@ -1645,8 +1647,17 @@ class TestSandboxManager:
         elif change == "removed_before":
             records = [None, None]
         else:
-            records = [current, None]
+            records = [current, None if change == "removed_during" else current]
         mocker.patch.object(manager._repository, "load_sandbox", side_effect=records)
+        stored = copy.copy(sample_execution)
+        updated = copy.copy(stored)
+        if change == "retried":
+            updated.execution_id = "new-execution"
+        elif change == "completed":
+            updated.set_completed("Done")
+        mocker.patch.object(
+            manager._repository, "load_execution", side_effect=[stored, updated]
+        )
         save = mocker.patch.object(
             manager._repository, "save_execution", return_value=True
         )
