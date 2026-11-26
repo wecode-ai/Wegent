@@ -5,6 +5,7 @@
 """Exercise command deadlines through the SDK, Executor Manager, and envd."""
 
 import asyncio
+import os
 from time import monotonic
 from uuid import uuid4
 
@@ -84,6 +85,8 @@ async def verify_deadline_and_cleanup(sandbox: AsyncSandbox) -> None:
 
 async def main() -> None:
     assert patch_e2b_sdk(), "Wegent SDK routing could not be initialized"
+    # The patched URL preserves HTTP. Disable SDK debug mode so context exit deletes the sandbox.
+    os.environ.pop("E2B_DEBUG", None)
     async with await AsyncSandbox.create(
         template="ClaudeCode",
         timeout=300,
