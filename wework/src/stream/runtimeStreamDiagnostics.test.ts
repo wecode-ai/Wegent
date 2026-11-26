@@ -5,6 +5,7 @@ import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import {
   getRuntimeStreamDiagnostics,
   measureRuntimeStreamEvent,
+  setRuntimeChatStreamDebugEnabled,
   startRuntimeStreamDiagnostics,
   stopRuntimeStreamDiagnostics,
 } from './runtimeStreamDiagnostics'
@@ -41,6 +42,54 @@ test('captures the local IPC stream used by standalone conversations', async () 
   expect(capture.events['response.output_text.delta'].count).toBe(1)
   expect(JSON.stringify(getRuntimeStreamDiagnostics())).not.toContain('private')
   unsubscribe()
+})
+
+test('writes native terminal diagnostics only when stream debugging is enabled', async () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'false')
+  vi.stubEnv('VITE_WEWORK_RUNTIME_DEBUG', '0')
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+  let listener!: (event: LocalExecutorEvent) => void
+  const stream = createRuntimeChatStream({
+    subscribe: async handler => {
+      listener = handler
+      return vi.fn()
+    },
+    request: vi.fn(),
+  })
+  const onChatDone = vi.fn()
+  const unsubscribe = stream.subscribe({ onChatDone })
+  const event = {
+    event: 'response.completed',
+    payload: {
+      deviceId: 'device',
+      taskId: 'task',
+      subtaskId: 'turn',
+      data: { value: 'reply text' },
+    },
+  }
+  try {
+    await Promise.resolve()
+    info.mockClear()
+    listener(event)
+    expect(info).not.toHaveBeenCalled()
+    expect(debug).not.toHaveBeenCalled()
+
+    setRuntimeChatStreamDebugEnabled(true)
+    listener(event)
+    expect(onChatDone).toHaveBeenCalledTimes(2)
+    expect(info).toHaveBeenCalledWith(
+      '[Wework] Runtime task create diagnostic',
+      expect.stringContaining('"stage":"runtime-terminal-received"')
+    )
+    expect(JSON.stringify(info.mock.calls)).not.toContain('reply text')
+  } finally {
+    setRuntimeChatStreamDebugEnabled(false)
+    unsubscribe()
+    vi.unstubAllEnvs()
+    info.mockRestore()
+    debug.mockRestore()
+  }
 })
 
 test('captures actual stream dispatch timing without payloads or identities', () => {

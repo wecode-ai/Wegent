@@ -1,5 +1,22 @@
 import { RESPONSE_API_STREAM_EVENTS } from './responseApiStream'
 
+const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
+
+export function isRuntimeChatStreamDebugEnabled(): boolean {
+  return (
+    import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' ||
+    globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
+  )
+}
+
+export function setRuntimeChatStreamDebugEnabled(enabled: boolean): void {
+  if (enabled) {
+    globalThis.localStorage?.setItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY, '1')
+    return
+  }
+  globalThis.localStorage?.removeItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY)
+}
+
 interface EventTiming {
   count: number
   firstAt: number
