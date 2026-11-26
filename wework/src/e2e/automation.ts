@@ -311,6 +311,10 @@ function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sour
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
+  clientHeight: number
+  clientWidth: number
+  scrollHeight: number
+  scrollTop: number
   connected: boolean
   height: number
   label: string | null
@@ -3356,6 +3360,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           : []
         sample.frames.push({
           elements: sampleElements?.(),
+          clientHeight: element?.clientHeight ?? 0,
+          clientWidth: element?.clientWidth ?? 0,
+          scrollHeight: element?.scrollHeight ?? 0,
+          scrollTop: element?.scrollTop ?? 0,
           connected: element?.isConnected ?? false,
           height: rect?.height ?? 0,
           label: element?.dataset.weworkBrowserWebview ?? null,

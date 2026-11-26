@@ -65,6 +65,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   scrollerClassName?: string
   contentClassName?: string
   messageListClassName?: string
+  layoutRevision?: string
   contentFooter?: ReactNode
   contentFooterClassName?: string
   stickyFooter?: ReactNode

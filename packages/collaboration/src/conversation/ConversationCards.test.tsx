@@ -3,6 +3,10 @@ import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WindowedMarkdownChunk } from "../markdown/WindowedMarkdownChunk";
+import {
+  createMarkdownWindowingScope,
+  MarkdownWindowingContext,
+} from "../markdown/MarkdownWindowingScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TurnFileChangesSummary } from "@wegent/chat-core/runtime";
 import { createCollaborationTranslator } from "../i18n";
@@ -469,6 +473,98 @@ describe("shared conversation cards without Electron", () => {
       detach();
     } finally {
       document.getSelection()!.removeAllRanges();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("certifies a retained Markdown placeholder only for its measured row width and scope", () => {
+    let width = 640;
+    let top = 0;
+    const intersections: IntersectionObserverCallback[] = [];
+    const resizes: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersections.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizes.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return this === container
+          ? new DOMRect(0, 0, width, 600)
+          : new DOMRect(0, top, width, 200);
+      },
+    );
+    const scrollRef = { current: container };
+    const first = createMarkdownWindowingScope(scrollRef, vi.fn());
+    const second = createMarkdownWindowingScope(scrollRef, vi.fn());
+    const mount = (scope: ReturnType<typeof createMarkdownWindowingScope>) =>
+      act(() =>
+        root.render(
+          <MarkdownWindowingContext.Provider value={scope}>
+            <div data-message-row>
+              <WindowedMarkdownChunk
+                chunkIndex={0}
+                content="Measured prose"
+                eager={false}
+              >
+                <p>Measured prose</p>
+              </WindowedMarkdownChunk>
+            </div>
+          </MarkdownWindowingContext.Provider>,
+        ),
+      );
+    const placeholder = () =>
+      container.querySelector<HTMLElement>(
+        "[data-markdown-window-placeholder]",
+      );
+    const move = (nextTop: number) => {
+      top = nextTop;
+      act(() =>
+        intersections.at(-1)!(
+          [{} as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        ),
+      );
+    };
+    const resize = (nextWidth: number) => {
+      width = nextWidth;
+      act(() => resizes.at(-1)!([], {} as ResizeObserver));
+    };
+    try {
+      mount(first);
+      expect(placeholder()).toBeNull();
+      move(3000);
+      expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
+      resize(320);
+      expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
+      resize(640);
+      mount(second);
+      // The old rendered height still exists, but it belongs to the previous scope.
+      expect(
+        placeholder()?.dataset.markdownPlaceholderRowWidth,
+      ).toBeUndefined();
+      move(0);
+      expect(placeholder()).toBeNull();
+      move(3000);
+      expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
+    } finally {
+      act(() => root.render(null));
+      vi.restoreAllMocks();
       vi.unstubAllGlobals();
     }
   });

@@ -70,7 +70,8 @@ export interface MessageListProps {
   scrollTailHeight?: number
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
-  onVirtualLayoutChange?: () => void
+  onVirtualLayoutChange?: (reason?: 'resize') => void
+  layoutRevision?: string
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -159,6 +160,7 @@ export const MessageList = memo(function MessageList({
   scrollTailHeight = 0,
   onBeforeUserMessageToggle,
   onVirtualLayoutChange,
+  layoutRevision,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -204,7 +206,8 @@ export const MessageList = memo(function MessageList({
   const nativeTypography = useElementTypography(
     listRef,
     MESSAGE_LAYOUT_CSS_PROPERTIES,
-    virtualize && scrollElementRef !== undefined
+    virtualize && scrollElementRef !== undefined,
+    layoutRevision
   )
   const layout = useMemo(
     () => ({
@@ -217,12 +220,12 @@ export const MessageList = memo(function MessageList({
     [nativeTypography, initialTypography, fontEpoch]
   )
   const layoutWidth = layout.width
-  const layoutKey = JSON.stringify([
-    layout.width,
+  const layoutPropertiesKey = JSON.stringify([
     className ?? null,
     layout.typography,
     layout.fontEpoch,
   ])
+  const layoutKey = JSON.stringify([layoutWidth, layoutPropertiesKey])
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
   const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
@@ -302,16 +305,18 @@ export const MessageList = memo(function MessageList({
   const virtualLayoutReady = virtualMessages && layoutWidth > 0
   const virtualMeasurementKey =
     virtualMessages && conversationKey != null ? String(conversationKey) : null
-  const measurementLayout = useMemo(
-    () => ({
-      key: layoutKey,
-      messages: new Map(
+  const measurementSignatures = useMemo(
+    () =>
+      new Map(
         virtualMessages
           ? visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
           : []
       ),
-    }),
-    [layoutKey, visibleMessages, virtualMessages]
+    [visibleMessages, virtualMessages]
+  )
+  const measurementLayout = useMemo(
+    () => ({ key: layoutKey, messages: measurementSignatures }),
+    [layoutKey, measurementSignatures]
   )
   const initialMeasurementsCache = useMemo(
     () =>
@@ -320,23 +325,10 @@ export const MessageList = memo(function MessageList({
         : (getConversationVirtualMeasurements(virtualMeasurementKey, measurementLayout) ?? []),
     [measurementLayout, virtualMeasurementKey]
   )
-  const messageIntrinsicHeights = useMemo(() => {
-    if (!virtualLayoutReady) return new Map<string, number>()
-    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    return new Map(
-      visibleMessages.map(message => [
-        message.id,
-        measuredSizes.get(message.id) ??
-          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography),
-      ])
-    )
-  }, [
-    initialMeasurementsCache,
-    layoutWidth,
-    layout.typography,
-    virtualLayoutReady,
-    visibleMessages,
-  ])
+  const measuredSizes = useMemo(
+    () => new Map(initialMeasurementsCache.map(item => [item.key, item.size])),
+    [initialMeasurementsCache]
+  )
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 shrink-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl shrink-0 flex-col gap-4 px-6 pb-2 pt-8'
@@ -374,11 +366,16 @@ export const MessageList = memo(function MessageList({
     [geometryRows]
   )
   const estimateSize = useCallback(
-    (index: number) =>
-      index === visibleMessages.length
-        ? 32
-        : Math.ceil(messageIntrinsicHeights.get(visibleMessages[index].id) ?? 220),
-    [messageIntrinsicHeights, visibleMessages]
+    (index: number) => {
+      const message = visibleMessages[index]
+      if (!message) return 32
+      if (!virtualLayoutReady) return 220
+      return Math.ceil(
+        measuredSizes.get(message.id) ??
+          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography)
+      )
+    },
+    [measuredSizes, layoutWidth, layout.typography, virtualLayoutReady, visibleMessages]
   )
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
@@ -390,7 +387,14 @@ export const MessageList = memo(function MessageList({
     },
     [forcedVirtualMessageIndex, streamingVirtualMessageIndex]
   )
-  const measureElement = useMessageRowMeasure(onVirtualMeasurement)
+  const [viewportPort] = useState(createMessageListViewportPort)
+  const recordMeasurement = useCallback(
+    (row: HTMLElement, width: number, size: number) => {
+      viewportPort.recordMeasurement(row, width, size, layoutWidth, measurementLayout)
+    },
+    [viewportPort, layoutWidth, measurementLayout]
+  )
+  const measureElement = useMessageRowMeasure(onVirtualMeasurement, recordMeasurement, layoutWidth)
   const {
     virtualizer: messageVirtualizer,
     tailHeight,
@@ -428,7 +432,6 @@ export const MessageList = memo(function MessageList({
     messageVirtualizer,
     virtualLayoutReady
   )
-  const [viewportPort] = useState(createMessageListViewportPort)
   const markdownWindowingState = useMemo(() => {
     const scope = createMarkdownWindowingScope(
       scrollElementRef,
@@ -436,11 +439,11 @@ export const MessageList = memo(function MessageList({
       layout.typography.rootFontSize,
       onNativeScrollRange
     )
-    return { conversationKey, layoutKey, scope }
+    return { conversationKey, scope }
   }, [
     conversationKey,
     scrollElementRef,
-    layoutKey,
+    layoutPropertiesKey,
     layout.typography.rootFontSize,
     viewportPort,
     onNativeScrollRange,
@@ -509,6 +512,8 @@ export const MessageList = memo(function MessageList({
       virtual: virtualMessages,
       ready: virtualLayoutReady,
       layoutKey,
+      layoutWidth,
+      layoutPropertiesKey,
       measurementKey: virtualMeasurementKey,
       measurementLayout,
       virtualizer: messageVirtualizer,

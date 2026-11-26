@@ -108,17 +108,24 @@ export function findUserViewportAnchor(
   return findConversationViewportAnchor(content, anchor)
 }
 
-function findConversationViewportAnchor(
+function findConversationAnchorScope(
   content: HTMLElement,
   anchor: ConversationViewportAnchor
 ): HTMLElement | null {
   const item = findMessageItem(content, anchor.messageId, anchor.itemId)
-  const scope =
-    anchor.chunkIndex === null
-      ? item
-      : Array.from(item?.querySelectorAll<HTMLElement>('[data-markdown-chunk-index]') ?? []).find(
-          chunk => chunk.dataset.markdownChunkIndex === anchor.chunkIndex
-        )
+  if (anchor.chunkIndex === null) return item
+  return (
+    Array.from(item?.querySelectorAll<HTMLElement>('[data-markdown-chunk-index]') ?? []).find(
+      chunk => chunk.dataset.markdownChunkIndex === anchor.chunkIndex
+    ) ?? null
+  )
+}
+
+function findConversationViewportAnchor(
+  content: HTMLElement,
+  anchor: ConversationViewportAnchor,
+  scope = findConversationAnchorScope(content, anchor)
+): HTMLElement | null {
   const candidate = scope?.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)[anchor.anchorIndex]
   // Resolve only the same paragraph in the same item/chunk; a message-wide
   // ordinal can identify unrelated text after preceding Markdown chunks mount.
@@ -250,14 +257,25 @@ export function restoreConversationAnchor(
 ): boolean {
   const anchor = snapshot.anchor
   if (!anchor || snapshot.pinnedToBottom) return false
-  const root = findConversationViewportAnchor(scroller, anchor)
-  if (!root) return false
-  const rect =
-    anchor.textOffset === null
+  const scope = findConversationAnchorScope(scroller, anchor)
+  const root = findConversationViewportAnchor(scroller, anchor, scope)
+  // Estimated row heights can put the saved chunk outside the viewport on reopen.
+  // Bring its placeholder into view so windowing can materialize the real text.
+  const placeholder =
+    !root &&
+    anchor.chunkIndex !== null &&
+    scope?.firstElementChild?.matches('[data-markdown-window-placeholder]')
+  const rect = root
+    ? anchor.textOffset === null
       ? root.getBoundingClientRect()
       : getTextOffsetRect(root, anchor.textOffset)
+    : placeholder
+      ? scope?.getBoundingClientRect()
+      : null
   if (!rect) return false
-  const correction = rect.top - scroller.getBoundingClientRect().top - anchor.offsetFromScrollerTop
+  const correction =
+    rect.top - scroller.getBoundingClientRect().top - (root ? anchor.offsetFromScrollerTop : 0)
+  if (Math.abs(correction) < 0.5) return root !== null
   const target = scroller.scrollTop + correction
   recordConversationScrollWrite(
     scroller,
@@ -267,7 +285,7 @@ export function restoreConversationAnchor(
       scroller.scrollTop = target
     }
   )
-  return true
+  return root !== null
 }
 
 export function findLatestUserMessageId(messages: WorkbenchMessage[]): string | null {

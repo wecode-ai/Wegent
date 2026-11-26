@@ -45,6 +45,7 @@ function ScrollableMessagePaneContent({
   scrollerClassName,
   contentClassName,
   messageListClassName,
+  layoutRevision,
   contentFooter,
   contentFooterClassName,
   stickyFooter,
@@ -297,6 +298,7 @@ function ScrollableMessagePaneContent({
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
+                layoutRevision={layoutRevision}
                 conversationKey={conversationKey}
                 forceVirtualMessageId={
                   searchTarget?.messageId ??

@@ -146,6 +146,7 @@ import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 import { collectPluginRuntimeDiagnostics } from './plugin-runtime-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
+import { verifyWorkspaceReviewRefresh } from './workspace-review-refresh-flow.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -4416,6 +4417,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'true',
         'The review tab was not active after switching back to the first task'
       )
+      await verifyWorkspaceReviewRefresh({
+        control,
+        resultDir,
+        workspacePath,
+        activeTaskWorkbenchSelector,
+        setPhase: value => {
+          phase = value
+        },
+      })
+
       await control.command('click', linkedFileTabSelector)
       await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
         target: activeTaskWorkbenchSelector,
