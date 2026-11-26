@@ -68,3 +68,19 @@ test('replaces returned goal modes in a mounted owner without changing other tab
   expect(owner.result.current.draftStore.exportInputs()).toEqual({})
   expect(owner.result.current.goalDraftActiveByScope).toEqual({})
 })
+
+test('restores a persisted tab draft after a crash remount', () => {
+  const first = renderHook(() => useWorkspaceTabDraftInput('durable-tab', 'account:one'))
+  act(() => {
+    first.result.current.draftStore.write('blank:0', 'Unsent input')
+  })
+  first.unmount()
+
+  const restored = renderHook(() => useWorkspaceTabDraftInput('durable-tab', 'account:one'))
+  expect(restored.result.current.draftStore.read('blank:0').value).toBe('Unsent input')
+  expect(
+    renderHook(() =>
+      useWorkspaceTabDraftInput('durable-tab', 'account:two')
+    ).result.current.draftStore.read('blank:0').value
+  ).toBe('')
+})

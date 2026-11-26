@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useState } from 'react'
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
@@ -6,9 +7,20 @@ import {
 } from '@/features/workspace-tabs/workspaceTabTransfer'
 import { createScopedDraftStore } from './scopedDraftStore'
 
-export function useWorkspaceTabDraftInput(workspaceTabId?: string) {
-  const [draftStore] = useState(createScopedDraftStore)
+export function useWorkspaceTabDraftInput(workspaceTabId?: string, accountScope?: string) {
+  const [draftStore] = useState(() =>
+    createScopedDraftStore({
+      storageScope: accountScope
+        ? JSON.stringify([accountScope, workspaceTabId ?? 'main'])
+        : undefined,
+    })
+  )
   const [goalDraftActiveByScope, setGoalDraftActiveByScope] = useState<Record<string, boolean>>({})
+  useLayoutEffect(() => () => draftStore.flush(), [draftStore])
+  useWindowEvent('pagehide', () => draftStore.flush())
+  useDocumentEvent('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') draftStore.flush()
+  })
   const setGoalDraftActiveForScope = useCallback((scopeKey: string, active: boolean) => {
     setGoalDraftActiveByScope(current => {
       if (Boolean(current[scopeKey]) === active) return current

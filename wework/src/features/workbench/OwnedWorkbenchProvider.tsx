@@ -305,7 +305,7 @@ export function OwnedWorkbenchProvider({
     standaloneChatKey: state.standaloneChatKey,
   })
   const { draftStore, goalDraftActiveByScope, setGoalDraftActiveForScope } =
-    useWorkspaceTabDraftInput(workspaceTabId)
+    useWorkspaceTabDraftInput(workspaceTabId, ownershipKey)
   const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
