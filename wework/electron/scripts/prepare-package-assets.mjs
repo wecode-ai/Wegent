@@ -167,6 +167,7 @@ await withTemporaryBuildDirectory({
           appVersion: electronPackage.version,
           dataSchema: builderConfig.extraMetadata.weworkDataSchema,
           readableDataSchemas: builderConfig.extraMetadata.weworkReadableDataSchemas,
+          teamAssignmentProtocol: 1,
           afterStopPreparation: electronPackage.weworkAfterStopPreparation,
           sourceSha,
           channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',

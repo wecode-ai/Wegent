@@ -53,6 +53,10 @@ import {
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
 import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
 import { upgradeUserEnvironment } from '../modules/upgrade-user-environment.mjs'
+import {
+  assertPackagedTeamProtocol,
+  createUpgradeTeamContinuity,
+} from '../modules/upgrade-team-continuity.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
 import {
@@ -177,6 +181,11 @@ export async function createDesktopScenario(options) {
   let modelRequests = 0
   const continuity = createUpgradeConversationContinuity(() => control, workbenchReadyTimeoutMs)
   const goalContinuity = createUpgradeGoalContinuity(pair, () => control, workbenchReadyTimeoutMs)
+  const team =
+    checkpoint === 'app-rollback' &&
+    pair.to.teamAssignmentProtocol === 1 &&
+    createUpgradeTeamContinuity(() => control, workbenchReadyTimeoutMs)
+  let teamContinuity
   const auxiliaryHistory = createUpgradeAuxiliaryHistory(pair, () => control, options)
   const { server, origin, requests, releaseHostDownload, unavailablePolicy, intervalProbe } =
     await createUpgradeUpdateServer({
@@ -434,6 +443,7 @@ export async function createDesktopScenario(options) {
       if (pair.to.afterStopPreparation === 1) continuity.seedTool(workspace)
       await send(PROMPT)
       await continuity.assertThread()
+      if (team) await team.seed()
       await auxiliaryHistory.seed(continuity.nativeThread())
       await goalContinuity.arm({ send, prompt: PROMPT, answer: `${ANSWER} ${modelRequests + 1}` })
       await continuity.assertThread()
@@ -678,6 +688,9 @@ export async function createDesktopScenario(options) {
       })
       const beforeRequests = modelRequests
       await goalContinuity.verifyResumed('upgrade')
+      if (checkpoint === 'app-rollback')
+        await assertPackagedTeamProtocol(preparedTarget.resources, pair.to.teamAssignmentProtocol)
+      if (team) await team.upgrade()
       await auxiliaryHistory.verify('upgrade')
       await send(`${PROMPT} continue after upgrade`)
       await continuity.assertThread()
@@ -812,6 +825,7 @@ export async function createDesktopScenario(options) {
         }
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
         await goalContinuity.verifyResumed('rollback')
+        if (team) await team.rollback(restoreRequired)
         await auxiliaryHistory.verify('rollback')
         await send(`${PROMPT} continue after rollback`)
         await continuity.assertThread()
@@ -863,10 +877,13 @@ export async function createDesktopScenario(options) {
             verifyCredentials: () => verifyCredentials('re-upgraded'),
             timeoutMs: workbenchReadyTimeoutMs,
           })
+          if (team) teamContinuity = await team.reupgrade()
           rollbackProtection.retryConfirmed = true
         }
       }
+      if (team) assert.ok(teamContinuity, 'Team receipt requires verification after re-upgrade')
       const evidence = JSON.stringify({
+        teamContinuity,
         schemaVersion: 1,
         kind: pair.kind,
         suiteVersion: pair.suiteVersion,
