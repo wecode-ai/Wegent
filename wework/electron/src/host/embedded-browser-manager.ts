@@ -17,6 +17,15 @@ import type { DownloadTargetPolicy } from './download-target-policy.js'
 import { createNativeContextMenuActions, installContextMenu } from './image-context-actions.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
+import {
+  fetchConnectionJson,
+  type ConnectionCsrfBinding,
+  type ConnectionHttpOperation,
+} from './connection-http.js'
+import {
+  beginWebConnectionCapture,
+  WEB_CONNECTION_CAPTURE_DURATION_MS,
+} from './web-connection-capture.js'
 import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
 import {
   BrowserDeviceMetricsController,
@@ -138,6 +147,19 @@ export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-a
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
 
 export class EmbeddedBrowserManager {
+  private readonly webConnectionCaptures = new Map<
+    string,
+    {
+      id: string
+      label: string
+      origin: string
+      capture: Awaited<ReturnType<typeof beginWebConnectionCapture>>
+      records?: Awaited<
+        ReturnType<Awaited<ReturnType<typeof beginWebConnectionCapture>>['collect']>
+      >
+      expires: number
+    }
+  >()
   private readonly entries = new Map<string, BrowserEntry>()
   private readonly attachedContents = new Map<string, WebContents>()
   private readonly attachmentWaiters = new Map<
@@ -271,6 +293,105 @@ export class EmbeddedBrowserManager {
 
   removeRequestHeaderRule(id: string): void {
     this.requestHeaderRules.delete(id)
+  }
+
+  fetchConnectionJson(
+    origin: string,
+    operation: ConnectionHttpOperation,
+    csrf?: ConnectionCsrfBinding
+  ) {
+    const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+    return fetchConnectionJson(
+      browserSession.fetch.bind(browserSession),
+      origin,
+      operation,
+      csrf ? { binding: csrf, cookies: url => browserSession.cookies.get({ url }) } : undefined
+    )
+  }
+
+  async startWebConnectionCapture(label: string) {
+    const contents = this.required(label).contents
+    const url = URL.parse(contents.getURL())
+    if (!url || !['http:', 'https:'].includes(url.protocol))
+      throw new Error('Open the source website before recording')
+    for (const [owner, recording] of this.webConnectionCaptures) {
+      if (recording.expires <= Date.now()) this.cancelWebConnectionCapture(owner, recording.id)
+    }
+    this.webConnectionCaptures.get(label)?.capture.close()
+    const capture = await beginWebConnectionCapture(contents, url.origin)
+    const id = randomUUID()
+    this.webConnectionCaptures.set(label, {
+      id,
+      label,
+      origin: url.origin,
+      capture,
+      expires: Date.now() + 120_000,
+    })
+    return { id, durationMs: WEB_CONNECTION_CAPTURE_DURATION_MS }
+  }
+
+  async finishWebConnectionCapture(label: string, id: string) {
+    const pagePath = new URL(this.required(label).contents.getURL()).pathname
+    const recording = this.requireWebConnectionCapture(label, id)
+    recording.records ??= await recording.capture.collect()
+    recording.expires = Date.now() + 5 * 60_000
+    return {
+      origin: recording.origin,
+      pagePath,
+      requests: recording.records.map(request => request.sample),
+    }
+  }
+
+  webConnectionAccount(label: string, id: string, requestIndex: number, path: string[]) {
+    const recording = this.requireWebConnectionCapture(label, id)
+    const account = recording.records?.[requestIndex]?.identity?.get(JSON.stringify(path))
+    if (account === undefined) throw new Error('The recording has no matching account identifier')
+    return { account }
+  }
+
+  validateWebConnectionRequests(
+    label: string,
+    id: string,
+    origin: string,
+    operations: Array<Pick<ConnectionHttpOperation, 'method' | 'path'>>
+  ) {
+    const recording = this.requireWebConnectionCapture(label, id)
+    if (origin !== recording.origin || !Array.isArray(operations)) {
+      throw new Error('The connection uses requests outside the recording')
+    }
+    const allowed = new Map(
+      recording.records?.map(record => [
+        JSON.stringify([record.sample.method, record.sample.path]),
+        record,
+      ])
+    )
+    return operations.map(operation => {
+      const record = allowed.get(JSON.stringify([operation?.method, operation?.path]))
+      if (!record) throw new Error('The connection uses requests outside the recording')
+      const { method, path } = record.sample
+      return { method, path, ...(record.csrf && { csrf: record.csrf }) }
+    })
+  }
+
+  cancelWebConnectionCapture(label: string, id: string) {
+    const recording = this.webConnectionCaptures.get(label)
+    if (recording?.label !== label || recording.id !== id) return
+    recording.capture.close()
+    this.webConnectionCaptures.delete(label)
+  }
+
+  private requireWebConnectionCapture(label: string, id: string) {
+    const recording = this.webConnectionCaptures.get(label)
+    const url = URL.parse(this.required(label).contents.getURL())
+    if (
+      !recording ||
+      recording.id !== id ||
+      recording.label !== label ||
+      recording.origin !== url?.origin ||
+      recording.expires <= Date.now()
+    )
+      throw new Error('Record another sample on this website')
+    return recording
   }
 
   createBackgroundPage(id: string): BrowserBackgroundPageState {
@@ -1028,6 +1149,8 @@ export class EmbeddedBrowserManager {
   }
 
   private clearLabelScopedState(label: string): void {
+    const recording = this.webConnectionCaptures.get(label)
+    if (recording) this.cancelWebConnectionCapture(label, recording.id)
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
     this.clearAgentCursorHide(label)
@@ -1225,6 +1348,8 @@ export class EmbeddedBrowserManager {
   }
 
   stop(): void {
+    for (const [label, recording] of this.webConnectionCaptures)
+      this.cancelWebConnectionCapture(label, recording.id)
     this.downloads.stop()
     for (const id of [...this.backgroundPages.keys()]) this.closeBackgroundPage(id)
     this.requestHeaderRules.clear()

@@ -48,6 +48,7 @@ export function StandInPrimaryProfile({
   onSelectDevice,
   deviceReadOnly = false,
   initialCalendar = false,
+  initialConnectionProvider,
   onCalendarViewChange,
   onReload,
   shortcuts,
@@ -68,6 +69,7 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
+  initialConnectionProvider?: string
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
@@ -102,13 +104,15 @@ export function StandInPrimaryProfile({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar ? 'connections' : 'main')
+  >(initialCalendar || initialConnectionProvider ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
-  const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
+  const [connectionDetailOpen, setConnectionDetailOpen] = useState(
+    initialCalendar || Boolean(initialConnectionProvider)
+  )
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
   const calendarViewChanged = useCallback(
     (open: boolean) => {
@@ -299,6 +303,7 @@ export function StandInPrimaryProfile({
             onNavigate={navigation.requestLeave}
             hideHeading
             initialCalendar={calendarEntry}
+            initialProvider={initialConnectionProvider}
             onCalendarViewChange={calendarViewChanged}
             onDetailViewChange={setConnectionDetailOpen}
             onDetailTitleChange={setConnectionTitle}

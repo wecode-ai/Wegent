@@ -284,6 +284,30 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
       if (isCurrent(sequence)) setBusy(false)
     }
   }
+  const addSingle = async () => {
+    if (!listeners.size || state.busy || input.disabled || !input.provider.singleResource) return
+    const sequence = ++searchSequence
+    setBusy(true)
+    setError(null)
+    try {
+      const { items, hasMore } = await input.api.searchConnectionResources(
+        input.deviceId,
+        input.provider.id,
+        state.kind,
+        ''
+      )
+      if (!isCurrent(sequence)) return
+      if (items.length !== 1 || hasMore || items[0]?.providerId !== input.provider.id)
+        throw Object.assign(new Error('The source did not return one resource'), {
+          code: 'connection_response_invalid',
+        })
+      add(items)
+    } catch (cause) {
+      failSearch(sequence, cause)
+    } finally {
+      if (isCurrent(sequence)) setBusy(false)
+    }
+  }
 
   return {
     getSnapshot: () => state,
@@ -291,6 +315,7 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     search,
     add,
     addAll,
+    addSingle,
     closeExclusionEditor,
     isConnected,
     identity,

@@ -24,6 +24,16 @@ export type WeworkRendererHealthState =
   | 'recreating'
   | 'failed'
 
+interface WebConnectionBinding {
+  providerId: string
+  definitionDigest: string
+}
+
+interface WebConnectionRequestTarget {
+  method: 'GET' | 'POST'
+  path: string
+}
+
 export interface WeworkRendererHealthSnapshot {
   readonly state: WeworkRendererHealthState
   readonly generation: number
@@ -71,6 +81,33 @@ export interface WeworkDesktopService {
     get(key: string): Promise<string | null>
     set(key: string, value: string): Promise<void>
     delete(key: string): Promise<void>
+  }
+  readonly webConnections: {
+    approveTrial(
+      label: string,
+      captureId: string,
+      binding: WebConnectionBinding,
+      scope: {
+        origin: string
+        pathPrefix?: string
+        name: string
+        account: string
+        operations: WebConnectionRequestTarget[]
+      }
+    ): Promise<string>
+    read(
+      binding: WebConnectionBinding,
+      operation: WebConnectionRequestTarget & {
+        query?: Record<string, string | number | boolean>
+        json?: unknown
+      },
+      trialId?: string
+    ): Promise<unknown>
+    install(
+      binding: WebConnectionBinding,
+      trialId: string,
+      files: Record<string, string>
+    ): Promise<{ providerId: string }>
   }
   readonly rendererHealth: {
     getState(): Promise<WeworkRendererHealthSnapshot>

@@ -10,6 +10,9 @@ export interface CodexConnectionDependency {
 export interface ConnectionDescriptor {
   id: string
   displayName: string
+  /** Discovery only. Never grants access to the site or any of its resources. */
+  webMatch?: Array<{ origin: string; pathPrefix?: string }>
+  singleResource?: true
   uses: string[]
   collectionModes: ['poll']
   /** Staged providers acknowledge only committedCheckpoint while draining pages. */
@@ -255,6 +258,7 @@ export interface ConnectionProvider {
 }
 
 export interface WeworkConnectionsService {
+  registerWeb(owner: Context, manifestUrl: URL, definition: string): Promise<() => void>
   register(
     owner: Context,
     manifestUrl: URL,
@@ -263,6 +267,9 @@ export interface WeworkConnectionsService {
 }
 
 export declare function parseConnections(manifest: unknown): ConnectionDefinition | null
+export declare function connectionWebsiteFilter(
+  url: string
+): (provider: ConnectionDescriptor) => boolean
 export declare function dependencySources(
   dependency: CodexConnectionDependency
 ): Array<CodexConnectionDependency['source']>

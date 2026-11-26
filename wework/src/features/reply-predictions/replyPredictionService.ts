@@ -57,18 +57,29 @@ export function runtimeReplyPredictionSource(
   }
 }
 
+const modelSelectionKeys = new WeakMap<ModelSelectionConfig, string>()
+
+function replyPredictionModelKey(selection: ModelSelectionConfig | null | undefined): string {
+  if (!selection) return 'null'
+  const cached = modelSelectionKeys.get(selection)
+  if (cached !== undefined) return cached
+  // Runtime task snapshots retain immutable model selections across consumers.
+  const key = JSON.stringify(selection, (_key, value: unknown) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map(key => [key, (value as Record<string, unknown>)[key]])
+        )
+      : value
+  )
+  modelSelectionKeys.set(selection, key)
+  return key
+}
+
 export function replyPredictionKey(source: ReplyPredictionSource) {
-  return `${source.scope}\u0000${JSON.stringify(
-    [source.latestTurnId || source.revision, source.modelSelection],
-    (_key, value: unknown) =>
-      value && typeof value === 'object' && !Array.isArray(value)
-        ? Object.fromEntries(
-            Object.keys(value)
-              .sort()
-              .map(key => [key, (value as Record<string, unknown>)[key]])
-          )
-        : value
-  )}`
+  const revision = JSON.stringify(source.latestTurnId || source.revision)
+  return `${source.scope}\u0000[${revision},${replyPredictionModelKey(source.modelSelection)}]`
 }
 
 type PredictionApi = NonNullable<WorkbenchServices['replyPredictionApi']>

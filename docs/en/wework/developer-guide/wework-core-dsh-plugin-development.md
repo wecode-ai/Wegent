@@ -4,6 +4,27 @@ sidebar_position: 8
 
 # Develop Core DSH plugins in an isolated Wework instance
 
+## Website connections
+
+The browser looks up connectors through `wework.connections.providers[].webMatch` in
+`package.json`. Each rule uses an exact `origin` and an optional `pathPrefix` matched
+on path boundaries. A match discovers a connector. Assistant settings grant access to a
+specific source.
+
+A generated website connector contains `package.json`, `cordis.patch.yml`, a fixed
+`index.js`, and `connection.json`. Its `operations` describe tested HTTP methods,
+paths, JSON input schemas, and request templates. The HTTP SDK exposes
+`read(operationId, parameters)`, and Electron issues the request in the browser session
+on the original device. When a recorded POST query uses a CSRF header that matches a
+same-site cookie, the host uses the current cookie to build the header during execution.
+`read` describes result fields and read pagination. `poll` describes event fields,
+collection windows, and an optional threshold. `check` binds the signed-in account.
+
+The authoring flow tests querying and collection with the same definition before handing
+the tested version to Core DSH for installation. The package entry validates the definition
+against its manifest at registration. Account, operation, or definition changes require
+renewed verification.
+
 The bundled **Wework Plugin Developer** is a Wework plugin. It may carry a
 nested Codex plugin in the official Codex format, and Wework uses two complete
 Electron processes for Core DSH plugin development:

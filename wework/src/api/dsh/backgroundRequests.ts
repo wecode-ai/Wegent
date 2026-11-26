@@ -6,6 +6,8 @@ const BACKGROUND_QUEUE_TIMEOUT_MS = 30_000
 
 // Allow the DSH-to-executor deadline to report its error before closing HTTP.
 export function dshRpcTimeoutMs(method: string): number {
+  if (method === 'runtime.connections.web.trial') return 320_000
+  if (method === 'runtime.connections.web.install') return 16 * 60_000 + 20_000
   const preparesPython =
     method === 'executor.plugin_auth.migrate' ||
     method === 'executor.plugin_auth.run' ||

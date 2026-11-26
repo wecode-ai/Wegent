@@ -764,6 +764,29 @@ describe('Core DSH runtime capabilities', () => {
     expect(stored.workbenchMode).toBe('focus')
   })
 
+  test('carries the assistant setup route across a deferred Core DSH restart', async () => {
+    const scheduleCoreDshRestart = vi.fn()
+    const completions: Array<() => void | Promise<void>> = []
+    const { router } = createIsolatedClipboardRouter(true, { scheduleCoreDshRestart })
+    const route = '/wework/app/stand-in?profileId=%40primary&connectionProvider=example%2Fweb'
+    await expect(
+      router.invoke(
+        WEWORK_APP_PRINCIPAL,
+        'runtime.restartCoreDsh',
+        { route },
+        { onResponseSent: completion => completions.push(completion) }
+      )
+    ).resolves.toEqual({ scheduled: true })
+    expect(scheduleCoreDshRestart).not.toHaveBeenCalled()
+    await completions[0]()
+    expect(scheduleCoreDshRestart).toHaveBeenCalledExactlyOnceWith(route)
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'runtime.restartCoreDsh', {
+        route: '//external.example/wework/app/stand-in?',
+      })
+    ).rejects.toThrow('Invalid assistant setup route')
+  })
+
   test('does not restart an unchanged persisted mode', async () => {
     const scheduleCoreDshRestart = vi.fn()
     const updatePreferences = vi.fn().mockResolvedValue({ workbenchMode: 'developer' })

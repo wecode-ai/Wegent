@@ -643,7 +643,7 @@ describe('delegated task completion model routing', () => {
     output: [{ type: 'input_text', text: JSON.stringify(history) }],
   })
 
-  test('reads the exact real child task before reporting its actual answer', () => {
+  test('reports the exact child result even when a user message joins the same turn', () => {
     const body = callback('first')
     const call = toolCall(delegatedTaskResultEvents(body))
     expect(call.name).toBe('mcp__wework_stand_in__read_task')
@@ -652,10 +652,19 @@ describe('delegated task completion model routing', () => {
       output(call.call_id, {
         taskId: 'child-1',
         messages: [{ role: 'assistant', content: 'THE_ACTUAL_CHILD_RESULT' }],
-      })
+      }),
+      { role: 'user', content: 'Keep following the source.' }
     )
-    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('THE_ACTUAL_CHILD_RESULT')
-    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('child-1')
+    expect(delegatedTaskResultEvents(body)).toBeNull()
+    const options = { allowInterleavedUserMessage: true }
+    const result = JSON.stringify(delegatedTaskResultEvents(body, options))
+    expect(result).toContain('THE_ACTUAL_CHILD_RESULT')
+    expect(result).toContain('child-1')
+    body.input.push(
+      { role: 'assistant', phase: 'final_answer', content: 'THE_ACTUAL_CHILD_RESULT' },
+      { role: 'user', content: 'Start a different task.' }
+    )
+    expect(delegatedTaskResultEvents(body, options)).toBeNull()
   })
 
   test('a later completion command cannot reuse an earlier result read', () => {

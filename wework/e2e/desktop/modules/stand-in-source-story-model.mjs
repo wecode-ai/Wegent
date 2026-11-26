@@ -255,7 +255,7 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
       if (handleModelMaintenanceRequest(body, response)) return true
       if (isReplyPredictionRequest(body)) return false
       const latest = latestUserText(body)
-      let events = delegatedTaskResultEvents(body)
+      let events = delegatedTaskResultEvents(body, { allowInterleavedUserMessage: true })
       if (!events) {
         if (latest.startsWith('Review this silent intake batch')) events = coordinator(body)
         else if (latest.includes(`${marker}-CONTINUOUS`)) events = proposal(body)

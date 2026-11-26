@@ -16,6 +16,12 @@
       "default": "./connections.js"
     },
     "./connection-dependencies": "./connection-dependencies.js",
+    "./connection-http": {
+      "types": "./connection-http.d.ts",
+      "default": "./connection-http.js"
+    },
+    "./web-connection-provider": "./web-connection-provider.js",
+    "./web-connection-package": "./web-connection-package.js",
     "./connection-tools": "./connection-tools.js",
     "./connection-runtime": "./connection-runtime.js",
     "./connection-observations": "./connection-observations.js",
@@ -28,6 +34,10 @@
     "connections.js",
     "connections.d.ts",
     "connection-dependencies.js",
+    "connection-http.js",
+    "connection-http.d.ts",
+    "web-connection-provider.js",
+    "web-connection-package.js",
     "connection-tools.js",
     "connection-runtime.js",
     "event-bus.js",

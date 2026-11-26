@@ -97,6 +97,8 @@ fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
             PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS
         }
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
+        Some("runtime.connections.web.trial") => 310,
+        Some("runtime.connections.web.install") => 16 * 60 + 10,
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
         Some("runtime.tasks.compact") => CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS,

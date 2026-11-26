@@ -1,7 +1,37 @@
 import { expect, test, vi } from 'vitest'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
 import { createReplyPredictionFeed } from './replyPredictionFeed'
-import { ReplyPredictionService } from './replyPredictionService'
+import { replyPredictionKey, ReplyPredictionService } from './replyPredictionService'
+
+test('reuses the canonical model key across turns without changing prediction identity', () => {
+  const options = vi.fn(() => ({ z: 'last', a: 'first' }))
+  const modelSelection = {
+    modelName: 'model',
+    get options() {
+      return options()
+    },
+  }
+  const source = {
+    scope: 'scope',
+    revision: 'one',
+    busy: false,
+    address: { deviceId: 'local', taskId: 'task' },
+    modelSelection,
+  }
+  const prefix = 'scope\u0000'
+  const model = { modelName: 'model', options: { a: 'first', z: 'last' } }
+  expect(replyPredictionKey(source)).toBe(prefix + JSON.stringify(['one', model]))
+  expect(replyPredictionKey({ ...source, latestTurnId: 'two' })).toBe(
+    prefix + JSON.stringify(['two', model])
+  )
+  expect(options).toHaveBeenCalledTimes(1)
+  expect(replyPredictionKey({ ...source, modelSelection: { modelName: 'other' } })).toBe(
+    prefix + JSON.stringify(['one', { modelName: 'other' }])
+  )
+  expect(replyPredictionKey({ ...source, modelSelection: undefined })).toBe(
+    prefix + JSON.stringify(['one', null])
+  )
+})
 
 test('task updates and cache events revalidate only the affected prediction', async () => {
   const store = new RuntimeTaskLifecycleStore('reply-prediction-feed')

@@ -3,6 +3,7 @@ import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/sta
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
 import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
 import {
@@ -118,6 +119,12 @@ function StandInSourceConnectionsContent({
     provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
   const allRows = role.connections ?? []
   const rows = allRows.filter(row => row.providerId === provider.id)
+  const website = provider.singleResource ? provider.webMatch?.[0] : undefined
+  const description = t(
+    website
+      ? 'workbench.web_connection_source_description'
+      : 'standIn.workspace.message_connection_help'
+  )
   const prefix =
     provider.id === '@wegent/dsh-connection-dingtalk/dingtalk'
       ? 'stand-in-dingtalk'
@@ -278,12 +285,33 @@ function StandInSourceConnectionsContent({
         <StandInConnectionHeader
           icon={MessageSquare}
           title={provider.displayName}
-          description={t('standIn.workspace.message_connection_help')}
+          description={description}
         />
         <p role="alert" className="text-sm text-text-secondary">
           {t('standIn.errors.connector_auth_required')}
         </p>
-        {provider.authTarget && deviceId === localDeviceId ? (
+        {website && deviceId === localDeviceId ? (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="stand-in-website-sign-in"
+              onClick={() =>
+                requestEmbeddedBrowserOpen(website.origin + (website.pathPrefix ?? '/'))
+              }
+            >
+              {t('workbench.web_connection_open_website')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="stand-in-website-auth-refresh"
+              onClick={model.authorized}
+            >
+              {t('workbench.web_connection_retry')}
+            </Button>
+          </div>
+        ) : provider.authTarget && deviceId === localDeviceId ? (
           <ControlButton
             variant="unstyled"
             type="button"
@@ -312,10 +340,21 @@ function StandInSourceConnectionsContent({
       <StandInConnectionHeader
         icon={MessageSquare}
         title={provider.displayName}
-        description={t('standIn.workspace.message_connection_help')}
+        description={description}
       />
       {connectedScope}
-      {!showAdding && (
+      {website && rows.length === 0 && (
+        <Button
+          size="sm"
+          disabled={disabled || busy}
+          data-testid="stand-in-website-add-source"
+          onClick={() => void model.addSingle()}
+        >
+          {t('workbench.web_connection_add_source')}
+        </Button>
+      )}
+      {website && error && <p role="alert">{error.message}</p>}
+      {!website && !showAdding && (
         <ControlButton
           variant="unstyled"
           type="button"
@@ -332,7 +371,7 @@ function StandInSourceConnectionsContent({
           {t('standIn.workspace.add_connection')}
         </ControlButton>
       )}
-      {showAdding && (
+      {!website && showAdding && (
         <form
           onSubmit={event => {
             event.preventDefault()

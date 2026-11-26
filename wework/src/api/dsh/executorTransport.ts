@@ -61,6 +61,14 @@ interface PendingExecutorEvent {
   next?: PendingExecutorEvent
 }
 
+interface ExecutorSubscriberTiming {
+  event: string
+  sequence: number
+  startedAt: number
+  durationMs: number
+  sources?: string[]
+}
+
 interface DshExecutorErrorBody {
   error?: {
     code?: string
@@ -318,6 +326,18 @@ export function subscribeDshExecutorEvents(
           })
         } finally {
           const durationMs = e2e ? performance.now() - startedAt : 0
+          if (durationMs >= EVENT_DELIVERY_SLICE_MS) {
+            const profileWindow = window as Window & {
+              __weworkProfileExecutorSubscriber?: (timing: ExecutorSubscriberTiming) => void
+            }
+            profileWindow.__weworkProfileExecutorSubscriber?.({
+              event: event.event,
+              sequence: event.sequence,
+              startedAt,
+              durationMs,
+              sources: executorEventSubscriberSources.get(id),
+            })
+          }
           if (durationMs >= 50)
             logRuntimeTaskCreateStage('executor-slow-event-subscriber', {
               event: event.event,

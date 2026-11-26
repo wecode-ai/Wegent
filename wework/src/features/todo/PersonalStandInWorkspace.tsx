@@ -377,6 +377,7 @@ function AccountStandInWorkspace({
                 : undefined
             }
             initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
+            initialConnectionProvider={query.get('connectionProvider') ?? undefined}
             onSelectLocation={workspaceSource.selectLocation}
             api={api}
             projects={projects}

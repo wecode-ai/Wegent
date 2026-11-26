@@ -3,6 +3,9 @@ import type { WorkbenchContextValue, WorkbenchPaneContextValue } from './workben
 import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 
 export const WorkbenchContext = createContext<WorkbenchContextValue | null>(null)
+export const WorkbenchServicesContext = createContext<WorkbenchContextValue['services'] | null>(
+  null
+)
 export const WorkbenchPaneContext = createContext<WorkbenchPaneContextValue | null>(null)
 export const RuntimeTaskRemindersContext = createContext<RuntimeTaskReminderState | null>(null)
 export const WorkbenchQueueActionsContext = createContext<Pick<

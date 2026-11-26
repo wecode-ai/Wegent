@@ -2,6 +2,7 @@ import {
   RuntimeTaskRemindersContext,
   WorkbenchOwnerLeaseContext,
   WorkbenchQueueActionsContext,
+  WorkbenchServicesContext,
   WorkbenchSidebarRemindersContext,
 } from './workbenchContexts'
 import { useRuntimeTaskReminders, type RuntimeTaskReminderState } from './runtimeTaskReminders'
@@ -103,7 +104,9 @@ export function WorkbenchContextProviders({
                         services={paneValue.services}
                         publish={publishTaskReminders}
                       >
-                        <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                        <WorkbenchServicesContext.Provider value={paneValue.services}>
+                          <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                        </WorkbenchServicesContext.Provider>
                       </WorkbenchReminderProvider>
                     </WorkbenchQueueActionsContext.Provider>
                   </WorkbenchCloudDeviceRestarts>

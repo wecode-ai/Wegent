@@ -13,6 +13,7 @@ import { setReducedMotion } from './e2e-media-preferences.js'
 import { blurE2EWindow, focusE2EWindow } from './e2e-window-focus.js'
 import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
+import type { WebConnectionGrants } from './web-connection-grants.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
 import { controlInlineVisualizationFrame } from './e2e-inline-visualization.js'
 import {
@@ -165,6 +166,7 @@ export interface ElectronDesktopServices {
   processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateController
   browserAnnotations?: BrowserAnnotationController
+  webConnections?: WebConnectionGrants
   applicationMenu?: () => ApplicationMenu | null
   updateApplicationMenuCapabilities?: (
     label: string,
@@ -324,7 +326,7 @@ export interface ElectronE2EHost {
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
   traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
-  scheduleCoreDshRestart: () => void
+  scheduleCoreDshRestart: (route?: string) => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   showMain: () => Promise<void>
   closeWorkspace: (label: string) => void
@@ -441,6 +443,39 @@ export function createElectronCapabilityRouter(
   }
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
+  const webConnections = desktopServices.webConnections
+  if (webConnections) {
+    router.register('webConnections.approveTrial', params => {
+      const label = stringParam(params, 'label')
+      const scope = params.scope as Parameters<WebConnectionGrants['approveTrial']>[2]
+      const operations = browser.validateWebConnectionRequests(
+        label,
+        stringParam(params, 'captureId'),
+        scope.origin,
+        scope.operations
+      )
+      return webConnections.approveTrial(
+        label,
+        params.binding as Parameters<WebConnectionGrants['approveTrial']>[1],
+        { ...scope, operations }
+      )
+    })
+    router.register('webConnections.read', params =>
+      webConnections.read(
+        params.binding as Parameters<WebConnectionGrants['read']>[0],
+        params.operation as Parameters<WebConnectionGrants['read']>[1],
+        typeof params.trialId === 'string' ? params.trialId : undefined
+      )
+    )
+    router.register('webConnections.install', params =>
+      webConnections.install(
+        params.binding as Parameters<WebConnectionGrants['install']>[0],
+        stringParam(params, 'trialId'),
+        stringRecordParam(params, 'files'),
+        spec => requiredCoreDshPluginService(desktopServices).installCoreDshPlugin(spec)
+      )
+    )
+  }
   const attachments = new LocalAttachmentStore(
     join(desktopServices.executorHome, 'workspace', 'attachments', 'draft')
   )
@@ -664,6 +699,23 @@ export function createElectronCapabilityRouter(
   )
   router.register('browser.closeBackgroundPage', params =>
     browser.closeBackgroundPage(stringParam(params, 'id'))
+  )
+  router.register('browser.connectionCapture.start', params =>
+    browser.startWebConnectionCapture(stringParam(params, 'label'))
+  )
+  router.register('browser.connectionCapture.finish', params =>
+    browser.finishWebConnectionCapture(stringParam(params, 'label'), stringParam(params, 'id'))
+  )
+  router.register('browser.connectionCapture.account', params =>
+    browser.webConnectionAccount(
+      stringParam(params, 'label'),
+      stringParam(params, 'id'),
+      Number(params.requestIndex),
+      stringArrayParam(params, 'path') ?? []
+    )
+  )
+  router.register('browser.connectionCapture.cancel', params =>
+    browser.cancelWebConnectionCapture(stringParam(params, 'label'), stringParam(params, 'id'))
   )
   router.register('secureStorage.get', params =>
     desktopServices.secureStorage.get(stringParam(params, 'key'))
@@ -1313,8 +1365,12 @@ export function createElectronCapabilityRouter(
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
-  router.register('runtime.restartCoreDsh', (_params, context) => {
-    context.deferUntilResponseSent(e2eHost.scheduleCoreDshRestart)
+  router.register('runtime.restartCoreDsh', (params, context) => {
+    const route = optionalStringParam(params, 'route')
+    if (route && (route.length > 2048 || !route.startsWith('/wework/app/stand-in?'))) {
+      throw new HostCapabilityError('invalid_input', 'Invalid assistant setup route')
+    }
+    context.deferUntilResponseSent(() => e2eHost.scheduleCoreDshRestart(route))
     return { scheduled: true }
   })
   router.register('shell.openExternal', async params => {

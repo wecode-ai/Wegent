@@ -98,6 +98,8 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { WebConnectionGrants } from './host/web-connection-grants.js'
+import { confirmWebConnectionTrial } from './host/web-connection-approval.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { completeE2ERuntimeControl } from './host/e2e-runtime-request.js'
 import {
@@ -1036,6 +1038,7 @@ function layoutPrimaryView(): void {
   embeddedBrowser?.layoutAll()
 }
 
+let coreRestartRoute: string | undefined
 const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
   if (!desktopRuntime.state().ready) return
@@ -1081,7 +1084,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
           error
         )
       })
-    const targetUrl = new URL(dshUrl)
+    const targetUrl = new URL(coreRestartRoute ?? dshUrl, dshUrl)
     if (pluginDevelopmentInstance) {
       targetUrl.searchParams.set(
         'weworkDevTitle',
@@ -1151,16 +1154,21 @@ function disposeCoreDshViews(): void {
   primaryDshLoaded = false
 }
 
-async function restartPrimaryCoreDsh(): Promise<void> {
+async function restartPrimaryCoreDsh(route?: string): Promise<void> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   disposeCoreDshViews()
   await mainWindow?.webContents.loadURL('about:blank')
   await desktopRuntime.restartCoreDsh()
-  await loadPrimaryDshView()
+  coreRestartRoute = route
+  try {
+    await loadPrimaryDshView()
+  } finally {
+    coreRestartRoute = undefined
+  }
   await restoreFixedWorkspaceWindows()
 }
 
-function scheduleCoreDshRestart(): void {
+function scheduleCoreDshRestart(route?: string): void {
   setTimeout(() => {
     void (async () => {
       if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
@@ -1169,7 +1177,7 @@ function scheduleCoreDshRestart(): void {
       lastStartupFailure = null
       rendererHealth.loading()
       notifyRuntimeChanged()
-      await restartPrimaryCoreDsh()
+      await restartPrimaryCoreDsh(route)
       runtimePhase = lastStartupFailure ? 'failed' : 'ready'
       notifyRuntimeChanged()
     })().catch(error => {
@@ -2527,6 +2535,16 @@ async function configureDesktopRuntime(): Promise<void> {
     openSchemeInMainWindow,
     desktopDownloadPolicy
   )
+  const browser = embeddedBrowser
+  const webConnections = new WebConnectionGrants(
+    join(app.getPath('userData'), 'web-connections'),
+    label => {
+      const state = browser.state(label)
+      return state.isLoading || state.navigationError ? null : state.url
+    },
+    scope => confirmWebConnectionTrial(scope, mainWindow, nativeDialogLanguage),
+    (origin, operation, csrf) => browser.fetchConnectionJson(origin, operation, csrf)
+  )
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
     publish: state => {
@@ -2718,6 +2736,7 @@ async function configureDesktopRuntime(): Promise<void> {
               : null,
           appUpdates,
           browserAnnotations,
+          webConnections,
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,

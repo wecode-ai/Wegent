@@ -18,6 +18,7 @@ export async function handleConnectionRpc(req, res, token, request) {
   let status = 200
   let response
   let collection = false
+  let responseTimer
   const controller = new AbortController()
   const stopDeadlines = () => {
     clearTimeout(bodyTimer)
@@ -54,9 +55,7 @@ export async function handleConnectionRpc(req, res, token, request) {
     controller.abort()
   }
   const bodyTimer = setTimeout(() => deadline(408, 'body_timeout'), BODY_TIMEOUT_MS)
-  const responseTimer = setTimeout(() => deadline(504, 'connection_timeout'), RESPONSE_TIMEOUT_MS)
   bodyTimer.unref()
-  responseTimer.unref()
   res.once?.('close', disconnect)
   try {
     if (!loopback || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
@@ -78,10 +77,21 @@ export async function handleConnectionRpc(req, res, token, request) {
     clearTimeout(bodyTimer)
     if (controller.signal.aborted || res.writableEnded || res.destroyed) return
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    const responseTimeout =
+      body.method === 'installWebConnection'
+        ? 15 * 60_000 + 30_000
+        : body.method === 'trialWebConnection'
+          ? 290_000
+          : RESPONSE_TIMEOUT_MS
+    responseTimer = setTimeout(() => deadline(504, 'connection_timeout'), responseTimeout)
+    responseTimer.unref()
     collection = body.method === 'collectObservation'
     response = {
       ok: true,
-      result: await request(body, collection ? controller.signal : undefined),
+      result: await request(
+        body,
+        collection || body.method === 'trialWebConnection' ? controller.signal : undefined
+      ),
     }
   } catch (error) {
     if (status === 200) status = error.code === 'request_too_large' ? 413 : 400

@@ -143,6 +143,14 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.web.trial" => boxed_rpc(move || async move {
+                self.connection_call("trialWebConnection", None, payload)
+                    .await
+            }),
+            "runtime.connections.web.install" => boxed_rpc(move || async move {
+                self.connection_call("installWebConnection", None, payload)
+                    .await
+            }),
             "runtime.connections.observations.sync" => {
                 boxed_rpc(
                     move || async move { self.sync_cloud_connection_subscription(payload).await },

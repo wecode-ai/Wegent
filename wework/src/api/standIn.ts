@@ -42,6 +42,8 @@ export function isStandInBindingOwner(targetUserId: number, userId: number): boo
 export interface ConnectionProviderDescriptor {
   id: string
   displayName: string
+  webMatch?: Array<{ origin: string; pathPrefix?: string }>
+  singleResource?: true
   resourceKinds: string[]
   allResourceLabel?: string
   allResourceKinds?: string[]

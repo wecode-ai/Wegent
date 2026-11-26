@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
@@ -13,15 +14,38 @@ const TITLES = [
 let decisionSequence = 0
 
 /** Act as the test user on the real OS dialog; never replace the native decision. */
-export async function withNativePluginDecision(control, operation, { allow = true } = {}) {
+export async function withNativePluginDecision(
+  control,
+  operation,
+  { allow = true, focusMainWindow = true, ...target } = {}
+) {
   const pid = control.applicationProcessId
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
-  await control.command('focusMainWindow', 'body')
+  if (focusMainWindow) await control.command('focusMainWindow', 'body')
   const abort = new AbortController()
-  const decision = clickNativeDecision(pid, allow, abort.signal, control.matrixEvidenceDirectory)
+  const decision = clickNativeDecision(
+    pid,
+    allow,
+    abort.signal,
+    control.matrixEvidenceDirectory,
+    target
+  )
   try {
-    const [result] = await Promise.all([operation(), decision])
-    return result
+    const outcome = Promise.resolve().then(operation)
+    if (process.platform !== 'darwin') {
+      const [result] = await Promise.all([outcome, decision])
+      return result
+    }
+    // The operation settles after the native response. On macOS the AX click can remain
+    // blocked after the sheet closes, so stop the driver when the application has acted.
+    const driverFinished = decision.catch(error => {
+      if (!error.cause?.killed) throw error
+      console.warn(
+        '[native-plugin-decision] Waiting for the application after AX timeout',
+        error.message
+      )
+    })
+    return await Promise.race([outcome, driverFinished.then(() => outcome)])
   } finally {
     abort.abort()
     await decision.catch(() => {})
@@ -33,7 +57,10 @@ export async function clickNativeDecision(pid, allow, signal, evidenceDirectory,
   if (process.platform === 'darwin') {
     await clickMacosNativeDecision(
       pid,
-      allow ? ['Allow installation', 'Allow update', '允许安装', '允许更新'] : ['Cancel', '取消'],
+      decision.labels ??
+        (allow
+          ? ['Allow installation', 'Allow update', '允许安装', '允许更新']
+          : ['Cancel', '取消']),
       options
     )
     return
@@ -184,10 +211,12 @@ throw 'The isolated app did not display its native Core plugin decision'
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.
   const deadline = Date.now() + options.timeout
-  const window = await findLinuxModal(pid, options).catch(async error => {
-    if (!signal.aborted) await recordNativeWindowDiagnostics(pid)
-    throw error
-  })
+  const window = await findLinuxModal(pid, options, decision.titles ?? TITLES).catch(
+    async error => {
+      if (!signal.aborted) await recordNativeWindowDiagnostics(pid)
+      throw error
+    }
+  )
   await recordNativeDecisionDiagnostics(pid, window, allow, evidenceDirectory, {
     ...options,
     timeout: Math.max(1, deadline - Date.now()),
@@ -250,7 +279,7 @@ function isVanishedX11Window(error) {
   return error.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? '')
 }
 
-async function findLinuxModal(pid, options) {
+async function findLinuxModal(pid, options, titles) {
   const deadline = Date.now() + options.timeout
   const remaining = () => {
     options.signal.throwIfAborted()
@@ -273,7 +302,7 @@ async function findLinuxModal(pid, options) {
     }
     // search --name reads only WM_NAME in Ubuntu's xdotool; GTK uses _NET_WM_NAME.
     // getwindowname resolves that EWMH UTF-8 property while preserving PID ownership.
-    const titles = await Promise.all(
+    const namedWindows = await Promise.all(
       windows.map(async window => {
         try {
           const { stdout } = await execute('xdotool', ['getwindowname', window], remaining())
@@ -285,8 +314,8 @@ async function findLinuxModal(pid, options) {
         }
       })
     )
-    const matches = titles
-      .filter(value => value && TITLES.includes(value.title))
+    const matches = namedWindows
+      .filter(value => value && titles.includes(value.title))
       .map(value => value.window)
     assert.ok(matches.length < 2, 'Native plugin confirmation must be unambiguous')
     if (matches.length === 1 && Date.now() < deadline) return matches[0]
@@ -332,14 +361,10 @@ async function recordNativeWindowDiagnostics(pid) {
 /** Click the exact visible native button in one isolated process. */
 export async function clickMacosNativeDecision(pid, labels, options) {
   assert.ok(Number.isSafeInteger(pid) && pid > 0)
-  await execute(
-    '/usr/bin/osascript',
-    [
-      '-e',
-      '\non run argv\n  set targetPid to (item 1 of argv) as integer\n  set acceptedLabels to items 2 thru -1 of argv\n  tell application "System Events"\n    set targetProcess to first application process whose unix id is targetPid\n    repeat 100 times\n      repeat with w in windows of targetProcess\n        set dialogs to sheets of w\n        if subrole of w is "AXDialog" then set end of dialogs to w\n        repeat with dialogReference in dialogs\n        set nativeDialog to contents of dialogReference\n        set nativeElements to get entire contents of nativeDialog\n        repeat with elementReference in nativeElements\n          set nativeElement to contents of elementReference\n          if class of nativeElement is button then\n            set labelText to name of nativeElement\n            if labelText is in acceptedLabels then\n              click nativeElement\n              return\n            end if\n          end if\n        end repeat\n        end repeat\n      end repeat\n      delay 0.1\n    end repeat\n  end tell\n  error "The isolated app did not display its native Core plugin decision"\nend run',
-      String(pid),
-      ...labels,
-    ],
-    options
-  )
+  const script = fileURLToPath(new URL('./native-plugin-approval-macos.swift', import.meta.url))
+  try {
+    await execute('/usr/bin/swift', [script, String(pid), ...labels], options)
+  } catch (error) {
+    throw new Error(error.stderr?.trim() || error.message, { cause: error })
+  }
 }
