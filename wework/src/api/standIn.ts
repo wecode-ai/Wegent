@@ -97,6 +97,7 @@ export interface StandInInboxWork {
   source: StandInSourceConnection
   status: 'pending' | 'needs_grouping' | 'sending' | 'sent' | 'failed'
   updatedAt: string
+  refreshVersion?: string
   messageCount: number
   latestMessage: StandInInboxMessage | null
   delegationResult?: StandInDelegationResult

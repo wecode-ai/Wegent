@@ -61,6 +61,7 @@ pub(crate) fn project_visible_work(
     } else if let Some(work) = work.as_object_mut() {
         work.remove("delegationResult");
     }
+    work["refreshVersion"] = json!(visible_refresh_version(&work, &messages));
 
     let hidden_messages_removed = raw_message_count > messages.len();
     Some(VisibleWork {
@@ -244,6 +245,44 @@ fn visible_delegation_result(messages: &[Value]) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// A deterministic revision of the visible work detail state.
+///
+/// Dispatch and delegation transitions can change while the message timestamp and
+/// count stay fixed. The UI uses this revision to refresh an expanded detail view.
+fn visible_refresh_version(work: &Value, messages: &[Value]) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    hash_text(&mut hash, work["status"].as_str().unwrap_or_default());
+    hash_text(&mut hash, work["error"].as_str().unwrap_or_default());
+    hash_delegation(&mut hash, &work["delegationResult"]);
+    for message in messages {
+        hash_text(&mut hash, message["recordId"].as_str().unwrap_or_default());
+        hash_text(
+            &mut hash,
+            message["dispatchStatus"].as_str().unwrap_or_default(),
+        );
+        hash_text(&mut hash, &message["dispatchFailureCount"].to_string());
+        hash_text(&mut hash, message["error"].as_str().unwrap_or_default());
+        hash_delegation(&mut hash, &message["delegationResult"]);
+        hash_text(&mut hash, "");
+    }
+    format!("{hash:016x}")
+}
+
+fn hash_delegation(hash: &mut u64, result: &Value) {
+    hash_text(hash, result["action"].as_str().unwrap_or_default());
+    hash_text(hash, result["status"].as_str().unwrap_or_default());
+    hash_text(hash, result["reason"].as_str().unwrap_or_default());
+}
+
+fn hash_text(hash: &mut u64, text: &str) {
+    for byte in text.bytes() {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+    *hash ^= 0xff;
+    *hash = hash.wrapping_mul(0x100000001b3);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +320,34 @@ mod tests {
             "at": "2026-01-01T00:00:00Z",
             "dispatchStatus": "sent",
             "source": {"providerId": "connection/email", "profile": "mailbox"}
+        })
+    }
+
+    fn delegated_message(
+        action: &str,
+        dispatch_status: &str,
+        delegation_status: &str,
+        reason: &str,
+    ) -> Value {
+        json!({
+            "recordId": "delegated-record",
+            "roleId": "@primary",
+            "text": "delegated content",
+            "at": "2026-01-01T00:00:00Z",
+            "dispatchStatus": dispatch_status,
+            "delegationResult": {
+                "action": action,
+                "status": delegation_status,
+                "reason": reason
+            },
+            "source": {
+                "providerId": crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+                "profile": "current",
+                "accountId": "account-new",
+                "kind": "direct",
+                "id": "peer",
+                "delegated": true
+            }
         })
     }
 
@@ -494,5 +561,56 @@ mod tests {
             Some(&json!({})),
             &visible
         ));
+    }
+
+    #[test]
+    fn refresh_version_tracks_visible_message_state_without_count_or_time_changes() {
+        let work = json!({
+            "id": "delegated",
+            "roleId": "@primary",
+            "source": delegated_message("reply", "sending", "submitting", "Sending reply")["source"],
+            "createdAt": "2026-01-01T00:00:00Z"
+        });
+        let variants = [
+            delegated_message("reply", "sending", "submitting", "Sending reply"),
+            delegated_message("reply", "sent", "sent", "Automatic reply sent"),
+            delegated_message("reply", "sent", "unknown", "Reply delivery unconfirmed"),
+            delegated_message("needs_user", "sent", "complete", "Needs user decision"),
+        ];
+        let versions = variants
+            .iter()
+            .map(|message| {
+                let visible =
+                    project_visible_work(&settings(), work.clone(), vec![message.clone()]).unwrap();
+                assert_eq!(visible.work["messageCount"], 1);
+                assert_eq!(visible.work["updatedAt"], "2026-01-01T00:00:00Z");
+                visible.work["refreshVersion"].as_str().unwrap().to_owned()
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(versions.len(), variants.len());
+    }
+
+    #[test]
+    fn refresh_version_ignores_hidden_account_message_state() {
+        let visible = delegated_message("reply", "sent", "sent", "Current account result");
+        let work = json!({
+            "id": "mixed",
+            "roleId": "@primary",
+            "source": visible["source"],
+            "createdAt": "2026-01-01T00:00:00Z"
+        });
+        let mut hidden = old_account_message();
+        let first = project_visible_work(
+            &settings(),
+            work.clone(),
+            vec![hidden.clone(), visible.clone()],
+        )
+        .unwrap();
+        hidden["dispatchStatus"] = json!("sent");
+        hidden["delegationResult"]["status"] = json!("sent");
+        hidden["delegationResult"]["reason"] = json!("Old account result updated");
+        let second = project_visible_work(&settings(), work, vec![hidden, visible]).unwrap();
+
+        assert_eq!(first.work["refreshVersion"], second.work["refreshVersion"]);
     }
 }
