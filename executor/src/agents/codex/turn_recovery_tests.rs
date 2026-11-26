@@ -96,6 +96,7 @@ pub(super) fn shared_options(
     cancellation: Option<oneshot::Receiver<()>>,
 ) -> super::super::SharedTurnNotificationOptions {
     super::super::SharedTurnNotificationOptions {
+        defer_interactive_forms: false,
         recover_usage_limits: false,
         runtime_notifications: None,
         overload_turn_recovering: None,
@@ -186,12 +187,52 @@ async fn overload_recovery_shared_reader_does_not_retry_other_terminal_errors() 
 }
 
 #[cfg(unix)]
+async fn recovery_reader(
+    mut child: tokio::process::Child,
+) -> (
+    super::super::CodexAppServerClient,
+    tokio::sync::broadcast::Receiver<super::super::CodexNotification>,
+) {
+    use super::super::*;
+    let notifications = CodexNotificationHub::new();
+    let rx = notifications.all.subscribe();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let stdin = Arc::new(Mutex::new(child.stdin.take().unwrap()));
+    let stdout = CodexStdout::new(child.stdout.take().unwrap(), None);
+    let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
+        stdout,
+        CodexAppServerHandle {
+            stdin: stdin.clone(),
+            pending: pending.clone(),
+            notifications: notifications.clone(),
+        },
+    ));
+    let state = CodexAppServerSharedState {
+        next_id: 2,
+        process: Some(CodexAppServerProcess {
+            child: child.into(),
+            stdin,
+            pending,
+            notifications,
+            reader_task,
+        }),
+        ..Default::default()
+    };
+    let client = CodexAppServerClient {
+        binary: "test-codex".into(),
+        home: None,
+        state: Arc::new(Mutex::new(state)),
+    };
+    client.mark_thread_active("root-thread").await;
+    (client, rx)
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn overload_recovery_native_reader_continues_only_after_completion() {
-    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
     use std::process::Stdio;
     let script = format!(
-        r#"printf '%s\n' '{{"id":1,"result":{{"turn":{{"id":"failed-turn"}}}}}}' '{error}' '{completed}'
+        r#"printf '%s\n' '{{"id":1,"result":{{"turn":{{"id":"failed-turn"}}}}}}' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"failed-turn"}}}}}}' '{error}' '{completed}'
 IFS= read -r continuation
 printf '%s\n' "{{\"method\":\"test/continuation\",\"params\":$continuation}}" '{{"id":2,"result":{{}}}}'
 printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"root-thread","turn":{{"id":"recovered-turn"}}}}}}'
@@ -201,7 +242,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         error = overload_error(),
         completed = completed("failed"),
     );
-    let mut child = tokio::process::Command::new("sh")
+    let child = tokio::process::Command::new("sh")
         .args(["-c", &script])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -209,11 +250,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let mut rpc = JsonRpcConnection::new(
-        child.stdin.take().unwrap(),
-        CodexStdout::new(child.stdout.take().unwrap(), None),
-        2,
-    );
+    let (client, mut rx) = recovery_reader(child).await;
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
     let (active_tx, mut active_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -225,10 +262,19 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
     }));
     let outcome = tokio::time::timeout(
         Duration::from_secs(20),
-        rpc.read_turn(
-            1,
+        super::super::read_shared_turn_notifications(
+            &client,
+            &mut rx,
+            "root-thread",
             &mut state,
-            super::super::json_rpc::TurnReadOptions {
+            20,
+            tokio::time::Instant::now() + Duration::from_secs(20),
+            super::super::SharedTurnNotificationOptions {
+                runtime_notifications: None,
+                expected_client_user_message_id: None,
+                cancellation: None,
+                active_turn_finished: None,
+                active_turn_id: None,
                 recover_usage_limits: false,
                 wait_for_goal_continuation: false,
                 active_turn_started: Some(Box::new(move |thread_id, turn_id| {
@@ -281,6 +327,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         ("root-thread".to_owned(), "failed-turn".to_owned())
     );
     assert!(recovery_rx.try_recv().is_err());
+
     assert_eq!(
         active_rx.try_recv().unwrap(),
         ("root-thread".to_owned(), "failed-turn".to_owned())
@@ -290,13 +337,23 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         ("root-thread".to_owned(), "recovered-turn".to_owned())
     );
     assert!(active_rx.try_recv().is_err());
-    assert!(child.wait().await.unwrap().success());
+    assert!(client
+        .state
+        .lock()
+        .await
+        .process
+        .as_mut()
+        .unwrap()
+        .child
+        .wait()
+        .await
+        .unwrap()
+        .success());
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn overload_recovery_native_reader_restores_goal_and_waits_for_automatic_continuation() {
-    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
     use std::process::Stdio;
     let stopped = blocked_goal(json!("failed-turn"));
     let mut active = stopped.clone();
@@ -322,7 +379,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         goal = stopped["params"]["goal"],
         active_goal = active["params"]["goal"],
     );
-    let mut child = tokio::process::Command::new("sh")
+    let child = tokio::process::Command::new("sh")
         .args(["-c", &script])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -330,19 +387,24 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let mut rpc = JsonRpcConnection::new(
-        child.stdin.take().unwrap(),
-        CodexStdout::new(child.stdout.take().unwrap(), None),
-        2,
-    );
+    let (client, mut rx) = recovery_reader(child).await;
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let outcome = tokio::time::timeout(
         Duration::from_secs(20),
-        rpc.read_turn(
-            1,
+        super::super::read_shared_turn_notifications(
+            &client,
+            &mut rx,
+            "root-thread",
             &mut state,
-            super::super::json_rpc::TurnReadOptions {
+            20,
+            tokio::time::Instant::now() + Duration::from_secs(20),
+            super::super::SharedTurnNotificationOptions {
+                runtime_notifications: None,
+                expected_client_user_message_id: None,
+                cancellation: None,
+                active_turn_finished: None,
+                active_turn_id: Some("failed-turn".into()),
                 recover_usage_limits: false,
                 wait_for_goal_continuation: false,
                 active_turn_started: None,
@@ -382,13 +444,23 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         resume["params"],
         json!({"threadId": "root-thread", "status": "active", "origin": "automatic"})
     );
-    assert!(child.wait().await.unwrap().success());
+    assert!(client
+        .state
+        .lock()
+        .await
+        .process
+        .as_mut()
+        .unwrap()
+        .child
+        .wait()
+        .await
+        .unwrap()
+        .success());
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn overload_recovery_native_reader_settles_goal_mutation_without_stop_button_request() {
-    use super::super::{debug_stdout::CodexStdout, json_rpc::JsonRpcConnection};
     use std::process::Stdio;
     let stopped = blocked_goal(json!("failed-turn"));
     let mut paused = stopped["params"]["goal"].clone();
@@ -401,7 +473,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         error = overload_error(),
         failed = completed("failed"),
     );
-    let mut child = tokio::process::Command::new("sh")
+    let child = tokio::process::Command::new("sh")
         .args(["-c", &script])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -409,19 +481,24 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let mut rpc = JsonRpcConnection::new(
-        child.stdin.take().unwrap(),
-        CodexStdout::new(child.stdout.take().unwrap(), None),
-        2,
-    );
+    let (client, mut rx) = recovery_reader(child).await;
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let outcome = tokio::time::timeout(
         Duration::from_secs(20),
-        rpc.read_turn(
-            1,
+        super::super::read_shared_turn_notifications(
+            &client,
+            &mut rx,
+            "root-thread",
             &mut state,
-            super::super::json_rpc::TurnReadOptions {
+            20,
+            tokio::time::Instant::now() + Duration::from_secs(20),
+            super::super::SharedTurnNotificationOptions {
+                runtime_notifications: None,
+                expected_client_user_message_id: None,
+                cancellation: None,
+                active_turn_finished: None,
+                active_turn_id: Some("failed-turn".into()),
                 recover_usage_limits: false,
                 wait_for_goal_continuation: false,
                 active_turn_started: None,
@@ -451,7 +528,18 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         }
     }
     assert_eq!(last_goal, Some(paused));
-    assert!(child.wait().await.unwrap().success());
+    assert!(client
+        .state
+        .lock()
+        .await
+        .process
+        .as_mut()
+        .unwrap()
+        .child
+        .wait()
+        .await
+        .unwrap()
+        .success());
 }
 
 #[cfg(unix)]

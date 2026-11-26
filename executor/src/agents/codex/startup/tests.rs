@@ -17,6 +17,7 @@ fn shared_client() -> CodexAppServerClient {
 
 fn options(cancellation: Option<oneshot::Receiver<()>>) -> SharedTurnNotificationOptions {
     SharedTurnNotificationOptions {
+        defer_interactive_forms: false,
         recover_usage_limits: false,
         runtime_notifications: None,
         overload_turn_recovering: None,

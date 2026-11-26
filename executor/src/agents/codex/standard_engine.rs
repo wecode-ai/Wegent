@@ -32,8 +32,8 @@ use crate::{
 use super::{
     elicitation::native_user_input_timeout,
     mcp_form::{deferred_form, form_item},
-    resolve_codex_binary, run_codex_app_server_turn_with_cancel, CodexAppServerTurn,
-    CodexAppServerTurnOptions, CodexNotification,
+    resolve_codex_binary, CodexAppServerTurn, CodexAppServerTurnOptions, CodexNotification,
+    CodexTurnConnection,
 };
 
 const INTERACTION_CLOCK_CHECK_INTERVAL: Duration = Duration::from_secs(15);
@@ -346,7 +346,9 @@ impl CodexAppServerEngine {
                     .await?
                     .map(|(credentials, _)| credentials);
                 }
-                run_codex_app_server_turn_with_cancel(&binary, request, options).await
+                CodexTurnConnection::Private(&binary)
+                    .run(request, options)
+                    .await
             }),
             notifications: notification_rx,
             answers: answer_tx,
@@ -389,7 +391,9 @@ impl AgentEngine for CodexAppServerEngine {
     fn cancel_pending(&self, task_id: &str, subtask_id: Option<&str>) -> Option<EventEnvelope> {
         let mut pending = self.pending.lock().ok()?;
         let suspended = pending.get(task_id)?;
-        if subtask_id.is_some_and(|id| id != suspended.scope().0.subtask_id) {
+        if subtask_id
+            .is_some_and(|id| id != crate::runner::execution_command_id(suspended.scope().0))
+        {
             return None;
         }
         let suspended = pending.remove(task_id)?;

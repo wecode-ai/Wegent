@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 #[cfg(unix)]
-use crate::agents::codex::{spawn_codex_app_server, CodexLaunchConfig, CodexTurnProcess};
+use crate::agents::codex::{spawn_codex_app_server, CodexLaunchConfig};
 use crate::agents::codex::{CodexAuthMode, EnvRestore};
 
 #[test]
@@ -70,18 +70,15 @@ async fn standalone_router_launch_preserves_a_live_subscription_process_auth() {
     fs::write(&binary, "#!/bin/sh\nexec sleep 60\n").unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
     let launch = CodexLaunchConfig::default();
-    let _subscription = CodexTurnProcess {
-        child: spawn_codex_app_server(
-            binary.to_str().unwrap(),
-            &launch,
-            Some(CodexAuthMode::LocalSubscription),
-        )
-        .unwrap(),
-    };
+    let _subscription = spawn_codex_app_server(
+        binary.to_str().unwrap(),
+        &launch,
+        Some(CodexAuthMode::LocalSubscription),
+    )
+    .unwrap();
     assert!(shared_home.join("auth.json").is_file());
 
     let router = spawn_codex_app_server(binary.to_str().unwrap(), &launch, None);
-    let router = router.map(|child| CodexTurnProcess { child });
 
     assert!(
         shared_home.join("auth.json").is_file(),

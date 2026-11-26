@@ -42,6 +42,21 @@ pub fn saved_executor_session(request: &ExecutionRequest) -> Option<Value> {
     Some(session)
 }
 
+/// Resolve the session that launch will resume without creating or deleting a marker.
+pub fn resumed_session_id(request: &ExecutionRequest) -> Option<String> {
+    if request.new_session || task_session_identifier(&request.task_id).is_none() {
+        return None;
+    }
+    match request.resolved_agent_kind() {
+        AgentKind::ClaudeCode => {
+            read_session_file(request).or_else(|| inherited_session_id(request))
+        }
+        AgentKind::CodeX => read_runtime_session(request, CODEX_THREAD_MARKER)
+            .or_else(|| inherited_codex_thread_id(request)),
+        _ => None,
+    }
+}
+
 pub fn load_saved_codex_thread_id(request: &ExecutionRequest) -> Option<String> {
     let task_id = task_session_identifier(&request.task_id);
     if request.new_session || task_id.is_none() {

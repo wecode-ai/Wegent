@@ -18,11 +18,6 @@ pub struct EventGoalAdmission {
     persist: PersistEventPhase,
 }
 
-enum Activation {
-    Acknowledged(Value),
-    Pending(u64),
-}
-
 impl EventGoalAdmission {
     #[cfg(test)]
     pub(crate) async fn activate_for_test(
@@ -41,12 +36,7 @@ impl EventGoalAdmission {
             }
         }
         let thread = self.thread.clone();
-        match self.activate(&mut Native(client), home, &thread).await? {
-            Activation::Acknowledged(response) => Ok(response),
-            Activation::Pending(_) => {
-                Err("Native event test did not acknowledge activation".into())
-            }
-        }
+        self.activate(&mut Native(client), home, &thread).await
     }
     pub(crate) fn new(
         thread: String,
@@ -108,7 +98,7 @@ impl EventGoalAdmission {
         rpc: &mut impl EventRpc,
         home: &std::path::Path,
         thread: &str,
-    ) -> Result<Activation, String> {
+    ) -> Result<Value, String> {
         if thread != self.thread {
             return Err("Event work cannot change its original native thread".into());
         }
@@ -155,13 +145,12 @@ impl EventGoalAdmission {
         self.check(rpc).await?;
         self.save("activation_requested")?;
         let response = rpc
-            .activate(json!({"threadId":thread,"status":"active","origin":"automatic"}))
+            .request(
+                "thread/goal/set",
+                json!({"threadId":thread,"status":"active","origin":"automatic"}),
+            )
             .await?;
-        if matches!(response, Activation::Acknowledged(_)) {
-            self.save("activated")?;
-        }
-        // The direct reader owns the pending ACK. Its request is already ordered
-        // before subsequent human mutations on this native connection.
+        self.save("activated")?;
         drop(self.guard.take());
         Ok(response)
     }
@@ -173,52 +162,19 @@ impl EventGoalAdmission {
         context: &mut CodexTurnRequestContext,
         thread: &str,
     ) -> Result<Value, String> {
-        match self
-            .activate(
-                &mut SharedRpc {
-                    client,
-                    launch,
-                    context: Some(context),
-                },
-                &client
-                    .home
-                    .clone()
-                    .unwrap_or_else(|| super::codex_home_for_launch_config(launch)),
-                thread,
-            )
-            .await?
-        {
-            Activation::Acknowledged(response) => Ok(response),
-            Activation::Pending(_) => {
-                Err("Shared native event activation did not acknowledge admission".into())
-            }
-        }
-    }
-
-    pub(super) async fn before_resume_direct(
-        &self,
-        rpc: &mut super::JsonRpcConnection,
-        state: &mut super::CodexRunState,
-    ) -> Result<(), String> {
-        self.check(&mut DirectRpc { rpc, state }).await
-    }
-
-    pub(super) async fn activate_direct(
-        &mut self,
-        rpc: &mut super::JsonRpcConnection,
-        state: &mut super::CodexRunState,
-        home: &std::path::Path,
-        thread: &str,
-    ) -> Result<u64, String> {
-        match self
-            .activate(&mut DirectRpc { rpc, state }, home, thread)
-            .await?
-        {
-            Activation::Pending(id) => Ok(id),
-            Activation::Acknowledged(_) => {
-                Err("Direct native event activation lost its turn reader".into())
-            }
-        }
+        self.activate(
+            &mut SharedRpc {
+                client,
+                launch,
+                context: Some(context),
+            },
+            &client
+                .home
+                .clone()
+                .unwrap_or_else(|| super::codex_home_for_launch_config(launch)),
+            thread,
+        )
+        .await
     }
 }
 
@@ -228,13 +184,6 @@ trait EventRpc: Send {
         method: &'static str,
         params: Value,
     ) -> BoxFuture<'a, Result<Value, String>>;
-    fn activate<'a>(&'a mut self, params: Value) -> BoxFuture<'a, Result<Activation, String>> {
-        Box::pin(async move {
-            self.request("thread/goal/set", params)
-                .await
-                .map(Activation::Acknowledged)
-        })
-    }
 }
 
 struct SharedRpc<'a> {
@@ -270,37 +219,6 @@ impl EventRpc for SharedRpc<'_> {
                         .await
                 }
             }
-        })
-    }
-}
-
-struct DirectRpc<'a> {
-    rpc: &'a mut super::JsonRpcConnection,
-    state: &'a mut super::CodexRunState,
-}
-impl EventRpc for DirectRpc<'_> {
-    fn request<'a>(
-        &'a mut self,
-        method: &'static str,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, String>> {
-        Box::pin(super::with_rpc_timeout(
-            method,
-            super::codex_rpc_timeout_seconds(),
-            self.rpc.request(method, params, self.state),
-        ))
-    }
-    fn activate<'a>(&'a mut self, params: Value) -> BoxFuture<'a, Result<Activation, String>> {
-        // The normal turn reader must consume the ACK and every initial turn
-        // notification, including source presentation and approval requests.
-        Box::pin(async move {
-            let id = super::with_rpc_timeout(
-                "thread/goal/set",
-                super::codex_rpc_timeout_seconds(),
-                self.rpc.send_request("thread/goal/set", params),
-            )
-            .await?;
-            Ok(Activation::Pending(id))
         })
     }
 }

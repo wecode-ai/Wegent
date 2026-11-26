@@ -14,7 +14,7 @@ use wegent_claude_harness::claude_options;
 mod codex;
 #[cfg(test)]
 pub(crate) use codex::turn_context_for_test;
-pub(crate) use codex::{codex_error_type, codex_guidance_input};
+pub(crate) use codex::{codex_error_type, codex_guidance_input, CodexTurnConnection};
 pub(crate) use codex::{
     prepare_provider_migration, provider_state_is_current, redact_diagnostic_text,
 };
