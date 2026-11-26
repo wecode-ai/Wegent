@@ -13,6 +13,16 @@ fn denied() -> AppIpcError {
     )
 }
 
+fn stand_in_role_config<'a>(settings: &'a Value, role_id: &Value) -> Option<&'a Value> {
+    if matches!(role_id.as_str(), None | Some("@primary")) {
+        return settings.get("primary").filter(|role| role.is_object());
+    }
+    settings["roles"]
+        .as_array()?
+        .iter()
+        .find(|role| role["id"] == *role_id)
+}
+
 pub(super) fn history_owned(link: &RuntimeTaskLink, user: i64) -> bool {
     link.runtime_handle["executionRequest"]["user_id"] == user
         && link.runtime_handle["origin"]
@@ -440,34 +450,9 @@ impl RuntimeWorkRpcHandler {
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work")
         ) {
-            if origin["standInId"].as_str() != identity.role.as_deref() {
-                return false;
-            }
-            let Ok(work) = store.stand_in_work(
-                identity.user,
-                origin["workId"].as_str().unwrap_or(&link.local_task_id),
-            ) else {
-                return false;
-            };
-            if work["roleId"].as_str() != identity.role.as_deref() {
-                return false;
-            }
-            let Ok(settings) = store.personal_stand_in(identity.user, &self.device_id) else {
-                return false;
-            };
-            let Ok(visible) =
-                self.validate_history_source(store, identity.user, &scope.role, &work)
-            else {
-                return false;
-            };
-            return source_bindings_visible(
-                &settings,
-                &visible.work["roleId"],
-                link.runtime_handle["executionRequest"].get("standInSourceBindings"),
-                &visible.messages,
-            ) && scope.source.as_ref().map_or(true, |source| {
-                source_scope(&visible.work["source"]) == *source
-            });
+            return self
+                .visible_connection_work(link, identity, scope, store)
+                .is_some();
         }
         let Some(_source) = &scope.source else {
             return true;
@@ -482,6 +467,61 @@ impl RuntimeWorkRpcHandler {
         false
     }
 
+    fn visible_connection_work(
+        &self,
+        link: &RuntimeTaskLink,
+        identity: &StandInMcpIdentity,
+        scope: &ReadScope,
+        store: &LocalTaskStore,
+    ) -> Option<VisibleWork> {
+        let origin = &link.runtime_handle["origin"];
+        if !matches!(
+            origin["type"].as_str(),
+            Some("connection_work" | "dingtalk_work")
+        ) {
+            return None;
+        }
+        let settings = store
+            .personal_stand_in(identity.user, &self.device_id)
+            .ok()?;
+        let work = store
+            .stand_in_work(
+                identity.user,
+                origin["workId"].as_str().unwrap_or(&link.local_task_id),
+            )
+            .ok()?;
+        let primary_reader = identity.work.is_none()
+            && !identity.readonly_worker
+            && matches!(identity.role.as_deref(), None | Some("@primary"));
+        let role = if primary_reader {
+            stand_in_role_config(&settings, &work["roleId"])?
+        } else {
+            if origin["standInId"].as_str() != identity.role.as_deref()
+                || work["roleId"].as_str() != identity.role.as_deref()
+            {
+                return None;
+            }
+            &scope.role
+        };
+        let visible = self
+            .validate_history_source(store, identity.user, role, &work)
+            .ok()?;
+        if !source_bindings_visible(
+            &settings,
+            &visible.work["roleId"],
+            link.runtime_handle["executionRequest"].get("standInSourceBindings"),
+            &visible.messages,
+        ) {
+            return None;
+        }
+        if let Some(source) = &scope.source {
+            if source_scope(&visible.work["source"]) != *source {
+                return None;
+            }
+        }
+        Some(visible)
+    }
+
     fn conversation_title(
         &self,
         link: &RuntimeTaskLink,
@@ -489,27 +529,9 @@ impl RuntimeWorkRpcHandler {
         scope: &ReadScope,
         store: &LocalTaskStore,
     ) -> String {
-        let origin = &link.runtime_handle["origin"];
-        if !matches!(
-            origin["type"].as_str(),
-            Some("connection_work" | "dingtalk_work")
-        ) {
-            return link.title.clone();
-        }
-        let Ok(work) = store.stand_in_work(
-            identity.user,
-            origin["workId"].as_str().unwrap_or(&link.local_task_id),
-        ) else {
-            return link.title.clone();
-        };
-        self.validate_history_source(store, identity.user, &scope.role, &work)
-            .map(|visible| {
-                visible.work["title"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned()
-            })
-            .unwrap_or_else(|_| link.title.clone())
+        self.visible_connection_work(link, identity, scope, store)
+            .and_then(|visible| visible.work["title"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| link.title.clone())
     }
 
     pub(super) fn memory_review_source_visible(
@@ -1057,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn primary_chat_reads_a_connection_work_with_current_source_bindings() {
+    fn primary_chat_reads_role_work_with_current_source_bindings() {
         let (_root, handler, _) = fixture();
         let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
         let source = json!({
@@ -1070,24 +1092,27 @@ mod tests {
         });
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
         settings["primary"] = json!({
-            "enabled":true,"prompt":"","preferences":"","connections":[source.clone()]
+            "enabled":true,"prompt":"","preferences":"","connections":[]
         });
+        settings["roles"][0]["enabled"] = json!(true);
+        settings["roles"][0]["connections"] = json!([source.clone()]);
         store.save_personal_stand_in(7, "mac", settings).unwrap();
         let work = store
             .ingest_stand_in_message(
                 7,
-                "@primary",
+                "default",
                 &source,
                 &json!({"id":"mail","text":"current mailbox content","at":"2026-01-02T00:00:00Z"}),
                 None,
             )
             .unwrap();
         let work_id = work["id"].as_str().unwrap();
+        let hidden = append_hidden_old_message(handler.task_store_path.as_ref(), work_id);
         let message = store.stand_in_messages(7, work_id).unwrap().remove(0);
         let mut actor = link(
             work_id,
             7,
-            json!({"type":"connection_work","userId":7,"deviceId":"mac","standInId":"@primary","workId":work_id}),
+            json!({"type":"connection_work","userId":7,"deviceId":"mac","standInId":"default","workId":work_id}),
         );
         actor.runtime_handle["executionRequest"]["standInSourceBindings"] = json!([{
             "recordId":message["recordId"],
@@ -1115,6 +1140,14 @@ mod tests {
         let scope = handler.conversation_scope(&primary, &store).unwrap();
 
         assert!(handler.conversation_visible(&actor, &primary, &scope, &store));
+        assert_eq!(
+            handler.conversation_title(&actor, &primary, &scope, &store),
+            "current mailbox content"
+        );
+        actor.runtime_handle["executionRequest"]["standInSourceBindings"] = json!([{
+            "recordId":hidden["recordId"]
+        }]);
+        assert!(!handler.conversation_visible(&actor, &primary, &scope, &store));
         actor.runtime_handle["executionRequest"]["standInSourceBindings"] = json!([{
             "recordId":"moved-record",
             "source":message["source"]
