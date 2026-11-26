@@ -6204,6 +6204,8 @@
       "session_source_description": "默认关闭，新事项继续这个来源的同一会话。开启后，每个新事项单独建会话。",
       "session_issue_description": "项目事项按 Issue 保持独立会话，不跨 Issue 复用。",
       "session_schedule_description": "定时交办沿用每项安排的既有会话模式，不随启动时机改变。",
+      "schedule_ask_before_act": "操作前询问我",
+      "schedule_ask_before_act_help": "关闭时，日历任务默认使用全权限，高危命令由 AI 审核。开启后，需要审批的操作由你确认。",
       "connection_help": "只接收你选择的范围，保存后生效。默认在发送消息或修改内容前请你确认。",
       "connection_cli_request_unavailable": "{{provider}}连接请求暂时失败，可能是连接工具（CLI）或插件运行异常。请稍后重试；若仍失败，请重新授权连接。",
       "dingtalk_connections": "已连接 {{count}} 个钉钉来源",
