@@ -1354,6 +1354,9 @@ class DockerExecutor(Executor):
         try:
             # Check if container exists and is owned by executor_manager
             if not check_container_ownership(executor_name):
+                status = self.get_container_status(executor_name).get("status")
+                if status == "not_found":
+                    return {"status": "not_found"}
                 return {
                     "status": "unauthorized",
                     "error_msg": f"Container '{executor_name}' is not owned by {CONTAINER_OWNER}",

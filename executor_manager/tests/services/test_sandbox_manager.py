@@ -1387,12 +1387,14 @@ class TestSandboxManager:
         mock_redis_client.delete.assert_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("lookup_status", ["failed", "not_found"])
     async def test_terminate_sandbox_retries_without_clearing_live_credentials(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
+        lookup_status,
     ):
         from executor_manager.services.sandbox import SandboxTerminationError
 
@@ -1406,8 +1408,7 @@ class TestSandboxManager:
             {"status": "success"},
         ]
         executor.delete_executor_by_task_id.return_value = {
-            "status": "failed",
-            "error_msg": "runtime temporarily unavailable",
+            "status": lookup_status,
         }
         revoke = mocker.spy(manager._repository, "delete_executor_binding")
 

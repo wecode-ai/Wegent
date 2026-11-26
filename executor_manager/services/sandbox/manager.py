@@ -1036,16 +1036,24 @@ class SandboxManager(metaclass=SingletonMeta):
             if not lease.lost.is_set() and (
                 not delete_status or delete_status.get("status") != "success"
             ):
-                delete_status = await asyncio.to_thread(
+                fallback = await asyncio.to_thread(
                     executor.delete_executor_by_task_id, sandbox_id, sandbox_only=True
                 )
                 result["delete_attempts"].append(
                     {
                         "mode": "task_id",
                         "task_id": sandbox_id,
-                        "result": delete_status,
+                        "result": fallback,
                     }
                 )
+                # Label lookup can miss the named container. It cannot override
+                # an explicit failure to remove that runtime.
+                if (
+                    fallback.get("status") != "not_found"
+                    or delete_status is None
+                    or delete_status.get("status") == "not_found"
+                ):
+                    delete_status = fallback
             result["delete_result"] = delete_status
             result["deleted"] = bool(
                 delete_status and delete_status.get("status") == "success"

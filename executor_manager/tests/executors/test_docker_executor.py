@@ -956,15 +956,29 @@ class TestDockerExecutor:
 
         assert result["status"] == "success"
 
-    @patch("executor_manager.executors.docker.utils.check_container_ownership")
-    def test_delete_executor_unauthorized(self, mock_check, executor):
-        """Test deleting executor without ownership"""
-        mock_check.return_value = False
+    @pytest.mark.parametrize(
+        ("runtime_status", "expected"),
+        [
+            ("running", "unauthorized"),
+            ("error", "unauthorized"),
+            ("not_found", "not_found"),
+        ],
+    )
+    def test_delete_executor_without_confirmed_ownership(
+        self, executor, mocker, runtime_status, expected
+    ):
+        mocker.patch.object(
+            docker_executor_module, "check_container_ownership", return_value=False
+        )
+        mocker.patch.object(
+            executor, "get_container_status", return_value={"status": runtime_status}
+        )
+        delete = mocker.patch.object(docker_executor_module, "delete_container")
 
         result = executor.delete_executor("test-executor")
 
-        assert result["status"] == "unauthorized"
-        assert "not owned by" in result["error_msg"]
+        assert result["status"] == expected
+        delete.assert_not_called()
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_get_executor_count_success(self, mock_run, executor):
