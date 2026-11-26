@@ -571,7 +571,7 @@ class TestDockerExecutor:
     def test_sandbox_task_cleanup_preserves_the_regular_executor(
         self, executor, mocker, delete_status
     ):
-        mocker.patch.object(
+        inventory = mocker.patch.object(
             docker_executor_module,
             "get_running_task_details",
             return_value={
@@ -593,6 +593,9 @@ class TestDockerExecutor:
 
         result = executor.delete_executor_by_task_id("123", sandbox_only=True)
 
+        inventory.assert_called_once_with(
+            label_selector="task_id=123", include_stopped=True
+        )
         delete.assert_called_once_with("sandbox")
         assert result["status"] == delete_status
         if delete_status == "success":
@@ -603,6 +606,21 @@ class TestDockerExecutor:
         else:
             assert result["deleted_containers"] == []
             repository.delete_executor_binding.assert_not_called()
+
+    def test_validation_reports_callback_reservation_failure(
+        self, executor, sample_task, mocker
+    ):
+        sample_task["type"] = "validation"
+        mocker.patch.object(
+            docker_executor_module, "prepare_callback_token", side_effect=RuntimeError()
+        )
+        validation = mocker.patch.object(executor, "_report_validation_stage")
+
+        result = executor.submit_executor(sample_task)
+
+        assert result["status"] == "failed"
+        assert validation.call_args.kwargs["status"] == "failed"
+        assert validation.call_args.kwargs["valid"] is False
 
     def test_create_new_container_first_command_includes_callback_token(
         self, executor, sample_task, mock_subprocess

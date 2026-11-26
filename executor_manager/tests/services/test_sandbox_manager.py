@@ -1178,14 +1178,16 @@ class TestSandboxManager:
         assert sandbox is None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("runtime_status", ["success", "failed"])
     async def test_get_sandbox_health_check_fails(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
+        runtime_status,
     ):
-        """Test stale sandbox metadata is cleared when health check fails."""
+        """An unhealthy sandbox keeps its binding until removal succeeds."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
         mocker.patch.object(
@@ -1194,13 +1196,93 @@ class TestSandboxManager:
         delete_sandbox = mocker.patch.object(
             manager._repository, "delete_sandbox", return_value=True
         )
+        executor = MagicMock()
+        executor.delete_executor.return_value = {"status": runtime_status}
+        executor.delete_executor_by_task_id.return_value = {"status": runtime_status}
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=executor,
+        )
 
         sandbox = await manager.get_sandbox("12345", check_health=True)
 
         assert sandbox is None
-        delete_sandbox.assert_called_once_with("12345")
+        if runtime_status == "success":
+            delete_sandbox.assert_called_once_with("12345")
+        else:
+            delete_sandbox.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_failed_runtime_removal_does_not_replace_sandbox(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=False
+        )
+        executor = MagicMock()
+        executor.delete_executor.return_value = {"status": "failed"}
+        executor.delete_executor_by_task_id.return_value = {"status": "failed"}
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=executor,
+        )
+        delete_sandbox = mocker.patch.object(manager._repository, "delete_sandbox")
+        start_sandbox = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={"task_id": 12345},
+        )
+
+        assert sandbox.sandbox_id == "12345"
+        assert error == "Sandbox replacement blocked: delete_failed"
+        delete_sandbox.assert_not_called()
+        start_sandbox.assert_not_called()
 
     # ----- terminate_sandbox Tests -----
+
+    @pytest.mark.asyncio
+    async def test_repeated_cancellation_keeps_cleanup_lease(
+        self, sandbox_manager_with_mock_redis, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        lease = MagicMock()
+        lease.lost.is_set.return_value = False
+        mocker.patch.object(
+            manager, "_try_acquire_task_lifecycle_lease", return_value=lease
+        )
+        mocker.patch.object(manager._repository, "load_sandbox", return_value=None)
+        release = mocker.patch.object(manager, "_release_task_lifecycle_lease")
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def delete_runtime(*args, **kwargs):
+            started.set()
+            await finish.wait()
+
+        mocker.patch.object(
+            manager, "_delete_sandbox_runtime", side_effect=delete_runtime
+        )
+        cleanup = asyncio.create_task(manager._cleanup_selected_sandbox("12345", None))
+        await started.wait()
+        cleanup.cancel()
+        await asyncio.sleep(0)
+        cleanup.cancel()
+        await asyncio.sleep(0)
+        release.assert_not_awaited()
+
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup
+        release.assert_awaited_once_with(lease)
 
     @pytest.mark.asyncio
     async def test_terminate_sandbox_success(

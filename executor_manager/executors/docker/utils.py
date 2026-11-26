@@ -243,7 +243,9 @@ def count_running_containers(label_selector: str = None) -> dict:
         return {"status": "failed", "error_msg": f"Error: {error_msg}", "count": 0}
 
 
-def get_running_task_details(label_selector: str = None) -> dict:
+def get_running_task_details(
+    label_selector: str = None, *, include_stopped: bool = False
+) -> dict:
     """
     Get detailed information about running tasks from Docker containers.
 
@@ -252,6 +254,7 @@ def get_running_task_details(label_selector: str = None) -> dict:
 
     Args:
         label_selector (str, optional): Additional label selector for filtering
+        include_stopped: Include exited containers for runtime cleanup.
 
     Returns:
         dict: Result with status, task_details and optional error message
@@ -259,6 +262,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
     try:
         # Base command with owner filter
         cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
+        if include_stopped:
+            cmd.append("--all")
 
         # Add additional label selector if provided
         if label_selector:

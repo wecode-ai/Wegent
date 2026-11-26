@@ -424,9 +424,21 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
-        callback_token = prepare_callback_token(
-            int(task_info["task_id"]), executor_name, sandbox=is_sandbox_task
-        )
+        try:
+            callback_token = prepare_callback_token(
+                int(task_info["task_id"]), executor_name, sandbox=is_sandbox_task
+            )
+        except RuntimeError:
+            if get_metadata_field(task, "type") == "validation":
+                self._report_validation_stage(
+                    task,
+                    stage="starting_container",
+                    status="failed",
+                    progress=100,
+                    message="Could not persist executor callback credential",
+                    valid=False,
+                )
+            raise
         metadata = task.get("metadata")
         if isinstance(metadata, dict) and "task_id" in metadata:
             metadata[CALLBACK_TOKEN] = callback_token
@@ -1656,7 +1668,9 @@ class DockerExecutor(Executor):
 
         try:
             # Find containers with the matching task_id label
-            result = get_running_task_details(label_selector=f"task_id={task_id}")
+            result = get_running_task_details(
+                label_selector=f"task_id={task_id}", include_stopped=True
+            )
             if result.get("status") != "success":
                 return {
                     "status": "failed",
