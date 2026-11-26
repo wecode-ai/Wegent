@@ -69,3 +69,9 @@ The native MySQL suite reuses the existing CI MySQL and Redis services and runs 
 Unbound SQLAlchemy parameters are rejected during plan preflight. Other SQL or connection failures can still occur after implicit MySQL DDL commits. An unchanged revision does not prove that structural changes rolled back: do not blindly retry or manually stamp past a failure. Stop the service, inspect the failed revision's actual tables and indexes, and restore a backup or perform reviewed cleanup of that revision's partial structures before upgrading again. Downgrades can discard data in new structures and do not replace backup restoration.
 
 This PR does not record or substitute for human database-migration approval. Before running against a local development database whose data must be retained, confirm the service-stop window, backup and tested restoration, failure handling, and applicable rollback boundaries. Production use requires separate review.
+
+### Team references for project agents
+
+Revision `ac7e491bf026` preserves existing Wegent Team IDs. For a project agent that stored its Codex or Claude Code configuration inline, the migration creates Ghost, Shell, Bot and Team definitions under the original owner, project namespace and agent identity. It stores the Team ID in the agent's `teamRef` and preserves archive state and project grants. The migration reports created definitions, reused bindings, invalid references and unfinished executions. If ownership or provenance conflicts, inspect the agent identified by the error and rerun the upgrade after resolving the conflict.
+
+Finish open v2 coordination before downgrading. Both the native migration and Alembic check current coordination activities and member executions before detaching bindings. Downgrade retains the definitions, execution history and Team IDs. A subsequent upgrade reuses the same Teams.

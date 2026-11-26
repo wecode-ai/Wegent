@@ -104,13 +104,19 @@ pub fn working_envelope(data: &Map<String, Value>, logical_device_id: &str) -> V
     }
     Value::Object(envelope)
 }
+
+#[path = "device_platform_mirror.rs"]
+mod platform_projection;
+pub(super) use platform_projection::{MirrorCache, platform_mirror};
+
 /// `_forward_runtime_event`: project, relay to the Runtime namespace room,
 /// publish on the Task live channel, then run the IM-only side effects.
-pub async fn forward(
+pub(super) async fn forward(
     state: &std::sync::Arc<AppState>,
     runtime: &std::sync::Arc<SocketRuntime>,
     session: &super::session::SessionSnapshot,
     data: &Map<String, Value>,
+    cache: &MirrorCache,
 ) -> Result<Value, crate::BoxError> {
     let user_id = session.user_id;
     let device_id = session
@@ -129,7 +135,13 @@ pub async fn forward(
     );
     let envelope = working_envelope(data, logical_device_id);
     log_terminal_relay(&envelope, user_id, device_id, "received");
-    let project_message = project_event(state, runtime, user_id, device_id, &envelope).await?;
+    let cache = envelope["event"]
+        .as_str()
+        .filter(|event| event.ends_with(".delta"))
+        .map(|_| cache);
+    let mirror = platform_mirror(state, session, &envelope["payload"], cache).await?;
+    let project_message =
+        !mirror && project_event(state, runtime, user_id, device_id, &envelope).await?;
     let relay_envelope = if session.device.device_type == Some(super::device::DeviceType::App) {
         working_envelope(envelope.as_object().expect("event object"), device_id)
     } else {
@@ -141,8 +153,10 @@ pub async fn forward(
     if personal_allowed {
         publish_live(state, user_id, device_id, &relay_envelope).await;
     }
-    forward_channel_event(state, logical_device_id, &envelope).await;
-    notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
+    if !mirror {
+        forward_channel_event(state, logical_device_id, &envelope).await;
+        notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
+    }
     log_terminal_relay(&envelope, user_id, device_id, "forwarded");
     Ok(accepted())
 }

@@ -107,6 +107,7 @@ async fn runtime_event(
     app: &Arc<AppState>,
     runtime: &Arc<SocketRuntime>,
     turn: Turn,
+    cache: &device_runtime_event::MirrorCache,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
     let Some(device_id) = snapshot.device.device_id.clone() else {
@@ -117,7 +118,7 @@ async fn runtime_event(
     };
     // `_forward_runtime_event` runs under `_get_runtime_event_lock(sid)`.
     turn.wait().await;
-    let forwarded = device_runtime_event::forward(app, runtime, &snapshot, &data).await;
+    let forwarded = device_runtime_event::forward(app, runtime, &snapshot, &data, cache).await;
     // Release the session's next frame as soon as this frame's whole forward
     // settled; the framework ACK stays outside the serialised region, exactly
     // as it was outside the source lock.
@@ -162,6 +163,7 @@ const _: () = {
                     // One session identity per connection, so the FIFO key does
                     // not allocate per frame.
                     let session: Arc<str> = socket.id.to_string().into();
+                    let cache = Arc::new(device_runtime_event::MirrorCache::default());
                     socket.on(
                         device_runtime_event::RUNTIME_EVENT,
                         move |socket: SocketRef<LocalAdapter>,
@@ -178,6 +180,7 @@ const _: () = {
                                 .runtime
                                 .runtime_event_order()
                                 .enter(&session);
+                            let cache = cache.clone();
                             let accepted_session = brz_socket_io::__private::session::<
                                 DeviceSession,
                                 _,
@@ -194,6 +197,7 @@ const _: () = {
                                         &dependencies.app,
                                         &dependencies.runtime,
                                         turn,
+                                        &cache,
                                     )
                                     .await
                                 }

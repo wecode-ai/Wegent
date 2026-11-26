@@ -281,6 +281,15 @@ pub(crate) async fn updated(
         );
         return Ok(json!({"success": true, "notified": 0, "skipped": "non_terminal"}));
     }
+    if super::device_runtime_event::platform_mirror(state, snapshot, data, None)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "runtime task projection identity rejected");
+            internal_error()
+        })?
+    {
+        return Ok(json!({"success": true, "notified": 0}));
+    }
     let content = data.get("content").and_then(Value::as_str).unwrap_or("");
     let event_name = if NON_REPLY_TERMINAL_STATUSES.contains(&normalized.as_str()) {
         "runtime.task.failed"
