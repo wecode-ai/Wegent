@@ -176,6 +176,7 @@ test('renders the shared personal home and a continuous collaboration sidebar', 
       await items.getByTestId('collaboration-home-create-issue').click()
       const response = await save
       expect(response.ok(), await response.text()).toBe(true)
+      const { id } = (await response.json()) as { id: string }
       const detail = home.getByTestId('personal-issues-detail')
       await expect(detail.getByText(title, { exact: true }).first()).toBeVisible({ timeout: 8_000 })
       await expect(page).toHaveURL(/\/collaboration$/)
@@ -183,7 +184,8 @@ test('renders the shared personal home and a continuous collaboration sidebar', 
         'aria-pressed',
         'true'
       )
-      await expect(items.getByText(/^(Inbox|收集箱)$/)).toBeVisible()
+      const recordedIssue = items.getByTestId(`collaboration-issue-table-row-${id}`)
+      await expect(recordedIssue.getByRole('cell', { name: /^(Inbox|收集箱)$/ })).toBeVisible()
       await evidence('04-recorded-issue-detail')
 
       await page.setViewportSize({ width: 390, height: 844 })
