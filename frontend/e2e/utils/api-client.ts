@@ -511,8 +511,17 @@ export class ApiClient {
   /**
    * List public models (admin only)
    */
-  async adminListPublicModels(): Promise<ApiResponse> {
-    return this.call('GET', '/api/admin/public-models')
+  async adminListPublicModels(params?: {
+    page?: number
+    limit?: number
+    search?: string
+  }): Promise<ApiResponse> {
+    const query = new URLSearchParams()
+    if (params?.page !== undefined) query.append('page', String(params.page))
+    if (params?.limit !== undefined) query.append('limit', String(params.limit))
+    if (params?.search) query.append('search', params.search)
+    const suffix = query.toString()
+    return this.call('GET', `/api/admin/public-models${suffix ? `?${suffix}` : ''}`)
   }
 
   /**

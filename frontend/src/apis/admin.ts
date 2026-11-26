@@ -1041,9 +1041,16 @@ export const adminApis = {
    */
   async getPublicModels(
     page: number = 1,
-    limit: number = 20
+    limit: number = 20,
+    search?: string
   ): Promise<AdminPublicModelListResponse> {
-    return apiClient.get(`/admin/public-models?page=${page}&limit=${limit}`)
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    if (search) {
+      params.append('search', search)
+    }
+    return apiClient.get(`/admin/public-models?${params.toString()}`)
   },
 
   /**

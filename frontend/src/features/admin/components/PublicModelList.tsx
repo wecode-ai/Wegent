@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tag } from '@/components/ui/tag'
@@ -13,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { CpuChipIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Search, X } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -41,115 +42,41 @@ import {
   AdminPublicModelUpdate,
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { Pagination } from '@/components/ui/pagination'
 import { ModelPrimaryGroupIconSettings } from './ModelPrimaryGroupIconSettings'
+import {
+  getPublicModelAllowedUsersEnabledFromConfig,
+  getPublicModelAllowedUsersFromConfig,
+  getPublicModelSpec,
+  getPublicModelSpecBoolean,
+  getPublicModelSpecValue,
+  getPublicModelVisibilityFromConfig,
+  parseAllowedUsersInput,
+  parsePublicModelConfig,
+  setPublicModelAllowedUsersEnabledInConfig,
+  setPublicModelAllowedUsersInConfig,
+  setPublicModelVisibilityInConfig,
+} from './publicModelConfig'
 
-const isJsonObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+const PUBLIC_MODELS_PAGE_SIZE = 50
+const SEARCH_DEBOUNCE_MS = 300
 
-export const parsePublicModelConfig = (value: string): Record<string, unknown> | null => {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    if (!isJsonObject(parsed)) {
-      return null
-    }
-    if ('spec' in parsed && !isJsonObject(parsed.spec)) {
-      return null
-    }
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-export const getPublicModelVisibilityFromConfig = (value: string): boolean | undefined => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return undefined
-  }
-  const isVisible = parsed.spec.isVisible
-  return typeof isVisible === 'boolean' ? isVisible : undefined
-}
-
-export const setPublicModelVisibilityInConfig = (value: string, isVisible: boolean): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  spec.isVisible = isVisible
-  return JSON.stringify({ ...config, spec }, null, 2)
-}
-
-export const getPublicModelAllowedUsersFromConfig = (value: string): string[] => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return []
-  }
-  const allowedUsers = parsed.spec.allowedUsers
-  if (!Array.isArray(allowedUsers)) {
-    return []
-  }
-  return allowedUsers.filter(
-    (name): name is string => typeof name === 'string' && name.trim().length > 0
-  )
-}
-
-export const getPublicModelAllowedUsersEnabledFromConfig = (value: string): boolean => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return false
-  }
-  return parsed.spec.allowedUsersEnabled === true
-}
-
-export const parseAllowedUsersInput = (value: string): string[] => {
-  const names = value
-    .split(/[\s,，]+/)
-    .map(name => name.trim())
-    .filter(Boolean)
-  return Array.from(new Set(names))
-}
-
-export const setPublicModelAllowedUsersEnabledInConfig = (
-  value: string,
-  enabled: boolean
-): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  if (enabled) {
-    spec.allowedUsersEnabled = true
-  } else {
-    delete spec.allowedUsersEnabled
-  }
-  return JSON.stringify({ ...config, spec }, null, 2)
-}
-
-export const setPublicModelAllowedUsersInConfig = (
-  value: string,
-  allowedUsers: string[]
-): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  if (allowedUsers.length > 0) {
-    spec.allowedUsers = allowedUsers
-  } else {
-    delete spec.allowedUsers
-  }
-  return JSON.stringify({ ...config, spec }, null, 2)
+const parsePageParam = (value: string | null): number => {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
 }
 
 const PublicModelList: React.FC = () => {
   const { t } = useTranslation()
   const { toast } = useToast()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialSearch = searchParams?.get('search')?.trim() ?? ''
   const [models, setModels] = useState<AdminPublicModel[]>([])
-  const [_total, setTotal] = useState(0)
-  const [page, _setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(() => parsePageParam(searchParams?.get('page') ?? null))
+  const [search, setSearch] = useState(initialSearch)
+  const [searchQuery, setSearchQuery] = useState(initialSearch)
   const [loading, setLoading] = useState(true)
 
   // Dialog states
@@ -190,8 +117,11 @@ const PublicModelList: React.FC = () => {
   const fetchModels = useCallback(async () => {
     setLoading(true)
     try {
-      // Use a larger limit to display all public models without pagination
-      const response = await adminApis.getPublicModels(page, 100)
+      const response = await adminApis.getPublicModels(
+        page,
+        PUBLIC_MODELS_PAGE_SIZE,
+        search || undefined
+      )
       setModels(response.items)
       setTotal(response.total)
     } catch (_error) {
@@ -202,11 +132,51 @@ const PublicModelList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [page, toast, t])
+  }, [page, search, toast, t])
 
   useEffect(() => {
     fetchModels()
   }, [fetchModels])
+
+  // Persist the committed search and page in the URL so a refresh restores them.
+  useEffect(() => {
+    const currentParams = searchParams?.toString() ?? ''
+    const params = new URLSearchParams(currentParams)
+    if (search) {
+      params.set('search', search)
+    } else {
+      params.delete('search')
+    }
+    if (page > 1) {
+      params.set('page', String(page))
+    } else {
+      params.delete('page')
+    }
+    const nextParams = params.toString()
+    if (nextParams !== currentParams) {
+      router.replace(nextParams ? `?${nextParams}` : '?', { scroll: false })
+    }
+  }, [page, router, search, searchParams])
+
+  const totalPages = Math.max(1, Math.ceil(total / PUBLIC_MODELS_PAGE_SIZE))
+
+  // Keep the current page valid after deletions or a stale URL page.
+  useEffect(() => {
+    if (!loading && page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [loading, page, totalPages])
+
+  // Debounce typing, then commit the search and return to the first page.
+  const trimmedSearchQuery = searchQuery.trim()
+  useEffect(() => {
+    if (trimmedSearchQuery === search) return
+    const timer = setTimeout(() => {
+      setSearch(trimmedSearchQuery)
+      setPage(1)
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [search, trimmedSearchQuery])
 
   const validateConfig = (value: string): Record<string, unknown> | null => {
     if (!value.trim()) {
@@ -222,31 +192,9 @@ const PublicModelList: React.FC = () => {
     return parsed
   }
 
-  const getSpecValue = (json: Record<string, unknown>, key: 'modelGroup' | 'modelSubGroup') => {
-    const spec = json.spec
-    if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
-      const value = (spec as Record<string, unknown>)[key]
-      return typeof value === 'string' ? value : ''
-    }
-    return ''
-  }
-
-  const getSpecBooleanValue = (json: Record<string, unknown>, key: string) => {
-    const spec = json.spec
-    if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
-      const value = (spec as Record<string, unknown>)[key]
-      return typeof value === 'boolean' ? value : false
-    }
-    return false
-  }
-
   const applyGroupingToConfig = (config: Record<string, unknown>) => {
     const nextConfig = { ...config }
-    const currentSpec = nextConfig.spec
-    const spec =
-      typeof currentSpec === 'object' && currentSpec !== null && !Array.isArray(currentSpec)
-        ? { ...(currentSpec as Record<string, unknown>) }
-        : {}
+    const spec = getPublicModelSpec(nextConfig)
     const trimmedGroup = formData.modelGroup.trim()
     const trimmedSubGroup = formData.modelSubGroup.trim()
 
@@ -294,8 +242,8 @@ const PublicModelList: React.FC = () => {
       config: value,
       ...(config
         ? {
-            modelGroup: getSpecValue(config, 'modelGroup'),
-            modelSubGroup: getSpecValue(config, 'modelSubGroup'),
+            modelGroup: getPublicModelSpecValue(config, 'modelGroup'),
+            modelSubGroup: getPublicModelSpecValue(config, 'modelSubGroup'),
           }
         : {}),
       ...(configVisibility === undefined ? {} : { is_visible: configVisibility }),
@@ -326,7 +274,7 @@ const PublicModelList: React.FC = () => {
     const config = validateConfig(formData.config)
     if (!config) return
 
-    const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
+    const spec = getPublicModelSpec(config)
     const trimmedValue = value.trim()
     if (trimmedValue) {
       spec[key] = trimmedValue
@@ -488,13 +436,13 @@ const PublicModelList: React.FC = () => {
     setFormData({
       name: model.name,
       namespace: model.namespace,
-      modelGroup: getSpecValue(model.json, 'modelGroup'),
-      modelSubGroup: getSpecValue(model.json, 'modelSubGroup'),
+      modelGroup: getPublicModelSpecValue(model.json, 'modelGroup'),
+      modelSubGroup: getPublicModelSpecValue(model.json, 'modelSubGroup'),
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
       is_visible: model.is_visible,
       is_advanced: model.is_advanced ?? false,
-      is_wework_available: getSpecBooleanValue(model.json, 'isWeworkAvailable'),
+      is_wework_available: getPublicModelSpecBoolean(model.json, 'isWeworkAvailable'),
       allowed_users: getPublicModelAllowedUsersFromConfig(JSON.stringify(model.json)).join(', '),
       allowed_users_enabled: getPublicModelAllowedUsersEnabledFromConfig(
         JSON.stringify(model.json)
@@ -522,8 +470,8 @@ const PublicModelList: React.FC = () => {
   }
 
   const getGroupPath = (model: AdminPublicModel): string | null => {
-    const group = getSpecValue(model.json, 'modelGroup')
-    const subGroup = getSpecValue(model.json, 'modelSubGroup')
+    const group = getPublicModelSpecValue(model.json, 'modelGroup')
+    const subGroup = getPublicModelSpecValue(model.json, 'modelSubGroup')
     if (group && subGroup) return `${group} / ${subGroup}`
     return group || subGroup || null
   }
@@ -531,11 +479,36 @@ const PublicModelList: React.FC = () => {
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('admin:public_models.title')}
-        </h2>
-        <p className="text-sm text-text-muted">{t('admin:public_models.description')}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">
+            {t('admin:public_models.title')}
+          </h2>
+          <p className="text-sm text-text-muted">{t('admin:public_models.description')}</p>
+        </div>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={event => setSearchQuery(event.target.value)}
+            placeholder={t('admin:public_models.search_placeholder')}
+            aria-label={t('admin:public_models.search_placeholder')}
+            className="h-9 pl-9 pr-8"
+            data-testid="public-model-search-input"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label={t('admin:public_models.clear_search')}
+              data-testid="public-model-search-clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content Container */}
@@ -551,7 +524,11 @@ const PublicModelList: React.FC = () => {
         {!loading && models.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('admin:public_models.no_models')}</p>
+            <p className="text-text-muted">
+              {search
+                ? t('admin:public_models.no_search_results', { search })
+                : t('admin:public_models.no_models')}
+            </p>
           </div>
         )}
 
@@ -643,19 +620,28 @@ const PublicModelList: React.FC = () => {
           </div>
         )}
 
-        {/* Add Button */}
+        {/* Footer: add actions and pagination */}
         {!loading && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex flex-wrap justify-center gap-2">
               <ModelPrimaryGroupIconSettings
                 groups={models
-                  .map(model => getSpecValue(model.json, 'modelGroup').trim())
+                  .map(model => getPublicModelSpecValue(model.json, 'modelGroup').trim())
                   .filter(Boolean)}
               />
               <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
                 {t('admin:public_models.create_model')}
               </UnifiedAddButton>
             </div>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalCount={total}
+              pageSize={PUBLIC_MODELS_PAGE_SIZE}
+              showPageSizeSelector={false}
+              onGoToPage={setPage}
+              totalCountLabel={t('admin:public_models.pagination.total_count', { count: total })}
+            />
           </div>
         )}
       </div>
