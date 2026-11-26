@@ -429,51 +429,103 @@ fn ordinary_saves_keep_pauses_and_account_switches_revoke_old_authority() {
 }
 
 #[test]
-fn an_existing_explicit_delegation_without_version_migrates_to_one() {
+fn legacy_delegation_uses_saved_conversation_boundaries_without_backfilling_timestamps() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("tasks.sqlite");
     let store = LocalTaskStore::open(&path).unwrap();
-    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    let mut settings = draft(
+        &store,
+        json!([
+            source("peer", "direct", "account-a"),
+            source("group", "group", "account-a")
+        ]),
+    );
     settings["primary"]["delegation"] = json!({"action":"enable"});
     let mut settings = saved(&store, settings);
-    let old_boundary = settings["primary"]["connections"][0]["enabledAfter"].clone();
+    let first_boundary = json!("2026-01-01T09:00:00Z");
+    let second_boundary = json!("2026-01-01T10:00:00Z");
+    settings["primary"]["connections"][0]["enabledAfter"] = first_boundary.clone();
+    settings["primary"]["connections"][1]["enabledAfter"] = second_boundary.clone();
     let policy = settings["primary"]["delegation"].as_object_mut().unwrap();
-    policy.remove("version");
     policy.remove("effectiveAfter");
     policy.remove("templateEnabledAfter");
-    rusqlite::Connection::open(&path)
-        .unwrap()
-        .execute(
-            "UPDATE loop_items SET metadata=?1 WHERE id='personal-stand-in:7'",
-            [settings.to_string()],
-        )
-        .unwrap();
-    let mut migrated = store.personal_stand_in(7, "desktop").unwrap();
-    assert_eq!(migrated["primary"]["delegation"]["version"], 1);
-    assert_eq!(
-        migrated["primary"]["delegation"]["effectiveAfter"],
-        old_boundary
-    );
-    for template in ["document", "schedule", "process"] {
-        assert_eq!(
-            migrated["primary"]["delegation"]["templateEnabledAfter"][template],
-            old_boundary
-        );
+    let database = Connection::open(&path).unwrap();
+    for had_version in [false, true] {
+        let mut legacy = settings.clone();
+        if !had_version {
+            legacy["primary"]["delegation"]
+                .as_object_mut()
+                .unwrap()
+                .remove("version");
+        }
+        database
+            .execute(
+                "UPDATE loop_items SET metadata=?1 WHERE id='personal-stand-in:7'",
+                [legacy.to_string()],
+            )
+            .unwrap();
+
+        let loaded = store.personal_stand_in(7, "desktop").unwrap();
+        let persisted: String = database
+            .query_row(
+                "SELECT metadata FROM loop_items WHERE id='personal-stand-in:7'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let persisted: Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(persisted, settings);
+        assert_eq!(loaded["primary"], settings["primary"]);
+
+        let identity = primary(&loaded);
+        let first = &identity["connections"][0];
+        let second = &identity["connections"][1];
+        assert!(!permits_delegated_message(
+            &identity,
+            first,
+            &first_boundary
+        ));
+        assert!(!permits_delegated_message(
+            &identity,
+            second,
+            &second_boundary
+        ));
+        assert!(permits_delegated_reply(
+            &identity,
+            first,
+            "document",
+            &instant_after(&first_boundary)
+        ));
+        assert!(permits_delegated_reply(
+            &identity,
+            second,
+            "document",
+            &instant_after(&second_boundary)
+        ));
     }
-    assert!(permits_delegated_message(
-        &primary(&migrated),
-        &migrated["primary"]["connections"][0],
-        &instant_after(&old_boundary)
+
+    let mut edited = store.personal_stand_in(7, "desktop").unwrap();
+    let mut unverified = primary(&edited);
+    unverified["connections"][0]["enabledAfter"] = Value::Null;
+    assert!(!permits_delegated_reply(
+        &unverified,
+        &unverified["connections"][0],
+        "document",
+        &instant_after(&second_boundary)
     ));
-    assert_eq!(
-        migrated["primary"]["connections"],
-        settings["primary"]["connections"]
-    );
-    migrated["primary"]["delegation"]["templates"]["document"] = json!(false);
-    assert_eq!(
-        saved(&store, migrated)["primary"]["delegation"]["version"],
-        2
-    );
+    edited["primary"]["delegation"]["templates"]["document"] = json!(false);
+    let identity = primary(&saved(&store, edited));
+    assert_eq!(identity["delegation"]["version"], 2);
+    let first = &identity["connections"][0];
+    let at = instant_after(&first_boundary);
+    assert!(permits_delegated_reply(&identity, first, "schedule", &at));
+    assert!(!permits_delegated_reply(&identity, first, "document", &at));
+    let mut invalid = identity.clone();
+    invalid["delegation"]["templateEnabledAfter"]
+        .as_object_mut()
+        .unwrap()
+        .remove("schedule");
+    assert!(!permits_delegated_reply(&invalid, first, "schedule", &at));
 }
 
 #[test]

@@ -35,14 +35,17 @@ pub fn active_delegated_source<'a>(identity: &'a Value, source: &Value) -> Optio
         return None;
     }
     let current = stand_in_connection(identity, source)?;
-    (is_exact_source(current)
-        && current["delegated"] == true
-        && current["paused"] == false
-        && current["profile"] == delegation["profile"]
-        && current["accountId"] == delegation["accountId"]
-        && current["organizationId"] == delegation["organizationId"]
-        && source["accountId"] == current["accountId"])
+    (matches_enabled_source(current, delegation) && source["accountId"] == current["accountId"])
         .then_some(current)
+}
+
+fn matches_enabled_source(source: &Value, delegation: &Value) -> bool {
+    is_exact_source(source)
+        && source["delegated"] == true
+        && source["paused"] == false
+        && source["profile"] == delegation["profile"]
+        && source["accountId"] == delegation["accountId"]
+        && source["organizationId"] == delegation["organizationId"]
 }
 
 fn timestamp(value: &Value) -> Option<DateTime<Utc>> {
@@ -65,9 +68,17 @@ fn after(value: &Value, cutoff: &Value) -> bool {
 }
 
 pub fn permits_delegated_message(identity: &Value, source: &Value, at: &Value) -> bool {
+    let delegation = &identity["delegation"];
     active_delegated_source(identity, source).is_some_and(|current| {
-        after(at, &current["enabledAfter"]) && after(at, &identity["delegation"]["effectiveAfter"])
+        after(at, &current["enabledAfter"])
+            && after_policy_cutoff(at, delegation.get("effectiveAfter"), delegation)
     })
+}
+
+fn after_policy_cutoff(at: &Value, cutoff: Option<&Value>, delegation: &Value) -> bool {
+    // Legacy version 1 can omit policy cutoffs. The selected conversation's
+    // saved cutoff is still mandatory and is at least as late as the earliest source cutoff.
+    cutoff.map_or(delegation["version"] == 1, |cutoff| after(at, cutoff))
 }
 
 pub fn permits_delegated_reply(
@@ -77,46 +88,22 @@ pub fn permits_delegated_reply(
     at: &Value,
 ) -> bool {
     let delegation = &identity["delegation"];
+    let cutoff = match delegation.get("templateEnabledAfter") {
+        Some(cutoffs) if !cutoffs.is_object() => return false,
+        cutoffs => cutoffs.and_then(|cutoffs| cutoffs.get(template)),
+    };
     TEMPLATES.contains(&template)
         && delegation["templates"][template] == true
-        && after(at, &delegation["templateEnabledAfter"][template])
+        && after_policy_cutoff(at, cutoff, delegation)
         && permits_delegated_message(identity, source, at)
 }
 
 pub(super) fn migrate_delegation_version(primary: &mut Value) -> bool {
-    let source_boundary = primary["connections"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|source| {
-            source_provider(source) == DINGTALK_PROVIDER
-                && source["delegated"] == true
-                && source["paused"] == false
-        })
-        .filter_map(|source| {
-            timestamp(&source["enabledAfter"]).map(|time| (time, source["enabledAfter"].clone()))
-        })
-        .min_by_key(|(time, _)| *time)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| json!(now()));
     let Some(delegation) = primary.get_mut("delegation") else {
         return false;
     };
     if delegation["authorized"] == true && delegation.get("version").is_none() {
         delegation["version"] = json!(1);
-        if timestamp(&delegation["effectiveAfter"]).is_none() {
-            delegation["effectiveAfter"] = source_boundary.clone();
-        }
-        if !delegation["templateEnabledAfter"].is_object() {
-            delegation["templateEnabledAfter"] = json!({});
-        }
-        for template in TEMPLATES {
-            if delegation["templates"][template] == true
-                && delegation["templateEnabledAfter"].get(template).is_none()
-            {
-                delegation["templateEnabledAfter"][template] = source_boundary.clone();
-            }
-        }
         return true;
     }
     false
@@ -178,6 +165,18 @@ fn dingtalk_sources(primary: &Value) -> impl Iterator<Item = &Value> {
         .into_iter()
         .flatten()
         .filter(|source| source_provider(source) == DINGTALK_PROVIDER)
+}
+
+fn earliest_enabled_source_boundary(primary: &Value) -> Option<&Value> {
+    let delegation = &primary["delegation"];
+    dingtalk_sources(primary)
+        .filter(|source| matches_enabled_source(source, delegation))
+        .filter_map(|source| {
+            let cutoff = source.get("enabledAfter")?;
+            Some((timestamp(cutoff)?, cutoff))
+        })
+        .min_by_key(|(time, _)| *time)
+        .map(|(_, cutoff)| cutoff)
 }
 
 fn source_scope(primary: &Value) -> BTreeMap<(&str, &str), bool> {
@@ -357,27 +356,45 @@ pub(super) fn save_delegation(
     } else {
         version
     };
+    // An ordinary settings save can carry the legacy boundaries into a versioned policy.
+    let legacy_boundary = (carry_boundaries && previous["version"] == 1)
+        .then(|| earliest_enabled_source_boundary(previous_primary))
+        .flatten();
+    let effective_after = if !authorized {
+        &Value::Null
+    } else if delegation_boundary_changed {
+        &boundary
+    } else if let Some(cutoff) = previous.get("effectiveAfter") {
+        cutoff
+    } else if previous["version"] == 1 {
+        legacy_boundary.unwrap_or(&boundary)
+    } else {
+        &Value::Null
+    };
+    let previous_cutoffs = previous.get("templateEnabledAfter");
     let cutoffs = TEMPLATES
         .into_iter()
         .filter(|template| authorized && template_settings[*template] == true)
         .map(|template| {
-            let previous_cutoff = &previous["templateEnabledAfter"][template];
-            let cutoff = if carry_boundaries
-                && previous["templates"][template] == true
-                && timestamp(previous_cutoff).is_some()
-            {
-                previous_cutoff.clone()
+            let cutoff = if carry_boundaries && previous["templates"][template] == true {
+                match previous_cutoffs.and_then(|cutoffs| cutoffs.get(template)) {
+                    Some(cutoff) if timestamp(cutoff).is_some() => cutoff,
+                    None if previous_cutoffs.is_none_or(Value::is_object) => {
+                        legacy_boundary.unwrap_or(&boundary)
+                    }
+                    _ => &boundary,
+                }
             } else {
-                boundary.clone()
+                &boundary
             };
-            (template.to_owned(), cutoff)
+            (template.to_owned(), cutoff.clone())
         })
         .collect::<serde_json::Map<String, Value>>();
     primary["delegation"] = json!({
         "version": version, "profile": profile, "accountId": account, "authorized": authorized,
         "paused": paused, "templates": template_settings, "templateEnabledAfter": cutoffs,
         "accountInvalidated": !preparing && previous["accountInvalidated"] == true && !authorized,
-        "effectiveAfter": if !authorized { &Value::Null } else if delegation_boundary_changed { &boundary } else { &previous["effectiveAfter"] }
+        "effectiveAfter": effective_after
     });
     primary["delegation"]
         .as_object_mut()
