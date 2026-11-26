@@ -1,10 +1,11 @@
 import type { DiffLineAnnotation, DiffLineEventBaseProps, SelectedLineRange } from '@pierre/diffs'
-import { PatchDiff } from '@pierre/diffs/react'
+import { FileDiff } from '@pierre/diffs/react'
 import { useCallback, useMemo } from 'react'
 import type { GitPatchAction } from '@/api/environment'
 import { useCodeTheme } from '@/features/appearance/useCodeTheme'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { ReviewPatchActionButton } from './fileChangesReviewInteractions'
+import { getCachedFileChangesPatch } from './fileChangesPatchCache'
 import {
   getDiffSelection,
   getHunkActionAnchor,
@@ -56,6 +57,7 @@ export function FileChangesPatchDiff({
   themeType,
 }: FileChangesPatchDiffProps) {
   const codeTheme = useCodeTheme()
+  const fileDiff = useMemo(() => getCachedFileChangesPatch(patch), [patch])
   const fileActions = useMemo(() => getReviewActions(reviewMode), [reviewMode])
   const lineAnnotations = useMemo<DiffLineAnnotation<HunkAction>[]>(
     () =>
@@ -149,8 +151,8 @@ export function FileChangesPatchDiff({
     [fileActions, onApplyPatch, pendingAction]
   )
   return (
-    <PatchDiff<HunkAction>
-      patch={patch}
+    <FileDiff<HunkAction>
+      fileDiff={fileDiff}
       lineAnnotations={lineAnnotations}
       renderAnnotation={renderAnnotation}
       selectedLines={selectedLines}

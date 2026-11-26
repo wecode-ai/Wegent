@@ -1383,8 +1383,16 @@ impl RuntimeWorkRpcHandler {
         } else {
             payload
         };
-        if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
-            return Ok(receipt);
+        let question_response = request_user_input_response(&payload);
+        // Async answers own the saved execution profile. Look up their command
+        // only after the reply has restored that profile.
+        let async_answer = question_response
+            .as_ref()
+            .is_some_and(|response| response["delivery"] == "async");
+        if !async_answer {
+            if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                return Ok(receipt);
+            }
         }
         if payload.get("resourceEventKeys").is_some()
             && existing_link
@@ -1397,7 +1405,6 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
-        let question_response = request_user_input_response(&payload);
         // The desktop delivers an async answer as the next ordinary user message.
         let reply_input = question_response.is_some()
             || existing_link.as_ref().is_some_and(|link| {
@@ -1406,7 +1413,7 @@ impl RuntimeWorkRpcHandler {
         let owner_input = matches!(owner_message, Some(OwnerMessage::Direct)) && !reply_input;
         let ordinary_input = question_response.is_none();
         if let Some(response) = question_response {
-            if response["delivery"] == "async" {
+            if async_answer {
                 self.apply_prepared_async_question_reply(
                     &local_task_id,
                     &response,
@@ -1414,6 +1421,9 @@ impl RuntimeWorkRpcHandler {
                     prepared,
                 )
                 .await?;
+                if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                    return Ok(receipt);
+                }
                 if self.is_busy_local_task(&local_task_id) {
                     let guided = self.send_guidance(payload.clone()).await?;
                     if guided["code"] != "no_active_turn" {

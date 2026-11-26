@@ -22,7 +22,7 @@ import time
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
@@ -31,6 +31,45 @@ from shared.logger import setup_logger
 logger = setup_logger(__name__)
 
 router = APIRouter(tags=["sandbox-proxy"])
+
+SANDBOX_PROXY_REQUEST_TIMEOUT_SECONDS = 60.0
+SANDBOX_PROXY_CONNECT_TIMEOUT_SECONDS = 10.0
+SANDBOX_PROCESS_START_DEFAULT_READ_SECONDS = 1800.0
+SANDBOX_PROCESS_START_RESPONSE_GRACE_SECONDS = 5.0
+PROCESS_START_PATH = "process.Process/Start"
+
+
+def _sandbox_proxy_timeout(path: str, deadline_ms: str = "") -> httpx.Timeout:
+    """Return a proxy timeout that covers the full response for the route."""
+    read_timeout = SANDBOX_PROXY_REQUEST_TIMEOUT_SECONDS
+    if path == PROCESS_START_PATH:
+        read_timeout = SANDBOX_PROCESS_START_DEFAULT_READ_SECONDS
+        # Connect deadlines are unsigned integers of at most 10 ASCII digits.
+        # envd validates the header and enforces the deadline, including zero.
+        if len(deadline_ms) <= 10 and deadline_ms.isascii() and deadline_ms.isdecimal():
+            read_timeout = (
+                int(deadline_ms) / 1000 + SANDBOX_PROCESS_START_RESPONSE_GRACE_SECONDS
+            )
+    return httpx.Timeout(
+        connect=SANDBOX_PROXY_CONNECT_TIMEOUT_SECONDS,
+        read=read_timeout,
+        write=SANDBOX_PROXY_REQUEST_TIMEOUT_SECONDS,
+        pool=SANDBOX_PROXY_CONNECT_TIMEOUT_SECONDS,
+    )
+
+
+def _proxy_timeout_phase(error: httpx.TimeoutException) -> str:
+    match error:
+        case httpx.ConnectTimeout():
+            return "connect"
+        case httpx.ReadTimeout():
+            return "read"
+        case httpx.WriteTimeout():
+            return "write"
+        case httpx.PoolTimeout():
+            return "pool"
+        case _:
+            return "unknown"
 
 
 async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
@@ -140,6 +179,9 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
     logger.info(
         f"[SandboxProxy] Proxy request received: sandbox_id={sandbox_id}, port={port}, path={path}"
     )
+    proxy_timeout = _sandbox_proxy_timeout(
+        path, request.headers.get("connect-timeout-ms", "")
+    )
 
     try:
         # Get sandbox info including metadata
@@ -190,7 +232,7 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         }
 
         # Make request to container
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=proxy_timeout) as client:
             response = await client.request(
                 method=request.method,
                 url=target_url,
@@ -239,11 +281,35 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
             },
         )
     except httpx.TimeoutException as e:
-        logger.error(f"[SandboxProxy] Timeout connecting to sandbox {sandbox_id}: {e}")
-        raise HTTPException(
-            status_code=504,
-            detail={"code": "timeout", "message": f"Request timeout: {str(e)}"},
+        timeout_phase = _proxy_timeout_phase(e)
+        timeout_seconds = getattr(proxy_timeout, timeout_phase, None)
+        logger.error(
+            "[SandboxProxy] Sandbox request timed out: sandbox_id=%s "
+            "method=%s path=%s phase=%s timeout_seconds=%s",
+            sandbox_id,
+            request.method,
+            path,
+            timeout_phase,
+            timeout_seconds,
         )
+        message = f"Sandbox request {request.method} {path} timed out"
+        if timeout_seconds is not None:
+            message += (
+                f" after {timeout_seconds:g} seconds during the {timeout_phase} phase"
+            )
+        detail = {
+            "code": "timeout",
+            "phase": timeout_phase,
+            "timeout_seconds": timeout_seconds,
+            "message": message,
+        }
+        if path == PROCESS_START_PATH:
+            # The E2B Connect client reads top-level errors on non-200 responses.
+            return JSONResponse(
+                status_code=504,
+                content={**detail, "code": "deadline_exceeded"},
+            )
+        raise HTTPException(status_code=504, detail=detail) from e
     except httpx.RequestError as e:
         logger.exception(
             "[SandboxProxy] Transport error for sandbox %s type=%s",
