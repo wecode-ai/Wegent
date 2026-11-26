@@ -565,7 +565,7 @@ fn top_level_comments_use_distinct_sessions_and_reply_reuses_thread_session() {
 }
 
 #[test]
-fn group_automation_materializes_member_models_without_desktop() {
+fn group_automation_resolves_only_the_manager_before_assignment() {
     let (_directory, store, project, agent, issue, catalog) = setup();
     let group =
         json!({"id":"group","name":"Group","leader":{"kind":"agent","id":agent.id},"members":[]});
@@ -585,6 +585,7 @@ fn group_automation_materializes_member_models_without_desktop() {
         .unwrap()
         .unwrap();
     let payload = claimed.execution_payload.unwrap();
+    assert!(payload.get("memberRuntimeProfiles").is_none());
     assert_eq!(payload["dispatch_role"], "manager");
     assert_eq!(payload["automation_run_id"], run["id"]);
     assert!(payload["message"]
@@ -598,8 +599,7 @@ fn group_automation_materializes_member_models_without_desktop() {
         payload["message"]
     );
     assert_eq!(
-        payload["memberRuntimeProfiles"][0]["runtimePayload"]["executionRequest"]["model_config"]
-            ["model_id"],
+        payload["executionRequest"]["model_config"]["model_id"],
         "native-model"
     );
 }

@@ -361,8 +361,9 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
     );
     assert_eq!(payload["executionRequest"]["bot"][0]["id"], leader.id);
     assert_eq!(payload["origin"]["dispatchRole"], "manager");
-    assert_eq!(payload["origin"]["dispatchId"], issue.id);
-    assert!(payload.get("collaboration_model").is_none());
+    let dispatch_id = payload["origin"]["dispatchId"].clone();
+    assert!(Uuid::parse_str(dispatch_id.as_str().unwrap()).is_ok());
+    assert_eq!(payload["collaboration_model"], "single");
     let mut explicit = claimed.clone();
     explicit.execution_payload.as_mut().unwrap()["runtimePayload"] =
         json!({"collaboration_model":"single"});
@@ -478,6 +479,17 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         .submit_collaboration_round(runtime_task_id, &plan)
         .unwrap();
     assert_eq!(round["state"], "dispatched");
+    assert_eq!(
+        store
+            .submit_collaboration_round(runtime_task_id, &plan)
+            .unwrap(),
+        round
+    );
+    let mut changed = plan.clone();
+    changed["items"][0]["instructions"] = json!("changed");
+    assert!(store
+        .submit_collaboration_round(runtime_task_id, &changed)
+        .is_err());
     assert_eq!(round["assignments"][0]["agent_name"], "Evidence Bot");
     assert_eq!(round["assignments"][1]["agent_name"], "Review Bot");
     let human_task_id = round["assignments"][2]["human_assignment_id"]
@@ -508,7 +520,7 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         manager.metadata["dispatch_assignments"][0]["agent_name"],
         "Evidence Bot"
     );
-    assert_eq!(manager.metadata["dispatch_id"], issue.id);
+    assert_eq!(manager.metadata["dispatch_id"], dispatch_id);
     assert_eq!(manager.metadata["activity_type"], "manager_assignment");
     if has_human {
         assert_eq!(
@@ -563,12 +575,10 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         first_member_execution.execution_payload.as_ref().unwrap()["message"],
         "任务标题：采集运行证据\n\n执行要求：Collect verifiable evidence."
     );
-    assert!(first_member_execution
-        .execution_payload
-        .as_ref()
-        .unwrap()
-        .get("collaboration_model")
-        .is_none());
+    assert_eq!(
+        first_member_execution.execution_payload.as_ref().unwrap()["collaboration_model"],
+        "single"
+    );
     let member_system_prompt = first_member_execution.execution_payload.as_ref().unwrap()
         ["executionRequest"]["system_prompt"]
         .as_str()
@@ -733,12 +743,10 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         resumed_manager.execution_payload.as_ref().unwrap()["origin"]["dispatchRole"],
         "manager"
     );
-    assert!(resumed_manager
-        .execution_payload
-        .as_ref()
-        .unwrap()
-        .get("collaboration_model")
-        .is_none());
+    assert_eq!(
+        resumed_manager.execution_payload.as_ref().unwrap()["collaboration_model"],
+        "single"
+    );
     assert!(
         resumed_manager.execution_payload.as_ref().unwrap()["message"]
             .as_str()

@@ -180,12 +180,12 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
     }
     payload_object.insert("origin".to_owned(), origin.clone());
 
-    if let Some(member_profiles) = stored
+    let member_profiles = stored
         .get("memberRuntimeProfiles")
         .or_else(|| stored.get("member_runtime_profiles"))
         .filter(|value| value.is_array())
-        .cloned()
-    {
+        .cloned();
+    if dispatch_role.as_ref().is_some_and(|role| role == "manager") || member_profiles.is_some() {
         let runtime_handle = payload_object
             .entry("runtimeHandle")
             .or_insert_with(|| json!({}));
@@ -195,10 +195,9 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
         let runtime_handle = runtime_handle
             .as_object_mut()
             .expect("Runtime handle was normalized");
-        runtime_handle.insert(
-            "collaborationMemberRuntimeProfiles".to_owned(),
-            member_profiles,
-        );
+        if let Some(profiles) = member_profiles {
+            runtime_handle.insert("collaborationMemberRuntimeProfiles".into(), profiles);
+        }
         if let Some(manager_context) = stored.get("collaboration_manager_context").cloned() {
             runtime_handle.insert("collaborationManagerContext".to_owned(), manager_context);
         }
@@ -219,7 +218,7 @@ pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Val
         request.insert("task_id".to_owned(), json!(runtime_task_id));
         request.insert(
             "subtask_id".to_owned(),
-            json!(uuid::Uuid::new_v4().to_string()),
+            json!(format!("local-execution-{}", execution.id)),
         );
         request.insert("task_title".to_owned(), json!(title));
         request.insert(
@@ -272,6 +271,15 @@ pub(super) fn apply_execution_agent_profile(
     execution: &LocalExecution,
 ) {
     payload
+        .entry("bot")
+        .or_insert_with(|| execution.agent_bots.clone());
+    payload
+        .entry("teamRef")
+        .or_insert_with(|| json!(execution.agent_id));
+    payload
+        .entry("collaboration_model")
+        .or_insert_with(|| execution.agent_collaboration_model.clone());
+    payload
         .entry("runtime")
         .or_insert_with(|| json!(execution.agent_runtime));
     payload
@@ -286,16 +294,4 @@ pub(super) fn apply_execution_agent_profile(
     payload
         .entry("projectPlugins")
         .or_insert_with(|| json!(execution.agent_plugins));
-    payload.entry("bot").or_insert_with(|| {
-        json!([{
-            "id": execution.agent_id,
-            "name": execution.agent_name,
-            "shell_type": if execution.agent_runtime == "claude_code" {
-                "ClaudeCode"
-            } else {
-                "Codex"
-            },
-            "mcp_servers": execution.agent_mcp_servers,
-        }])
-    });
 }

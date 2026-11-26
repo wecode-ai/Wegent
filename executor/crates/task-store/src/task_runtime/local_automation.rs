@@ -84,7 +84,9 @@ pub(super) fn validate_rules(
                 .ok_or_else(|| {
                     TaskRuntimeError::Invalid("Automation group is unavailable".into())
                 })?;
-            for agent in runner_dispatch::group_agents(connection, project_id, group)? {
+            if group["leader"]["kind"] == "agent" {
+                let agent =
+                    collaboration_agent(connection, project_id, text(&group["leader"], "id"))?;
                 super::super::runner_routing::validate_automation(
                     &agent.metadata,
                     &rule["runnerSelection"],
@@ -430,7 +432,8 @@ fn dispatch(
             let agent = get_item_from(connection, target_id, "chat_agent")?.ok_or_else(|| {
                 TaskRuntimeError::Invalid("automation Agent was not found".into())
             })?;
-            if agent.cloud_project_id.as_deref() != Some(&project.id)
+            if (agent.cloud_project_id.as_deref() != Some(&project.id)
+                && !has_active_project_team_binding(connection, &project.id, target_id)?)
                 || agent.status.as_deref() != Some("active")
             {
                 return Err(TaskRuntimeError::Invalid(

@@ -92,20 +92,22 @@ impl LocalTaskStore {
                       COALESCE((SELECT MAX(c.created_at) FROM loop_item_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL),t.updated_at),
                       COALESCE((SELECT MAX(e.completed_at) FROM loop_item_executions e WHERE e.loop_item_id=t.id AND e.status IN ('completed','failed','cancelled')),t.updated_at)) END AS activity_at
              FROM loop_items t JOIN loop_items p ON p.id=t.cloud_project_id
+             LEFT JOIN loop_items coordinator ON coordinator.id=json_extract(t.metadata,'$.human_coordination_dispatch') AND coordinator.resource_type='issue_coordination'
              WHERE t.resource_type='task' AND t.deleted_at IS NULL
                AND p.resource_type='project' AND p.deleted_at IS NULL AND p.status='active'
                AND p.id<>?1 AND COALESCE(json_extract(p.metadata,'$.task_provider'),'local')='local'
                AND json_extract(t.metadata,'$.archived_at') IS NULL
                AND (?11=0 OR COALESCE(t.created_by_user_id,0) IN (SELECT value FROM json_each(?7)))
-               AND (?2=0 OR t.assignee_user_id IN (SELECT value FROM json_each(?7)))
+               AND (?2=0 OR t.assignee_user_id IN (SELECT value FROM json_each(?7)) OR coordinator.assignee_user_id IN (SELECT value FROM json_each(?7)))
                AND (COALESCE(t.created_by_user_id,0) IN (SELECT value FROM json_each(?7))
                  OR t.assignee_user_id IN (SELECT value FROM json_each(?7))
+                 OR coordinator.assignee_user_id IN (SELECT value FROM json_each(?7))
                  OR EXISTS(SELECT 1 FROM loop_items b WHERE b.resource_type='execution'
                    AND b.loop_item_id=t.id AND b.cloud_project_id=t.cloud_project_id
                    AND b.task_user_id IN (SELECT value FROM json_each(?7))
                    AND b.unlinked_at IS NULL AND b.deleted_at IS NULL)
                  OR EXISTS(SELECT 1 FROM loop_items a WHERE a.resource_type='chat_agent'
-                   AND a.id=t.assignee_agent_id AND a.cloud_project_id=t.cloud_project_id
+                   AND a.id=t.assignee_agent_id AND (a.cloud_project_id=t.cloud_project_id OR EXISTS (SELECT 1 FROM project_team_bindings b WHERE b.project_id=t.cloud_project_id AND b.team_ref=a.id))
                    AND COALESCE(a.created_by_user_id,0) IN (SELECT value FROM json_each(?7))
                    AND a.status='active' AND a.deleted_at IS NULL)
                  OR EXISTS(SELECT 1 FROM loop_item_comments c WHERE c.task_id=t.id

@@ -446,7 +446,7 @@ fn human_assignment_delivery_from_the_issue_settles_the_round() {
     let human_task = store.get_task(&project.id, &human_task_id).unwrap();
     assert_eq!(
         human_task.metadata["collaboration_assignment"]["dispatch_id"],
-        json!(issue.id)
+        claimed.execution_payload.as_ref().unwrap()["dispatch_id"]
     );
 
     let address = RuntimeTaskAddress {
@@ -466,7 +466,7 @@ fn human_assignment_delivery_from_the_issue_settles_the_round() {
             address.clone(),
             Some(&json!({
                 "humanAssignmentId": human_task_id,
-                "dispatchId": issue.id,
+                "dispatchId": human_task.metadata["collaboration_assignment"]["dispatch_id"],
                 "dispatchRoundId": "cpu-review-round-1",
                 "assignmentId": "cpu-review-admin",
             })),
@@ -550,18 +550,15 @@ fn human_assignment_delivery_from_the_issue_settles_the_round() {
         }],
     });
     let resumed_runtime_id = resumed_manager.runtime_task_id.as_deref().unwrap();
-    assert_eq!(
-        store
-            .submit_collaboration_round(
-                resumed_runtime_id,
-                &json!({
-                    "round_id": "cpu-review-round-1",
-                    "items": second_plan["items"],
-                }),
-            )
-            .unwrap()["state"],
-        "already_dispatched"
-    );
+    assert!(store
+        .submit_collaboration_round(
+            resumed_runtime_id,
+            &json!({
+                "round_id": "cpu-review-round-1",
+                "items": second_plan["items"],
+            }),
+        )
+        .is_err());
     assert_eq!(
         store.get_task(&project.id, &issue.id).unwrap().version,
         manager_issue.version

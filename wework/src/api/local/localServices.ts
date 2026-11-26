@@ -3962,6 +3962,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         candidate => candidate.id === assigneeId
       )
       if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
+      if (group.leader.kind === 'human') return { runnerSelection }
       const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
       const memberRuntimeProfiles = await Promise.all(
         Array.from(new Set(references.map(member => member.id))).map(async memberId => {

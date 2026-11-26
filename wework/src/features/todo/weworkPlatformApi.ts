@@ -369,6 +369,18 @@ export function createWeworkPlatformApi(
       },
     },
     issues: {
+      async submitRound(projectId, input) {
+        const issues =
+          (await projectLocation(projectId)) === 'local' ? localApi.issues : cloudApi.issues
+        if (!issues.submitRound) throw new Error('Issue coordination is unavailable')
+        await issues.submitRound(projectId, input)
+      },
+      async decideRound(projectId, input) {
+        const issues =
+          (await projectLocation(projectId)) === 'local' ? localApi.issues : cloudApi.issues
+        if (!issues.decideRound) throw new Error('Issue coordination is unavailable')
+        await issues.decideRound(projectId, input)
+      },
       async list(projectId, filters) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.issues.list(projectId, filters)

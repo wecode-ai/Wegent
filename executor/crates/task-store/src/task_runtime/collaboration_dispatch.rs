@@ -20,10 +20,19 @@ impl LocalTaskStore {
         manager_runtime_task_id: &str,
         plan: &Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.submit_collaboration_round_with_notification(manager_runtime_task_id, plan, |_| {})
+    }
+
+    pub fn submit_collaboration_round_with_notification(
+        &self,
+        manager_runtime_task_id: &str,
+        plan: &Value,
+        notify: impl FnOnce(&Value),
+    ) -> Result<Value, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let manager_execution_id =
-            active_manager_execution_id(&transaction, manager_runtime_task_id)?.ok_or_else(
+            manager_execution_id_for_runtime(&transaction, manager_runtime_task_id)?.ok_or_else(
                 || {
                     TaskRuntimeError::Invalid(
                         "collaboration manager Runtime execution was not found".to_owned(),
@@ -51,113 +60,48 @@ impl LocalTaskStore {
             .ok_or_else(|| {
                 TaskRuntimeError::Invalid("workflow plan items must not be empty".to_owned())
             })?;
-        if collaboration_round_exists(&transaction, &manager.loop_item_id, round_id)? {
-            transaction.rollback()?;
-            return Ok(json!({
-                "round_id": round_id,
-                "state": "already_dispatched",
-            }));
-        }
-
-        let group = manager_payload
-            .get("collaboration_group")
-            .filter(|group| group.is_object())
-            .ok_or_else(|| {
-                TaskRuntimeError::Invalid(
-                    "collaboration manager group context is missing".to_owned(),
-                )
-            })?;
-        let mut dispatched = Vec::with_capacity(assignments.len());
-        for assignment in assignments {
-            let assignee_type = assignment
-                .get("assignee_type")
-                .and_then(Value::as_str)
-                .unwrap_or("agent");
-            let assignment_id = required_string(assignment, "assignment_id")?;
-            let assignee_id = required_string(assignment, "assignee_id")?;
-            let title = required_string(assignment, "title")?;
-            let instructions = required_string(assignment, "instructions")?;
-            match assignee_type {
-                "agent" => {
-                    validate_group_agent(group, assignee_id)?;
-                    let agent =
-                        collaboration_agent(&transaction, &manager.cloud_project_id, assignee_id)?;
-                    let selected_model_id = assignment.get("model_id").and_then(Value::as_str);
-                    let runtime_payload = collaboration_member_runtime_payload(
-                        manager_payload,
-                        assignee_id,
-                        selected_model_id,
-                    )?;
-                    let mut payload = json!({
-                        "runtimePayload": runtime_payload,
-                        "message": collaboration_assignment_prompt(title, instructions),
-                        "workflow_task_title": title,
-                        "workflow_node_id": assignment.get("workflow_stage_id"),
-                        "model_id": selected_model_id,
-                        "assignment_id": assignment_id,
-                        "dispatch_id": manager_payload.get("dispatch_id"),
-                        "dispatch_role": "member",
-                        "coordination_round_id": round_id,
-                        "coordination_manager_execution_id": manager_execution_id,
-                        "collaboration_group": group,
-                        "project_workspace_roots": manager_payload.get("project_workspace_roots"),
-                    });
-                    if let Some(context) = manager_payload.get("project_coordination") {
-                        payload["project_coordination"] = context.clone();
-                    }
-                    let execution_id = create_local_execution(
-                        &transaction,
-                        &manager.loop_item_id,
-                        &manager.cloud_project_id,
-                        &agent.id,
-                        &agent,
-                        manager.task_priority.as_deref().unwrap_or("none"),
-                        payload,
-                    )?;
-                    dispatched.push(json!({
-                        "execution_id": execution_id,
-                        "assignment_id": assignment_id,
-                        "assignee_type": "agent",
-                        "task_title": title,
-                        "agent_id": agent.id,
-                        "agent_name": agent_display_name(&agent),
-                        "workflow_stage_id": assignment.get("workflow_stage_id"),
-                        "model_id": selected_model_id,
-                    }));
-                }
-                "human" => {
-                    let human_name = validate_group_human(group, assignee_id)?;
-                    let human_task_id = create_human_assignment_task(
-                        &transaction,
-                        &manager,
-                        round_id,
-                        assignment_id,
-                        assignee_id,
-                        title,
-                        instructions,
-                        assignment.get("workflow_stage_id"),
-                    )?;
-                    dispatched.push(json!({
-                        "human_assignment_id": human_task_id,
-                        "assignment_id": assignment_id,
-                        "assignee_type": "human",
-                        "task_title": title,
-                        "instructions": instructions,
-                        "human_user_id": assignee_id,
-                        "human_user_name": human_name,
-                        "workflow_stage_id": assignment.get("workflow_stage_id"),
-                    }));
-                }
-                value => {
-                    return Err(TaskRuntimeError::Invalid(format!(
-                        "unsupported collaboration assignee type '{value}'"
-                    )));
-                }
+        if let Some(receipt) = manager_payload.get("coordination_round_receipt") {
+            if manager_payload["coordination_submitted_round_id"] == round_id
+                && receipt["items"] == plan["items"]
+            {
+                return Ok(receipt["response"].clone());
             }
+            return Err(TaskRuntimeError::Invalid(
+                "This manager turn already submitted a different assignment list".into(),
+            ));
+        }
+        if manager.status == "completed" {
+            return Err(TaskRuntimeError::Invalid("Manager turn has ended".into()));
+        }
+        let dispatch_id = manager_payload["dispatch_id"].as_str().ok_or_else(|| {
+            TaskRuntimeError::Invalid("Manager dispatch identity is missing".into())
+        })?;
+        if source_manager_execution(&transaction, &manager.loop_item_id, round_id, dispatch_id)?
+            .is_some()
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Round already belongs to another manager turn".into(),
+            ));
         }
 
+        let turn = RoundOwner {
+            project: &manager.cloud_project_id,
+            issue: &manager.loop_item_id,
+            priority: manager.task_priority.as_deref().unwrap_or("none"),
+            actor: manager.assigner_user_id,
+            execution: Some(manager_execution_id),
+            payload: manager_payload,
+        };
+        let dispatched = dispatch_assignments(&transaction, &turn, round_id, assignments)?;
+        let response = json!({
+            "round_id": round_id,
+            "state": "dispatched",
+            "assignments": dispatched,
+        });
         let mut updated_payload = manager_payload.clone();
         updated_payload["coordination_submitted_round_id"] = json!(round_id);
+        updated_payload["coordination_round_receipt"] =
+            json!({"items": assignments, "response": response});
         transaction.execute(
             "UPDATE loop_item_executions
              SET execution_payload = ?1,
@@ -179,12 +123,6 @@ impl LocalTaskStore {
             &dispatched,
             manager.assigner_user_id,
         )?;
-        let dispatch_id = manager
-            .execution_payload
-            .as_ref()
-            .and_then(|payload| payload.get("dispatch_id"))
-            .and_then(Value::as_str)
-            .unwrap_or(&manager.loop_item_id);
         update_manager_assignment_activity(
             &transaction,
             manager_execution_id,
@@ -193,11 +131,9 @@ impl LocalTaskStore {
             &dispatched,
         )?;
         transaction.commit()?;
-        Ok(json!({
-            "round_id": round_id,
-            "state": "dispatched",
-            "assignments": dispatched,
-        }))
+        drop(connection);
+        notify(&response);
+        Ok(response)
     }
 
     pub(super) fn resume_manager_for_finished_round(
@@ -210,7 +146,14 @@ impl LocalTaskStore {
             return Ok(());
         };
         drop(connection);
-        self.resume_manager_for_round(&execution.loop_item_id, &round_id)
+        let Some(dispatch_id) = execution
+            .execution_payload
+            .as_ref()
+            .and_then(|p| p["dispatch_id"].as_str())
+        else {
+            return Ok(());
+        };
+        self.resume_manager_for_round(&execution.loop_item_id, &round_id, dispatch_id)
     }
 
     pub(crate) fn resume_manager_for_human_delivery(
@@ -221,44 +164,54 @@ impl LocalTaskStore {
         let assignment = connection
             .query_row(
                 "SELECT parent_id,
-                        json_extract(metadata, '$.collaboration_assignment.round_id')
+                        json_extract(metadata, '$.collaboration_assignment.round_id'), json_extract(metadata,'$.collaboration_assignment.dispatch_id')
                  FROM loop_items
                  WHERE id = ?1
                    AND resource_type = 'task'
                    AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'",
                 [human_task_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?,row.get::<_, Option<String>>(2)?)),
             )
             .optional()?
-            .and_then(|(item_id, round_id)| item_id.zip(round_id));
+            .and_then(|(item, round, dispatch)| Some((item?, round?, dispatch?)));
         drop(connection);
-        let Some((item_id, round_id)) = assignment else {
+        let Some((item_id, round_id, dispatch_id)) = assignment else {
             return Ok(());
         };
-        self.resume_manager_for_round(&item_id, &round_id)
+        self.resume_manager_for_round(&item_id, &round_id, &dispatch_id)
     }
 
     fn resume_manager_for_round(
         &self,
         item_id: &str,
         round_id: &str,
+        dispatch_id: &str,
     ) -> Result<(), TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if !collaboration_round_is_ready(&transaction, item_id, round_id)? {
+        if transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='issue_coordination' AND id=?1 AND loop_item_id=?2)",
+            params![dispatch_id, item_id],
+            |r| r.get::<_, bool>(0),
+        )? {
+            return Ok(());
+        }
+        if !collaboration_round_is_ready(&transaction, item_id, round_id, dispatch_id)? {
             transaction.rollback()?;
             return Ok(());
         }
-        if manager_resume_exists(&transaction, item_id, round_id)? {
+        if manager_resume_exists(&transaction, item_id, round_id, dispatch_id)? {
             transaction.rollback()?;
             return Ok(());
         }
-        let source_manager = source_manager_execution(&transaction, item_id, round_id)?
-            .ok_or_else(|| {
-                TaskRuntimeError::Invalid(
-                    "collaboration round manager execution was not found".to_owned(),
-                )
-            })?;
+        let source_manager =
+            source_manager_execution(&transaction, item_id, round_id, dispatch_id)?.ok_or_else(
+                || {
+                    TaskRuntimeError::Invalid(
+                        "collaboration round manager execution was not found".to_owned(),
+                    )
+                },
+            )?;
         if !TERMINAL_EXECUTION_STATUSES.contains(&source_manager.status.as_str()) {
             transaction.rollback()?;
             return Ok(());
@@ -301,13 +254,18 @@ impl LocalTaskStore {
             })?;
         let leader =
             collaboration_agent(&transaction, &source_manager.cloud_project_id, leader_id)?;
-        let results = self.collaboration_round_results(&transaction, item_id, round_id)?;
+        let results =
+            self.collaboration_round_results(&transaction, item_id, round_id, dispatch_id)?;
         let mut payload = source_payload.clone();
         payload["message"] = Value::String(format!(
             "{manager_context}\n\n<collaboration_round_results>\n上一轮任务已经全部结束。请读取以下执行结果，综合判断是否需要分配下一轮任务；如 Issue 已达到待确认或完成条件，请显式调用 update_issue_status。不要直接执行成员工作。\n\n{}\n</collaboration_round_results>",
             serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_owned())
         ));
         payload["coordination_resume_round_id"] = json!(round_id);
+        payload
+            .as_object_mut()
+            .expect("manager payload must be an object")
+            .remove("coordination_round_receipt");
         payload
             .as_object_mut()
             .expect("manager payload must be an object")
@@ -340,16 +298,19 @@ impl LocalTaskStore {
         connection: &Connection,
         item_id: &str,
         round_id: &str,
+        dispatch_id: &str,
     ) -> Result<Value, TaskRuntimeError> {
         let mut statement = connection.prepare(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
                AND json_extract(execution_payload, '$.dispatch_role') = 'member'
-               AND json_extract(execution_payload, '$.coordination_round_id') = ?2
+               AND json_extract(execution_payload, '$.coordination_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
              ORDER BY id",
         )?;
         let execution_ids = statement
-            .query_map(params![item_id, round_id], |row| row.get::<_, i64>(0))?
+            .query_map(params![item_id, round_id, dispatch_id], |row| {
+                row.get::<_, i64>(0)
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         let mut results = execution_ids
             .into_iter()
@@ -382,11 +343,11 @@ impl LocalTaskStore {
                AND resource_type = 'task'
                AND deleted_at IS NULL
                AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
-               AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2
+               AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2 AND json_extract(metadata,'$.collaboration_assignment.dispatch_id') = ?3
              ORDER BY sequence_number, id",
         )?;
         let human_rows = human_statement
-            .query_map(params![item_id, round_id], |row| {
+            .query_map(params![item_id, round_id, dispatch_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
@@ -419,6 +380,181 @@ impl LocalTaskStore {
         }
         Ok(Value::Array(results))
     }
+}
+
+#[path = "human_coordination.rs"]
+mod human_coordination;
+
+struct RoundOwner<'a> {
+    project: &'a str,
+    issue: &'a str,
+    priority: &'a str,
+    actor: i64,
+    execution: Option<i64>,
+    payload: &'a Value,
+}
+
+fn dispatch_assignments(
+    connection: &Connection,
+    turn: &RoundOwner<'_>,
+    round_id: &str,
+    assignments: &[Value],
+) -> Result<Vec<Value>, TaskRuntimeError> {
+    let manager_payload = turn.payload;
+    if assignments.len() > 20 {
+        return Err(TaskRuntimeError::Invalid(
+            "A round accepts at most 20 assignments".into(),
+        ));
+    }
+    let mut assignment_ids = HashSet::with_capacity(assignments.len());
+    for assignment in assignments {
+        if !assignment_ids.insert(required_string(assignment, "assignment_id")?) {
+            return Err(TaskRuntimeError::Invalid("Duplicate assignment_id".into()));
+        }
+    }
+    let group = manager_payload
+        .get("collaboration_group")
+        .filter(|group| group.is_object())
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("collaboration manager group context is missing".to_owned())
+        })?;
+    let mut dispatched = Vec::with_capacity(assignments.len());
+    for assignment in assignments {
+        let assignee_type = assignment
+            .get("assignee_type")
+            .and_then(Value::as_str)
+            .unwrap_or("agent");
+        let assignment_id = required_string(assignment, "assignment_id")?;
+        let assignee_id = required_string(assignment, "assignee_id")?;
+        let title = required_string(assignment, "title")?;
+        let instructions = required_string(assignment, "instructions")?;
+        if let Some(stage_id) = assignment.get("workflow_stage_id").filter(|v| !v.is_null()) {
+            let stage = group["stages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|stage| stage_id.is_string() && stage["id"] == *stage_id)
+                .ok_or_else(|| TaskRuntimeError::Invalid("Unknown collaboration stage".into()))?;
+            let owner = &stage["assignee"];
+            if !owner.is_null() && (owner["kind"] != assignee_type || owner["id"] != assignee_id) {
+                return Err(TaskRuntimeError::Invalid(
+                    "Collaboration stage belongs to another member".into(),
+                ));
+            }
+        }
+        match assignee_type {
+            "agent" => {
+                validate_group_agent(group, assignee_id)?;
+                let agent = collaboration_agent(connection, turn.project, assignee_id)?;
+                if (manager_payload["project_coordination"].is_object()
+                    || manager_payload.get("automation_run_id").is_some())
+                    && !agent.metadata["execution_policy"].is_object()
+                {
+                    return Err(TaskRuntimeError::Invalid("RUNNER_CONFIGURATION_REQUIRED: configure the assigned member before automatic execution".into()));
+                }
+                let selected_model_id = assignment.get("model_id").and_then(Value::as_str);
+                let mut payload = json!({
+                    "message": collaboration_assignment_prompt(title, instructions),
+                    "workflow_task_title": title,
+                    "workflow_node_id": assignment.get("workflow_stage_id"),
+                    "model_id": selected_model_id,
+                    "assignment_id": assignment_id,
+                    "dispatch_id": manager_payload.get("dispatch_id"),
+                    "dispatch_role": "member",
+                    "coordination_round_id": round_id,
+                    "coordination_manager_execution_id": turn.execution,
+                    "collaboration_group": group,
+                    "project_workspace_roots": manager_payload.get("project_workspace_roots"),
+                });
+                if manager_payload
+                    .get("memberRuntimeProfiles")
+                    .or_else(|| manager_payload.get("member_runtime_profiles"))
+                    .is_some()
+                {
+                    payload["runtimePayload"] = collaboration_member_runtime_payload(
+                        manager_payload,
+                        assignee_id,
+                        selected_model_id,
+                    )?;
+                } else {
+                    let selection = &manager_payload["runnerSelection"];
+                    let model_policy = &agent.metadata["model_policy"];
+                    let model = if model_policy["mode"] == "fixed" {
+                        &model_policy["model"]
+                    } else {
+                        &selection["model"]
+                    };
+                    if selected_model_id.is_some_and(|id| model["model_id"] != id) {
+                        return Err(TaskRuntimeError::Invalid(
+                            "Selected model does not match member policy".into(),
+                        ));
+                    }
+                    payload["runnerSelection"] = selection.clone();
+                    payload["projectInstructions"] =
+                        json!(crate::task_runtime::collaboration_member_system_prompt(
+                            agent.metadata["system_prompt"].as_str().unwrap_or_default(),
+                        ));
+                }
+                if turn.execution.is_none() {
+                    payload["human_coordination_member"] =
+                        json!({"issue":turn.issue,"member":assignee_id});
+                }
+                if let Some(context) = manager_payload.get("project_coordination") {
+                    payload["project_coordination"] = context.clone();
+                }
+                let execution_id = local_execution_activity::create_scoped_local_execution(
+                    connection,
+                    turn.issue,
+                    turn.project,
+                    &agent.id,
+                    &agent,
+                    turn.priority,
+                    payload,
+                    turn.actor,
+                )?;
+                dispatched.push(json!({
+                    "execution_id": execution_id,
+                    "assignment_id": assignment_id,
+                    "assignee_type": "agent",
+                    "task_title": title,
+                    "agent_id": agent.id, "assignee_id":assignee_id,
+                    "agent_name": agent_display_name(&agent),
+                    "workflow_stage_id": assignment.get("workflow_stage_id"),
+                    "model_id": selected_model_id,
+                }));
+            }
+            "human" => {
+                let human_name = validate_group_human(group, assignee_id)?;
+                let human_task_id = create_human_assignment_task(
+                    connection,
+                    turn,
+                    round_id,
+                    assignment_id,
+                    assignee_id,
+                    title,
+                    instructions,
+                    assignment.get("workflow_stage_id"),
+                )?;
+                dispatched.push(json!({
+                    "human_assignment_id": human_task_id,
+                    "assignment_id": assignment_id,
+                    "assignee_type": "human",
+                    "task_title": title,
+                    "instructions": instructions,
+                    "human_user_id": assignee_id, "assignee_id":assignee_id,
+                    "human_user_name": human_name,
+                    "workflow_stage_id": assignment.get("workflow_stage_id"),
+                }));
+            }
+            value => {
+                return Err(TaskRuntimeError::Invalid(format!(
+                    "unsupported collaboration assignee type '{value}'"
+                )));
+            }
+        }
+    }
+
+    Ok(dispatched)
 }
 
 fn collaboration_assignment_prompt(title: &str, instructions: &str) -> String {
@@ -542,7 +678,7 @@ fn collaboration_member_runtime_payload(
     Ok(payload)
 }
 
-fn active_manager_execution_id(
+fn manager_execution_id_for_runtime(
     connection: &Connection,
     runtime_task_id: &str,
 ) -> Result<Option<i64>, TaskRuntimeError> {
@@ -550,7 +686,7 @@ fn active_manager_execution_id(
         .query_row(
             "SELECT id FROM loop_item_executions
              WHERE runtime_task_id = ?1
-               AND status IN ('claimed', 'running', 'cancel_requested')
+               AND (status IN ('claimed', 'running') OR (status = 'completed' AND termination_reason = 'collaboration_round_dispatched'))
                AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
              ORDER BY id DESC LIMIT 1",
             params![runtime_task_id],
@@ -636,7 +772,7 @@ fn reject_group_leader(
 #[allow(clippy::too_many_arguments)]
 fn create_human_assignment_task(
     connection: &Connection,
-    manager: &LocalExecution,
+    turn: &RoundOwner<'_>,
     round_id: &str,
     assignment_id: &str,
     assignee_id: &str,
@@ -649,7 +785,7 @@ fn create_human_assignment_task(
             "local collaboration human assignee identity must be a numeric user id".to_owned(),
         )
     })?;
-    let project = get_item_from(connection, &manager.cloud_project_id, "project")?
+    let project = get_item_from(connection, turn.project, "project")?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
     let status = project_status::initial_status(&project.metadata)?;
     let sequence = project.next_item_number.unwrap_or(1);
@@ -659,14 +795,8 @@ fn create_human_assignment_task(
         .ok_or_else(|| TaskRuntimeError::Invalid("project key is missing".to_owned()))?;
     let task_id = format!("{project_key}-{sequence}");
     let timestamp = now();
-    let dispatch_id = manager
-        .execution_payload
-        .as_ref()
-        .and_then(|payload| payload.get("dispatch_id"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| manager.loop_item_id.clone());
-    let metadata = json!({
+    let dispatch_id = required_string(turn.payload, "dispatch_id")?;
+    let mut metadata = json!({
         "tags": [],
         "is_unread": true,
         "collaboration_assignment": {
@@ -674,16 +804,23 @@ fn create_human_assignment_task(
             "assignee_type": "human",
             "round_id": round_id,
             "dispatch_id": dispatch_id,
-            "manager_execution_id": manager.id,
-            "root_item_id": manager.loop_item_id,
+            "manager_execution_id": turn.execution,
+            "root_item_id": turn.issue,
             "workflow_stage_id": workflow_stage_id,
         },
     });
+    record_assignment_change(
+        &mut metadata,
+        turn.actor,
+        Some("user"),
+        Some(assignee_id),
+        None,
+    );
     connection.execute(
         "UPDATE loop_items
          SET next_item_number = ?1, updated_at = ?2
          WHERE id = ?3",
-        params![sequence + 1, timestamp, manager.cloud_project_id],
+        params![sequence + 1, timestamp, turn.project],
     )?;
     connection.execute(
         "INSERT INTO loop_items (
@@ -694,20 +831,20 @@ fn create_human_assignment_task(
                    0, ?8, 1, ?9, ?9, ?10, ?11)",
         params![
             task_id,
-            manager.cloud_project_id,
-            manager.loop_item_id,
+            turn.project,
+            turn.issue,
             title,
             instructions,
             sequence,
-            manager.task_priority.as_deref().unwrap_or("none"),
+            turn.priority,
             metadata.to_string(),
             timestamp,
             assignee_user_id,
-            manager.assigner_user_id,
+            turn.actor,
             status,
         ],
     )?;
-    refresh_runtime_projection_additional_context(connection, &manager.loop_item_id)?;
+    refresh_runtime_projection_additional_context(connection, turn.issue)?;
     Ok(task_id)
 }
 
@@ -746,27 +883,6 @@ fn human_delivery_markdown(
         .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
 }
 
-fn collaboration_round_exists(
-    connection: &Connection,
-    item_id: &str,
-    round_id: &str,
-) -> Result<bool, TaskRuntimeError> {
-    Ok(connection.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM loop_item_executions
-             WHERE loop_item_id = ?1
-               AND json_extract(execution_payload, '$.coordination_round_id') = ?2
-             UNION ALL
-             SELECT 1 FROM loop_items
-             WHERE parent_id = ?1
-               AND resource_type = 'task'
-               AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2
-         )",
-        params![item_id, round_id],
-        |row| row.get(0),
-    )?)
-}
-
 fn coordination_round_id(execution: &LocalExecution) -> Option<String> {
     let payload = execution.execution_payload.as_ref()?;
     payload
@@ -780,6 +896,7 @@ fn collaboration_round_is_ready(
     connection: &Connection,
     item_id: &str,
     round_id: &str,
+    dispatch_id: &str,
 ) -> Result<bool, TaskRuntimeError> {
     let (agent_total, agent_terminal): (i64, i64) = connection.query_row(
         "SELECT COUNT(*),
@@ -787,8 +904,8 @@ fn collaboration_round_is_ready(
          FROM loop_item_executions
          WHERE loop_item_id = ?1
            AND json_extract(execution_payload, '$.dispatch_role') = 'member'
-           AND json_extract(execution_payload, '$.coordination_round_id') = ?2",
-        params![item_id, round_id],
+           AND json_extract(execution_payload, '$.coordination_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3",
+        params![item_id, round_id, dispatch_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let (human_total, human_terminal): (i64, i64) = connection.query_row(
@@ -799,8 +916,8 @@ fn collaboration_round_is_ready(
            AND resource_type = 'task'
            AND deleted_at IS NULL
            AND json_extract(metadata, '$.collaboration_assignment.assignee_type') = 'human'
-           AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2",
-        params![item_id, round_id],
+           AND json_extract(metadata, '$.collaboration_assignment.round_id') = ?2 AND json_extract(metadata,'$.collaboration_assignment.dispatch_id') = ?3",
+        params![item_id, round_id, dispatch_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let total = agent_total + human_total;
@@ -811,15 +928,16 @@ fn manager_resume_exists(
     connection: &Connection,
     item_id: &str,
     round_id: &str,
+    dispatch_id: &str,
 ) -> Result<bool, TaskRuntimeError> {
     Ok(connection.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM loop_item_executions
              WHERE loop_item_id = ?1
                AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
-               AND json_extract(execution_payload, '$.coordination_resume_round_id') = ?2
+               AND json_extract(execution_payload, '$.coordination_resume_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
          )",
-        params![item_id, round_id],
+        params![item_id, round_id, dispatch_id],
         |row| row.get(0),
     )?)
 }
@@ -828,15 +946,16 @@ fn source_manager_execution(
     connection: &Connection,
     item_id: &str,
     round_id: &str,
+    dispatch_id: &str,
 ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
     let id = connection
         .query_row(
             "SELECT id FROM loop_item_executions
              WHERE loop_item_id = ?1
                AND json_extract(execution_payload, '$.dispatch_role') = 'manager'
-               AND json_extract(execution_payload, '$.coordination_submitted_round_id') = ?2
+               AND json_valid(execution_payload) AND json_extract(execution_payload, '$.coordination_submitted_round_id') = ?2 AND json_extract(execution_payload,'$.dispatch_id') = ?3
              ORDER BY id DESC LIMIT 1",
-            params![item_id, round_id],
+            params![item_id, round_id, dispatch_id],
             |row| row.get(0),
         )
         .optional()?;
@@ -855,114 +974,5 @@ fn agent_display_name(agent: &LoopItem) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_member_payload_uses_canonical_member_instructions() {
-        let manager_payload = json!({
-            "memberRuntimeProfiles": [{
-                "memberIds": ["member-1"],
-                "runtimePayload": {
-                    "projectInstructions": "member system instructions",
-                    "executionRequest": {
-                        "system_prompt": "manager system instructions"
-                    }
-                }
-            }]
-        });
-
-        let payload =
-            collaboration_member_runtime_payload(&manager_payload, "member-1", None).unwrap();
-        let system_prompt = payload["executionRequest"]["system_prompt"]
-            .as_str()
-            .expect("member system prompt");
-
-        assert!(system_prompt.starts_with("member system instructions"));
-        assert!(!system_prompt.contains("manager system instructions"));
-        assert!(system_prompt.contains("The Executor records this run in the current Issue"));
-        assert!(system_prompt.contains("Use native subagents"));
-        assert!(system_prompt.contains("Delegate a single nontrivial task to one subagent"));
-        assert!(system_prompt.contains("finalize_delivery"));
-    }
-
-    #[test]
-    fn local_member_payload_requires_and_validates_a_preconfigured_model() {
-        let manager_payload = json!({
-            "memberRuntimeProfiles": [{
-                "memberIds": ["member-1"],
-                "modelRuntimeProfiles": [{
-                    "modelId": "fast-model",
-                    "runtimePayload": {
-                        "projectInstructions": "member instructions",
-                        "executionRequest": {
-                            "model_config": {"model_id": "fast-model"}
-                        }
-                    }
-                }, {
-                    "modelId": "deep-model",
-                    "runtimePayload": {
-                        "projectInstructions": "member instructions",
-                        "executionRequest": {
-                            "model_config": {"model_id": "deep-model"}
-                        }
-                    }
-                }]
-            }]
-        });
-
-        let missing =
-            collaboration_member_runtime_payload(&manager_payload, "member-1", None).unwrap_err();
-        assert!(missing.to_string().contains("must choose model_id"));
-
-        let unavailable = collaboration_member_runtime_payload(
-            &manager_payload,
-            "member-1",
-            Some("unconfigured-model"),
-        )
-        .unwrap_err();
-        assert!(unavailable.to_string().contains("is not allowed"));
-
-        let selected =
-            collaboration_member_runtime_payload(&manager_payload, "member-1", Some("deep-model"))
-                .unwrap();
-        assert_eq!(
-            selected["executionRequest"]["model_config"]["model_id"],
-            "deep-model"
-        );
-    }
-
-    #[test]
-    fn local_member_payload_validates_model_for_a_legacy_profile() {
-        let manager_payload = json!({
-            "memberRuntimeProfiles": [{
-                "memberIds": ["member-1"],
-                "runtimePayload": {
-                    "projectInstructions": "member instructions",
-                    "executionRequest": {
-                        "model_config": {"model_id": "legacy-model"}
-                    }
-                }
-            }]
-        });
-
-        let selected = collaboration_member_runtime_payload(
-            &manager_payload,
-            "member-1",
-            Some("legacy-model"),
-        )
-        .unwrap();
-        assert_eq!(
-            selected["executionRequest"]["model_config"]["model_id"],
-            "legacy-model"
-        );
-
-        let unavailable = collaboration_member_runtime_payload(
-            &manager_payload,
-            "member-1",
-            Some("unverified-model"),
-        )
-        .unwrap_err();
-        assert!(unavailable.to_string().contains("cannot be verified"));
-    }
-}
+#[path = "collaboration_dispatch_tests.rs"]
+mod tests;

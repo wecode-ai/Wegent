@@ -313,6 +313,11 @@ impl LocalTaskStore {
         mut payload: Value,
         trigger_message_id: Option<&str>,
     ) -> Result<LocalExecution, TaskRuntimeError> {
+        if payload.get("human_coordination_member").is_some() {
+            return Err(TaskRuntimeError::Invalid(
+                "Only the assigned member thread may continue this round".into(),
+            ));
+        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
@@ -320,7 +325,8 @@ impl LocalTaskStore {
         })?;
         let task =
             get_item_from(&connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
-        if agent.cloud_project_id.as_deref() != Some(project_id)
+        if (agent.cloud_project_id.as_deref() != Some(project_id)
+            && !has_active_project_team_binding(&connection, project_id, agent_id)?)
             || agent.status.as_deref() != Some("active")
             || task.cloud_project_id.as_deref() != Some(project_id)
         {
@@ -371,14 +377,17 @@ impl LocalTaskStore {
                 }
             }
         }
-        let execution_id = create_local_execution(
+        let actor =
+            project_coordination_commands::execution_actor_on(&connection, project_id, &payload)?;
+        let execution_id = local_execution_activity::create_scoped_local_execution(
             &connection,
             task_id,
             project_id,
             agent_id,
             &agent,
             task.priority.as_deref().unwrap_or("none"),
-            payload.clone(),
+            payload,
+            actor,
         )?;
         let execution = execution_row(&connection, execution_id)?;
         connection.commit()?;

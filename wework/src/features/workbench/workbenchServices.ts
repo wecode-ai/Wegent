@@ -93,6 +93,19 @@ export interface LocalProjectMigrationSnapshot {
   migration_fingerprint: string | null
 }
 export type LocalProjectSpaceApi = DeliveryApi & {
+  issueCoordination?: {
+    get(
+      userId: number,
+      projectId: string,
+      loopItemId: string
+    ): Promise<import('@wegent/collaboration').IssueCoordination | null>
+    write(
+      action: 'submit' | 'decide',
+      userId: number,
+      projectId: string,
+      input: Record<string, unknown>
+    ): Promise<void>
+  }
   readProjectMigrationSnapshot?(projectId: string): Promise<LocalProjectMigrationSnapshot>
   archiveMigratedProject?(
     projectId: string,

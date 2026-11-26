@@ -2,15 +2,24 @@ use super::*;
 
 impl LocalTaskStore {
     pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
+        self.list_chat_agents_with_archived(project_id, false)
+    }
+
+    pub fn list_chat_agents_with_archived(
+        &self,
+        project_id: &str,
+        include_archived: bool,
+    ) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                     public_id, project_key, name, title, description, sequence_number,
-                    next_item_number, status, priority, sort_order, current_delivery_id,
-                    metadata, version, created_at, updated_at, completed_at,
+                    next_item_number, COALESCE((SELECT b.status FROM project_team_bindings b WHERE b.project_id=?1 AND b.team_ref=loop_items.id), status), priority, sort_order, current_delivery_id,
+                    metadata, COALESCE((SELECT b.version FROM project_team_bindings b WHERE b.project_id=?1 AND b.team_ref=loop_items.id), version), created_at, updated_at, completed_at,
                     assignee_agent_id, created_by_user_id, assignee_user_id
              FROM loop_items
-             WHERE resource_type = 'chat_agent' AND cloud_project_id = ?1 AND deleted_at IS NULL
+             WHERE resource_type = 'chat_agent' AND deleted_at IS NULL
+               AND (cloud_project_id = ?1 OR id IN (SELECT team_ref FROM project_team_bindings WHERE project_id = ?1))
              ORDER BY created_at ASC",
         )?;
         let rows =
@@ -18,9 +27,46 @@ impl LocalTaskStore {
         let agents = collect_items(rows)?;
         Ok(agents
             .into_iter()
-            .filter(|agent| agent.status.as_deref() != Some("archived"))
+            .filter(|agent| include_archived || agent.status.as_deref() != Some("archived"))
             .map(map_chat_agent)
+            .map(|mut agent| {
+                agent.project_id = project_id.to_owned();
+                agent
+            })
             .collect())
+    }
+
+    pub fn bind_chat_agent(
+        &self,
+        project_id: &str,
+        team_ref: &str,
+    ) -> Result<ChatAgent, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let project =
+            get_item_from(&tx, project_id, "project")?.ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let owned: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items WHERE id=?1 AND created_by_user_id=?2)",
+            params![team_ref, project.created_by_user_id], |row| row.get(0),
+        )?;
+        let source = get_item_from(&tx, team_ref, "chat_agent")?
+            .filter(|agent| {
+                agent.status.as_deref() == Some("active")
+                    && agent.cloud_project_id.as_deref() == Some(DEFAULT_WORK_ITEM_PROJECT_ID)
+                    && owned
+            })
+            .ok_or_else(|| {
+                TaskRuntimeError::Invalid("Local Team is unavailable for this project".into())
+            })?;
+        if project_id != DEFAULT_WORK_ITEM_PROJECT_ID {
+            tx.execute(
+                "INSERT OR IGNORE INTO project_team_bindings(project_id, team_ref) VALUES (?1, ?2)",
+                params![project_id, team_ref],
+            )?;
+        }
+        tx.commit()?;
+        drop(connection);
+        self.get_chat_agent(project_id, &source.id)
     }
 
     pub fn create_chat_agent(
@@ -83,6 +129,16 @@ impl LocalTaskStore {
         let current = get_item_from(&connection, agent_id, "chat_agent")?
             .ok_or_else(|| TaskRuntimeError::Invalid("Robot not found".to_owned()))?;
         if current.cloud_project_id.as_deref() != Some(project_id) {
+            if let Some(status @ ("active" | "archived")) = input.status.as_deref() {
+                if has_project_team_binding(&connection, project_id, agent_id)? {
+                    if connection.execute("UPDATE project_team_bindings SET status=?1, version=version+1 WHERE project_id=?2 AND team_ref=?3 AND version=?4",
+                        params![status, project_id, agent_id, input.version])? != 1 {
+                        return Err(TaskRuntimeError::VersionConflict);
+                    }
+                    drop(connection);
+                    return self.get_chat_agent(project_id, agent_id);
+                }
+            }
             return Err(TaskRuntimeError::Invalid(
                 "Robot is not in this project".to_owned(),
             ));
@@ -199,6 +255,7 @@ impl LocalTaskStore {
                 .or(current.title)
                 .unwrap_or_else(|| "AI".to_owned())
         });
+        binding_rows::save_solo_bot(&mut metadata, agent_id, &name);
         let changed = connection.execute(
             "UPDATE loop_items
              SET name = ?1, title = ?1, status = ?2, metadata = ?3,
@@ -227,6 +284,12 @@ impl LocalTaskStore {
         version: i64,
     ) -> Result<(), TaskRuntimeError> {
         let connection = self.connection()?;
+        if has_project_team_binding(&connection, project_id, agent_id)? {
+            if connection.execute("UPDATE project_team_bindings SET status='archived',version=version+1 WHERE project_id=?1 AND team_ref=?2 AND version=?3",params![project_id, agent_id, version])? != 1 {
+                return Err(TaskRuntimeError::VersionConflict);
+            }
+            return Ok(());
+        }
         let changed = connection.execute(
             "UPDATE loop_items
              SET status = 'archived', version = version + 1, updated_at = ?1
@@ -247,17 +310,31 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let bound = has_project_team_binding(&transaction, project_id, agent_id)?;
         let agent = get_item_from(&transaction, agent_id, "chat_agent")?
-            .filter(|agent| agent.cloud_project_id.as_deref() == Some(project_id))
+            .filter(|agent| bound || agent.cloud_project_id.as_deref() == Some(project_id))
             .ok_or_else(|| TaskRuntimeError::Invalid("Robot is not in this project".into()))?;
-        if wegent_protocol::collaboration::is_managed_project_agent(
-            agent.name.as_deref().unwrap_or_default(),
-        ) {
+        if !bound
+            && transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_team_bindings WHERE team_ref=?1)",
+                [agent_id],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "PROJECT_AGENT_IN_USE: remove this Team from its projects first".into(),
+            ));
+        }
+        if !bound
+            && wegent_protocol::collaboration::is_managed_project_agent(
+                agent.name.as_deref().unwrap_or_default(),
+            )
+        {
             return Err(TaskRuntimeError::Invalid(
                 "PROJECT_AGENT_MANAGED: the current-device Agent cannot be deleted".into(),
             ));
         }
-        if agent.version != version {
+        if !bound && agent.version != version {
             return Err(TaskRuntimeError::VersionConflict);
         }
         let project = get_item_from(&transaction, project_id, "project")?
@@ -276,6 +353,11 @@ impl LocalTaskStore {
         {
             return Err(TaskRuntimeError::Invalid("PROJECT_AGENT_IN_USE: replace or remove the Agent from its collaboration groups first".into()));
         }
+        if bound {
+            if transaction.execute("DELETE FROM project_team_bindings WHERE project_id=?1 AND team_ref=?2 AND version=?3",params![project_id, agent_id, version])? != 1 { return Err(TaskRuntimeError::VersionConflict); }
+            transaction.commit()?;
+            return Ok(());
+        }
         let changed = transaction.execute("UPDATE loop_items SET status='archived',deleted_at=?1,updated_at=?1,version=version+1 WHERE id=?2 AND cloud_project_id=?3 AND resource_type='chat_agent' AND version=?4 AND deleted_at IS NULL", params![now(), agent_id, project_id, version])?;
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
@@ -292,12 +374,14 @@ impl LocalTaskStore {
         let connection = self.connection()?;
         let row = get_item_from(&connection, agent_id, "chat_agent")?
             .ok_or_else(|| TaskRuntimeError::Invalid("Robot not found".to_owned()))?;
-        if row.cloud_project_id.as_deref() != Some(project_id) {
-            return Err(TaskRuntimeError::Invalid(
-                "Robot is not in this project".to_owned(),
-            ));
+        let mut agent = map_chat_agent(row);
+        if agent.project_id != project_id {
+            let (status,version) = connection.query_row("SELECT status, version FROM project_team_bindings WHERE project_id=?1 AND team_ref=?2", params![project_id,agent_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?))).optional()?.ok_or_else(|| TaskRuntimeError::Invalid("Robot is not in this project".into()))?;
+            agent.project_id = project_id.to_owned();
+            agent.status = status;
+            agent.version = version;
         }
-        Ok(map_chat_agent(row))
+        Ok(agent)
     }
 
     // ------------------------------------------------------------------

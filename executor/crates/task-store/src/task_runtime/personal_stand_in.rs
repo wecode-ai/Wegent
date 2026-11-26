@@ -8,6 +8,8 @@ use wegent_protocol::StandInTaskPermissions;
 mod connections;
 #[path = "stand_in_dots_delegation.rs"]
 mod dots_delegation;
+#[path = "personal_execution_team.rs"]
+mod execution_team;
 use connections::validate_connections;
 #[path = "personal_stand_in_share_copy.rs"]
 mod share_copy;
@@ -251,6 +253,7 @@ fn read_personal_state(
             fields.remove("selectionErrors");
         }
         migrate_personal_settings(&mut settings)?;
+        execution_team::bind(&mut settings, user)?;
         return Ok((settings, Some(original)));
     }
     let mut personal = empty_personal(user, device);
@@ -294,6 +297,7 @@ fn read_personal_state(
         personal["roles"] = json!(roles);
     }
     migrate_personal_settings(&mut personal)?;
+    execution_team::bind(&mut personal, user)?;
     Ok((personal, None))
 }
 
@@ -302,10 +306,13 @@ pub(super) fn write_personal(
     value: &Value,
 ) -> Result<(), TaskRuntimeError> {
     let user = value["userId"].as_i64().unwrap();
+    let mut value = value.clone();
+    execution_team::bind(&mut value, user)?;
     connection.execute(
         "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'personal_stand_in',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",
         params![personal_key(user),value.to_string(),now()],
     )?;
+    execution_team::persist(connection, &value)?;
     connection.execute("DELETE FROM loop_items WHERE resource_type='stand_in_settings' AND json_extract(metadata,'$.userId')=?1", params![user])?;
     Ok(())
 }
@@ -589,6 +596,7 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
 #[derive(Clone, Copy)]
 pub(super) struct StandInSaveOptions<'a> {
     pub(super) direct_save: bool,
+    pub(super) workspace_owner: bool,
     pub(super) verified_account: Option<&'a Value>,
     pub(super) backend: Option<&'a str>,
 }
@@ -625,6 +633,7 @@ impl LocalTaskStore {
         let current = read_personal(&connection, user, device)?;
         let mut expected = previous.clone();
         expected["primary"] = implicit_primary();
+        execution_team::bind(&mut expected, user)?;
         if current != expected {
             return Err(TaskRuntimeError::VersionConflict);
         }
@@ -706,6 +715,18 @@ impl LocalTaskStore {
         value: Value,
         verified_account: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
+        self.save_verified_personal_settings(user, device, backend, value, verified_account, false)
+    }
+
+    pub fn save_verified_personal_settings(
+        &self,
+        user: i64,
+        device: &str,
+        backend: Option<&str>,
+        value: Value,
+        verified_account: Option<&Value>,
+        workspace_owner: bool,
+    ) -> Result<Value, TaskRuntimeError> {
         if value["primary"]["delegation"]["action"] == "prepare" && verified_account.is_none() {
             return Err(TaskRuntimeError::Invalid(
                 "Verify the selected DingTalk account before preparing delegation".into(),
@@ -720,6 +741,7 @@ impl LocalTaskStore {
             value,
             StandInSaveOptions {
                 direct_save: true,
+                workspace_owner,
                 verified_account,
                 backend,
             },
@@ -818,6 +840,16 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.validate_personal_settings_for_device_owner(user, device, value, false)
+    }
+
+    pub fn validate_personal_settings_for_device_owner(
+        &self,
+        user: i64,
+        device: &str,
+        value: Value,
+        workspace_owner: bool,
+    ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let result = self.save_personal_stand_in_on(
@@ -827,6 +859,7 @@ impl LocalTaskStore {
             value,
             StandInSaveOptions {
                 direct_save: true,
+                workspace_owner,
                 verified_account: None,
                 backend: None,
             },
@@ -847,6 +880,9 @@ impl LocalTaskStore {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
+            object.remove("bindableTeams");
+            object.remove("teamImportVersion");
+            object.remove("portableTeam");
             object.remove("autoSelect");
         }
         let roles = value["roles"]
@@ -897,6 +933,9 @@ impl LocalTaskStore {
             fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
+            if value["primary"].get("teamRef").is_none() {
+                value["primary"]["teamRef"] = previous["primary"]["teamRef"].clone();
+            }
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
             dots_delegation::save_delegation(
                 &mut value["primary"],
@@ -906,13 +945,20 @@ impl LocalTaskStore {
             )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
+        let previous_roles: std::collections::HashMap<_, _> = previous["roles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|role| Some((role["id"].as_str()?, role)))
+            .collect();
         for role in value["roles"].as_array_mut().unwrap() {
             dots_delegation::strip_source_markers(role);
-            let before = previous["roles"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|before| before["id"] == role["id"]);
+            let before = role["id"]
+                .as_str()
+                .and_then(|id| previous_roles.get(id).copied());
+            if let (None, Some(before)) = (role.get("teamRef"), before) {
+                role["teamRef"] = before["teamRef"].clone();
+            }
             if before.is_none()
                 && role["migrationSource"].is_string()
                 && role.get("taskPermissions").is_some()
@@ -928,8 +974,29 @@ impl LocalTaskStore {
             role["version"] = json!(version + 1);
             stamp_project_enabled(role, before.unwrap_or(&Value::Null));
         }
+        let grants = stand_in_identities(&value)
+            .into_iter()
+            .filter_map(|identity| {
+                let id = identity["teamRef"].as_str()?;
+                (id.starts_with("LA-")
+                    && (options.workspace_owner
+                        || previous["workspaceTeamGrants"]
+                            .as_array()
+                            .is_some_and(|old| old.iter().any(|v| v == id))))
+                .then(|| id.to_owned())
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        value
+            .as_object_mut()
+            .expect("validated settings")
+            .remove("workspaceTeamGrants");
+        if !grants.is_empty() {
+            value["workspaceTeamGrants"] = json!(grants);
+        }
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
+        execution_team::bind(&mut value, user)?;
+        execution_team::import_transfer(connection, user, &mut value)?;
         write_personal(connection, &value)?;
         if let Some(backend) = options.backend.filter(|backend| {
             !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)

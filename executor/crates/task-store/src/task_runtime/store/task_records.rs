@@ -609,6 +609,10 @@ impl LocalTaskStore {
             metadata
                 .as_object_mut()
                 .unwrap()
+                .remove("human_coordination_dispatch");
+            metadata
+                .as_object_mut()
+                .unwrap()
                 .remove("collaboration_group_assignment_key");
         }
         let starts_runtime_dispatch = (collaboration_group_changed

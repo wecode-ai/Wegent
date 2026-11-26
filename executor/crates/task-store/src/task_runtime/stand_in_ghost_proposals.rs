@@ -701,6 +701,7 @@ impl LocalTaskStore {
                 &profile_device,
                 settings,
                 super::personal_stand_in::StandInSaveOptions {
+                    workspace_owner: false,
                     direct_save: false,
                     verified_account: None,
                     backend,

@@ -77,6 +77,7 @@ export function createLocalWorkspaceApi(
   locale: 'zh-CN' | 'en' = 'zh-CN'
 ): SharedWorkspaceApi | null {
   if (!deliveryApi) return null
+  const coordinationApi = deliveryApi.issueCoordination
   const delivery = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
   const automation = createWeworkAutomationSharedWorkspaceApi(
     deliveryApi,
@@ -303,19 +304,19 @@ export function createLocalWorkspaceApi(
     },
   ]
   const projectAgentApi = detailServices?.localProjectChatAgentApi
+  const isProjectBinding = (agent: LocalProjectChatAgent) =>
+    Boolean(agent.sourceProjectId && agent.sourceProjectId !== agent.projectId)
   const toProjectAgent = (agent: LocalProjectChatAgent) => ({
     ...agent,
     agent_id: agent.name,
-    deletable: !isDefaultLocalAgent(agent),
-    can_edit: true,
+    deletable: isProjectBinding(agent) || !isDefaultLocalAgent(agent),
+    can_edit: !isProjectBinding(agent),
     name: agent.displayName || agent.name,
   })
-  const listProjectAgents = async (projectId: string, options?: { forceRefresh?: boolean }) =>
-    (
-      await (options?.forceRefresh
-        ? projectAgentApi?.list(projectId, { forceRefresh: true })
-        : projectAgentApi?.list(projectId))
-    )?.map(toProjectAgent) ?? []
+  const listProjectAgents = async (
+    projectId: string,
+    options?: { forceRefresh?: boolean; includeArchived?: boolean }
+  ) => (await projectAgentApi?.list(projectId, options))?.map(toProjectAgent) ?? []
   const projectChatClient = detailServices?.projectChatClient
   const localAgentResources = async (
     _workspaceId?: string,
@@ -721,7 +722,7 @@ export function createLocalWorkspaceApi(
               const existing = (await projectAgentApi.list(projectId, { forceRefresh: true })).find(
                 agent => agent.id === agentId
               )
-              if (existing && isDefaultLocalAgent(existing)) {
+              if (existing && !isProjectBinding(existing) && isDefaultLocalAgent(existing)) {
                 throw new Error(
                   locale === 'zh-CN'
                     ? '默认本地智能体不能停用'
@@ -786,6 +787,37 @@ export function createLocalWorkspaceApi(
     },
     issues: {
       ...delivery.issues,
+      ...(coordinationApi
+        ? ({
+            async get(issueId: string) {
+              const issue = await delivery.issues.get(issueId)
+              if (!issue.assignee_group_id) return issue
+              const coordination = await coordinationApi.get(
+                userId,
+                String(issue.cloud_project_id),
+                issueId
+              )
+              return { ...issue, coordination }
+            },
+            async submitRound(projectId, { items, ...context }) {
+              await coordinationApi.write('submit', userId, projectId, {
+                ...context,
+                items: items.map(item => ({
+                  assignment_id: item.assignmentId,
+                  assignee_type: item.assigneeType,
+                  assignee_id: item.assigneeId,
+                  title: item.title,
+                  instructions: item.instructions,
+                  workflow_stage_id: item.workflowStageId,
+                  model_id: item.modelId,
+                })),
+              })
+            },
+            async decideRound(projectId, input) {
+              await coordinationApi.write('decide', userId, projectId, { ...input })
+            },
+          } satisfies Partial<SharedWorkspaceApi['issues']>)
+        : {}),
       async getBoardSnapshot(projectId) {
         const [snapshot, agents] = await Promise.all([
           delivery.issues.getBoardSnapshot(projectId),

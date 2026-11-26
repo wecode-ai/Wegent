@@ -12,6 +12,8 @@ pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .to_owned()
     };
     ChatAgent {
+        team_ref: row.id.clone(),
+        source_project_id: row.cloud_project_id.clone().unwrap_or_default(),
         execution_policy: metadata
             .get("execution_policy")
             .filter(|value| !value.is_null())
@@ -122,7 +124,15 @@ pub(super) fn insert_comment(
     create: &LocalCommentCreate,
     status: &str,
 ) -> Result<LocalComment, TaskRuntimeError> {
-    let message_id = Uuid::new_v4().to_string();
+    insert_comment_with_id(connection, create, status, Uuid::new_v4().to_string())
+}
+
+pub(super) fn insert_comment_with_id(
+    connection: &Connection,
+    create: &LocalCommentCreate,
+    status: &str,
+    message_id: String,
+) -> Result<LocalComment, TaskRuntimeError> {
     let now = now();
     let (reply_to_message_id, thread_root_message_id) =
         if let Some(reply_to) = &create.reply_to_message_id {
@@ -527,6 +537,8 @@ pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
+        agent_bots: agent_metadata["bot"].clone(),
+        agent_collaboration_model: agent_metadata["collaboration_model"].clone(),
         agent_mcp_servers: agent_metadata
             .get("mcp_servers")
             .filter(|value| value.is_object())

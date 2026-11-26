@@ -195,10 +195,26 @@ pub(super) fn sync_assignment_receipt(
     metadata: &Value,
 ) -> Result<(), TaskRuntimeError> {
     let history = metadata["assignment_history"].as_array();
-    let row = history.and_then(|rows| rows.last().filter(|entry| entry["to_type"]=="user").map(|entry| json!({
-        "id":format!("{issue}-{}",rows.len()), "target_type":"human", "target_id":entry["to_id"], "target_name":entry["to_name"],
-        "receipt_tracking":entry["receipt_tracking"]==true,"human_read_at":entry["human_read_at"],"stand_in_received_at":entry["stand_in_received_at"],
-    }))).unwrap_or_else(|| json!({}));
+    let row = history
+        .and_then(|rows| {
+            let entry = rows.last()?;
+            let leader = &metadata["collaboration_group"]["leader"];
+            let (target_id, target_name) = match entry["to_type"].as_str() {
+                Some("user") => (&entry["to_id"], &entry["to_name"]),
+                Some("group") if leader["kind"] == "human" => (&leader["id"], &leader["name"]),
+                _ => return None,
+            };
+            Some(json!({
+                "id": format!("{issue}-{}", rows.len()),
+                "target_type": "human",
+                "target_id": target_id,
+                "target_name": target_name,
+                "receipt_tracking": entry["receipt_tracking"] == true,
+                "human_read_at": entry["human_read_at"],
+                "stand_in_received_at": entry["stand_in_received_at"],
+            }))
+        })
+        .unwrap_or_else(|| json!({}));
     connection.execute(
         "INSERT INTO loop_items(id,resource_type,cloud_project_id,parent_id,metadata,created_at,updated_at)
          VALUES (?1,'issue_receipt',?2,?3,?4,?5,?5)

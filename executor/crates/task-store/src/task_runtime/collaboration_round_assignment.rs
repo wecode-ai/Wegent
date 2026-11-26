@@ -155,7 +155,7 @@ pub(super) fn update_manager_assignment_activity(
     Ok(())
 }
 
-fn assignment_summary(assignments: &[Value]) -> String {
+pub(super) fn assignment_summary(assignments: &[Value]) -> String {
     assignments
         .iter()
         .filter_map(|assignment| {

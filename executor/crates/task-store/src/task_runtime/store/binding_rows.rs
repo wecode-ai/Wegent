@@ -1,5 +1,33 @@
 use super::*;
 
+pub(super) fn save_solo_bot(metadata: &mut Value, id: &str, name: &str) {
+    if metadata["collaboration_model"]
+        .as_str()
+        .is_some_and(|mode| mode != "single")
+    {
+        return;
+    }
+    let shell = if metadata["runtime"] == "claude_code" {
+        "ClaudeCode"
+    } else {
+        "Codex"
+    };
+    let servers = metadata["mcp_servers"].clone();
+    if metadata.get("bot").is_none() {
+        metadata["bot"] = json!([{"id":id}]);
+    }
+    let Some([bot]) = metadata["bot"].as_array_mut().map(Vec::as_mut_slice) else {
+        return;
+    };
+    // The source agent owns only the solo Bot it created with its own identity.
+    if bot["id"].as_str() == Some(id) {
+        bot["name"] = json!(name);
+        bot["shell_type"] = json!(shell);
+        bot["mcp_servers"] = servers;
+        metadata["collaboration_model"] = json!("single");
+    }
+}
+
 pub(super) fn insert_chat_agent(
     connection: &Connection,
     project_id: &str,
@@ -74,6 +102,7 @@ pub(super) fn insert_chat_agent(
     });
     metadata["execution_device_id"] = json!(input.execution_device_id);
     metadata["local_project_id"] = json!(input.local_project_id);
+    save_solo_bot(&mut metadata, &id, &input.name);
     connection.execute(
         "INSERT INTO loop_items (
             id, resource_type, project_space, cloud_project_id, name, title,
