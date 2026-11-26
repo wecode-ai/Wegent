@@ -12,6 +12,8 @@ use axum::{
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
+#[cfg(unix)]
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::{process::Command, time::timeout};
 
 use super::HttpError;
@@ -176,11 +178,15 @@ async fn wait_for_envd_process(
         return Ok(child.wait_with_output().await);
     };
     let pid = child.id();
-    let output = child.wait_with_output();
-    tokio::pin!(output);
+    #[cfg(unix)]
+    let mut child = child;
     #[cfg(unix)]
     let mut process_group = ProcessGroupGuard(pid);
-    if let Ok(result) = timeout(deadline, &mut output).await {
+    #[cfg(unix)]
+    let output = collect_output_before_reaping(&mut child);
+    #[cfg(not(unix))]
+    let output = child.wait_with_output();
+    if let Ok(result) = timeout(deadline, output).await {
         #[cfg(unix)]
         if result.is_ok() {
             process_group.0 = None;
@@ -199,6 +205,34 @@ async fn wait_for_envd_process(
         );
     }
     Err(deadline)
+}
+
+#[cfg(unix)]
+async fn collect_output_before_reaping(
+    child: &mut tokio::process::Child,
+) -> std::io::Result<std::process::Output> {
+    drop(child.stdin.take());
+    // A detached descendant can hold a pipe open after the leader exits. Keep
+    // the leader unreaped so its PID cannot be reused while cleanup is armed.
+    let (stdout, stderr) = tokio::try_join!(
+        read_process_pipe(child.stdout.take()),
+        read_process_pipe(child.stderr.take())
+    )?;
+    let status = child.wait().await?;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+#[cfg(unix)]
+async fn read_process_pipe(pipe: Option<impl AsyncRead + Unpin>) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    if let Some(mut pipe) = pipe {
+        pipe.read_to_end(&mut output).await?;
+    }
+    Ok(output)
 }
 
 #[cfg(unix)]
@@ -318,6 +352,8 @@ const CONNECT_FLAG_END_STREAM: u8 = 0b0000_0010;
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use std::{future::Future, task::Poll};
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     #[tokio::test]
@@ -354,6 +390,56 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn envd_reserves_process_group_id_while_a_descendant_holds_output_open() {
+        let child = Command::new("/bin/bash")
+            .args(["-c", "sleep 30 & exit 0"])
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        timeout(
+            Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || peek_child_exit(pid, 0)),
+        )
+        .await
+        .expect("shell did not exit after launching its descendant")
+        .unwrap()
+        .unwrap();
+
+        let wait = wait_for_envd_process(child, Some(Duration::from_secs(60)));
+        tokio::pin!(wait);
+        std::future::poll_fn(|cx| {
+            assert!(wait.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+
+        peek_child_exit(pid, libc::WNOHANG).expect("process leader was already reaped");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn peek_child_exit(pid: u32, options: libc::c_int) -> std::io::Result<()> {
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        // Observe the exit without consuming it from Tokio's child handle.
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT | options,
+            )
+        };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        assert_eq!(unsafe { info.assume_init().si_pid() }, pid as libc::pid_t);
+        Ok(())
     }
 
     #[tokio::test]
