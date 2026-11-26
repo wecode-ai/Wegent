@@ -10,6 +10,8 @@ import {
 } from './shared.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
+const FONT_FIXTURE_LINE_PREFIX = 'Live font fixture'
+
 async function withReviewCleanup(verify, cleanupSteps) {
   let failed = false
   try {
@@ -177,7 +179,23 @@ async function verifyLiveFontRoundTrip({
   expectedRows,
 }) {
   let diffContainerId
-  let fontIncreased = false
+  let originalFont
+  const readFont = async () => {
+    const font = Number.parseFloat(
+      await control.command('getComputedStyleValue', 'html', { value: '--text-code' })
+    )
+    assert.ok(Number.isInteger(font), 'The renderer did not report its code font size')
+    return font
+  }
+  const changeNativeFont = async (action, expectedFont) => {
+    await activateFontAction(control, action)
+    await waitForValue(
+      readFont,
+      font => font === expectedFont,
+      'The native font-size action did not update the renderer',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+  }
   await withReviewCleanup(async () => {
     const container = await renderer('Runtime.evaluate', {
       expression: `document.querySelector(${JSON.stringify(reviewLinesSelector + ' [data-review-path="' + GIT_SEED_NAME + '"] diffs-container')})`,
@@ -208,9 +226,11 @@ async function verifyLiveFontRoundTrip({
         Math.abs(beforeFont.anchor.height - Math.round(beforeFont.font * 1.8)) <= 1,
       'The live font fixture did not exercise Diff row virtualization'
     )
+    const rendererFont = await readFont()
+    assert.equal(rendererFont, beforeFont.font, 'The Diff did not use the renderer code font')
+    originalFont = rendererFont
     const changeFont = async (action, font, expectedHeight) => {
-      await activateFontAction(control, action)
-      fontIncreased = action === 'increaseFontSize'
+      await changeNativeFont(action, font)
       const geometry = await readGeometry({
         font,
         bodyHeight: expectedHeight,
@@ -238,7 +258,14 @@ async function verifyLiveFontRoundTrip({
     [
       'restore font',
       async () => {
-        if (fontIncreased) await activateFontAction(control, 'decreaseFontSize')
+        if (originalFont === undefined) return
+        const font = await readFont()
+        if (font === originalFont) return
+        assert.equal(Math.abs(font - originalFont), 1, 'Unexpected font size after a single step')
+        await changeNativeFont(
+          font > originalFont ? 'decreaseFontSize' : 'increaseFontSize',
+          originalFont
+        )
       },
     ],
     [
@@ -261,13 +288,16 @@ export async function verifyWorkspaceReviewRefresh({
   setPhase('workspace-review-refresh-content')
   const reviewLinesSelector = `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-diff-lines"]`
   const reviewRefreshSelector = `${activeTaskWorkbenchSelector} [data-testid="refresh-review-diff-button"]`
-  const waitForReviewLine = marker =>
+  const waitForReviewLine = (marker, includeOffscreen = false) =>
     control.command('waitFor', '[data-line]', {
       target: reviewLinesSelector,
       text: marker,
-      visible: true,
+      visible: includeOffscreen ? undefined : true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+  const reviewBodySelector = `${reviewLinesSelector} [data-review-path="${GIT_SEED_NAME}"] [data-testid="file-changes-review-file-diff-body"]`
+  const readBodyHeight = async () =>
+    JSON.parse(await control.command('getElementMetrics', reviewBodySelector))[0]?.height ?? 0
   const toolbarSelector = `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-toolbar"]`
   const readToolbar = () => control.command('getText', toolbarSelector)
   const clickRefresh = () =>
@@ -279,6 +309,8 @@ export async function verifyWorkspaceReviewRefresh({
     return waitForReviewLine(marker)
   }
   await waitForReviewLine(REVIEW_RESTORE_MARKER)
+  const originalBodyHeight = await readBodyHeight()
+  assert.ok(originalBodyHeight > 0, 'The original Diff did not have a measured body')
   const devtools = await createDevtoolsClient(resultDir, DEFAULT_STEP_TIMEOUT_MS + 1000)
   const origin = await control.command('getLocationOrigin', 'body')
   const reviewTarget = (await devtools({ action: 'targets' })).find(
@@ -295,6 +327,12 @@ export async function verifyWorkspaceReviewRefresh({
     clickRefresh,
     waitForReviewLine,
   })
+  await waitForValue(
+    readBodyHeight,
+    height => height > 0 && Math.abs(height - originalBodyHeight) <= 3,
+    'The unmodified Diff did not return to its original height after refresh',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
 
   const readmePath = join(workspacePath, GIT_SEED_NAME)
   const originalReadme = await readFile(readmePath, 'utf8')
@@ -315,12 +353,16 @@ export async function verifyWorkspaceReviewRefresh({
     )
 
     setPhase('workspace-review-live-font')
-    const extraLines = Array.from({ length: 480 }, (_, index) => `Live font fixture ${index}`)
+    const extraLines = Array.from(
+      { length: 480 },
+      (_, index) => `${FONT_FIXTURE_LINE_PREFIX} ${index}`
+    )
     await writeFile(readmePath, originalReadme + extraLines.join('\n') + '\n')
     await refreshReview(extraLines[0])
     const expectedRows = originalReadme.trimEnd().split('\n').length + extraLines.length
     await verifyLiveFontRoundTrip({ control, renderer, detach, reviewLinesSelector, expectedRows })
   }, [['restore README', () => writeFile(readmePath, originalReadme)]])
+  setPhase('workspace-review-restore-refresh')
   await clickRefresh()
   const restoredStats = /\+2\s*-0(?!\d)/
   await waitForValue(
@@ -329,7 +371,20 @@ export async function verifyWorkspaceReviewRefresh({
     'The restored review did not return the original Diff statistics',
     DEFAULT_STEP_TIMEOUT_MS
   )
-  const restoredReview = await waitForReviewLine(REVIEW_RESTORE_MARKER)
+  await waitForReviewLine(REVIEW_RESTORE_MARKER)
+  // Hidden virtual rows do not contribute text to the visible-line check.
+  // The body height also verifies the full patch returned to its original size.
+  await waitForValue(
+    readBodyHeight,
+    height => height > 0 && Math.abs(height - originalBodyHeight) <= 3,
+    'The restored Diff did not return to its original height',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const restoredReview = await waitForReviewLine(REVIEW_RESTORE_MARKER, true)
   assert.match(await readToolbar(), restoredStats, 'The restored Diff statistics changed')
   assert.ok(!restoredReview.includes(refreshedReviewMarker))
+  assert.ok(
+    !restoredReview.includes(FONT_FIXTURE_LINE_PREFIX),
+    'The review retained large fixture rows'
+  )
 }
