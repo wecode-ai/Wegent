@@ -1124,6 +1124,40 @@ describe('ChatInput', () => {
     expect(setSelectedModelOption).toHaveBeenCalledWith('permissionMode', 'read-only')
   })
 
+  test.each(['desktop', 'compact'] as const)(
+    'uses only task permission controls in the %s composer when command approval is unavailable',
+    async variant => {
+      const onChangePermission = vi.fn()
+      const setSelectedModelOption = vi.fn()
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant={variant}
+          projectChat={projectChatControls({
+            selectedModelOptions: { permissionMode: 'read-only' },
+            permissionControls: { value: 'full-access', onChange: onChangePermission },
+            setSelectedModelOption,
+          })}
+        />
+      )
+
+      if (variant === 'compact') await userEvent.click(screen.getByTestId('add-context-button'))
+      await userEvent.click(screen.getByTestId('permission-mode-menu-button'))
+      expect(screen.getByTestId('permission-mode-full-access')).toHaveAttribute(
+        'aria-current',
+        'true'
+      )
+      expect(screen.queryByTestId('command-approval-manual')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('permission-mode-workspace-write'))
+
+      expect(onChangePermission).toHaveBeenCalledWith('workspace-write')
+      expect(setSelectedModelOption).not.toHaveBeenCalled()
+    }
+  )
+
   test('shows compact pause button while the assistant is streaming', async () => {
     const onPause = vi.fn()
 

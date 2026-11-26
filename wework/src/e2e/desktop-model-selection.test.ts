@@ -75,6 +75,7 @@ for (const initiallyOpen of [true, false]) {
               assert.equal(open, false, 'The modal picker isolates its background trigger')
               if (action === 'getText') return selected ? 'Target model' : 'Source model'
               if (action === 'getAttribute') return 'fixture-provider'
+              if (action === 'getElementMetrics') return '[]'
               if (action === 'hover') open = true
               return ''
             }
@@ -106,7 +107,14 @@ for (const initiallyOpen of [true, false]) {
       assert.ok(selected)
       assert.equal(selections, initiallyOpen || !initiallySelected ? 1 : 0)
       assert.equal(open, false)
-      assert.equal(calls.at(-1), `getAttribute:${trigger}`)
+      assert.equal(
+        calls.at(-1),
+        `${!initiallyOpen && initiallySelected ? 'getElementMetrics' : 'getAttribute'}:${trigger}`
+      )
+      assert.equal(
+        calls.filter(call => call === `getElementMetrics:${trigger}`).length,
+        initiallyOpen ? 0 : 1
+      )
       assert.ok(calls.includes(`getText:${trigger}`))
     })
   }

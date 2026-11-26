@@ -1,8 +1,9 @@
+import { localizeStandardStatusName } from '../i18n'
 import type { CollaborationProject } from '../types'
 import type { WorkspaceMyWorkItem, WorkspaceTaskBinding } from '../ports/SharedWorkspaceApi'
-import { CollaborationIssueCard, createIssueBoardCardLabels } from '../issue-card'
-import { createCollaborationTranslator } from '../i18n'
 import { composerMarkdownText } from '../composer'
+import { resolveIssueCardAssignee } from '../issue-card/model'
+import { ProjectIssueTable } from './ProjectIssueTable'
 import { Button as ControlButton } from '../markdown/Button'
 import { Bell, FolderOpen } from 'lucide-react'
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
@@ -24,6 +25,8 @@ export function PersonalIssueList({
   userId,
   localUserIds,
   state,
+  unassignedUserId,
+  showUnassignedEmpty,
   projects,
   showCompleted,
   assignedOnly,
@@ -49,6 +52,8 @@ export function PersonalIssueList({
   recentIssue?: WorkspaceMyWorkItem
   order: PersonalHomeIssueOrder
   state: ReturnType<typeof usePersonalHomeIssues>
+  unassignedUserId?: number
+  showUnassignedEmpty?: boolean
   projects: CollaborationProject[]
   showCompleted: boolean
   assignedOnly: boolean
@@ -60,7 +65,7 @@ export function PersonalIssueList({
   renderActivity?(props: IssueActivityProps): ReactNode
 }) {
   const nowMs = useClock(active, { resolutionMs: 60_000 })
-  const recentCard = useRef<HTMLElement>(null)
+  const recentCard = useRef<HTMLTableRowElement>(null)
   const revealedIssue = useRef<string | null>(null)
   useLayoutEffect(() => {
     if (!recentIssue || !recentCard.current || revealedIssue.current === recentIssue.id) return
@@ -74,21 +79,19 @@ export function PersonalIssueList({
       { duration: 1600 }
     )
   }, [recentIssue])
-  const labels = createIssueBoardCardLabels(
-    createCollaborationTranslator(language.startsWith('zh') ? 'zh-CN' : 'en')
-  )
+  const items = state.items
   const visibleItems = recentIssue
     ? [
-        state.items.find(
+        items.find(
           item =>
             item.id === recentIssue.id && item.cloud_project_id === recentIssue.cloud_project_id
         ) ?? recentIssue,
-        ...state.items.filter(
+        ...items.filter(
           item =>
             item.id !== recentIssue.id || item.cloud_project_id !== recentIssue.cloud_project_id
         ),
       ]
-    : state.items
+    : items
   const compareItems = (left: WorkspaceMyWorkItem, right: WorkspaceMyWorkItem) => {
     if (left.id === right.id && left.cloud_project_id === right.cloud_project_id) return 0
     if (left.id === recentIssue?.id) return -1
@@ -104,7 +107,7 @@ export function PersonalIssueList({
       right.id.localeCompare(left.id)
     )
   }
-  const orderedItems = [...visibleItems].sort(compareItems)
+  const orderedItems = visibleItems.filter(item => item.cloud_project_id).sort(compareItems)
   const itemsByProject = new Map<string, WorkspaceMyWorkItem[]>()
   for (const item of orderedItems) {
     const key = String(item.cloud_project_id)
@@ -112,39 +115,39 @@ export function PersonalIssueList({
     items.push(item)
     itemsByProject.set(key, items)
   }
-  const groups = projects
-    .map(project => ({
-      project,
-      items: (itemsByProject.get(String(project.id)) ?? []).filter(
-        item =>
-          String(item.cloud_project_id) === String(project.id) &&
-          (!assignedOnly ||
-            (item.assignee_user_id != null &&
-              (project.project_store === 'local'
-                ? (localUserIds ?? [userId])
-                : [project.current_user_id ?? userId]
-              ).some(id => String(item.assignee_user_id) === String(id)))) &&
-          !item.archived_at &&
-          (showCompleted || !['completed', 'cancelled'].includes(item.status))
-      ),
-    }))
-    .filter(group => group.items.length)
-    .sort(
-      (left, right) =>
-        Number(right.project.id === recentIssue?.cloud_project_id) -
-          Number(left.project.id === recentIssue?.cloud_project_id) ||
-        (order === 'attention'
-          ? Number(right.items.some(item => item.attention_order?.[0] === 0)) -
-            Number(left.items.some(item => item.attention_order?.[0] === 0))
-          : compareItems(left.items[0], right.items[0]))
-    )
+  const groups: Array<{ project: CollaborationProject | null; items: WorkspaceMyWorkItem[] }> =
+    projects
+      .map(project => ({
+        project,
+        items: (itemsByProject.get(String(project.id)) ?? []).filter(
+          item =>
+            String(item.cloud_project_id) === String(project.id) &&
+            (item.id === recentIssue?.id ||
+              !assignedOnly ||
+              (item.assignee_user_id != null &&
+                (project.project_store === 'local'
+                  ? (localUserIds ?? [userId])
+                  : [project.current_user_id ?? userId]
+                ).some(id => String(item.assignee_user_id) === String(id)))) &&
+            !item.archived_at &&
+            (showCompleted || !['completed', 'cancelled'].includes(item.status))
+        ),
+      }))
+      .filter(group => group.items.length)
+      .sort(
+        (left, right) =>
+          Number(right.project.id === recentIssue?.cloud_project_id) -
+            Number(left.project.id === recentIssue?.cloud_project_id) ||
+          (order === 'attention'
+            ? Number(right.items.some(item => item.attention_order?.[0] === 0)) -
+              Number(left.items.some(item => item.attention_order?.[0] === 0))
+            : compareItems(left.items[0], right.items[0]))
+      )
+  const unassignedItems = visibleItems.filter(item => !item.cloud_project_id)
+  if (showUnassignedEmpty || unassignedItems.length)
+    groups.unshift({ project: null, items: unassignedItems })
   return (
     <>
-      {state.loading && (
-        <p role="status" className="py-4 text-sm text-text-secondary">
-          {t('personalHome.loading')}
-        </p>
-      )}
       {!hideEmpty &&
         !state.loading &&
         !state.error &&
@@ -154,13 +157,13 @@ export function PersonalIssueList({
         ))}
       {groups.map(({ project, items }) => (
         <section
-          key={project.id}
+          key={project?.id ?? 'unassigned'}
           className="mb-4"
-          data-testid={`personal-home-project-${project.id}`}
+          data-testid={project ? `personal-home-project-${project.id}` : 'independent-issue-list'}
         >
           <h3 className="mb-1 flex items-center gap-2 text-base font-medium text-text-secondary">
             <FolderOpen aria-hidden="true" className="h-4 w-4 text-text-muted" />
-            {onOpenProject ? (
+            {project && onOpenProject ? (
               <ControlButton
                 variant="unstyled"
                 type="button"
@@ -171,119 +174,112 @@ export function PersonalIssueList({
                 {project.name}
               </ControlButton>
             ) : (
-              project.name
+              (project?.name ?? t('independentIssues.independent'))
             )}
             <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-secondary">
               {items.length}
             </span>
           </h3>
-          {items.map(item => {
-            const description = composerMarkdownText(item.description ?? '')
-            const titlePrefix = item.title.trim().replace(/\s+/g, ' ')
-            const completeTitle = !titlePrefix.endsWith('…')
-            const following = description.slice(titlePrefix.length, titlePrefix.length + 1)
-            const summary =
-              completeTitle &&
-              description.startsWith(titlePrefix) &&
-              (!following || /\s/.test(following))
-                ? description.slice(titlePrefix.length).trim()
-                : description
-            const viewerIds =
-              project.project_store === 'local'
-                ? (localUserIds ?? [userId])
-                : [project.current_user_id ?? userId]
-            const assignedAt = personalHomeAssignmentAt(item, viewerIds)
-            const waiting =
-              pendingIssueHumanRequests(item).length > 0 && issueNeedsUser(item, viewerIds)
-            const currentAssignee =
-              item.assignee_user_id != null &&
-              viewerIds.some(id => String(id) === String(item.assignee_user_id))
-            const configuredStatus = project.board_config?.statuses.find(
-              status => status.id === item.status
-            )?.name
-            const status = waiting
-              ? t('personalHome.needsInput')
-              : (configuredStatus ?? t(`todo.status_${item.status}`, { defaultValue: item.status }))
-            return (
-              <CollaborationIssueCard
-                variant="list"
-                cardRef={item.id === recentIssue?.id ? recentCard : undefined}
-                key={item.id}
-                item={
-                  currentAssignee && !item.assignee_name
-                    ? { ...item, assignee_name: t('personalHome.me') }
-                    : item
-                }
-                reference={`#${item.sequence_number}`}
-                labels={{
-                  ...labels,
-                  statuses: {
-                    ...labels.statuses,
-                    ...Object.fromEntries(
-                      (project.board_config?.statuses ?? []).map(status => [status.id, status.name])
-                    ),
-                  },
-                }}
-                display={{
-                  showAssignee: true,
-                  showDate: true,
-                  showPriority: true,
-                  showTags: true,
-                }}
-                detailButtonTestId={`personal-home-issue-${item.id}`}
-                articleProps={{
-                  'aria-current':
+          {!items.length && !state.loading && !state.error ? (
+            <p className="py-3 text-sm text-text-secondary">{t('personalHome.empty')}</p>
+          ) : null}
+          {!!items.length && (
+            <ProjectIssueTable
+              issues={items}
+              emptyLabel={t('personalHome.empty')}
+              issueLabel={t('todo.issue_column')}
+              statusLabel={t('todo.status')}
+              assignmentsLabel={t('todo.assignee')}
+              tagLabel={t('todo.tags')}
+              startAtLabel={t('todo.start_date')}
+              dueAtLabel={t('todo.end_date')}
+              updatedLabel={t('todo.updated_at')}
+              showIssueKey={Boolean(project)}
+              selectable={false}
+              showControls={false}
+              statusName={status => {
+                const name = project?.board_config?.statuses.find(item => item.id === status)?.name
+                return name
+                  ? localizeStandardStatusName(status, name, (key, fallback) =>
+                      t(key, { defaultValue: fallback ?? status })
+                    )
+                  : t(`todo.status_${status}`, { defaultValue: status })
+              }}
+              onOpen={onOpenIssue}
+              getRowOptions={item => {
+                const viewerIds =
+                  project?.project_store === 'local'
+                    ? (localUserIds ?? [userId])
+                    : [project ? (project.current_user_id ?? userId) : (unassignedUserId ?? userId)]
+                const assignedAt = personalHomeAssignmentAt(item, viewerIds)
+                const waiting =
+                  pendingIssueHumanRequests(item).length > 0 && issueNeedsUser(item, viewerIds)
+                const text = composerMarkdownText(item.description)
+                const title = item.title.trim().replace(/\s+/g, ' ')
+                const following = text.charAt(title.length)
+                const summaryText =
+                  !title.endsWith('…') &&
+                  text.startsWith(title) &&
+                  (!following || /\s/.test(following))
+                    ? text.slice(title.length).trim()
+                    : text
+                const summary = summaryText && (
+                  <p className="line-clamp-1 whitespace-pre-wrap text-text-secondary">
+                    {summaryText}
+                  </p>
+                )
+                return {
+                  buttonTestId: `${project ? 'personal-home-issue' : 'independent-issue'}-${item.id}`,
+                  assigneeName:
+                    resolveIssueCardAssignee(item).assigneeName ??
+                    (item.assignee_user_id != null &&
+                    viewerIds.some(id => String(id) === String(item.assignee_user_id))
+                      ? t('personalHome.me')
+                      : null),
+                  active:
                     selectedIssue?.id === item.id &&
-                    selectedIssue.cloud_project_id === item.cloud_project_id
-                      ? 'true'
+                    selectedIssue.cloud_project_id === item.cloud_project_id,
+                  ref:
+                    item.id === recentIssue?.id
+                      ? row => {
+                          recentCard.current = row
+                        }
                       : undefined,
-                }}
-                cardClassName="cursor-pointer focus-within:bg-text-primary/[0.025] aria-[current=true]:bg-muted"
-                detailButtonClassName="cursor-pointer keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
-                onOpen={() => onOpenIssue(item)}
-                titleTrailing={
-                  <>
-                    {waiting ? (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-xs font-normal text-amber-700 dark:text-amber-400">
-                        <Bell aria-hidden="true" className="h-3.5 w-3.5" />
-                        {status}
-                      </span>
-                    ) : null}
-                    {assignedAt && (
-                      <span
-                        data-testid={`personal-home-assignment-age-${item.id}`}
-                        title={new Date(assignedAt).toLocaleString(language)}
-                        className="shrink-0 text-xs font-normal text-text-secondary"
-                      >
-                        {t('personalHome.assignedFor', {
-                          duration: personalHomeAssignmentDuration(
-                            assignedAt,
-                            language,
-                            nowMs
-                          ),
-                        })}
-                      </span>
-                    )}
-                  </>
+                  titleTrailing: (
+                    <>
+                      {waiting && (
+                        <span className="inline-flex items-center gap-1 text-xs text-text-secondary">
+                          <Bell aria-hidden="true" className="h-3.5 w-3.5" />
+                          {t('personalHome.needsInput')}
+                        </span>
+                      )}
+                      {assignedAt && (
+                        <time
+                          dateTime={assignedAt}
+                          data-testid={`personal-home-assignment-age-${item.id}`}
+                          title={new Date(assignedAt).toLocaleString(language)}
+                          className="block text-xs text-text-secondary"
+                        >
+                          {t('personalHome.assignedFor', {
+                            duration: personalHomeAssignmentDuration(assignedAt, language, nowMs),
+                          })}
+                        </time>
+                      )}
+                    </>
+                  ),
+                  details:
+                    renderActivity?.({
+                      summary,
+                      assignment: item.assignment_context,
+                      bindings: item.task_bindings,
+                      onOpenTask: onOpenTask && (binding => onOpenTask(item, binding)),
+                      issueId: item.id,
+                      active,
+                    }) ?? summary,
                 }
-                summary={(() => {
-                  const content = summary ? (
-                    <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
-                      {summary}
-                    </p>
-                  ) : undefined
-                  return renderActivity?.({
-                    summary: content,
-                    assignment: item.assignment_context,
-                    bindings: item.task_bindings,
-                    onOpenTask: onOpenTask && (binding => onOpenTask(item, binding)),
-                    issueId: item.id,
-                    active,
-                  }) ?? content
-                })()}
-              />
-            )
-          })}
+              }}
+            />
+          )}
         </section>
       ))}
     </>

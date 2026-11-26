@@ -94,6 +94,12 @@ Run only the embedded-browser Agent operation regression:
 pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
+Run the address history, downloads list, and file state checks on macOS or Linux:
+
+```bash
+WEWORK_E2E_DOWNLOAD_HISTORY_ONLY=true pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
@@ -327,7 +333,8 @@ become network timeouts. Backend identity and address expiry are checked before 
 safe failure categories under `parent-python-downloads-failed`, including descriptor timeouts,
 without credentials or download addresses.
 Linux Core balancing avoids colocating Python startup with checkpoints observed during descriptor
-timeouts, including `stand-in-cli`, `quota-recovery`, and `permission-modes`.
+timeouts, including `stand-in-cli`, `quota-recovery`, `permission-modes`, `model-routing`,
+`human-interactions`, and `runtime-task-queue`.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated

@@ -17,6 +17,7 @@ import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 
 const FIRST = 'STAND_IN_NATIVE_BACKGROUND_REQUEST'
 const NEXT = 'STAND_IN_NATIVE_SECOND_MESSAGE'
+const AUTO = 'STAND_IN_NATIVE_AUTOMATIC_GUIDANCE'
 const CHILD = 'STAND_IN_NATIVE_CHILD_WORK'
 const CHILD_RESULT = 'Native child verified its isolated work.'
 const RESULT = '原生子代理已经完成后台检查。'
@@ -24,6 +25,7 @@ const NOTIFICATION_REQUEST = 'STAND_IN_NATIVE_NOTIFICATION_REQUEST'
 const NOTIFICATION_RESULT = '助理已完成后台核对。'
 const CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
+const WAITING = `${CHAT} [data-testid="message-assistant-waiting"]`
 
 /** Extend the CI-owned session checkpoint without another app or Backend lifecycle. */
 export function createDesktopScenario(options) {
@@ -31,6 +33,7 @@ export function createDesktopScenario(options) {
   let active = false
   let spawned = false
   let followedUp = false
+  let automaticallyGuided = false
   let childResultObserved = false
   let nativeWaitObserved = false
   let lastWaitCallId
@@ -112,6 +115,10 @@ export function createDesktopScenario(options) {
         } else if (!receivedNext && sequence === 1) {
           events.push(assistantMessage('已交给原生子代理，你可以继续交代其他事情。'))
         }
+        if (input.includes(AUTO) && !automaticallyGuided) {
+          automaticallyGuided = true
+          events.push(assistantMessage('普通发送也已进入正在运行的这一轮。'))
+        }
         for (const event of events) event.item.phase = 'commentary'
         lastWaitCallId = `native-chat-wait-${sequence}`
         events.push(
@@ -167,7 +174,14 @@ export function createDesktopScenario(options) {
           true,
           'The parent remains active while waiting on its native child'
         )
-        // Busy ordinary sends queue; explicitly steer the still-active parent.
+        await control.command('waitFor', WAITING, { visible: false })
+        await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]`, {
+          visible: true,
+        })
+        await control.command('waitFor', `${CHAT} [data-testid="pause-response-button"]`, {
+          visible: false,
+        })
+        // The explicit guide action remains available during the active parent turn.
         await control.command(
           'fill',
           `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
@@ -183,6 +197,13 @@ export function createDesktopScenario(options) {
         })
         assert.equal(released, false, 'Follow-up must be processed before the child completes')
         assert.equal(followedUp, true)
+        await send(AUTO)
+        await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
+          text: '普通发送也已进入正在运行的这一轮。',
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
+        assert.equal(automaticallyGuided, true)
+        assert.equal(released, false)
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('closeMainWindowToTray', 'body')
         releaseChild()
@@ -239,6 +260,11 @@ export function createDesktopScenario(options) {
           Boolean,
           options.modelResponseTimeoutMs,
           'The background notification request must reach the model'
+        )
+        await control.command(
+          'waitFor',
+          `${WAITING} [data-testid="thinking-indicator"]:has(> [aria-hidden="true"] + [aria-hidden="true"] + [aria-hidden="true"]:last-child)`,
+          { visible: true }
         )
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('closeMainWindowToTray', 'body')

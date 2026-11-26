@@ -68,14 +68,14 @@ export function createDesktopScenario({
         } else if (requestContainsToolOutput(body, 'router-intake')) {
           const intake = JSON.parse(readMcpToolOutput(body, 'router-intake')).snapshot
           assert.ok(intake.events.length > 0)
-          assert.ok(intake.events.every(event => event.kind === 'work_state'))
+          assert.ok(intake.events.every(event => event.kind === 'assignment'))
           assert.equal(intake.works.length, 1)
           events = mcpToolRequestEvents(body, {
             toolName: 'ignore_events',
             directToolName: 'mcp__wework_stand_in__ignore_events',
             argumentsValue: {
               eventIds: intake.events.map(event => event.id),
-              reason: 'The work completed; no extra execution is needed.',
+              reason: 'The existing work already covers this requested review.',
             },
             searchCallId: 'router-ignore-search',
             toolCallId: 'router-ignore',
@@ -191,10 +191,27 @@ export function createDesktopScenario({
         await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`)
         await captureScreenshot(control, 'router-02-one-concrete-work.png')
         await control.command('click', '[data-testid="stand-in-work-dialog-close"]')
+        const afterCompletion = await rpc(control, 'runtime.coordination.contexts', {})
+        assert.equal(
+          afterCompletion.contexts.find(context => context.id === `personal:${USER}`)
+            ?.needsProcessing,
+          false,
+          'Successful role work must leave coordination idle'
+        )
+        const settings = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+        const collaboration = settings.roles[0].collaboration
+        collaboration.projectPolicies = [
+          { id: project.id, store: 'local', policy: { ...collaboration.policy, immediate: false } },
+        ]
+        await rpc(control, 'runtime.stand_in.personal.save', { userId: USER, settings })
+        await rpc(control, 'todos.create', {
+          project_id: project.id,
+          todo: { title: 'Review the completed router work', assignee_user_id: USER },
+        })
         const pending = await until(
           () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
           state => state.pendingCount > 0 && Date.parse(state.nextCheckAt) > Date.now() + 240000,
-          'Ordinary execution feedback must enter its fixed silent window'
+          'The new review assignment must enter its fixed silent window'
         )
         assert.equal(pending.running, false)
         assert.equal(assessments, 0)

@@ -1,5 +1,6 @@
 //! Only the background coordinator receives these batch-bound command tools.
 use super::*;
+use crate::task_runtime::stand_in_projection::project_visible_work;
 
 pub(super) fn tools() -> Vec<Value> {
     let mut tools = vec![
@@ -105,19 +106,34 @@ pub(super) fn call(
             })
             .ok_or("Work is outside the current coordinator scope")?;
         if name == "read_work" {
-            let messages = if matches!(
+            let visible = if matches!(
                 work["origin"]["type"].as_str(),
                 Some("connection_work" | "dingtalk_work")
             ) {
-                store
-                    .stand_in_messages(identity.user, arguments["taskId"].as_str().unwrap())
-                    .map_err(|e| e.to_string())?
+                let settings = store
+                    .personal_stand_in(identity.user, &identity.device)
+                    .map_err(|e| e.to_string())?;
+                let work_id = arguments["taskId"].as_str().unwrap();
+                let record = store
+                    .stand_in_work(identity.user, work_id)
+                    .map_err(|e| e.to_string())?;
+                let messages = store
+                    .stand_in_messages(identity.user, work_id)
+                    .map_err(|e| e.to_string())?;
+                Some(
+                    project_visible_work(&settings, record, messages)
+                        .ok_or("Work has no source events visible to the current account")?,
+                )
             } else {
-                Vec::new()
+                None
             };
-            return Ok(super::connection_context::summarize(
-                json!({"work":work,"sourceMessages":messages}),
-            ));
+            let result = match visible {
+                Some(visible) => {
+                    json!({"work":visible.work,"sourceMessages":visible.messages})
+                }
+                None => json!({"work":work,"sourceMessages":[]}),
+            };
+            return Ok(super::connection_context::summarize(result));
         }
     }
     if matches!(name, "create_work" | "suggest_action") {

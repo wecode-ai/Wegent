@@ -31,20 +31,27 @@ import {
   type RuntimeConversationQueuePort,
 } from '@wegent/collaboration/execution/runtimeConversationQueue'
 import { useCallback, useId, useMemo, useState, useSyncExternalStore } from 'react'
-import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
+import {
+  getAssistantContentPresentation,
+  TemporaryConversationLayout,
+} from '@wegent/collaboration/conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
   RequestUserInputCard,
   type RequestUserInputPayload,
 } from '@/components/chat/RequestUserInputCard'
-import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+} from '@/components/layout/requestUserInputOverlay'
 import {
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@/components/chat/requestUserInputMessages'
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
@@ -57,6 +64,7 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useRuntimeTaskPermissions } from '@/features/workbench/useRuntimeTaskPermissions'
 import { findModelForSelection } from '@/features/workbench/runtimeContextUsage'
 import {
   deriveRuntimePaneStatus,
@@ -115,9 +123,11 @@ export function TemporaryChatPanel({
   showExecutionTools = true,
   showModelSelector = true,
   hideProcessing = false,
+  showActivityDots = false,
   assistantMessageStyle,
   markReadWhenActive = false,
   nativeConversation = false,
+  allowMessagesDuringApproval = false,
   modelControls,
   allowInitialGoal = false,
   expanded = false,
@@ -162,6 +172,7 @@ export function TemporaryChatPanel({
     loadRuntimeTranscriptForPane,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
+    refreshWorkLists,
   } = useWorkbenchPaneContext()
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: services.attachmentApi?.uploadAttachment,
@@ -198,6 +209,14 @@ export function TemporaryChatPanel({
     contextUsageStore.getSnapshot
   )
   const taskLifecycle = useRuntimeTaskLifecycle(address)
+  const taskPermissions = useRuntimeTaskPermissions(
+    address,
+    taskLifecycle?.task,
+    state.user?.id,
+    services.standInApi,
+    refreshWorkLists,
+    active && !readOnly
+  )
   const activeThreadId = taskLifecycle?.task?.threadId ?? address?.threadId
   const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const activeModelSelection =
@@ -291,6 +310,7 @@ export function TemporaryChatPanel({
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
+      ...taskPermissions,
       scopeKey: instanceId,
       trialTemplates: trialGuide?.templates ?? [],
       trialPluginName: trialGuide?.pluginName,
@@ -354,6 +374,7 @@ export function TemporaryChatPanel({
       attachmentSelection,
       contextUsage,
       projectChat,
+      taskPermissions,
       taskModelSelection,
       instanceId,
       trialGuide,
@@ -419,6 +440,7 @@ export function TemporaryChatPanel({
     historyError,
     historyBeforeCursor,
     historyLoadingMoreBefore,
+    pendingTerminalTurnId,
     queuedMessages,
     hiddenRequestUserInputIds,
   } = useSyncExternalStore(observation.subscribe, observation.getSnapshot, observation.getSnapshot)
@@ -528,8 +550,18 @@ export function TemporaryChatPanel({
       : explicitNewSession && (activeProviderPending || requiresNewSession))
       ? { startNewSession: true, expectedThreadId: activeThreadId }
       : {}
+  const pendingRequest =
+    focusedRequest === undefined
+      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
+      : focusedRequest &&
+          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
+        ? focusedRequest
+        : null
+  const showComposerWhilePending =
+    allowMessagesDuringApproval &&
+    (pendingRequest?.interactionKind ?? pendingRequest?.interaction_kind) === 'approval'
   const canSendWithCurrentModel = () => {
-    if (nativeConversation && taskLifecycle?.interactionStatus) {
+    if (nativeConversation && taskLifecycle?.interactionStatus && !showComposerWhilePending) {
       setError(t('standIn.native_input_pending'))
       return false
     }
@@ -775,20 +807,15 @@ export function TemporaryChatPanel({
     const hosted = await requestUserInputHost?.submit(response, payload)
     if (hosted !== undefined) return hosted
     const appendUserMessage = isAsyncRequestUserInputPayload(payload)
-    // A non-blocking Codex question carries no runtime request to answer, so it
-    // is answered by the next user message: Codex steers the running turn while
-    // the model is still working and starts a new turn once it has stopped.
+    const attachments = requestUserInputResponseAttachments(response)
     if (appendUserMessage) {
-      const answerMessage: RuntimePaneQueuedMessage = {
-        id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
-        content: requestUserInputResponseText(response),
-        status: 'queued',
-        createdAt: new Date().toISOString(),
-        ...selectedModelFields,
+      return sendRuntimePaneMessage({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: { ...response, delivery: 'async' },
+        ...(attachments.length ? { attachments } : {}),
         ...runtimeContext,
-      }
-      conversationQueue.enqueue(answerMessage)
-      return sendQueuedMessageAsGuidance(answerMessage)
+      })
     }
     const key = submissionKey(requestKey)
     const fallback = t('interactions.failed')
@@ -801,6 +828,7 @@ export function TemporaryChatPanel({
           address,
           message: requestUserInputResponseText(response),
           requestUserInputResponse: response,
+          ...(attachments.length ? { attachments } : {}),
           ...runtimeContext,
         },
         {
@@ -859,13 +887,6 @@ export function TemporaryChatPanel({
     releaseDraftAttachment: attachmentSelection.releaseAttachmentForScope,
     getDraftAttachment: attachmentSelection.getAttachment,
   })
-  const pendingRequest =
-    focusedRequest === undefined
-      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
-      : focusedRequest &&
-          !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
-        ? focusedRequest
-        : null
   const pendingRequestKey = pendingRequest && requestUserInputPayloadKey(pendingRequest)
   const recoveryAvailable =
     needsSessionConfirmation &&
@@ -893,9 +914,23 @@ export function TemporaryChatPanel({
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   const messageGaps = renderMessageGaps?.(presentation.messages)
+  const showWaitingDots =
+    showActivityDots &&
+    !readOnly &&
+    !pendingRequest &&
+    !taskLifecycle?.interactionStatus &&
+    (sending ||
+      paneStatus.isResponseActive ||
+      paneStatus.isWaitingForAssistantIndicator ||
+      (pendingTerminalTurnId !== null && pendingTerminalTurnId === taskLifecycle?.turn.latestId)) &&
+    presentation.messages.findLast(
+      message =>
+        message.role === 'user' ||
+        (message.role === 'assistant' && getAssistantContentPresentation(message).content.trim())
+    )?.role !== 'assistant'
   const layout = (
     <TemporaryConversationLayout
-      messageCount={presentation.messages.length}
+      messageCount={presentation.messages.length + Number(showWaitingDots)}
       loading={historyLoading}
       loadError={historyError}
       onRetry={retryHistory}
@@ -975,6 +1010,7 @@ export function TemporaryChatPanel({
             <RequestUserInputComposer
               payload={pendingRequest}
               source={address}
+              showComposerWhilePending={showComposerWhilePending}
               renderQuestion={onCollapse =>
                 pendingRequest ? (
                   <RequestUserInputCard
@@ -993,6 +1029,20 @@ export function TemporaryChatPanel({
                       requestUserInputHost?.setDraft(pendingRequest, answers)
                     }
                     onCollapse={onCollapse}
+                    onSkip={() => {
+                      const keys = (
+                        focusedRequest
+                          ? [pendingRequest]
+                          : pendingRequestUserInputPayloads(
+                              presentation.messages,
+                              hiddenRequestUserInputIds
+                            )
+                      )
+                        .filter(isAsyncRequestUserInputPayload)
+                        .map(requestUserInputPayloadKey)
+                        .filter((key): key is string => Boolean(key))
+                      setHiddenRequestUserInputIds(current => new Set([...current, ...keys]))
+                    }}
                     onSubmit={submitRequestUserInput}
                     onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
                   />
@@ -1001,7 +1051,7 @@ export function TemporaryChatPanel({
             >
               <ComposerCatalogContext.Provider value={composerCatalog}>
                 <BufferedChatInput
-                  predictionAddress={address}
+                  predictionAddress={showWaitingDots ? null : address}
                   value={input}
                   replaceDraftKey={replaceDraftKey}
                   onChange={value => {
@@ -1044,6 +1094,7 @@ export function TemporaryChatPanel({
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
                   isStreaming={busy}
+                  showPauseButton={!showActivityDots || showWaitingDots}
                   onPause={pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
@@ -1076,7 +1127,10 @@ export function TemporaryChatPanel({
         onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
-        isWaitingForAssistant={nativeConversation ? sending : busy}
+        isWaitingForAssistant={
+          showActivityDots ? showWaitingDots : busy && (!nativeConversation || sending)
+        }
+        waitingIndicatorStyle={showActivityDots ? 'dots' : undefined}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"

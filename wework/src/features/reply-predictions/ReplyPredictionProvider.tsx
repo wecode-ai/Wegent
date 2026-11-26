@@ -21,34 +21,24 @@ import { createReplyPredictionViews } from './replyPredictionViews'
 const noSubscription = () => () => {}
 const emptySnapshot = () => null
 
-function createPredictionTaskReader(store: RuntimeTaskLifecycleStore | null) {
-  const report = (error: unknown) => reportReplyPredictionFeedError(error)
+function createPredictionTaskReader(
+  store: RuntimeTaskLifecycleStore | null,
+  address: RuntimeTaskAddress | null | undefined
+) {
   return {
     subscribe(listener: () => void) {
       try {
-        return store?.subscribe(listener) ?? noSubscription()
+        return address && store ? store.subscribeTask(address, listener) : noSubscription()
       } catch (error) {
-        report(error)
+        reportReplyPredictionFeedError(error)
         return noSubscription()
       }
     },
     getSnapshot() {
       try {
-        return store?.getSnapshot() ?? null
+        return store?.getTask(address) ?? null
       } catch (error) {
-        report(error)
-        return null
-      }
-    },
-    selectTask(
-      snapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']> | null,
-      address?: RuntimeTaskAddress | null
-    ) {
-      if (!snapshot || !address) return null
-      try {
-        return store?.selectTask(snapshot, address) ?? null
-      } catch (error) {
-        report(error)
+        reportReplyPredictionFeedError(error)
         return null
       }
     },
@@ -70,10 +60,12 @@ export function ReplyPredictionProvider({
   const workbench = paneWorkbench ?? globalWorkbench
   const preferences = useAppPreferencesState()
   const store = useContext(RuntimeTaskLifecycleContext)
-  const taskReader = useMemo(() => createPredictionTaskReader(store), [store])
-  const snapshot = useSyncExternalStore(taskReader.subscribe, taskReader.getSnapshot)
-  const lifecycle = taskReader.selectTask(snapshot, address)
   const enabled = preferences?.loaded && preferences.preferences.replyPredictionsEnabled
+  const taskReader = useMemo(
+    () => createPredictionTaskReader(enabled ? store : null, address),
+    [enabled, store, address]
+  )
+  const lifecycle = useSyncExternalStore(taskReader.subscribe, taskReader.getSnapshot)
   const api = enabled ? workbench?.services.replyPredictionApi : undefined
   const service = useMemo(() => {
     if (!api) return null
@@ -87,7 +79,12 @@ export function ReplyPredictionProvider({
   const target = runtimeReplyPredictionSource(address, lifecycle)
   const feed = useContext(ReplyPredictionFeedContext)
   const key = target ? replyPredictionKey(target) : ''
-  const entry = feed?.service === service && target ? feed.entries.get(target.scope) : undefined
+  const scope = target?.scope
+  const entry = useSyncExternalStore(feed?.subscribe ?? noSubscription, () => {
+    if (!feed || !scope) return undefined
+    const snapshot = feed.getSnapshot()
+    return snapshot.service === service ? snapshot.entries.get(scope) : undefined
+  })
   const feedOwnsRequest = Boolean(entry && (entry.key !== key || entry.busy || entry.requested))
   const [views] = useState(createReplyPredictionViews)
   const view = views.resolve(feedOwnsRequest ? null : service, target)
@@ -107,7 +104,7 @@ export function ReplyPredictionProvider({
               text: prediction.text,
               acceptLabel: t('workbench.reply_prediction_accept'),
               onAccept: () => {
-                if (feedOwnsRequest && target) feed?.accept(target.scope, key)
+                if (feedOwnsRequest && target) feed?.getSnapshot().accept(target.scope, key)
                 else view?.accept()
               },
             }

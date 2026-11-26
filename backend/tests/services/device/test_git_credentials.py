@@ -21,6 +21,7 @@ import pytest
 from app.services.device import git_credentials
 from app.services.device.git_credential_paths import managed_git_cli_command
 from app.services.device.git_credentials_command import (
+    GIT_CREDENTIAL_SYNC_SCRIPT,
     GIT_CREDENTIALS_SECRET_ENV,
     SYNC_GIT_CREDENTIALS_COMMAND,
 )
@@ -91,7 +92,7 @@ def _isolated_command_path(
     if tool:
         executable = bin_path / tool
         executable.write_text(
-            "#!/bin/sh\nread -r credential\n"
+            '#!/bin/sh\nif [ "$1" = config ]; then exit 0; fi\nread -r credential\n'
             '[ -n "$credential" ] || exit 97\n'
             f"exit {tool_exit_code}\n",
             encoding="utf-8",
@@ -493,6 +494,97 @@ def test_device_command_reports_cli_outcome_without_affecting_git_auth(
     assert env_file.exists() is (expected_status == "configured")
 
 
+def test_sync_preserves_an_unrelated_read_only_profile(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    profile = home / ".bashrc"
+    original = b"# User configuration  \n\n"
+    profile.write_bytes(original)
+    profile.chmod(0o444)
+    before = profile.stat()
+
+    result = _run_sync_command(home, [_synthetic_account()])
+
+    assert result.returncode == 0, result.stdout
+    assert profile.read_bytes() == original
+    assert profile.stat().st_mode == before.st_mode
+    assert profile.stat().st_mtime_ns == before.st_mtime_ns
+
+
+def test_missing_git_is_reported_before_staging_credentials(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    command_path = Path(_isolated_command_path(tmp_path, tool=None))
+    (command_path / "git").unlink()
+
+    result = _run_sync_command(
+        home, [_synthetic_account()], command_path=str(command_path)
+    )
+
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {"error": "git_not_found"}
+    assert not (home / ".wegent").exists()
+
+
+def test_failed_clear_restores_aliased_profile(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    initial_sync = _run_sync_command(home, [_synthetic_account()])
+    assert initial_sync.returncode == 0, initial_sync.stdout
+    root = home / ".wegent/workbench/git-auth"
+    revision = (root / "current").readlink()
+    profile = home / ".bash_profile"
+    original = b"# >>> Wegent managed Git authentication >>>\nexport GH_CONFIG_DIR=test\n# <<< Wegent managed Git authentication <<<\n"
+    profile.write_bytes(original)
+    alias = home / ".profile"
+    alias.symlink_to(profile.name)
+    (home / ".zshrc").write_bytes(b"\xff")
+
+    cleared = _run_sync_command(home, [])
+
+    assert cleared.returncode == 1
+    assert json.loads(cleared.stdout) == {"error": "profile_update_failed"}
+    assert alias.readlink() == Path(profile.name)
+    assert profile.read_bytes() == original
+    assert (root / "current").readlink() == revision
+
+
+def test_legacy_cli_preference_timeout_keeps_git_credentials_active(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    command_path = _isolated_command_path(tmp_path, tool="glab")
+    account = {**_synthetic_account(), "provider": "gitlab"}
+    script = GIT_CREDENTIAL_SYNC_SCRIPT.removesuffix("main()") + """
+original_run = subprocess.run
+
+def run_with_preference_timeout(command, *args, **kwargs):
+    if command[1:4] == ["config", "set", "git_protocol"]:
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+    return original_run(command, *args, **kwargs)
+
+subprocess.run = run_with_preference_timeout
+main()
+"""
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "SYNC_GIT_CREDENTIALS_COMMAND",
+        "python3 -c " + shlex.quote(script),
+    )
+
+    result = _run_sync_command(home, [account], command_path=command_path)
+
+    assert result.returncode == 0, result.stdout
+    report = json.loads(result.stdout)
+    assert report["synced_domains"] == [account["domain"]]
+    assert report["cli"][0]["status"] == "configured"
+    assert report["cli"][0]["reason_code"] == "cli_git_protocol_failed"
+    root = home / ".wegent/workbench/git-auth"
+    assert (root / "current" / "credential-helper").is_file()
+    assert (root / "env.sh").is_file()
+
+
 def _recording_tool_path(
     tmp_path: Path,
     *,
@@ -608,6 +700,9 @@ def test_failed_publication_restores_legacy_config_and_can_resume(
     assert (home / ".gitconfig").read_bytes() == before
     assert (home / ".profile").read_bytes() == profile
     assert (legacy / "current/token").read_text() == "synthetic-old-secret"
+    root = home / ".wegent/workbench/git-auth"
+    assert not (root / "current").exists()
+    assert list((root / "revisions").iterdir()) == []
     result = _run_sync_command(home, [_synthetic_account()])
     assert result.returncode == 0, result.stdout
     assert not legacy.exists()

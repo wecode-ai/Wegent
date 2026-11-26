@@ -1,35 +1,46 @@
-import { SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { SettingsGroup, SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
+import { StandInSettingsEntry, type StandInSettingsShortcut } from './StandInSettingsLayout'
 
 export function StandInSelfLearningSetting({
   enabled = false,
-  savedEnabled,
   disabled,
   onChange,
+  report,
+  onOpenReport,
 }: {
   enabled?: boolean
-  savedEnabled?: boolean
   disabled: boolean
   onChange(enabled: boolean): void
+  report?: StandInSettingsShortcut
+  onOpenReport(): void
 }) {
-  const experimental = useExperimentalFeaturesEnabled()
   const { t } = useTranslation('common')
-  if (!experimental && !savedEnabled && !enabled) return null
   const label = t('standIn.workspace.self_learning')
   return (
-    <SettingsRow
-      className="px-0"
-      label={label}
-      description={t('standIn.workspace.self_learning_help')}
-    >
-      <SettingsSwitch
-        aria-label={label}
-        data-testid="stand-in-self-learning-toggle"
-        checked={enabled}
-        disabled={disabled}
-        onCheckedChange={onChange}
-      />
-    </SettingsRow>
+    <SettingsGroup className="mt-4 rounded-lg bg-transparent">
+      <SettingsRow
+        className="px-3"
+        label={label}
+        description={t('standIn.workspace.self_learning_help')}
+      >
+        <SettingsSwitch
+          aria-label={label}
+          data-testid="stand-in-self-learning-toggle"
+          checked={enabled}
+          disabled={disabled}
+          onCheckedChange={onChange}
+        />
+      </SettingsRow>
+      {report && (
+        <StandInSettingsEntry
+          grouped
+          testId={report.testId}
+          label={report.label}
+          disabled={disabled}
+          onClick={onOpenReport}
+        />
+      )}
+    </SettingsGroup>
   )
 }

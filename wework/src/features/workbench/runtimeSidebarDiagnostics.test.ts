@@ -7,7 +7,7 @@ import {
 
 const runtimeConfig = vi.hoisted(() => ({ controlUrl: '' }))
 vi.mock('@/e2e/runtime-config', () => ({
-  getDesktopE2ERuntimeConfig: () => runtimeConfig,
+  getDesktopE2EInjectedConfig: () => runtimeConfig,
 }))
 
 function rect(top: number, height: number): DOMRect {

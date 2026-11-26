@@ -34,13 +34,15 @@ export function IssueHierarchySummary({
           type="button"
           data-testid="issue-parent-link"
           onClick={() => onOpen(parent)}
-          title={`${parent.id} · ${parent.title}`}
-          className="flex max-w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left text-xs text-text-secondary hover:bg-muted max-md:min-h-11"
+          title={parent.title}
+          className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left text-xs text-text-secondary hover:bg-muted max-md:min-h-11"
         >
           <GitBranch className="h-3.5 w-3.5 shrink-0" />
           <span className="shrink-0">{t('todo.parent_board_parent')}</span>
-          <span className="truncate">{parent.title}</span>
-          <span className="shrink-0 text-text-muted">{parent.id}</span>
+          <span className="min-w-0 truncate">{parent.title}</span>
+          {parent.sequence_number > 0 ? (
+            <span className="shrink-0 text-text-muted">#{parent.sequence_number}</span>
+          ) : null}
         </ControlButton>
       ) : null}
       {children.length || onAddChild ? (

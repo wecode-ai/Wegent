@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -418,12 +419,15 @@ async def test_runtime_rpc_service_allows_app_device_task_message_when_explicit(
     )
 
     assert result == {"accepted": True}
+    request_id = sio_call.await_args.args[1]["request_id"]
+    assert UUID(request_id).hex == request_id
     sio_call.assert_awaited_once_with(
         "runtime:rpc",
         {
             "method": "runtime.tasks.send",
             "payload": {"taskId": "runtime-1", "message": "continue from IM"},
             "appTaskAccessScope": "project-session",
+            "request_id": request_id,
         },
         to="socket-1",
         namespace="/local-executor",
@@ -722,11 +726,14 @@ async def test_runtime_rpc_service_returns_runtime_failure_ack(monkeypatch):
         "success": False,
         "error": "Runtime send adapter is not available",
     }
+    request_id = sio.call.await_args.args[1]["request_id"]
+    assert UUID(request_id).hex == request_id
     sio.call.assert_awaited_once_with(
         "runtime:rpc",
         {
             "method": "runtime.tasks.send",
             "payload": {"localTaskId": "codex-1"},
+            "request_id": request_id,
         },
         to="socket-1",
         namespace="/local-executor",
@@ -1077,11 +1084,14 @@ async def test_composer_catalog_rpc_keeps_device_route_and_task_scope(monkeypatc
     )
 
     resolver.assert_awaited_once_with(user_id=7, submitted_device_id="device-1")
+    request_id = sio_call.await_args.args[1]["request_id"]
+    assert UUID(request_id).hex == request_id
     sio_call.assert_awaited_once_with(
         "runtime:rpc",
         {
             "method": "runtime.composer.catalog.read",
             "payload": {"taskId": "side-task", "forceRefresh": True},
+            "request_id": request_id,
         },
         to="socket-1",
         namespace="/local-executor",
@@ -1259,10 +1269,13 @@ async def test_im_stand_in_capability_cannot_control_other_users_or_methods(
         )
         assert result["taskId"] == "stand-in-chat-7-primary"
         call.assert_awaited_once()
+        request_id = call.await_args.args[1]["request_id"]
+        assert UUID(request_id).hex == request_id
         assert call.await_args.args[1] == {
             "method": method,
             "payload": {"userId": payload_user, "message": "hello"},
             "appTaskAccessScope": "stand-in-conversation",
+            "request_id": request_id,
         }
     else:
         with pytest.raises(module.RuntimeRpcError) as error:

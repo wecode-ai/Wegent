@@ -1,4 +1,6 @@
 import { createContext } from 'react'
-import type { ReplyPredictionFeedSnapshot } from './replyPredictionFeed'
+import type { createReplyPredictionFeed } from './replyPredictionFeed'
 
-export const ReplyPredictionFeedContext = createContext<ReplyPredictionFeedSnapshot | null>(null)
+export const ReplyPredictionFeedContext = createContext<ReturnType<
+  typeof createReplyPredictionFeed
+> | null>(null)

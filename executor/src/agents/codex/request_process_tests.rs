@@ -1073,3 +1073,53 @@ async fn native_rpc_responses_protect_the_gap_before_turn_and_goal_notifications
 
 #[path = "connection_mcp_process_tests.rs"]
 mod connection_mcp;
+
+#[tokio::test]
+async fn concurrent_action_resumes_queue_on_the_thread_lifecycle_gate() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+dir=$(dirname "$0")
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$dir/requests.jsonl"
+  (
+    id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+    [ -n "$id" ] || exit 0
+    case "$line" in
+      *'"method":"thread/resume"'*)
+        if mkdir "$dir/resume.lock" 2>/dev/null; then
+          sleep 0.2
+          rmdir "$dir/resume.lock"
+          printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+        else
+          printf 'overlap\n' >> "$dir/overlap.log"
+          printf '{"id":%s,"error":{"code":-32600,"message":"thread thread-1 already has an active writer"}}\n' "$id"
+        fi ;;
+      *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+    esac
+  ) &
+done
+wait
+"#,
+    );
+    let request = ExecutionRequest {
+        task_id: "resume-gate".into(),
+        ..ExecutionRequest::default()
+    };
+    let params = json!({"threadId":"thread-1"}).as_object().unwrap().clone();
+    let calls = (0..8).map(|_| {
+        fixture
+            .client
+            .resume_thread_for_action(&request, params.clone())
+    });
+    let results = timeout(
+        Duration::from_secs(15),
+        futures_util::future::join_all(calls),
+    )
+    .await
+    .unwrap();
+    for result in results {
+        result.unwrap();
+    }
+    assert!(!fixture._directory.path().join("overlap.log").exists());
+    fixture.client.restart().await;
+}

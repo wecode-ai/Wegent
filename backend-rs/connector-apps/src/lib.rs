@@ -19,6 +19,7 @@ mod admin_connector_apps;
 mod apps_installed;
 mod connector_runtime;
 mod execution_apps;
+pub mod external_authorization;
 mod mcp_server;
 
 pub use apps_installed::connection::{ConnectorCredentialError, connected_access_token};

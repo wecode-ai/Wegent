@@ -3,7 +3,7 @@ export const EMPTY_PANE_GUIDANCE_MESSAGES: GuidanceWorkbenchMessage[] = []
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
-import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import { getDesktopE2EInjectedConfig } from '@/e2e/runtime-config'
 import type {
   RuntimePaneQueuedMessage,
   RuntimePaneTranscript,
@@ -26,7 +26,7 @@ export const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 
 export function resolveRuntimeTranscriptPageSize(
   configuredPageSize = Number(
-    getDesktopE2ERuntimeConfig().transcriptPageSize ??
+    getDesktopE2EInjectedConfig().transcriptPageSize ??
       import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
   )
 ): number {

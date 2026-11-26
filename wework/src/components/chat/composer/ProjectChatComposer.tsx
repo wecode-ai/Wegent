@@ -1,3 +1,4 @@
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type {
   Attachment,
   LocalDeviceApp,
@@ -32,6 +33,7 @@ import {
   type ComposerFollowUpBehavior,
 } from './composerTextareaTypes'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
+import type { ComposerPermissionControls } from '@wegent/collaboration/controls'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
 import {
@@ -70,6 +72,7 @@ interface ProjectChatComposerProps {
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  permissionControls?: ComposerPermissionControls | null
   modelSelectorOpenSignal?: number
   onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   isModelSelectionReady: boolean
@@ -163,6 +166,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       selectedModel,
       activeModel,
       selectedModelOptions,
+      permissionControls,
       modelSelectorOpenSignal,
       onModelSelectorOpenChange,
       isModelSelectionReady,
@@ -203,7 +207,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalSkills,
       onListLocalApps,
       projectWork,
-      projectPhrases = [],
+      projectPhrases,
       showProjectWorkBar = true,
       showExecutionTools = true,
       showModelSelector,
@@ -261,7 +265,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           : [],
       [projectWork]
     )
-    const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    const handleQuickPhraseSelect = useStableEvent((phrase: QuickPhrase) => {
       if (!composerRef.current) return
       setPhraseError(null)
       applyQuickPhrase(phrase, composerRef.current, {
@@ -280,7 +284,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           )
           .catch(cause => setPhraseError(cause instanceof Error ? cause.message : String(cause)))
       }
-    }
+    })
 
     const previousAdmission = useRef('')
     if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
@@ -410,7 +414,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectExternalMention={onSelectExternalMention}
               onSelectCloudProject={onSelectCloudProject}
-              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}
               models={models}
@@ -442,6 +445,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               showPluginPicker={showPluginPicker}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
+              permissionControls={permissionControls}
               showModelSelector={showModelSelector}
               models={models}
               selectedModel={selectedModel}

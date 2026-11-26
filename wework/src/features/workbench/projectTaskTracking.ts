@@ -6,6 +6,13 @@ import type { WorkbenchServices } from './workbenchServices'
 
 const cloudRuntimeApis = new WeakMap<WeworkWorkspaceRuntimePort, ProjectTaskRuntimeApi>()
 
+export class ProjectSpaceTaskContextIncompleteError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'ProjectSpaceTaskContextIncompleteError'
+  }
+}
+
 export interface ProjectTaskRuntimeContext {
   project: CloudProject
   loop_item: CloudLoopItem | null
@@ -60,7 +67,22 @@ export function createCloudProjectTaskRuntimeApi(
     async findCloudContextForTask(task) {
       const sharedTask = toWorkspaceRuntimeTaskAddress(task)
       const context = await port.findCloudContextForTask(sharedTask)
-      const issue = context.issueId ? await port.findIssueForTask(sharedTask) : null
+      let issue: Awaited<ReturnType<WeworkWorkspaceRuntimePort['findIssueForTask']>> | null = null
+      if (context.issueId) {
+        try {
+          issue = await port.findIssueForTask(sharedTask)
+        } catch (cause) {
+          // The first read found an Issue. A failed second read cannot establish
+          // that the task is unbound, even if the Issue is now missing.
+          throw new ProjectSpaceTaskContextIncompleteError('Failed to resolve the task Issue', {
+            cause,
+          })
+        }
+        if (issue.id !== context.issueId || issue.cloud_project_id !== context.project.id)
+          throw new ProjectSpaceTaskContextIncompleteError(
+            'Project-space task context changed during lookup'
+          )
+      }
       return {
         project: toCloudProject(context.project),
         loop_item: issue ? toCloudLoopItem(issue) : null,

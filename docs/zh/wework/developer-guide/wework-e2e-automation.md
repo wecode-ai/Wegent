@@ -29,7 +29,8 @@ Backend 身份校验在 HTTP 计时范围外完成，避免把串行存储等待
 仍须拒绝 Backend 切换并检查地址是否过期。父窗口日志以 `parent-python-downloads-failed` 记录安全的
 错误分类，可区分描述请求超时，不记录凭据或下载地址。
 Linux Core 分片平衡使用同机运行的超时证据来隔离 Python 启动，包括避免与 `stand-in-cli`、
-`quota-recovery` 和 `permission-modes` 同机运行。
+`quota-recovery`、`permission-modes`、`model-routing`、`human-interactions` 和
+`runtime-task-queue` 同机运行。
 
 协议专用用例先确认新会话已激活，再打开选择器并实际点选目标模型，不能把旧会话仍可见的输入框或临时默认标签当成配置完成。独立目录可能稍后恢复已配置的默认模型；只有显式选择才能固定协议用例的模型意图。模型目录可能在菜单打开后继续发布推理能力；已经打开的模型列表保持当前面板，显式选中模型后再进入强度面板。Catalog 保存等待器同时观察原生目录重载、编辑器关闭和重启确认框，不能仅凭后台重载日志判定保存交互结束。提及分页的测试任务使用共享批处理器清理，每批最多 8 个请求；清理失败必须显式报错，避免并发清理耗尽 Backend 连接池后污染下一条用例。
 
@@ -95,6 +96,12 @@ pnpm --filter wework e2e:desktop:plugins
 
 ```bash
 pnpm --filter wework e2e:desktop:embedded-browser
+```
+
+单独验证地址栏历史、下载列表和磁盘文件状态（macOS 或 Linux）：
+
+```bash
+WEWORK_E2E_DOWNLOAD_HISTORY_ONLY=true pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
 在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：

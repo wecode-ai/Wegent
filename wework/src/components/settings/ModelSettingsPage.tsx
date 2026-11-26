@@ -581,6 +581,7 @@ export function ModelSettingsPage({
   const restartConfirmDialog = (
     <ConfirmDialog
       open={restartDialogOpen}
+      focusCancel
       title={t('workbench.local_codex_subscription_restart_title', '需要重启 Wework 生效')}
       description={t(
         'workbench.local_codex_subscription_restart_description',

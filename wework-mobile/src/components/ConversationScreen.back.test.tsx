@@ -17,6 +17,7 @@ const environment = vi.hoisted(() => ({
   platform: 'android',
   backHandlers: new Set<() => boolean>(),
   composerInset: { value: 0 },
+  gestureEnabled: true,
 }))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
@@ -24,6 +25,11 @@ vi.mock('@react-navigation/native', async () => {
   const { useEffect } = await import('react')
   return {
     useIsFocused: () => environment.focused,
+    useNavigation: () => ({
+      setOptions: (options: { gestureEnabled?: boolean }) => {
+        environment.gestureEnabled = options.gestureEnabled ?? true
+      },
+    }),
     useFocusEffect: (effect: () => void | (() => void)) =>
       useEffect(() => (environment.focused ? effect() : undefined), [effect, environment.focused]),
   }
@@ -126,6 +132,7 @@ describe('conversation keyboard layout and model navigation', () => {
     environment.platform = 'android'
     environment.backHandlers.clear()
     environment.composerInset.value = 0
+    environment.gestureEnabled = true
   })
 
   const props = (): React.ComponentProps<typeof ConversationScreen> => ({
@@ -425,6 +432,20 @@ describe('conversation keyboard layout and model navigation', () => {
     expect(composer().props.active).toBe(true)
     await act(() => renderer.root.findByProps({ testID: 'new-chat-device' }).props.onPress())
     expect(composer().props.active).toBe(false)
+  })
+
+  it('disables the native back gesture only while the quick model selector is open', async () => {
+    const handlers = props()
+    await act(() => {
+      renderer = create(<ConversationScreen {...handlers} />)
+    })
+    expect(environment.gestureEnabled).toBe(true)
+
+    await act(() => composer().props.onSelectModel())
+    expect(environment.gestureEnabled).toBe(false)
+
+    await act(() => renderer.root.findByType('QuickDismiss' as never).props.onDismiss())
+    expect(environment.gestureEnabled).toBe(true)
   })
 
   it('consumes back to close only the quick layer and keeps the composer draft mounted', async () => {

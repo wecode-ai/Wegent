@@ -121,6 +121,10 @@ where
             local_model_proxy::token_route(),
         )
         .route(
+            local_model_proxy::OFFICIAL_HTTP_ROUTE,
+            local_model_proxy::official_http_route(),
+        )
+        .route(
             local_model_proxy::HARNESS_MESSAGES_ROUTE,
             local_model_proxy::harness_messages_route(),
         )

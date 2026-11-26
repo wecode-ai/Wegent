@@ -354,9 +354,11 @@ export interface ImageMarkupComment {
 
 export interface RequestUserInputResponseAnswer {
   answers: string[];
+  attachments?: Attachment[];
 }
 
 export interface RequestUserInputResponse {
+  delivery?: "async";
   requestId?: number | string;
   request_id?: number | string;
   itemId?: string;

@@ -108,8 +108,21 @@ fn save(
     record: &Value,
 ) -> Result<(), AppIpcError> {
     // Preserve the stopped generation as a fence without retaining provider snapshots.
-    let tombstone = (section == "observers" && record["status"] == "stopped" && record["cloud_stop_pending"] != true)
-        .then(|| json!({"id":id,"consumer_key":record["consumer_key"],"generation":record["generation"],"device_id":record["device_id"],"status":"stopped","cloud_stop_pending":false}));
+    let tombstone = (section == "observers"
+        && record["status"] == "stopped"
+        && record["cloud_stop_pending"] != true)
+        .then(|| {
+            json!({
+                "id": id,
+                "consumer_key": record["consumer_key"],
+                "generation": record["generation"],
+                "device_id": record["device_id"],
+                "status": "stopped",
+                "cloud_stop_pending": false,
+                "stop_reason": record["stop_reason"],
+                "change_request_number": record["change_request_number"],
+            })
+        });
     let record = tombstone.as_ref().unwrap_or(record);
     let value = serde_json::to_string(record).map_err(storage)?;
     let consuming = match section {

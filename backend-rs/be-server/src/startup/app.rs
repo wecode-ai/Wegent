@@ -160,6 +160,7 @@ pub async fn build_with_clients(
         decision_http,
         url_metadata_http,
         erp: Arc::new(NoopErpProvider),
+        issue_im_recipient: None,
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
         cloud_device_destroyer: None,

@@ -47,6 +47,7 @@ mod manifest_migration;
 mod plugin_preparation;
 mod plugin_skills;
 mod plugin_sync_protocol;
+mod python_mcp;
 mod runtime_recovery;
 mod runtime_skill_config;
 mod shared_packages;
@@ -411,6 +412,7 @@ pub struct GlobalCapabilityStore {
     plugin_store_dir_override: Option<PathBuf>,
     shared_packages: bool,
     codex_only_plugins: bool,
+    managed_mcp_python: Option<PathBuf>,
     workbench_root_override: Option<PathBuf>,
 }
 

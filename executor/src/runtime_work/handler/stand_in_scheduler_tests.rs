@@ -41,29 +41,30 @@ async fn discovery_is_idle_until_intake_is_due() {
 }
 
 #[tokio::test]
-async fn discovery_notices_work_state_changes_and_returns_to_idle() {
+async fn discovery_stays_idle_for_normal_work_and_routes_failure() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());
     let mut link = RuntimeTaskLink {
         local_task_id: "stand-in-work".into(),
         status: "queued".into(),
         created_at: chrono::Utc::now().timestamp_millis(),
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        runtime_handle: json!({"origin":{"type":"stand_in_task","initiatedBy":"stand_in","userId":7,"standInId":"@primary"}}),
         ..Default::default()
     };
     handler.upsert_local_task(link.clone());
-    assert!(personal_processing_needed(&handler).await);
-    let snapshot = handler
-        .coordination_snapshot_for_test(&store, 7)
-        .await
-        .unwrap();
-    assert_eq!(snapshot["skip"], true);
     assert!(!personal_processing_needed(&handler).await);
 
     link.status = "done".into();
+    link.turn_status = Some("completed".into());
+    handler.upsert_local_task(link.clone());
+    assert!(!personal_processing_needed(&handler).await);
+    assert!(store.stand_in_events(7).unwrap().is_empty());
+
+    link.status = "failed".into();
+    link.turn_status = Some("failed".into());
     handler.upsert_local_task(link);
     assert!(personal_processing_needed(&handler).await);
-    handler
+    let snapshot = handler
         .coordination_snapshot_for_test(&store, 7)
         .await
         .unwrap();
@@ -71,7 +72,14 @@ async fn discovery_notices_work_state_changes_and_returns_to_idle() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["kind"], "work_state");
     assert_eq!(events[0]["taskId"], "stand-in-work");
-    assert_eq!(events[0]["state"][3], "done");
+    assert_eq!(events[0]["state"][3], "failed");
+    assert_eq!(snapshot["events"][0]["id"], events[0]["id"]);
+    assert_eq!(snapshot["events"][0]["requiresAction"], true);
+
+    let mut handled = events[0].clone();
+    handled["status"] = json!("handled");
+    store.save_stand_in_event(7, &handled).unwrap();
+    assert!(!personal_processing_needed(&handler).await);
 }
 
 #[tokio::test]

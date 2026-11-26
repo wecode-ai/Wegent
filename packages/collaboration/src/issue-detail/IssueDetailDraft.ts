@@ -193,22 +193,23 @@ function createIssueDraftState<TWorkflow>(
       options.dueDateFromSource ?? defaultDueDate
     )
   const initial = options.initial
+  const initialDraft: IssueDetailDraftValue<TWorkflow> = {
+    title: initial.title,
+    description: initial.description,
+    status: initial.status,
+    priority: initial.priority,
+    parentId: initial.parentId ?? '',
+    startDate: initial.startDate ?? '',
+    dueDate: initial.dueDate ?? '',
+    tags: initial.tags ?? [],
+    assigneeTarget: initial.assigneeTarget ?? '',
+    workflow: initial.workflow ?? null,
+  }
   let draft: IssueDetailDraftValue<TWorkflow> = cached
     ? (cached.draft as IssueDetailDraftValue<TWorkflow>)
     : options.source
       ? from(options.source)
-      : {
-          title: initial.title,
-          description: initial.description,
-          status: initial.status,
-          priority: initial.priority,
-          parentId: initial.parentId ?? '',
-          startDate: initial.startDate ?? '',
-          dueDate: initial.dueDate ?? '',
-          tags: initial.tags ?? [],
-          assigneeTarget: initial.assigneeTarget ?? '',
-          workflow: initial.workflow ?? null,
-        }
+      : initialDraft
   const restoredContentDirty = Boolean(
     cached &&
     (cached.draft.title !== cached.source.title ||
@@ -216,19 +217,20 @@ function createIssueDraftState<TWorkflow>(
         (options.normalizeDescription ?? identityDescription)(cached.source.description ?? ''))
   )
   const dirty = () => {
-    const source = options.source ? from(options.source) : null
-    return source
-      ? draft.title.trim() !== source.title ||
-          draft.description !== source.description ||
-          draft.status !== source.status ||
-          draft.priority !== source.priority ||
-          draft.parentId !== source.parentId ||
-          draft.startDate !== source.startDate ||
-          draft.dueDate !== source.dueDate ||
-          !equalTags(draft.tags, source.tags) ||
-          draft.assigneeTarget !== source.assigneeTarget ||
-          JSON.stringify(draft.workflow) !== JSON.stringify(source.workflow)
-      : false
+    const source = options.source ? from(options.source) : initialDraft
+    const title = options.source ? draft.title.trim() : draft.title
+    return (
+      title !== source.title ||
+      draft.description !== source.description ||
+      draft.status !== source.status ||
+      draft.priority !== source.priority ||
+      draft.parentId !== source.parentId ||
+      draft.startDate !== source.startDate ||
+      draft.dueDate !== source.dueDate ||
+      !equalTags(draft.tags, source.tags) ||
+      draft.assigneeTarget !== source.assigneeTarget ||
+      JSON.stringify(draft.workflow) !== JSON.stringify(source.workflow)
+    )
   }
   let snapshot = { draft, dirty: dirty(), restoredContentDirty }
   const listeners = new Set<() => void>()
@@ -277,6 +279,7 @@ function createIssueDraftState<TWorkflow>(
     draft = typeof value === 'function' ? value(draft) : value
     persist()
     publish()
+    return snapshot.dirty
   }
   return {
     getSnapshot: () => snapshot,
@@ -313,7 +316,7 @@ function createIssueDraftState<TWorkflow>(
       field: K,
       value: SetStateAction<IssueDetailDraftValue<TWorkflow>[K]>
     ) {
-      setDraft(current => ({
+      return setDraft(current => ({
         ...current,
         [field]:
           typeof value === 'function'

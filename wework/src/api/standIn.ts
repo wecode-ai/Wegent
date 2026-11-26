@@ -1,3 +1,4 @@
+import type { StandInShareApi } from './personalStandIn'
 import {
   installStandInConnectionDependencies,
   type ConnectionDependencyPluginApi,
@@ -56,13 +57,26 @@ export interface ConnectionProviderDescriptor {
     }
   >
   authTarget?: { pluginKey: string; connectorSlug: string }
-  availability: { status: string; code?: string }
+  availability: {
+    status: string
+    code?: string
+    profile?: string
+    accountId?: string
+    accountName?: string
+    organizationName?: string
+  }
   dependencies: Array<{
     alias: string
     status: string
     source?: { marketplaceId: string; pluginId: string }
     version?: string
   }>
+}
+
+export interface StandInDelegationResult {
+  action: 'reply' | 'needs_user' | 'skip'
+  status: 'complete' | 'submitting' | 'sent' | 'unknown'
+  reason: string
 }
 
 export interface StandInInboxMessage {
@@ -72,6 +86,7 @@ export interface StandInInboxMessage {
   senderId: string
   at: string
   source: StandInSourceConnection
+  delegationResult?: StandInDelegationResult
 }
 
 export interface StandInInboxWork {
@@ -82,8 +97,10 @@ export interface StandInInboxWork {
   source: StandInSourceConnection
   status: 'pending' | 'needs_grouping' | 'sending' | 'sent' | 'failed'
   updatedAt: string
+  refreshVersion?: string
   messageCount: number
   latestMessage: StandInInboxMessage | null
+  delegationResult?: StandInDelegationResult
   task?: RuntimeTaskSummary | null
   error?: string | null
 }
@@ -114,6 +131,7 @@ import {
   type PersonalStandInSettings,
   type StandInDelegationRoute,
   type StandInSourceConnection,
+  type StandInTaskPermissions,
 } from './personalStandIn'
 
 export interface StandInProposal {
@@ -142,6 +160,37 @@ export interface StandInGhostRevision {
   after: string
   version: number
 }
+
+export interface StandInLearningDimension {
+  id: 'intent' | 'verification' | 'judgment' | 'actionability' | 'clarity'
+  baselineScore: number | null
+  candidateScore: number | null
+  sampleCount: number
+  insufficientCount: number
+  notApplicableCount: number
+}
+
+export interface StandInLearningReport {
+  iterations: number
+  latest: {
+    status: 'pending' | 'accepted' | 'rejected' | 'reverted' | 'obsolete' | 'unchanged'
+    evaluatedAt: string
+    currentScore: number | null
+    baselineScore: number | null
+    candidateScore: number | null
+    sampleCount: number | null
+    dimensions?: StandInLearningDimension[] | null
+    pendingProposalId?: string | null
+  } | null
+  revision: StandInGhostRevision | null
+}
+
+export type StandInLearningRunStatus =
+  | 'started'
+  | 'busy'
+  | 'disabled'
+  | 'insufficient'
+  | 'already_evaluated'
 
 export type StandInMemoryScope =
   | { kind: 'personal' }
@@ -304,7 +353,13 @@ export interface RemoteStandInRoleBranch {
   cancelGroup?: boolean
 }
 
+export interface StandInTaskPermissionSnapshot {
+  taskPermissions: StandInTaskPermissions
+  snapshotRevision?: string | null
+}
+
 export interface StandInExecutorApi {
+  sharing: StandInShareApi
   deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
   gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
   onboarding(userId: number, deviceId: string, language: string): Promise<StandInOnboardingResult>
@@ -340,6 +395,12 @@ export interface StandInExecutorApi {
     operation: 'start' | 'stop'
   ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
+  setTaskPermissions(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    taskPermissions: StandInTaskPermissions
+  ): Promise<StandInTaskPermissionSnapshot>
   checkProcessing(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   configureTelemetry(
     userId: number,
@@ -436,6 +497,7 @@ export interface StandInExecutorApi {
       | 'name'
       | 'kind'
       | 'profile'
+      | 'accountId'
       | 'providerId'
       | 'scope'
       | 'collectionKey'
@@ -466,11 +528,12 @@ export interface StandInExecutorApi {
     options?: Record<string, unknown>
   ): Promise<{ taskId: string; address: WorkspaceRuntimeTaskAddress | null }>
   proposal(userId: number, deviceId: string, roleId?: string): Promise<StandInProposal | null>
-  latestAppliedGhost(
+  learningReport(userId: number, deviceId: string, roleId?: string): Promise<StandInLearningReport>
+  runLearning(
     userId: number,
     deviceId: string,
     roleId?: string
-  ): Promise<StandInGhostRevision | null>
+  ): Promise<{ status: StandInLearningRunStatus }>
   resolveProposal(
     userId: number,
     deviceId: string,
@@ -489,7 +552,8 @@ export interface StandInExecutorApi {
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
-    deviceId: string
+    deviceId: string,
+    transferRoleId?: string
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,
@@ -502,7 +566,13 @@ export interface StandInExecutorApi {
     deviceId: string,
     taskId: string,
     options?: { resolveActiveProvider?: boolean }
-  ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
+  ): Promise<{
+    success: boolean
+    deviceId?: string
+    task?: RuntimeTaskSummary
+    code?: string
+    error?: string
+  }>
   assignmentTasks(
     userId: number,
     deviceId: string,
@@ -546,6 +616,7 @@ export function createStandInExecutorApi(
   const request: Request = async (method, payload, deviceId) => {
     const changesProfile = [
       'runtime.stand_in.personal.save',
+      'runtime.stand_in.share.copy',
       'runtime.stand_in.personal.lifecycle',
       'runtime.stand_in.proposal.resolve',
       'runtime.stand_in.onboarding.complete',
@@ -583,6 +654,8 @@ export function createStandInExecutorApi(
   }
   return {
     taskCommands: createRuntimeTaskCommandsApi(request),
+    setTaskPermissions: (userId, deviceId, taskId, taskPermissions) =>
+      request('runtime.tasks.permissions.set', { userId, taskId, taskPermissions }, deviceId),
     gitConnection: (deviceId, input) => {
       const { channel, ...payload } = input
       if (channel === 'auth') {
@@ -750,16 +823,23 @@ export function createStandInExecutorApi(
       ),
     proposal: (userId, deviceId, roleId) =>
       request('runtime.stand_in.proposal.get', { userId, roleId }, deviceId),
-    latestAppliedGhost: async (userId, deviceId, roleId) => {
-      const revision = await request<StandInGhostRevision | null>(
+    runLearning: (userId, deviceId, roleId) =>
+      request('runtime.stand_in.learning.run', { userId, roleId }, deviceId),
+    learningReport: async (userId, deviceId, roleId) => {
+      const report = await request<StandInLearningReport | null>(
         'runtime.stand_in.proposal.get',
-        { userId, roleId, latestAppliedGhost: true },
+        { userId, roleId, learningReport: true },
         deviceId
       )
-      if (revision && (!revision.id?.startsWith('ghost:') || !Number.isInteger(revision.version))) {
+      const revision = report?.revision
+      if (
+        !report ||
+        !Number.isInteger(report.iterations) ||
+        (revision && (!revision.id?.startsWith('ghost:') || !Number.isInteger(revision.version)))
+      ) {
         throw new Error(getStandInErrorMessage({ code: 'stand_in_unavailable' }))
       }
-      return revision
+      return report
     },
     resolveProposal: async (userId, deviceId, proposalId, accept, undoVersion) => {
       const saved = await request<PersonalStandInSettings>(
@@ -776,6 +856,56 @@ export function createStandInExecutorApi(
         { projectId, itemId, assignmentId, recipientUserId },
         deviceId
       )
+    },
+    sharing: {
+      list: (userId, deviceId) => request('runtime.stand_in.share.list', { userId }, deviceId),
+      searchUsers: (userId, deviceId, query) =>
+        request('runtime.stand_in.share.search_users', { userId, query }, deviceId),
+      definition: (userId, deviceId, kind, id) =>
+        request('runtime.stand_in.share.definition', { userId, kind, id }, deviceId),
+      publish: async (userId, deviceId, share) => {
+        await request('runtime.stand_in.share.publish', { userId, share }, deviceId)
+      },
+      direct: async (userId, deviceId, entry) => {
+        await request(
+          'runtime.stand_in.share.direct',
+          {
+            userId,
+            ownerUserId: entry.owner_user_id,
+            kind: entry.resource_kind,
+            id: entry.source_id,
+          },
+          deviceId
+        )
+      },
+      revoke: async (userId, deviceId, entry) => {
+        await request(
+          'runtime.stand_in.share.revoke',
+          {
+            userId,
+            kind: entry.resource_kind,
+            id: entry.source_id,
+            recipientUserId: entry.recipient_user_id,
+          },
+          deviceId
+        )
+      },
+      copy: async (userId, deviceId, entry, update = false) => {
+        const settings = await request<PersonalStandInSettings>(
+          'runtime.stand_in.share.copy',
+          {
+            userId,
+            ownerUserId: entry.owner_user_id,
+            kind: entry.resource_kind,
+            id: entry.source_id,
+            expectedRevision: entry.revision,
+            update,
+          },
+          deviceId
+        )
+        publishPersonalStandIn(settings)
+        return settings
+      },
     },
     deviceIdentity: deviceId => request('runtime.stand_in.device_identity', {}, deviceId),
     personalGet: (userId, deviceId) => {
@@ -805,10 +935,10 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    personalSave: async (userId, settings, deviceId) => {
+    personalSave: async (userId, settings, deviceId, transferRoleId) => {
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
-        { userId, settings },
+        { userId, settings, ...(transferRoleId !== undefined ? { transferRoleId } : {}) },
         deviceId
       )
       publishPersonalStandIn(saved)

@@ -89,7 +89,17 @@ impl RuntimeWorkRpcHandler {
             .expect("runtime turn scheduler lock should not be poisoned")
             .active_task_ids
             .len();
-        if active_tasks > 0 || self.background_terminal_count() > 0 {
+        let background_terminals = self.background_terminal_count();
+        if active_tasks > 0 || background_terminals > 0 {
+            log_executor_event(
+                "bundled plugin cache synchronization deferred",
+                &[
+                    ("plugin", name),
+                    ("reason", "scheduler_or_background".to_owned()),
+                    ("active_tasks", active_tasks.to_string()),
+                    ("background_terminals", background_terminals.to_string()),
+                ],
+            );
             return Ok(json!({"status": "deferred", "updated": false}));
         }
         let result = self
@@ -111,7 +121,19 @@ impl RuntimeWorkRpcHandler {
                 );
                 Ok(json!({"status": "ready", "updated": changed}))
             }
-            Err(CodexIdleMutationError::Busy { .. }) => {
+            Err(CodexIdleMutationError::Busy {
+                active_turn_count,
+                pending_request_count,
+            }) => {
+                log_executor_event(
+                    "bundled plugin cache synchronization deferred",
+                    &[
+                        ("plugin", name),
+                        ("reason", "codex_busy".to_owned()),
+                        ("active_turns", active_turn_count.to_string()),
+                        ("pending_requests", pending_request_count.to_string()),
+                    ],
+                );
                 Ok(json!({"status": "deferred", "updated": false}))
             }
             Err(CodexIdleMutationError::Update(error)) => {

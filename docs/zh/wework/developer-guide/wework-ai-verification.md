@@ -244,12 +244,20 @@ pnpm --filter wework profile:renderer --capture
 pnpm --filter wework profile:renderer --processes
 ```
 
-- `--check` 在空闲 CPU ≥ 10%、单任务 CPU ≥ 15% 或采样 JS 堆峰值 ≥ 200 MB（200,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
-- `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。原生调用的 `caller` 字段可以定位到触发布局等操作的 JavaScript 代码。录制本身会增加开销，阈值验收用 `--check` 单独复测。测量报告统一保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- `--check` 在零运行任务 CPU ≥ 3%、单任务 CPU ≥ 15%、10 任务并发 CPU ≥ 20%、回合状态更新所在的主线程任务 ≥ 100 ms，或采样 JS 堆峰值 ≥ 200 MB（200,000,000 字节）时退出失败。省略参数仅输出测量结果。CPU 按隔离窗口 Renderer PID 的累计 CPU 时间除以墙钟时间计算，100% 代表占用一个逻辑核心。空闲窗口约 7 秒，单任务 CPU 窗口从模型开始响应到末段可见。V8 堆使用量每秒采样，不强制 GC。
+- 基准加载 257 条合成的已保存任务。并发阶段加载包含 480 条事项的本地项目，其中 20 条未完成，再启动 10 个真实 Codex 任务。前台任务先通过测试模型执行 180 条只读工具命令，保留真实工具历史。所有任务都到达测试模型后才开始计时，在前台会话输出期间，前台任务和三个后台任务分批执行共 40 条只读工具命令，同时通过 Responses 协议发送 765 条推理摘要增量。并发输出约 39 秒。测量覆盖前台会话中的 Goal 更新，以及切换到“待你处理”后的滚动和后台 Goal 更新。报告记录各阶段平均值、采样点之间至少 10 秒窗口的最高 CPU 及窗口可见状态，20% 阈值按最高并发值判定。
+- 回合状态从提交前开始观测，直到同一任务收到启动和结束的 `runtime.turn.updated` 快照。报告的 `turnUpdates` 记录更新时间和包含该更新的 Chromium 主线程长任务耗时。没有匹配的长任务时记为 0，表示更新所在任务低于 Chromium 的 50 ms 长任务报告阈值。
+- 排查回合更新超限时，可用 `turnUpdates.frame.scripts` 定位长帧里的脚本，再结合 CPU 采样堆栈找出事件订阅者。回复预测的任务更新和单条缓存变更只重新校验对应任务的预测。
+- 会话面板按当前任务订阅生命周期，切换会话时更新订阅。侧栏在输入属性未变时跳过重渲染，排序控件的无障碍名称仅在标签或语言变化时重新翻译。
+- 项目侧栏复用任务列表对应的生命周期键。通知和协作事项待答问题轮询会保留内容相同的收件箱快照，避免在空闲时刷新界面。
+- `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。原生调用的 `caller` 字段可以定位到触发布局等操作的 JavaScript 代码。录制以 100 µs 请求 V8 采样间隔，在 trace 中标注空闲窗口和两个并发测量窗口。录制本身会增加开销，阈值验收用 `--check` 单独复测。测量报告统一保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- `--check` 在同一轮单任务验证中按 2 ms 间隔请求 CPU 采样，空闲和十任务阶段不采样。回合更新违反长任务阈值时，CI 保留 `renderer-turn-long-task-profile.json`。用 `navigationStartUs + longTaskStartMs × 1000` 对齐超限区间与 CPU 采样时间，并用 `longTaskMs` 确定区间长度。
 - `--history` 在测量前依次完成 16 个真实持久化会话，逐个记录堆使用量，然后在同一 Renderer 启动基准任务。它使用可复现的测试模型结果，报告中的 `historicalTasks` 标明会话数量。
 - `--processes` 记录空闲、流式中段和任务完成后的进程树快照。用 `processSamples` 分别检查主进程、Renderer、GPU、执行器及其子进程。进程快照 CPU 为操作系统或 Electron 的采样值，阈值验收使用单独运行的 `--check`。共享内存页可能出现在多个进程的统计中，进程内存应逐项阅读。
 - 排查堆峰值时，先按 `heapSamples` 的阶段定位触发操作。自然 GC 后迅速回落的峰值，可以用 Chromium Memory 面板的 Allocation sampling 按调用栈查找短寿命的大量分配；阈值仍使用未开启分配采样的峰值复测。
 - 排查长期内存增长时，在同一隔离实例中用相同历史数据反复切换任务后记录 JS 堆，再用 Chromium Memory 面板采集两份堆快照。先比较对象数量和 retained size，再检查 `Retainers` 中仍可达的引用路径，尤其是 detached DOM、回调闭包和缓存。使用 Memory 面板之前先断开同一目标上的 CDP 录制。报告和快照仅保存在本地。
+
+macOS 桌面 CI 在相关的 PR 和合并队列变更上复用已打包的应用运行 `--check`。超线会使必需的 **Wework E2E Summary** 检查失败，测量报告随 CI 诊断附件保留。
 
 ### 工作台资源预算
 

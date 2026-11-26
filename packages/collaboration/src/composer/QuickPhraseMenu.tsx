@@ -109,21 +109,23 @@ export function QuickPhraseMenu({
   const [previewedStash, setPreviewedStash] = useState<QuickPhrase | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionPending, setActionPending] = useState(false)
-  const stashed = globalPhrases.filter(phrase => phrase.id.startsWith('stash-'))
+  const visibleGlobalPhrases = open ? globalPhrases : []
+  const visibleProjectPhrases = open ? projectPhrases : []
+  const stashed = visibleGlobalPhrases.filter(phrase => phrase.id.startsWith('stash-'))
   const entries = [
     ...stashed.map(phrase => ({
       phrase,
       value: `global:${phrase.id}`,
       group: t('workbench.quick_phrases_stash', '暂存区'),
     })),
-    ...projectPhrases
+    ...visibleProjectPhrases
       .filter(phrase => !phrase.id.startsWith('stash-'))
       .map(phrase => ({
         phrase,
         value: `project:${phrase.id}`,
         group: t('workbench.project_quick_phrases_title', '项目快捷短语'),
       })),
-    ...globalPhrases
+    ...visibleGlobalPhrases
       .filter(phrase => !phrase.id.startsWith('stash-'))
       .map(phrase => ({
         phrase,

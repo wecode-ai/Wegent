@@ -268,12 +268,22 @@ fn encode_wegent_header_value(value: &str) -> String {
 pub enum ModelConfigError {
     /// `Model config has no env configuration`.
     NoEnv,
+    /// `Model API key is masked and unavailable for execution`.
+    MaskedApiKey,
+    /// `GIT_TOKEN_AES_KEY` / `GIT_TOKEN_AES_IV` cannot decrypt a stored key.
+    CryptoConfiguration,
 }
 
 impl std::fmt::Display for ModelConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoEnv => write!(f, "Model config has no env configuration"),
+            Self::MaskedApiKey => {
+                write!(f, "Model API key is masked and unavailable for execution")
+            }
+            Self::CryptoConfiguration => {
+                write!(f, "Model API key encryption configuration is invalid")
+            }
         }
     }
 }
@@ -290,8 +300,7 @@ impl std::error::Error for ModelConfigError {}
 /// (`get_model_config_for_bot`) and resolves the `api_key` placeholder through
 /// the deployment adapter and the placeholder engine.
 ///
-/// Not modeled: `decrypt_api_key`, `codex_catalog_model_id`, and
-/// `imageConfig`; no recorded create case reaches them.
+/// Not modeled: `codex_catalog_model_id`; no recorded create case reaches it.
 pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, ModelConfigError> {
     let model_config = model_spec
         .get("modelConfig")
@@ -308,7 +317,12 @@ pub fn extract_model_config(model_spec: &Value) -> Result<Map<String, Value>, Mo
             .unwrap_or_default()
             .to_string()
     };
-    let api_key = env_str("api_key");
+    let raw_api_key = env_str("api_key");
+    if raw_api_key == "***" {
+        return Err(ModelConfigError::MaskedApiKey);
+    }
+    let api_key = wegent_identity::repository_credentials::decrypt_model_api_key(&raw_api_key)
+        .map_err(|_| ModelConfigError::CryptoConfiguration)?;
     let base_url = env
         .get("base_url")
         .and_then(Value::as_str)
@@ -627,7 +641,7 @@ mod tests {
             "modelConfig": {
                 "env": {
                     "model": "claude",
-                    "api_key": "test-api-key",
+                    "api_key": "sk-test-api-key",
                     "base_url": "https://model.example.test",
                     "model_id": "qwen3.7-plus",
                     "small_model": "qwen3.7-plus",
@@ -801,6 +815,29 @@ mod tests {
             extract_model_config(&json!({"modelConfig": {}})),
             Err(ModelConfigError::NoEnv)
         ));
+    }
+
+    #[test]
+    fn extract_model_config_rejects_a_masked_api_key() {
+        let error = extract_model_config(&json!({
+            "modelConfig": {"env": {"api_key": "***"}}
+        }))
+        .unwrap_err();
+        assert!(matches!(error, ModelConfigError::MaskedApiKey));
+    }
+
+    #[test]
+    fn extract_model_config_keeps_placeholder_keys_for_the_credential_resolver() {
+        let config = extract_model_config(&json!({
+            "modelConfig": {
+                "env": {
+                    "api_key": "${DEPLOYMENT_USER_API_KEY}",
+                    "model": "claude"
+                }
+            }
+        }))
+        .expect("config");
+        assert_eq!(config["api_key"], json!("${DEPLOYMENT_USER_API_KEY}"));
     }
 
     #[test]

@@ -194,6 +194,7 @@ export type WorkbenchMessageAction<
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
       startedAt?: number
+      completedAt?: number
       durationMs?: number
     }
   | {

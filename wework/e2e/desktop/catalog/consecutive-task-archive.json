@@ -1,0 +1,12 @@
+{
+  "order": 83030,
+  "scenario": "./scenarios/consecutive-task-archive.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 122030,
+      "shard": 8,
+      "position": 11250
+    }
+  }
+}

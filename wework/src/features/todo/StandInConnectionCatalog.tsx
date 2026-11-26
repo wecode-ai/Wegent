@@ -1,5 +1,13 @@
-import type { StandInRole } from '@/api/personalStandIn'
+import {
+  STAND_IN_DINGTALK_PROVIDER,
+  type StandInDingTalkDelegation,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor } from '@/api/standIn'
+import {
+  isDingTalkDelegationSource,
+  matchesDingTalkAccount,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { CollaborationProject } from '@wegent/collaboration'
@@ -21,8 +29,6 @@ import { EMAIL_PROVIDER } from './StandInEmailConnections'
 import { GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { findStandInProject } from './standInProjects'
 
-const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
-
 export function StandInConnectionCatalog({
   role,
   projects,
@@ -32,6 +38,7 @@ export function StandInConnectionCatalog({
   scheduling,
   projectScopeConfigured = true,
   onSelect,
+  dingTalkDelegation,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -41,13 +48,15 @@ export function StandInConnectionCatalog({
   scheduling: boolean
   projectScopeConfigured?: boolean
   onSelect(view: string): void
+  dingTalkDelegation?: StandInDingTalkDelegation
 }) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [configuredOnly, setConfiguredOnly] = useState(false)
   const source = role.collaboration
+  const participates = source.includeParticipatingIssues === true
   const projectConfigured =
-    projectScopeConfigured && (source.allProjects || source.projects.length > 0)
+    projectScopeConfigured && (participates || source.allProjects || source.projects.length > 0)
   const connections = role.connections ?? []
   const providerIds = [
     ...new Set([...providers.map(item => item.id), ...connections.map(row => row.providerId)]),
@@ -77,12 +86,31 @@ export function StandInConnectionCatalog({
       configured: projectConfigured,
       active: projectConfigured && source.enabled,
       quietStatus: !projectConfigured || source.enabled,
-      summary: projectConfigured ? projectSummary : t('standIn.workspace.project_connection_help'),
-      summaryLabel: source.allProjects
-        ? t('standIn.workspace.all_projects_with_exclusions', {
-            count: source.excludedProjects.length,
-          })
-        : source.projects.map(ref => findStandInProject(projects, ref)?.name ?? ref.id).join(' · '),
+      summary: projectConfigured ? (
+        <>
+          {participates && (
+            <span>
+              {t('standIn.workspace.receive_participating_issues')}
+              {(source.allProjects || source.projects.length > 0) && ' · '}
+            </span>
+          )}
+          {projectSummary}
+        </>
+      ) : (
+        t('standIn.workspace.project_connection_help')
+      ),
+      summaryLabel: [
+        participates && t('standIn.workspace.receive_participating_issues'),
+        ...(source.allProjects
+          ? [
+              t('standIn.workspace.all_projects_with_exclusions', {
+                count: source.excludedProjects.length,
+              }),
+            ]
+          : source.projects.map(ref => findStandInProject(projects, ref)?.name ?? ref.id)),
+      ]
+        .filter(Boolean)
+        .join(' · '),
       status: t(
         !projectConfigured
           ? 'standIn.workspace.connection_not_configured'
@@ -95,18 +123,28 @@ export function StandInConnectionCatalog({
       const provider = providers.find(item => item.id === id)
       const selected = connections.filter(row => row.providerId === id)
       const configured = selected.length > 0
-      const prefix = id === DINGTALK_PROVIDER ? 'dingtalk' : id
+      const isDingTalk = id === STAND_IN_DINGTALK_PROVIDER
+      const primaryDingTalk = isDingTalk && role.id === '@primary'
+      const prefix = isDingTalk ? 'dingtalk' : id
       const availability = provider?.availability.status
       const ready = availability === 'ready'
+      const activeDelegation =
+        dingTalkDelegation?.authorized === true &&
+        !dingTalkDelegation.paused &&
+        !dingTalkDelegation.accountInvalidated &&
+        matchesDingTalkAccount(provider?.availability, dingTalkDelegation) &&
+        selected.some(row => row.delegated && !row.paused)
       const status = loading
         ? t('standIn.loading')
         : availability === 'auth_required'
           ? t('standIn.workspace.connection_needs_auth')
           : ready
             ? t(
-                configured
-                  ? 'standIn.workspace.connection_configured'
-                  : 'standIn.workspace.connection_not_configured'
+                !configured
+                  ? 'standIn.workspace.connection_not_configured'
+                  : primaryDingTalk && !activeDelegation
+                    ? 'standIn.workspace.connection_receiving_paused'
+                    : 'standIn.workspace.connection_configured'
               )
             : provider?.availability.code
               ? getStandInErrorMessage({ code: provider.availability.code })
@@ -124,8 +162,8 @@ export function StandInConnectionCatalog({
               : MessageSquare,
         name: provider?.displayName ?? t('standIn.workspace.connection_unknown_source'),
         configured,
-        active: configured && ready && !loading,
-        quietStatus: ready && !loading,
+        active: configured && ready && !loading && (!primaryDingTalk || activeDelegation),
+        quietStatus: ready && !loading && (!primaryDingTalk || activeDelegation),
         summary: configured ? (
           <>
             {selected.map((row, index) => (
@@ -135,17 +173,23 @@ export function StandInConnectionCatalog({
                   data-testid={`stand-in-connection-${prefix}-${row.profile}-${row.kind}-${row.id}`}
                 >
                   {row.name}
-                  {row.configurationSummary && <> · {row.configurationSummary}</>}
+                  {primaryDingTalk ? (
+                    isDingTalkDelegationSource(row) && row.kind === 'group' ? (
+                      <> · {t('standIn.dingtalk_delegation.group_mentions')}</>
+                    ) : null
+                  ) : (
+                    row.configurationSummary && <> · {row.configurationSummary}</>
+                  )}
                 </span>
               </span>
             ))}
-            {selected.every(row => !row.configurationSummary) && (
+            {!primaryDingTalk && selected.every(row => !row.configurationSummary) && (
               <> · {t('standIn.workspace.connection_default_configuration')}</>
             )}
           </>
         ) : (
           t(
-            id === DINGTALK_PROVIDER
+            isDingTalk
               ? 'standIn.workspace.message_connection_help'
               : id === EMAIL_PROVIDER
                 ? 'standIn.workspace.connection_email_help'
@@ -180,7 +224,7 @@ export function StandInConnectionCatalog({
             data-testid="stand-in-connection-configured-filter"
             aria-pressed={configuredOnly}
             onClick={() => setConfiguredOnly(value => !value)}
-            className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted"
           >
             {configuredOnly
               ? t('standIn.workspace.connection_show_all')
@@ -189,7 +233,7 @@ export function StandInConnectionCatalog({
                 })}
           </ControlButton>
         </div>
-        <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary focus-within:ring-2 focus-within:ring-focus">
+        <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <ControlInput
             appearance="plain"
@@ -287,7 +331,7 @@ function ConnectionRow({
       data-testid={testId}
       disabled={disabled}
       onClick={onSelect}
-      className="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left hover:bg-muted/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:opacity-40"
+      className="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left hover:bg-muted/60 disabled:opacity-40"
     >
       <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-text-secondary">
         <Icon aria-hidden="true" className="size-4" />

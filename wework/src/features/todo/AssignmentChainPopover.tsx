@@ -1,8 +1,7 @@
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
-import { IssueAssignmentHistoryList } from '@wegent/collaboration'
+import { assignmentHistoryLabels, IssueAssignmentHistoryList } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AnchorPopover } from './AnchorPopover'
-import { assignmentHistoryLabels } from './assignmentHistoryLabels'
 import { memberNameById } from './todoShared'
 
 type AssignmentEntry = NonNullable<CloudLoopItem['assignment_history']>[number]

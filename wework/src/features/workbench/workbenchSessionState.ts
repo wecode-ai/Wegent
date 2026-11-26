@@ -4,6 +4,7 @@ import type {
   LocalDeviceSkill,
   ProjectExecutionMode,
   RuntimeContextUsage,
+  RuntimeTaskAddress,
   User,
   UserPreferences,
 } from '@/types/api'
@@ -63,14 +64,18 @@ export function createWorkbenchSessionState(
       )
     )
   }
-  const syncLifecycle = (previous: typeof snapshot.state | null, receivedRuntimeWork = false) => {
+  const syncLifecycle = (
+    previous: typeof snapshot.state | null,
+    receivedRuntimeWork = false,
+    updatedAddress?: RuntimeTaskAddress
+  ) => {
     const state = snapshot.state
     if (!previous || previous.devices !== state.devices) {
       syncRuntimeConversationDeviceAliases(state.devices)
       lifecycleStore.syncDevices(state.devices)
     }
     if (receivedRuntimeWork || !previous || previous.runtimeWork !== state.runtimeWork)
-      lifecycleStore.syncRuntimeWork(state.runtimeWork)
+      lifecycleStore.syncRuntimeWork(state.runtimeWork, updatedAddress)
     if (!previous || previous.currentRuntimeTask !== state.currentRuntimeTask)
       lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }
@@ -107,7 +112,11 @@ export function createWorkbenchSessionState(
         projectWorktreeBranch: preference.worktreeBranch,
       }
     }
-    syncLifecycle(previous, receivedRuntimeWork)
+    syncLifecycle(
+      previous,
+      receivedRuntimeWork,
+      action.type === 'runtime_task_snapshot_updated' ? action.address : undefined
+    )
     publish()
   }
   const resources = {

@@ -44,6 +44,22 @@ describe('mock model deferred tool discovery', () => {
     ).rejects.toThrow('missing or ambiguous')
   })
 
+  it('keeps direct calls when the Chat sandbox exposes a shell exec tool', () => {
+    const request = {
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'exec',
+            parameters: { type: 'object', properties: { command: { type: 'string' } } },
+          },
+        },
+      ],
+    }
+
+    expect(codeModeToolCall(request, 'load_skill', { skill_name: 'connector' })).toBeNull()
+  })
+
   it('searches missing tools before issuing a scenario call', () => {
     expect(deferredToolSearchCall({ tools: [search] }, ['wework_space__get_board_item'])).toEqual({
       toolName: 'search_deferred_tools',

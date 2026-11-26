@@ -28,8 +28,8 @@ export function createElectronEmbeddedBrowserViewPort() {
   let cursorHost: HTMLDivElement | null = null
   let measurementFrame: number | null = null
   // Metadata refs may rebind in one commit; ownership lasts until the native host is released.
-  const ownsHost = () =>
-    placeholder?.isConnected === true && host?.owner === owner && !host.destroyed
+  // A cached task detaches its layout placeholder while its native view stays mounted.
+  const ownsHost = () => host?.owner === owner && !host.destroyed && host.container.isConnected
   function publish() {
     const next = ownsHost() && host ? host.cursorHost : null
     if (cursorHost === next) return

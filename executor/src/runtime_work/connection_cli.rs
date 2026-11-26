@@ -293,28 +293,26 @@ mod tests {
     }
     #[test]
     fn connection_cli_resolves_only_the_exact_installed_cache_version_or_declared_local_source() {
+        let root = tempfile::tempdir().unwrap();
+        let managed = root.path().join("managed");
+        let local_path = root.path().join("plugins/mail");
         let plugin = json!({"name":"mail","localVersion":"1.2.0"});
         let source = json!({"marketplaceId":"company","pluginId":"mail@company"});
         assert_eq!(
-            dependency_root(&plugin, &source, Path::new("/managed")).unwrap(),
-            Path::new("/managed/plugins/cache/company/mail/1.2.0")
+            dependency_root(&plugin, &source, &managed).unwrap(),
+            managed.join("plugins/cache/company/mail/1.2.0")
         );
         for (key, value) in [("name", "../mail"), ("localVersion", "../other")] {
             let mut invalid = plugin.clone();
             invalid[key] = json!(value);
-            assert!(dependency_root(&invalid, &source, Path::new("/managed")).is_err());
+            assert!(dependency_root(&invalid, &source, &managed).is_err());
         }
-        assert!(dependency_root(
-            &plugin,
-            &json!({"marketplaceId":"../other"}),
-            Path::new("/managed")
-        )
-        .is_err());
-        let local = json!({"name":"mail","source":{"type":"local","path":"/plugins/mail"}});
+        assert!(dependency_root(&plugin, &json!({"marketplaceId":"../other"}), &managed).is_err());
+        let local = json!({"name":"mail","source":{"type":"local","path":local_path}});
         assert_eq!(
-            dependency_root(&local, &source, Path::new("/managed")).unwrap(),
-            Path::new("/plugins/mail")
+            dependency_root(&local, &source, &managed).unwrap(),
+            local_path
         );
-        assert!(dependency_root(&json!({"name":"mail"}), &source, Path::new("/managed")).is_err());
+        assert!(dependency_root(&json!({"name":"mail"}), &source, &managed).is_err());
     }
 }

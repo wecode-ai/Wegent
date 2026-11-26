@@ -24,7 +24,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 interface ComposerToolbarProps extends Pick<
   ComponentProps<typeof SharedComposerToolbar>,
-  'isStreaming' | 'showPauseButton' | 'onPause'
+  'isStreaming' | 'showPauseButton' | 'onPause' | 'permissionControls'
 > {
   composerScopeKey?: string
   captureInsertion?(): { insertText(text: string): boolean } | null
@@ -93,7 +93,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
     showPluginPicker = true,
     pluginPickerIconOnly = false,
     onListLocalApps,
-    projectPhrases = [],
+    projectPhrases,
     onQuickPhraseSelect,
     workspaceTarget,
   } = props

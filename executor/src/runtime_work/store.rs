@@ -24,6 +24,7 @@ const INDEX_VERSION: u64 = 1;
 const DELETED_ARCHIVED_TASK_ID_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
+    "answeredAsyncQuestions",
     "mcpAppContexts",
     "cloudProjectId",
     "cloud_project_id",
@@ -39,6 +40,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "modelSelection",
     "model_selection",
     "origin",
+    super::stand_in_task_permissions::TASK_PERMISSIONS,
     "standInOwnerRequest",
     "standInResult",
     "standInResultReceipt",
@@ -166,6 +168,8 @@ struct PersistedRuntimeTask {
     archived: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_execution: Option<PersistedLocalExecution>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gateway_binding: Option<crate::agents::model_gateway::GatewayBinding>,
     continuable: bool,
     goal_status: Option<String>,
     goal_execution_status: Option<String>,
@@ -194,6 +198,7 @@ struct PersistedRuntimeTaskInput {
     runtime: String,
     archived: bool,
     local_execution: Option<PersistedLocalExecution>,
+    gateway_binding: Option<crate::agents::model_gateway::GatewayBinding>,
     status: Option<String>,
     continuable: bool,
     goal_status: Option<String>,
@@ -217,6 +222,7 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
         Self {
             snapshot_revision: input.snapshot_revision,
             local_execution: input.local_execution,
+            gateway_binding: input.gateway_binding,
             local_task_id: input.local_task_id,
             thread_id: input.thread_id,
             workspace_path: input.workspace_path,
@@ -251,6 +257,7 @@ impl PersistedRuntimeTask {
         Self {
             snapshot_revision: link.snapshot_revision.clone(),
             local_execution: PersistedLocalExecution::from_runtime(link),
+            gateway_binding: link.gateway_binding.clone(),
             local_task_id: link.local_task_id.clone(),
             thread_id: link.thread_id.clone(),
             workspace_path: link.workspace_path.clone(),
@@ -309,6 +316,7 @@ impl PersistedRuntimeTask {
             completed_at: None,
             runtime_handle: persisted_runtime_handle(&self.runtime_handle, &self.runtime),
             execution_state: None,
+            gateway_binding: self.gateway_binding,
             parent: self.parent,
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key,
@@ -330,6 +338,7 @@ impl PersistedRuntimeTask {
     }
 
     fn apply_to(self, task: &mut RuntimeTaskLink) {
+        task.gateway_binding = self.gateway_binding;
         task.thread_id = self.thread_id;
         task.workspace_path = self.workspace_path;
         task.title = self.title;

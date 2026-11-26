@@ -1,11 +1,16 @@
 import {
+  ArrowRightLeft,
+  ArrowUp,
   AtSign,
   Check,
   ChevronDown,
+  CircleCheck,
   GitBranch,
+  ListTodo,
   Paperclip,
   Plus,
   SlidersHorizontal,
+  UserRound,
   X,
 } from 'lucide-react'
 import {
@@ -18,6 +23,7 @@ import {
   type Ref,
 } from 'react'
 import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
+import { composerSendMenuClassName } from '../composer/ComposerSendButton'
 import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
 import type { ComposerInputHandle } from '../composer/composerInputTypes'
 import { ActionMenu } from '../controls/ActionMenu'
@@ -131,15 +137,16 @@ export function IssueMainCommentComposer({
   const canSend =
     !blocked &&
     !uploading &&
-    (transfer.mode === 'child' && transfer.pendingToggle === null
-      ? Boolean(value.trim() || transfer.pendingChild)
-      : Boolean(
-          value.trim() || transfer.target || transfer.moveTarget || transfer.pendingToggle !== null
-        ))
-  const sendLabel =
-    transfer.mode === 'child' && transfer.pendingToggle === null
+    (transfer.closeWithComment
+      ? Boolean(value.trim() || transfer.commentCommitted)
+      : transfer.mode === 'child'
+        ? Boolean(value.trim() || transfer.pendingChild)
+        : Boolean(value.trim() || transfer.target || transfer.moveTarget))
+  const sendLabel = transfer.closeWithComment
+    ? translate('todo.comment_and_close_issue')
+    : transfer.mode === 'child'
       ? translate('todo.send_and_create_child')
-      : issueActions && (transfer.target || transfer.moveTarget || transfer.pendingToggle !== null)
+      : issueActions && (transfer.target || transfer.moveTarget)
         ? translate(
             value.trim() && !transfer.commentCommitted
               ? 'todo.send_and_update_issue'
@@ -154,8 +161,12 @@ export function IssueMainCommentComposer({
     if (canSend) void transfer.submit(draft)
   }
 
+  const modeLabel = translate(
+    transfer.mode === 'child' ? 'todo.create_child_issue' : 'todo.assign_current_issue'
+  )
+  const ModeIcon = transfer.mode === 'child' ? GitBranch : ListTodo
   const modeControl = assignment?.createChild ? (
-    <span className="inline-flex min-w-0" title={translate('todo.comment_assignment_mode')}>
+    <span className="inline-flex min-w-0" title={modeLabel}>
       <SelectRoot
         value={normalizeSelectValue(transfer.mode)}
         onValueChange={selectedValue => {
@@ -165,22 +176,20 @@ export function IssueMainCommentComposer({
       >
         <SelectTrigger
           data-testid={`${testIds.form}-assignment-mode`}
-          aria-label={translate('todo.comment_assignment_mode')}
+          aria-label={`${translate('todo.comment_assignment_mode')}: ${modeLabel}`}
+          data-assignment-mode={transfer.mode}
           appearance="composer"
-          className="max-w-full"
+          className="task-detail-comment-mode max-w-full"
         >
-          {issueActions && <GitBranch className="h-4 w-4 shrink-0" aria-hidden="true" />}
-          <span className="min-w-0 truncate">
-            {translate(
-              transfer.mode === 'child' ? 'todo.create_child_issue' : 'todo.assign_current_issue'
-            )}
-          </span>
+          <ModeIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="current" disabled={assignment.canAssignCurrent === false}>
             {translate('todo.assign_current_issue')}
           </SelectItem>
-          <SelectItem value="child">{translate('todo.create_child_issue')}</SelectItem>
+          <SelectItem value="child" data-testid={`${testIds.form}-create-child`}>
+            {translate('todo.create_child_issue')}
+          </SelectItem>
         </SelectContent>
       </SelectRoot>
     </span>
@@ -193,8 +202,10 @@ export function IssueMainCommentComposer({
           {issueActions ? (
             <IssueCommentActionPicker
               testId={`${testIds.form}-assignee`}
+              icon={assignment.createChild ? UserRound : GitBranch}
               label={translate('todo.comment_assign_action')}
               placeholder={translate('todo.comment_assign_placeholder')}
+              currentLabel={transfer.mode === 'current' ? assignment.currentAssignee : undefined}
               value={transfer.target}
               options={[{ value: '', label: translate('todo.keep_assignee') }, ...transfer.options]}
               onChange={transfer.setTarget}
@@ -245,6 +256,7 @@ export function IssueMainCommentComposer({
       {issueActions && transfer.mode === 'current' && issueActions.moves.length > 0 ? (
         <IssueCommentActionPicker
           testId={`${testIds.form}-move`}
+          icon={ArrowRightLeft}
           label={translate('todo.comment_move_to')}
           placeholder={translate('todo.comment_move_placeholder')}
           value={transfer.moveTarget}
@@ -268,7 +280,8 @@ export function IssueMainCommentComposer({
       canSend={canSend}
       onSubmit={() => submit(value)}
       sendLabel={sendLabel}
-      showSendLabel={Boolean(assignment || issueActions)}
+      sendIcon={transfer.closeWithComment ? CircleCheck : ArrowUp}
+      sendModeSelected={transfer.closeWithComment}
       workflow={Boolean(issueActions)}
       pendingActions={
         issueActions ? (
@@ -276,33 +289,30 @@ export function IssueMainCommentComposer({
         ) : undefined
       }
       sendActions={
-        issueActions?.canToggle ? (
+        issueActions?.canToggle && !issueActions.closed ? (
           <ActionMenu
             density="dense"
             testId={`${testIds.form}-send-actions`}
             ariaLabel={translate('todo.comment_send_actions')}
             icon={ChevronDown}
-            triggerClassName="task-detail-comment-submit-menu"
+            triggerClassName={composerSendMenuClassName}
             placement="bottom-end"
             showTriggerTooltip={false}
             disabled={blocked || uploading || Boolean(transfer.pendingChild)}
             items={[
               {
                 testId: `${testIds.form}-send-option`,
-                label: sendLabel,
-                disabled: !canSend,
-                onSelect: () => submit(value),
+                label: translate('todo.comment_send_mode'),
+                icon: ArrowUp,
+                checked: !transfer.closeWithComment,
+                onSelect: () => transfer.selectCloseWithComment(false),
               },
               {
                 testId: `${testIds.form}-close`,
-                label: translate(
-                  issueActions.closed
-                    ? 'todo.reopen_issue_action'
-                    : value.trim()
-                      ? 'todo.comment_and_close_issue'
-                      : 'todo.close_issue_action'
-                ),
-                onSelect: () => transfer.submit(value, !issueActions.closed),
+                label: translate('todo.comment_and_close_issue'),
+                icon: CircleCheck,
+                checked: transfer.closeWithComment,
+                onSelect: () => transfer.selectCloseWithComment(true),
               },
             ]}
           />
@@ -363,17 +373,19 @@ export function IssueMainCommentComposer({
               event.target.value = ''
             }}
           />
-          <ControlButton
-            variant="unstyled"
-            type="button"
-            data-testid={testIds.attach}
-            aria-label={labels.attach}
-            title={labels.attach}
-            disabled={!onSelectFiles || blocked}
-            onClick={() => fileInput.current?.click()}
-          >
-            {issueActions ? <Plus className="h-4 w-4" /> : <Paperclip className="h-4 w-4" />}
-          </ControlButton>
+          {onSelectFiles ? (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid={testIds.attach}
+              aria-label={labels.attach}
+              title={labels.attach}
+              disabled={blocked}
+              onClick={() => fileInput.current?.click()}
+            >
+              {issueActions ? <Plus className="h-4 w-4" /> : <Paperclip className="h-4 w-4" />}
+            </ControlButton>
+          ) : null}
           {issueActions ? (
             <ControlButton
               variant="unstyled"
