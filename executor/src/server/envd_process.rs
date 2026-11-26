@@ -14,14 +14,18 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 #[cfg(unix)]
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::{process::Command, time::timeout};
+use tokio::{
+    process::Command,
+    time::{timeout_at, Instant},
+};
 
 use super::HttpError;
 use crate::{logging::log_executor_event, process_environment};
 
 pub(super) async fn start(headers: HeaderMap, body: Body) -> Result<Response, HttpError> {
+    let received_at = Instant::now();
     let deadline = match headers.get("connect-timeout-ms").map(parse_connect_timeout) {
-        Some(Some(deadline)) => Some(deadline),
+        Some(Some(timeout)) => Some(ProcessDeadline::new(received_at, timeout)),
         Some(None) => {
             return Ok(process_start_error(
                 "invalid_argument",
@@ -30,19 +34,22 @@ pub(super) async fn start(headers: HeaderMap, body: Body) -> Result<Response, Ht
         }
         None => None,
     };
-    if deadline.is_some_and(|deadline| deadline.is_zero()) {
-        return Ok(process_start_error(
-            "deadline_exceeded",
-            "Sandbox command exceeded its 0 ms deadline",
-        ));
+    let bytes = axum::body::to_bytes(body, usize::MAX);
+    let bytes = if let Some(deadline) = deadline {
+        if deadline.expired() {
+            return Ok(deadline_exceeded(deadline.timeout));
+        }
+        match timeout_at(deadline.at, bytes).await {
+            Ok(bytes) if !deadline.expired() => bytes,
+            _ => return Ok(deadline_exceeded(deadline.timeout)),
+        }
+    } else {
+        bytes.await
     }
-
-    let bytes = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("failed to read process start request: {error}"),
-        })?;
+    .map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("failed to read process start request: {error}"),
+    })?;
     let request: ProcessStartRequest = serde_json::from_slice(&connect_request_payload(&bytes)?)
         .map_err(|error| HttpError {
             status: StatusCode::BAD_REQUEST,
@@ -50,14 +57,27 @@ pub(super) async fn start(headers: HeaderMap, body: Body) -> Result<Response, Ht
         })?;
     Ok(match run_envd_process(&request, deadline).await {
         Ok(output) => process_start_response(process_start_stream_body(&output)),
-        Err(deadline) => process_start_error(
-            "deadline_exceeded",
-            &format!(
-                "Sandbox command exceeded its {} ms deadline",
-                deadline.as_millis()
-            ),
-        ),
+        Err(timeout) => deadline_exceeded(timeout),
     })
+}
+
+#[derive(Clone, Copy)]
+struct ProcessDeadline {
+    at: Instant,
+    timeout: Duration,
+}
+
+impl ProcessDeadline {
+    fn new(received_at: Instant, timeout: Duration) -> Self {
+        Self {
+            at: received_at + timeout,
+            timeout,
+        }
+    }
+
+    fn expired(&self) -> bool {
+        Instant::now() >= self.at
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,7 +107,7 @@ struct ProcessOutput {
 
 async fn run_envd_process(
     request: &ProcessStartRequest,
-    deadline: Option<Duration>,
+    deadline: Option<ProcessDeadline>,
 ) -> Result<ProcessOutput, Duration> {
     let requested_environment = request
         .process
@@ -127,6 +147,9 @@ async fn run_envd_process(
             ("cwd", request.process.cwd.clone().unwrap_or_default()),
         ],
     );
+    if let Some(deadline) = deadline.filter(ProcessDeadline::expired) {
+        return Err(deadline.timeout);
+    }
     let child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -172,7 +195,7 @@ async fn run_envd_process(
 
 async fn wait_for_envd_process(
     child: tokio::process::Child,
-    deadline: Option<Duration>,
+    deadline: Option<ProcessDeadline>,
 ) -> Result<std::io::Result<std::process::Output>, Duration> {
     let Some(deadline) = deadline else {
         return Ok(child.wait_with_output().await);
@@ -186,7 +209,7 @@ async fn wait_for_envd_process(
     let output = collect_output_before_reaping(&mut child);
     #[cfg(not(unix))]
     let output = child.wait_with_output();
-    if let Ok(result) = timeout(deadline, output).await {
+    if let Ok(result) = timeout_at(deadline.at, output).await {
         #[cfg(unix)]
         if result.is_ok() {
             process_group.0 = None;
@@ -200,11 +223,11 @@ async fn wait_for_envd_process(
             "envd process deadline exceeded",
             &[
                 ("pid", pid.to_string()),
-                ("timeout_ms", deadline.as_millis().to_string()),
+                ("timeout_ms", deadline.timeout.as_millis().to_string()),
             ],
         );
     }
-    Err(deadline)
+    Err(deadline.timeout)
 }
 
 #[cfg(unix)]
@@ -312,6 +335,16 @@ fn process_start_stream_body(output: &ProcessOutput) -> Vec<u8> {
     stream
 }
 
+fn deadline_exceeded(timeout: Duration) -> Response {
+    process_start_error(
+        "deadline_exceeded",
+        &format!(
+            "Sandbox command exceeded its {} ms deadline",
+            timeout.as_millis()
+        ),
+    )
+}
+
 fn process_start_error(code: &str, message: &str) -> Response {
     let mut stream = Vec::new();
     let payload = json!({"error": {"code": code, "message": message}});
@@ -355,6 +388,11 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::{future::Future, task::Poll};
     use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::time::timeout;
+
+    fn deadline_after(timeout: Duration) -> Option<ProcessDeadline> {
+        Some(ProcessDeadline::new(Instant::now(), timeout))
+    }
 
     fn spawn_process_with_descendant() -> (
         tokio::process::Child,
@@ -377,7 +415,7 @@ mod tests {
         let step_timeout = Duration::from_secs(5);
 
         {
-            let wait = wait_for_envd_process(child, Some(Duration::from_secs(60)));
+            let wait = wait_for_envd_process(child, deadline_after(Duration::from_secs(60)));
             tokio::pin!(wait);
             let ready = timeout(step_timeout, async {
                 tokio::select! {
@@ -412,7 +450,7 @@ mod tests {
 
         let deadline = Duration::from_millis(100);
         assert!(matches!(
-            wait_for_envd_process(child, Some(deadline)).await,
+            wait_for_envd_process(child, deadline_after(deadline)).await,
             Err(elapsed) if elapsed == deadline
         ));
         // The descendant inherited stdout and keeps it open until it exits.
@@ -445,7 +483,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        let wait = wait_for_envd_process(child, Some(Duration::from_secs(60)));
+        let wait = wait_for_envd_process(child, deadline_after(Duration::from_secs(60)));
         tokio::pin!(wait);
         std::future::poll_fn(|cx| {
             assert!(wait.as_mut().poll(cx).is_pending());

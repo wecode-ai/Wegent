@@ -1097,6 +1097,44 @@ async fn envd_process_start_returns_a_connect_error_on_deadline() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn envd_process_start_expires_while_receiving_the_request_body() {
+    use std::{convert::Infallible, time::Duration};
+    use tokio::time::{sleep, timeout, Instant};
+
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let body_delay = Duration::from_secs(1);
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        sleep(body_delay).await;
+        let payload = br#"{"process":{"cmd":"/bin/true"}}"#;
+        Ok::<_, Infallible>(axum::body::Bytes::from(connect_envelope(0, payload)))
+    }));
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/process.Process/Start")
+        .header(header::CONTENT_TYPE, "application/connect+json")
+        .header("connect-timeout-ms", "100")
+        .body(body)
+        .unwrap();
+
+    let started = Instant::now();
+    let response = timeout(Duration::from_secs(2), app.oneshot(request))
+        .await
+        .expect("envd must answer during the request body read")
+        .unwrap();
+    assert!(started.elapsed() < body_delay);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let error = json!({"error": {
+        "code": "deadline_exceeded",
+        "message": "Sandbox command exceeded its 100 ms deadline"
+    }});
+    assert_eq!(
+        body.as_ref(),
+        connect_envelope(2, error.to_string().as_bytes())
+    );
+}
+
 #[tokio::test]
 async fn envd_archive_routes_upload_and_restore_executor_runtime_snapshot() {
     let _lock = env_lock().lock().await;
