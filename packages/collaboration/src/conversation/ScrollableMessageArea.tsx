@@ -26,7 +26,6 @@ function ScrollableMessagePaneContent({
   useContentVisibility,
   onVirtualMeasurement,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   messages,
   renderGapAfterMessage,
@@ -45,6 +44,7 @@ function ScrollableMessagePaneContent({
   scrollerClassName,
   contentClassName,
   messageListClassName,
+  layoutRevision,
   contentFooter,
   contentFooterClassName,
   stickyFooter,
@@ -287,7 +287,6 @@ function ScrollableMessagePaneContent({
                 useContentVisibility={useContentVisibility}
                 onVirtualMeasurement={onVirtualMeasurement}
                 renderVisualization={renderVisualization}
-                assistantMessageStyle={assistantMessageStyle}
                 showProcessingStatus={showProcessingStatus}
                 key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}
@@ -297,6 +296,7 @@ function ScrollableMessagePaneContent({
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={initialDistanceFromBottomPx}
                 className={messageListClassName}
+                layoutRevision={layoutRevision}
                 conversationKey={conversationKey}
                 forceVirtualMessageId={
                   searchTarget?.messageId ??

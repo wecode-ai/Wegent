@@ -14,7 +14,7 @@ export interface MarkdownWindowingScope {
   scrollElementRef?: RefObject<HTMLElement | null>
   getHeight(content: string, width: number): number | undefined
   setHeight(content: string, width: number, height: number): void
-  onChunkLayout(element: HTMLElement): void
+  onChunkLayout(element: HTMLElement, materialized?: boolean): void
   captureNativeScrollRange(): void
   registerViewportCheck(check: (viewport: DOMRect) => (() => void) | undefined): () => void
   getViewportRenders(): Array<() => void>
@@ -22,7 +22,7 @@ export interface MarkdownWindowingScope {
 
 export function createMarkdownWindowingScope(
   scrollElementRef: RefObject<HTMLElement | null> | undefined,
-  onChunkLayout: (element: HTMLElement) => void,
+  onChunkLayout: (element: HTMLElement, materialized?: boolean) => void,
   rootFontSize = 16,
   onNativeScrollRange?: () => void
 ): MarkdownWindowingScope {

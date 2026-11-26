@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
 import { createSetupRenderingEvidence } from '../modules/setup-rendering-evidence.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { verifyBrowserChromeFocus } from './browser-chrome-focus.mjs'
 import {
   handleBrowserHistoryModelRequest,
@@ -794,9 +795,25 @@ export function createDesktopScenario({
           `workspace-browser-${taskId.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
           'The fresh local task did not expose its task-scoped embedded browser label'
         )
+        // The setup includes a real browser tool call and a model continuation.
+        // Wait for the same task's completed turn before timing its DOM rendering.
+        await waitForWorkbenchDebugState(
+          control,
+          ({ pane }) =>
+            pane?.currentRuntimeTask?.taskId === taskId &&
+            pane.status?.isBusy === false &&
+            pane.status.taskExecution?.status === 'done' &&
+            pane.messageSummary?.lastMessage?.role === 'assistant' &&
+            pane.messageSummary.lastMessage.status === 'done' &&
+            pane.messageSummary.lastMessage.displayItems?.some(
+              item => item.type === 'assistant_text'
+            ),
+          'The embedded-browser setup model turn did not complete',
+          modelResponseTimeoutMs
+        )
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
-          timeoutMs: uiTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
         setupCompleted = true
       } finally {

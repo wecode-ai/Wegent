@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,11 @@ from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 CONNECTOR_CONNECTION_KIND = "ConnectorConnection"
 CONNECTOR_CONNECTION_NAMESPACE = "system"
+OAUTH_DISCONNECT_ID_KEY = "oauthDisconnectId"
+
+
+class ConnectorAuthorizationSuperseded(Exception):
+    """An OAuth session started before the user disconnected the connector."""
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -67,6 +73,11 @@ class ConnectorConnection:
     last_error: str | None
     row: Kind
 
+    @property
+    def oauth_disconnect_id(self) -> str:
+        spec = (self.row.json or {}).get("spec") or {}
+        return str(spec.get(OAUTH_DISCONNECT_ID_KEY) or "")
+
     def access_token(self) -> str:
         """Return the decrypted token, or ``""`` when it cannot be decrypted.
 
@@ -105,18 +116,17 @@ class ConnectorConnectionService:
         *,
         slug: str,
         user_id: int,
+        include_inactive: bool = False,
     ) -> ConnectorConnection | None:
-        row = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == CONNECTOR_CONNECTION_KIND,
-                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
-                Kind.name == slug,
-                Kind.user_id == user_id,
-                Kind.is_active,
-            )
-            .first()
+        query = db.query(Kind).filter(
+            Kind.kind == CONNECTOR_CONNECTION_KIND,
+            Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+            Kind.name == slug,
+            Kind.user_id == user_id,
         )
+        if not include_inactive:
+            query = query.filter(Kind.is_active)
+        row = query.first()
         return ConnectorConnectionService._row_to_connection(row) if row else None
 
     @staticmethod
@@ -150,6 +160,7 @@ class ConnectorConnectionService:
         expires_at: datetime | None,
         expected_refresh_token_encrypted: str | None = None,
         expected_access_token_encrypted: str | None = None,
+        expected_oauth_disconnect_id: str | None = None,
     ) -> ConnectorConnection | None:
         """Persist a grant for ``slug``.
 
@@ -166,7 +177,21 @@ class ConnectorConnectionService:
         the write is also accepted while the connection is expired without a
         refresh token and still carries the access token the caller started
         from. ``expected_access_token_encrypted`` supplies that check.
+
+        An external OAuth session supplies its disconnect marker. Under the
+        write lock, reject it after a disconnect and preserve any usable grant.
         """
+        row = ConnectorConnectionService._lock_row(db, slug=slug, user_id=user_id)
+        current = dict((row.json or {}).get("spec") or {}) if row is not None else {}
+        disconnect_id = str(current.get(OAUTH_DISCONNECT_ID_KEY) or "")
+        if expected_oauth_disconnect_id is not None:
+            if disconnect_id != expected_oauth_disconnect_id:
+                raise ConnectorAuthorizationSuperseded()
+            if row is not None and row.is_active:
+                connection = ConnectorConnectionService._row_to_connection(row)
+                if ConnectorConnectionService.is_usable(connection):
+                    db.commit()
+                    return None
         spec = {
             "connectorAppSlug": slug,
             "status": "connected",
@@ -179,7 +204,8 @@ class ConnectorConnectionService:
             ),
             "tokenType": token_type or "bearer",
         }
-        row = ConnectorConnectionService._lock_row(db, slug=slug, user_id=user_id)
+        if disconnect_id:
+            spec[OAUTH_DISCONNECT_ID_KEY] = disconnect_id
         if row is None:
             if expected_refresh_token_encrypted is not None:
                 db.commit()
@@ -204,7 +230,6 @@ class ConnectorConnectionService:
             db.commit()
             db.refresh(row)
             return ConnectorConnectionService._row_to_connection(row)
-        current = dict((row.json or {}).get("spec") or {})
         if expected_refresh_token_encrypted is not None:
             if not row.is_active:
                 # Disconnecting during the refresh stays disconnected.
@@ -438,6 +463,7 @@ class ConnectorConnectionService:
         spec.update(
             {
                 "status": "disconnected",
+                OAUTH_DISCONNECT_ID_KEY: uuid4().hex,
                 "accessTokenEncrypted": None,
                 "refreshTokenEncrypted": None,
                 "toolSummaries": [],

@@ -1,4 +1,5 @@
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
+import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
 import { standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -76,14 +77,18 @@ export function StandInWorkList({
   const needsStart =
     !needsRestore &&
     selectedWork &&
+    !selectedWork.source.delegated &&
     selectedState?.status !== 'waiting' &&
     ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
     if (item.task.status === 'archived') return t('workbench.settings_category_archived')
     const work = inbox.find(value => value.taskId === item.task.taskId)
-    return work && work.status !== 'sent'
-      ? t(`standIn.workspace.inbox_${work.status}`)
-      : t(`standIn.personal.activity_${standInState(item).status}`)
+    return t(
+      delegationResultLabel(work?.delegationResult) ??
+        (work && work.status !== 'sent'
+          ? `standIn.workspace.inbox_${work.status}`
+          : `standIn.personal.activity_${standInState(item).status}`)
+    )
   }
   const filterStatus = (item: RuntimeTaskReminderItem) => {
     const work = inbox.find(value => value.taskId === item.task.taskId)
@@ -364,6 +369,14 @@ export function StandInWorkList({
               t('standIn.workspace.preview_no_summary')}
           </p>
           <p className="mt-4 text-sm text-text-secondary">{statusLabel(selected)}</p>
+          {selectedWork?.delegationResult?.reason && (
+            <p
+              className="mt-2 whitespace-pre-wrap break-words text-sm"
+              data-testid="stand-in-delegation-result-reason"
+            >
+              {selectedWork.delegationResult.reason}
+            </p>
+          )}
           {selectedWork && selectedWork.messageCount > 0 && api && (
             <div className="mt-4 flex flex-wrap gap-2">
               {inbox.some(
@@ -462,86 +475,88 @@ export function StandInWorkList({
               {error}
             </p>
           )}
-          <div className="mt-auto pt-6">
-            <p className="mb-3 text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
-            <ControlButton
-              variant="primary"
-              size="sm"
-              type="button"
-              data-testid="stand-in-preview-open"
-              disabled={
-                busy ||
-                (needsRestore
-                  ? !onRestoreTask
-                  : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
-                (!!needsStart && !api)
-              }
-              onClick={async () => {
-                try {
-                  setBusy(true)
-                  setError(null)
-                  if (needsRestore) {
-                    await onRestoreTask?.(selected.address)
-                    onRefresh?.()
-                    return
-                  }
-                  const address =
-                    needsStart && api && userId !== undefined && deviceId
-                      ? await api.runWork(userId, deviceId, selectedWork.id)
-                      : selected.address
-                  onRefresh?.()
-                  await onOpenTask?.(address)
-                } catch (cause) {
-                  setError(getStandInErrorMessage(cause))
-                } finally {
-                  setBusy(false)
+          {(!selectedWork?.source.delegated || selectedWork.task) && (
+            <div className="mt-auto pt-6">
+              <p className="mb-3 text-xs text-text-muted">{t('standIn.workspace.preview_help')}</p>
+              <ControlButton
+                variant="primary"
+                size="sm"
+                type="button"
+                data-testid="stand-in-preview-open"
+                disabled={
+                  busy ||
+                  (needsRestore
+                    ? !onRestoreTask
+                    : !needsStart && (!onOpenTask || (!!selectedWork && !selectedWork.task))) ||
+                  (!!needsStart && !api)
                 }
-              }}
-              className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
-            >
-              {t(
-                needsRestore
-                  ? 'workbench.archived_unarchive'
-                  : needsStart
-                    ? 'standIn.workspace.start_work'
-                    : 'standIn.workspace.open_work'
-              )}
-              <ArrowUpRight className="h-4 w-4" />
-            </ControlButton>
-            {selectedWork?.task &&
-              ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
-              selectedState.status !== 'running' &&
-              selectedState.status !== 'waiting' &&
-              selectedState.status !== 'completed' &&
-              api &&
-              userId !== undefined &&
-              deviceId && (
-                <ControlButton
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  data-testid="stand-in-preview-confirm-once"
-                  disabled={busy}
-                  className="mt-2 min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
-                  onClick={async () => {
-                    try {
-                      setBusy(true)
-                      const address = await api.runWork(userId, deviceId, selectedWork.id, {
-                        confirmThisRun: true,
-                      })
+                onClick={async () => {
+                  try {
+                    setBusy(true)
+                    setError(null)
+                    if (needsRestore) {
+                      await onRestoreTask?.(selected.address)
                       onRefresh?.()
-                      await onOpenTask?.(address)
-                    } catch (cause) {
-                      setError(getStandInErrorMessage(cause))
-                    } finally {
-                      setBusy(false)
+                      return
                     }
-                  }}
-                >
-                  {t('standIn.authorization.confirm_once')}
-                </ControlButton>
-              )}
-          </div>
+                    const address =
+                      needsStart && api && userId !== undefined && deviceId
+                        ? await api.runWork(userId, deviceId, selectedWork.id)
+                        : selected.address
+                    onRefresh?.()
+                    await onOpenTask?.(address)
+                  } catch (cause) {
+                    setError(getStandInErrorMessage(cause))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+                className="inline-flex min-h-11 md:min-h-9 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
+              >
+                {t(
+                  needsRestore
+                    ? 'workbench.archived_unarchive'
+                    : needsStart
+                      ? 'standIn.workspace.start_work'
+                      : 'standIn.workspace.open_work'
+                )}
+                <ArrowUpRight className="h-4 w-4" />
+              </ControlButton>
+              {selectedWork?.task &&
+                ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status) &&
+                selectedState.status !== 'running' &&
+                selectedState.status !== 'waiting' &&
+                selectedState.status !== 'completed' &&
+                api &&
+                userId !== undefined &&
+                deviceId && (
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    data-testid="stand-in-preview-confirm-once"
+                    disabled={busy}
+                    className="mt-2 min-h-11 w-full rounded-lg border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-9"
+                    onClick={async () => {
+                      try {
+                        setBusy(true)
+                        const address = await api.runWork(userId, deviceId, selectedWork.id, {
+                          confirmThisRun: true,
+                        })
+                        onRefresh?.()
+                        await onOpenTask?.(address)
+                      } catch (cause) {
+                        setError(getStandInErrorMessage(cause))
+                      } finally {
+                        setBusy(false)
+                      }
+                    }}
+                  >
+                    {t('standIn.authorization.confirm_once')}
+                  </ControlButton>
+                )}
+            </div>
+          )}
         </aside>
       )}
     </div>

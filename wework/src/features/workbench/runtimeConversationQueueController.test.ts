@@ -168,6 +168,58 @@ describe('RuntimeConversationQueueController', () => {
     vi.restoreAllMocks()
   })
 
+  test('logs a complete dispatch snapshot only when the queue state changes', async () => {
+    const store = idleStore(taskA)
+    const send = acceptingTransport(store)
+    const first = message('first')
+    cacheRuntimeConversationQueuedMessages(taskA, [first])
+    cacheRuntimeConversationQueuePaused(taskA, true)
+    attach(taskA, store, send)
+    const dispatchLogs = () =>
+      vi.mocked(console.info).mock.calls.flatMap(([prefix, value]) => {
+        if (prefix !== '[Wework] Runtime task create diagnostic' || typeof value !== 'string')
+          return []
+        const entry = JSON.parse(value)
+        return entry.stage === 'queue-dispatch-state' ? [entry] : []
+      })
+
+    await flushQueue()
+    expect(dispatchLogs()).toEqual([
+      expect.objectContaining({
+        owner: 'task-queue',
+        reason: 'paused',
+        messageId: null,
+        paused: true,
+        queueLength: 1,
+        localQueuedCount: 1,
+        runtimeQueuedCount: 0,
+        failedCount: 0,
+        sendingCount: 0,
+        pendingGuidanceCount: 0,
+        messages: [expect.objectContaining({ id: first.id, status: 'queued' })],
+      }),
+    ])
+
+    cacheRuntimeConversationQueuedMessages(taskA, [{ ...first }])
+    await flushQueue()
+    expect(dispatchLogs()).toHaveLength(1)
+
+    const second = message('second')
+    cacheRuntimeConversationQueuedMessages(taskA, [first, second])
+    await flushQueue()
+    expect(dispatchLogs()).toHaveLength(2)
+    expect(dispatchLogs().at(-1)).toMatchObject({
+      paused: true,
+      queueLength: 2,
+      localQueuedCount: 2,
+      messages: [
+        expect.objectContaining({ id: first.id }),
+        expect.objectContaining({ id: second.id }),
+      ],
+    })
+    expect(send).not.toHaveBeenCalled()
+  })
+
   test.each([
     undefined,
     { startNewSession: true, expectedThreadId: 'previous-thread' },

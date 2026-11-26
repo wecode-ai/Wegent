@@ -695,8 +695,14 @@ impl LocalTaskStore {
                 .as_str()
                 .ok_or_else(|| invalid("Missing profile device"))?
                 .to_owned();
-            settings =
-                self.save_personal_stand_in_on(&tx, user, &profile_device, settings, backend)?;
+            settings = self.save_personal_stand_in_on(
+                &tx,
+                user,
+                &profile_device,
+                settings,
+                backend,
+                false,
+            )?;
         }
         tx.execute(
             "UPDATE loop_items SET status=?1,metadata=?2,updated_at=?3 WHERE id=?4",
