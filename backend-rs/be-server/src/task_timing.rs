@@ -5,11 +5,13 @@
 //! `GET /api/tasks/:task_id/timing` — task time triage and detailed spans.
 
 use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response, StatusCode};
+use brz_mysql::FromMysqlRow;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::state::AppState;
 use crate::task_pipeline_stage_info_repo as task_repo;
+use crate::task_routing::ByTaskId;
 
 #[brz_http_server::get("/api/tasks/:task_id/timing")]
 async fn get_task_timing(
@@ -23,6 +25,7 @@ async fn get_task_timing(
     let session = SessionBoundaries::from_task_row(repo_task);
     let owner_user_id = task.user_id();
     let spans = load_spans(state, task_id).await?;
+    let turn_boundaries = load_turn_boundaries(state, task_id).await?;
     let now_at_ms = chrono::Utc::now().timestamp_millis();
     Ok(aggregate(
         task_id,
@@ -30,6 +33,7 @@ async fn get_task_timing(
         &task_status,
         session,
         spans,
+        turn_boundaries,
         now_at_ms,
     ))
 }
@@ -67,6 +71,14 @@ struct TaskTimingResponse {
     coverage: Vec<TimingCategory>,
     spans: Vec<SpanView>,
     has_spans: bool,
+}
+
+#[derive(Debug, Clone, FromMysqlRow)]
+struct TurnBoundaryRow {
+    id: i64,
+    role: String,
+    created_at: Option<chrono::NaiveDateTime>,
+    completed_at: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,12 +235,32 @@ async fn load_spans(state: &AppState, task_id: i64) -> Result<Vec<TimingSpanRow>
         .map_err(|error| dependency("read timing spans", error))
 }
 
+async fn load_turn_boundaries(
+    state: &AppState,
+    task_id: i64,
+) -> Result<Vec<TurnBoundaryRow>, ApiError> {
+    let table = state.task_store.table_templates().subtasks;
+    state
+        .mysql
+        .route(ByTaskId(task_id as u64))
+        .fetch_all(turn_boundaries_statement(table), (task_id,))
+        .await
+        .map_err(|error| dependency("read turn boundaries", error))
+}
+
+fn turn_boundaries_statement(table: &str) -> String {
+    format!(
+        "SELECT id, `role`, created_at, completed_at FROM {table} WHERE task_id = ? AND status != 'DELETE' ORDER BY message_id ASC, created_at ASC, id ASC"
+    )
+}
+
 fn aggregate(
     task_id: i64,
     owner_user_id: i64,
     task_status: &str,
     session: SessionBoundaries,
     rows: Vec<TimingSpanRow>,
+    turn_rows: Vec<TurnBoundaryRow>,
     now_at_ms: i64,
 ) -> TaskTimingResponse {
     let spans: Vec<SpanView> = rows
@@ -251,8 +283,11 @@ fn aggregate(
             metadata: row.metadata.0.clone(),
         })
         .collect();
-
     let window = session_window(&session, &rows, now_at_ms);
+    let inferred_waiting_spans = inferred_waiting_user_spans(&turn_rows, &spans, window);
+    let mut spans = spans;
+    spans.extend(inferred_waiting_spans);
+
     let wall_time_ms = window.map(|(start, end)| (end - start).max(0));
     let observed_ms = window.map(|(start, end)| {
         union_ms(&clip_intervals(
@@ -301,6 +336,100 @@ fn session_window(
         })
         .max(first);
     Some((first, last))
+}
+
+fn inferred_waiting_user_spans(
+    turn_rows: &[TurnBoundaryRow],
+    spans: &[SpanView],
+    window: Option<(i64, i64)>,
+) -> Vec<SpanView> {
+    // Infer one waiting-user interval from an assistant finish boundary and
+    // the next user action. No interval is invented after the final assistant
+    // response, so opening the timing report never extends the session.
+    let mut result = Vec::new();
+    let mut last_assistant: Option<&TurnBoundaryRow> = None;
+    let mut synthetic_id: i64 = -1;
+    for row in turn_rows {
+        match row.role.as_str() {
+            "ASSISTANT" => last_assistant = Some(row),
+            "USER" => {
+                let Some(assistant) = last_assistant else {
+                    continue;
+                };
+                let Some(start) = assistant_end_ms(assistant, spans) else {
+                    continue;
+                };
+                let Some(end) = row.created_at.and_then(local_naive_timestamp_ms) else {
+                    continue;
+                };
+                if end <= start {
+                    continue;
+                }
+                if persisted_waiting_overlaps(start, end, spans, window) {
+                    continue;
+                }
+                result.push(SpanView {
+                    id: synthetic_id,
+                    subtask_id: Some(assistant.id),
+                    parent_span_id: String::new(),
+                    span_id: format!(
+                        "task-assistant-{}-user-{}-inferred-waiting-user",
+                        assistant.id, row.id
+                    ),
+                    kind: "waiting_user".to_string(),
+                    actor_id: "user".to_string(),
+                    actor_type: "user".to_string(),
+                    actor_label: "Waiting for user".to_string(),
+                    status: "completed".to_string(),
+                    start_at_ms: Some(start),
+                    end_at_ms: Some(end),
+                    duration_ms: Some(end - start),
+                    clock: "backend".to_string(),
+                    source: "inferred-turn-boundary".to_string(),
+                    metadata: serde_json::json!({
+                        "reason": "next_user_message",
+                        "quality": "inferred",
+                        "assistantSubtaskId": assistant.id,
+                        "userSubtaskId": row.id,
+                    }),
+                });
+                synthetic_id -= 1;
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+fn assistant_end_ms(row: &TurnBoundaryRow, spans: &[SpanView]) -> Option<i64> {
+    spans
+        .iter()
+        .filter(|span| span.subtask_id == Some(row.id) && span.kind == "agent")
+        .filter_map(|span| {
+            let start = span.start_at_ms?;
+            span.end_at_ms
+                .or_else(|| span.duration_ms.map(|duration| start + duration))
+        })
+        .max()
+        .or_else(|| row.completed_at.and_then(local_naive_timestamp_ms))
+}
+
+fn persisted_waiting_overlaps(
+    start: i64,
+    end: i64,
+    spans: &[SpanView],
+    window: Option<(i64, i64)>,
+) -> bool {
+    intervals_by_kinds(spans, &["waiting_user"], window)
+        .iter()
+        .any(|(wait_start, wait_end)| *wait_start < end && start < *wait_end)
+}
+
+fn local_naive_timestamp_ms(value: chrono::NaiveDateTime) -> Option<i64> {
+    value
+        .and_local_timezone(chrono::Local)
+        .single()
+        .map(|value| value.timestamp_millis())
 }
 
 #[cfg(test)]
@@ -592,6 +721,118 @@ mod tests {
         }
     }
 
+    fn turn_row(
+        id: i64,
+        role: &str,
+        created_at: Option<i64>,
+        completed_at: Option<i64>,
+    ) -> TurnBoundaryRow {
+        let timestamp = |value: i64| {
+            chrono::DateTime::from_timestamp_millis(value)
+                .map(|value| value.with_timezone(&chrono::Local).naive_local())
+        };
+        TurnBoundaryRow {
+            id,
+            role: role.to_string(),
+            created_at: created_at.and_then(timestamp),
+            completed_at: completed_at.and_then(timestamp),
+        }
+    }
+
+    #[test]
+    fn inferred_waiting_user_spans_fill_between_turns() {
+        let mut rows = vec![span("agent", 0, 10), span("agent", 30, 40)];
+        rows[0].subtask_id = Some(2);
+        rows[1].subtask_id = Some(4);
+        let turn_rows = vec![
+            turn_row(1, "USER", Some(0), None),
+            turn_row(2, "ASSISTANT", Some(0), Some(10)),
+            turn_row(3, "USER", Some(20), None),
+            turn_row(4, "ASSISTANT", Some(20), Some(40)),
+        ];
+
+        let response = aggregate(
+            1,
+            7,
+            "COMPLETED",
+            session(Some(0), Some(40)),
+            rows,
+            turn_rows,
+            40,
+        );
+
+        let waiting = category(&response.triage, "waiting_user");
+        assert_eq!(waiting.duration_ms, 10);
+        assert_eq!(waiting.sample_count, 1);
+        assert_eq!(response.unobserved_ms, Some(10));
+    }
+
+    #[test]
+    fn turn_boundaries_statement_does_not_embed_line_continuations() {
+        let sql = turn_boundaries_statement("subtasks");
+        let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(
+            normalized,
+            "SELECT id, `role`, created_at, completed_at FROM subtasks WHERE task_id = ? AND status != 'DELETE' ORDER BY message_id ASC, created_at ASC, id ASC"
+        );
+        assert!(!sql.contains('\\'));
+    }
+
+    #[test]
+    fn inferred_waiting_user_uses_latest_agent_end() {
+        let mut first = span("agent", 0, 8);
+        first.subtask_id = Some(2);
+        let mut second = span("agent", 10, 12);
+        second.subtask_id = Some(2);
+        let turn_rows = vec![
+            turn_row(1, "USER", Some(0), None),
+            turn_row(2, "ASSISTANT", Some(0), Some(8)),
+            turn_row(3, "USER", Some(20), None),
+        ];
+
+        let response = aggregate(
+            1,
+            7,
+            "COMPLETED",
+            session(Some(0), Some(20)),
+            vec![first, second],
+            turn_rows,
+            20,
+        );
+
+        let waiting = category(&response.triage, "waiting_user");
+        assert_eq!(waiting.duration_ms, 8);
+        assert_eq!(waiting.sample_count, 1);
+        assert_eq!(response.unobserved_ms, Some(2));
+    }
+
+    #[test]
+    fn inferred_waiting_user_spans_do_not_duplicate_direct_samples() {
+        let mut agent = span("agent", 0, 10);
+        agent.subtask_id = Some(2);
+        let mut waiting = span("waiting_user", 10, 20);
+        waiting.subtask_id = Some(2);
+        let turn_rows = vec![
+            turn_row(1, "USER", Some(0), None),
+            turn_row(2, "ASSISTANT", Some(0), Some(10)),
+            turn_row(3, "USER", Some(20), None),
+        ];
+
+        let response = aggregate(
+            1,
+            7,
+            "COMPLETED",
+            session(Some(0), Some(20)),
+            vec![agent, waiting],
+            turn_rows,
+            20,
+        );
+
+        let waiting = category(&response.triage, "waiting_user");
+        assert_eq!(waiting.duration_ms, 10);
+        assert_eq!(waiting.sample_count, 1);
+        assert_eq!(response.unobserved_ms, Some(0));
+    }
     fn session(start: Option<i64>, end: Option<i64>) -> SessionBoundaries {
         SessionBoundaries {
             start_at_ms: start,
@@ -626,7 +867,7 @@ mod tests {
         let session = session(Some(0), Some(30));
         let rows = vec![span("agent", 5, 15), span("unknown", 18, 20)];
 
-        let response = aggregate(1, 7, "COMPLETED", session, rows, 30);
+        let response = aggregate(1, 7, "COMPLETED", session, rows, Vec::new(), 30);
 
         assert_eq!(response.wall_time_ms, Some(30));
         assert_eq!(response.observed_ms, Some(12));
@@ -636,7 +877,7 @@ mod tests {
     #[test]
     fn parallel_spans_do_not_double_wall_time() {
         let rows = vec![span("subagent", 0, 10), span("subagent", 0, 10)];
-        let response = aggregate(1, 7, "RUNNING", session(None, None), rows, 20);
+        let response = aggregate(1, 7, "RUNNING", session(None, None), rows, Vec::new(), 20);
         let subagent = response
             .coverage
             .iter()
@@ -648,7 +889,7 @@ mod tests {
     #[test]
     fn triage_separates_tool_and_agent() {
         let rows = vec![span("agent", 0, 20), span("tool", 5, 15)];
-        let response = aggregate(1, 7, "RUNNING", session(None, None), rows, 20);
+        let response = aggregate(1, 7, "RUNNING", session(None, None), rows, Vec::new(), 20);
         assert_eq!(response.wall_time_ms, Some(20));
         let get = |kind: &str| {
             response
@@ -670,7 +911,7 @@ mod tests {
             span("subagent", 5, 15),
             span("tool", 6, 10),
         ];
-        let response = aggregate(1, 7, "RUNNING", session(None, None), rows, 20);
+        let response = aggregate(1, 7, "RUNNING", session(None, None), rows, Vec::new(), 20);
         let get = |kind: &str| {
             response
                 .triage
@@ -688,7 +929,15 @@ mod tests {
     #[test]
     fn task_boundaries_define_session_wall_time() {
         let rows = vec![span("agent", 20, 50), span("tool", 0, 30)];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), Some(100)), rows, 1_000);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), Some(100)),
+            rows,
+            Vec::new(),
+            1_000,
+        );
         assert_eq!(response.wall_time_ms, Some(90));
         let get = |kind: &str| {
             response
@@ -711,14 +960,30 @@ mod tests {
     #[test]
     fn running_task_uses_creation_time_as_start() {
         let rows = vec![span("agent", 20, 50)];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), None), rows, 100);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), None),
+            rows,
+            Vec::new(),
+            100,
+        );
         assert_eq!(response.wall_time_ms, Some(90));
     }
 
     #[test]
     fn running_task_wall_time_grows_to_the_request_time() {
         let rows = vec![span("agent", 20, 50)];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), None), rows, 1_000);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), None),
+            rows,
+            Vec::new(),
+            1_000,
+        );
         assert_eq!(response.wall_time_ms, Some(990));
     }
 
@@ -728,7 +993,15 @@ mod tests {
         open.end_at_ms = None;
         open.duration_ms = None;
         let rows = vec![open];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), None), rows, 1_000);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), None),
+            rows,
+            Vec::new(),
+            1_000,
+        );
         let get = |kind: &str| {
             response
                 .triage
@@ -744,7 +1017,15 @@ mod tests {
     #[test]
     fn resumed_runtime_time_excludes_waiting_user_overlap() {
         let rows = vec![span("waiting_user", 10, 20), span("provision", 10, 20)];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), Some(20)), rows, 1_000);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), Some(20)),
+            rows,
+            Vec::new(),
+            1_000,
+        );
         let get = |kind: &str| {
             response
                 .triage
@@ -794,7 +1075,15 @@ mod tests {
     #[test]
     fn category_without_samples_is_not_observed() {
         let rows = vec![span("agent", 20, 50)];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), None), rows, 1_000);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), None),
+            rows,
+            Vec::new(),
+            1_000,
+        );
         let tool = category(&response.triage, "tool");
 
         assert_eq!(tool.duration_ms, 0);
@@ -809,7 +1098,15 @@ mod tests {
             span("tool", 40, 50),
             span("agent", 20, 50),
         ];
-        let response = aggregate(1, 7, "RUNNING", session(Some(10), None), rows, 1_000);
+        let response = aggregate(
+            1,
+            7,
+            "RUNNING",
+            session(Some(10), None),
+            rows,
+            Vec::new(),
+            1_000,
+        );
         let tool = category(&response.coverage, "tool");
 
         assert_eq!(tool.sample_count, 2);
@@ -825,8 +1122,16 @@ mod tests {
             Some("2026-11-20T12:30:00.000000"),
             None,
         ));
-        let first = aggregate(1, 7, "FAILED", session.clone(), rows.clone(), 1_000);
-        let second = aggregate(1, 7, "FAILED", session, rows, 2_000);
+        let first = aggregate(
+            1,
+            7,
+            "FAILED",
+            session.clone(),
+            rows.clone(),
+            Vec::new(),
+            1_000,
+        );
+        let second = aggregate(1, 7, "FAILED", session, rows, Vec::new(), 2_000);
 
         assert_eq!(first.wall_time_ms, second.wall_time_ms);
         assert_eq!(first.session_end_at_ms, second.session_end_at_ms);

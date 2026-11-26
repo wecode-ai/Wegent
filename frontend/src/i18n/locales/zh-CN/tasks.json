@@ -253,7 +253,7 @@
       "gap": "未采样",
       "no_samples_compact": "{{count}} 类暂无采样点",
       "coverage": "采样覆盖 {{observed}} · {{percent}}",
-      "hint": "并行执行只计一次；未采样表示采样能力尚未覆盖，不代表空闲。"
+      "hint": "等待用户指系统交还控制权后的时间；并行执行只计一次；未采样只出现在系统执行窗口内，不代表空闲。"
     },
     "categories": {
       "tool": {
@@ -269,8 +269,8 @@
         "example": "模型响应、thinking、编排决策"
       },
       "waiting_user": {
-        "description": "等待用户确认或补充信息",
-        "example": "等待批准、澄清、人工输入"
+        "description": "系统交还控制权后，等待用户输入、确认或批准",
+        "example": "上一轮结束后等待追问、批准、澄清或表单"
       },
       "runtime": {
         "description": "排队、调度与环境准备",

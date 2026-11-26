@@ -257,7 +257,7 @@
       "gap": "Unsampled",
       "no_samples_compact": "{{count}} categories have no samples",
       "coverage": "Sample coverage {{observed}} · {{percent}}",
-      "hint": "Parallel execution is counted once; unsampled means sampling coverage is not yet available, not idle time."
+      "hint": "Waiting for user covers time after control is returned to the user; parallel execution is counted once; unsampled only applies to system execution windows and does not imply idle time."
     },
     "categories": {
       "tool": {
@@ -273,8 +273,8 @@
         "example": "Model responses, thinking, orchestration"
       },
       "waiting_user": {
-        "description": "Waiting for user confirmation or input",
-        "example": "Approval, clarification, human input"
+        "description": "Time after the system returns control to the user, while waiting for input, confirmation, or approval",
+        "example": "Waiting for a follow-up, approval, clarification, or a form"
       },
       "runtime": {
         "description": "Queueing, scheduling, and environment preparation",
