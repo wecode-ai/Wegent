@@ -11,6 +11,7 @@ pub use model::*;
 use serde_json::Value;
 pub use store::milestones::MilestoneInput;
 pub use store::personal_stand_in;
+pub use store::project_dingtalk_delegation_result;
 pub use store::project_router_store;
 pub use store::stand_in_telemetry;
 pub use store::{IssueHumanRequestScope, LocalTaskStore, TaskRuntimeError};

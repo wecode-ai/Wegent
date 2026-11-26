@@ -42,19 +42,9 @@ export function IssueProjectSelect({
         <>
           <span className="min-w-0 flex-1">
             {selected ? (
-              <>
-                <span data-testid="issue-project-selected-name" className="block truncate">
-                  {selected.name}
-                </span>
-                {selected.project_key && (
-                  <span
-                    data-testid="issue-project-selected-key"
-                    className="block break-all text-xs text-text-secondary"
-                  >
-                    {selected.project_key}
-                  </span>
-                )}
-              </>
+              <span data-testid="issue-project-selected-name" className="block truncate">
+                {selected.name}
+              </span>
             ) : (
               (triggerPlaceholder ?? empty)
             )}

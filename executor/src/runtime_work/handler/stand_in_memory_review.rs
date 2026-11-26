@@ -1,6 +1,7 @@
 //! Background memory writes are bound to a live scheduled run and readable evidence.
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
+use crate::task_runtime::stand_in_projection::project_visible_work;
 
 pub(super) fn memory_review_save_result(
     result: Result<Value, crate::task_runtime::TaskRuntimeError>,
@@ -237,7 +238,14 @@ impl RuntimeWorkRpcHandler {
             let work = store
                 .stand_in_work(identity.user, work_id)
                 .map_err(super::stand_in::settings_error)?;
-            crate::task_runtime::personal_stand_in::connection_memory_scope(&work["source"])
+            let settings = store
+                .personal_stand_in(identity.user, &self.device_id)
+                .map_err(super::stand_in::settings_error)?;
+            let messages = store
+                .stand_in_messages(identity.user, work_id)
+                .map_err(super::stand_in::settings_error)?;
+            let visible = project_visible_work(&settings, work, messages).ok_or_else(denied)?;
+            crate::task_runtime::personal_stand_in::connection_memory_scope(&visible.work["source"])
         } else if origin["cloudProjectId"].is_string() {
             json!({"kind":"project","id":origin["cloudProjectId"],"store":origin["projectStore"]})
         } else if let Some(role) = origin["standInId"]

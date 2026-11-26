@@ -6,6 +6,7 @@ import {
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
+import { isOrdinaryDelegationSkip } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 
 export function inboxRuntimeItem(
@@ -13,17 +14,17 @@ export function inboxRuntimeItem(
   deviceId: string,
   runtimeItem?: RuntimeTaskReminderItem
 ): RuntimeTaskReminderItem {
-  // Archived inbox state must not be overwritten by a stale active-work snapshot.
-  const task = (work.task?.status === 'archived' ? work.task : runtimeItem?.task) ??
-    work.task ?? {
-      taskId: work.taskId,
-      title: work.title,
-      runtime: 'codex' as const,
-      workspacePath: '',
-      status: work.status === 'sent' ? 'done' : 'pending',
-      running: false,
-      updatedAt: work.updatedAt,
-    }
+  // The backend task summary is account-filtered. Runtime snapshots may predate
+  // that projection and cannot replace its title or error.
+  const task = work.task ?? {
+    taskId: work.taskId,
+    title: work.title,
+    runtime: 'codex' as const,
+    workspacePath: '',
+    status: work.status === 'sent' ? 'done' : 'pending',
+    running: false,
+    updatedAt: work.updatedAt,
+  }
   const origin = {
     ...(task.runtimeHandle?.origin as Record<string, unknown>),
     initiatedBy: 'stand_in',
@@ -87,7 +88,15 @@ export function useStandInInbox(
   return {
     ...query.data,
     scope: query.data ? scope : undefined,
-    items: query.data?.items ?? [],
+    items:
+      query.data?.items.filter(
+        work =>
+          !work.source.delegated ||
+          !!work.takenOverAt ||
+          (work.delegationResult
+            ? !isOrdinaryDelegationSkip(work.delegationResult)
+            : work.status === 'pending')
+      ) ?? [],
     sourceErrors: query.data?.sourceErrors ?? [],
     error:
       query.status === 'error'

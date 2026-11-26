@@ -11,6 +11,7 @@ import {
 } from './conversation-layout.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
+import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import {
   configuredMarketplaceSource,
   marketplaceSourcesMatch,
@@ -1191,6 +1192,22 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugins-create-menu"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const [createButtonBounds] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="plugins-create-button"]')
+  )
+  await waitForElementTop(
+    control,
+    '[data-testid="plugins-create-menu"]',
+    top => top >= createButtonBounds.bottom,
+    'the create menu to open below its trigger'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', '[data-testid="plugins-create-plugin-option"]', {
+      value: '-webkit-app-region',
+    }),
+    'no-drag',
+    'The create plugin action must remain clickable over native drag regions'
+  )
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-create-menu.png')
   await control.command('click', '[data-testid="plugins-create-plugin-option"]')
   await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
@@ -1375,6 +1392,59 @@ async function verifyMarketplacePluginLifecycle({
         testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
       ),
     'The installed marketplace card and installed strip became inconsistent'
+  )
+  const cardMenuSelector = `[data-testid="plugin-marketplace-actions-menu-${pluginId}"]`
+  const [originalActionBounds] = JSON.parse(
+    await control.command('getElementMetrics', actionsSelector)
+  )
+  const previousWindowSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 760, height: 900 }),
+  })
+  try {
+    await waitForElementWidth(
+      control,
+      actionsSelector,
+      width => width >= 44,
+      'the narrow plugin card action to reach its touch target size'
+    )
+    await control.command('click', actionsSelector)
+    await control.command('waitFor', cardMenuSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+    const targets = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${actionsSelector}, ${cardMenuSelector} [role="menuitem"]`
+      )
+    )
+    assert.ok(targets.length >= 4, 'The installed card must expose its trigger and three actions')
+    assert.ok(
+      targets.every(target => target.width >= 44 && target.height >= 44),
+      `Plugin card touch targets must be at least 44px: ${JSON.stringify(targets)}`
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${cardMenuSelector} [role="menuitem"]`, {
+        value: '-webkit-app-region',
+      }),
+      'no-drag',
+      'Plugin card menu actions must remain clickable over native drag regions'
+    )
+  } finally {
+    try {
+      if (Number(await control.command('getElementCount', cardMenuSelector))) {
+        await control.command('press', `${cardMenuSelector} [role="menuitem"]`, { key: 'Escape' })
+        await control.command('waitFor', cardMenuSelector, {
+          visible: false,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+      }
+    } finally {
+      await control.command('setMainWindowSize', 'body', { value: previousWindowSize })
+    }
+  }
+  await waitForElementWidth(
+    control,
+    actionsSelector,
+    width => width === originalActionBounds.width,
+    'the plugin card action to restore its original layout'
   )
   await control.command('click', actionsSelector)
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`

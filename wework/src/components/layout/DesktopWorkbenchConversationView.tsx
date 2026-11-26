@@ -110,7 +110,7 @@ export function DesktopWorkbenchConversationView({
     runtimeTaskSummary,
     cloudProjectMentionCandidates,
     handleSelectCloudProject,
-    openBoundProjectSpaceTask,
+    openIssueExecutionSource,
     visibleCloudMentionCandidates,
     issueExecutionReadOnly,
     mcpAppConversationServices,
@@ -349,10 +349,8 @@ export function DesktopWorkbenchConversationView({
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
                 scrollerClassName="h-auto flex-1 overflow-visible"
                 contentClassName={rightPanelExpanded ? 'invisible' : undefined}
-                messageListClassName={cn(
-                  DESKTOP_MESSAGE_LIST_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
+                messageListClassName={cn(DESKTOP_MESSAGE_LIST_CLASS, 'transition-none')}
+                layoutRevision={`${chatColumnWidth}:${chatColumnMaxWidth}:${environmentInfoPanelExpanded}`}
                 contentFooter={
                   isCreatingWorktree ? (
                     <WorktreeCreationStatus className="py-8" />
@@ -435,7 +433,7 @@ export function DesktopWorkbenchConversationView({
                                 variant="unstyled"
                                 type="button"
                                 data-testid="project-execution-open-issue"
-                                onClick={openBoundProjectSpaceTask}
+                                onClick={openIssueExecutionSource}
                                 className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
                               >
                                 {t('workbench.back_to_work_item', '返回 Issue')}

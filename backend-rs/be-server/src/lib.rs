@@ -172,6 +172,7 @@ pub use wegent_knowledge_access::auth::{
 };
 #[cfg(test)]
 mod app_test_support;
+mod external_connector_authorization;
 mod mcp_identity;
 #[cfg(test)]
 pub(crate) use wegent_mcp_providers::user_mcp_oauth;

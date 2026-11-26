@@ -54,20 +54,23 @@ During the initial task load, the desktop sidebar shows **Loading tasks…** bel
 | Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage                                                                                                                                                                                                                                                                                                                            |
 | Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                                                                                                                                                                                                                                                                                                                                               |
 
+<a id="share-conversation-as-issue"></a>
+
 ### Share a conversation as an issue
 
 Select text in a task conversation and choose **Share with others** in the selection popover to open the same flow with that text already selected. Confirm participants, assignee and content, then save. Sign in if prompted.
 
 The full source message is shown with the selection highlighted. Only highlighted text is shared by default. Select the expand icon at the top right of the message (**Share whole message**) to include its full content. Select the shrink icon (**Share selected text only**) to switch back. You can also select other messages and load earlier history.
 
-Messages retain transcript order. An empty checkbox means excluded, a minus means only the selected fragment, and a check means the whole message. Clicking a partial message selects the whole message; click again to exclude it, then again to restore the fragment.
+Messages retain transcript order. An empty checkbox means excluded, a minus means only the selected fragment, and a check means the whole message. Click a message to deselect or reselect it. Use the button in its top right to switch between the selected fragment and the whole message.
 
-In a desktop task, select **Share as issue** above the composer. It opens the same creation view as the collaboration sidebar. Edit the title at the top. On the left, choose participants, assign the issue and optionally link a project. You are the default assignee. On the right, choose what to share and add a to-do. Sign in to your team's Wework service if prompted.
+In a desktop task, select **Share as issue** above the composer. It opens the same creation view as the collaboration sidebar. Edit the title at the top. On the left, choose participants, assign the issue and optionally link a project. You are the default assignee. On the right, choose what to share and enter a **Description**. Sign in to your team's Wework service if prompted.
 
 - Leave participants and the project blank and select **Create Issue** to keep the issue private. Select colleagues and choose **Create and share** to notify them.
 - Choose a project to place the issue on its board under the project's default issue visibility.
-- **Content to share** lists conversation excerpts from oldest to newest. Use the shortcuts to select all messages, the first message or the last message. Click a message or image to select it, then click again to deselect it. Use the button at the top right of an image to enlarge it. Select up to 100 attachments.
-- Status, priority, assignee and due date are under **More settings**. The issue keeps a snapshot of the submitted content.
+- **Content to share** lists conversation excerpts from oldest to newest. Choose **Select all** on the right side of the header to select all displayed messages, or select messages individually. An existing highlighted excerpt stays selected as text. When history is collapsed, the header shows how many selected messages are outside the preview. Choose **Add attachment** or **+** at the left of the attachment row to upload local files. Select attachments in a single row, scroll with the arrows at either end, and open a preview from the top right of a card. Select up to 100 attachments.
+- Check who can see the issue in the footer before submitting.
+- Expand **More settings** on the left side of the dialog footer to set the status, priority, due date and runtime environment. The issue keeps a snapshot of the submitted content.
 
 <a id="conversation-interactions"></a>
 
@@ -277,6 +280,8 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Send after the response | `Enter`                        | Queue the next instruction              |
 | Steer the response      | `Command/Ctrl + Enter`         | Adjust the current direction            |
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
+
+While a local Codex task is running, you can attach files in the composer and choose **Steer the response**, with or without a text message.
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.

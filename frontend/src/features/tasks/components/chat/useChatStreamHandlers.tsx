@@ -20,11 +20,12 @@ import { isChatShell, teamRequiresWorkspace } from '../../service/messageService
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
 import { generateMessageId } from '@wegent/chat-core'
-import {
-  useMessageSendQueue,
-  type QueuedMessage,
-  type QueuedMessageStatus,
-} from './useMessageSendQueue'
+import { useMessageSendQueue } from './useMessageSendQueue'
+import type {
+  PreparedChatSend,
+  QueuedMessage,
+  QueuedMessageStatus,
+} from '../../session/messageSendQueue'
 import { useGuidanceQueue, type GuidanceQueueItem } from './useGuidanceQueue'
 import { useChatTransientState } from './useChatTransientState'
 import { useGuidanceSocketHandlers } from './useGuidanceSocketHandlers'
@@ -270,6 +271,7 @@ export function useChatStreamHandlers({
 
   const {
     currentTaskId,
+    messageSendQueue,
     selectedTaskDetail,
     selectTask,
     refreshTasks,
@@ -300,14 +302,6 @@ export function useChatStreamHandlers({
 
   type ContextSendRequest = Parameters<typeof contextSendMessage>[0]
   type ContextSendOptions = NonNullable<Parameters<typeof contextSendMessage>[1]>
-
-  interface PreparedChatSend {
-    localMessageId: string
-    displayMessage: string
-    sourceMessage: string
-    request: ContextSendRequest
-    options: ContextSendOptions
-  }
 
   const { retryMessage, sendChatGuidance, registerChatHandlers } = useSocket()
 
@@ -365,8 +359,6 @@ export function useChatStreamHandlers({
   const handleSendMessageRef = useRef<
     ((message?: string, options?: SendMessageOptions) => Promise<void>) | null
   >(null)
-  const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
-
   const { pendingTaskId, setPendingTaskId, resetStreamingState, effectiveTaskIdForState } =
     useChatTransientState({
       selectedTaskId: currentTaskId,
@@ -886,7 +878,8 @@ export function useChatStreamHandlers({
   )
 
   const activeTaskId = currentTaskId && currentTaskId > 0 ? currentTaskId : null
-  const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
+  const isRuntimeBlockingQueue =
+    !taskState?.runtime.taskStatus || Boolean(runtimeDerived?.blocksQueuedDispatch)
   const isActiveTaskBlocked =
     Boolean(runtimeDerived?.isStreaming) || hasPendingUserMessage || isRuntimeBlockingQueue
   const canQueueMessage = Boolean(
@@ -927,18 +920,19 @@ export function useChatStreamHandlers({
 
   const dispatchQueuedMessage = useCallback(
     async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
-      const prepared = queuedMessage.snapshot
-      await sendPreparedChatMessage(prepared, { onError: undefined })
+      await sendPreparedChatMessage(queuedMessage.snapshot, {
+        onMessageSent: (_localMessageId, taskId) => {
+          if (selectedTaskDetail?.id === taskId && selectedTaskDetail.is_group_chat) {
+            markTaskAsViewed(taskId, selectedTaskDetail.status, new Date().toISOString())
+          }
+        },
+      })
     },
-    [sendPreparedChatMessage]
+    [markTaskAsViewed, selectedTaskDetail, sendPreparedChatMessage]
   )
 
   const handleQueuedDispatchError = useCallback(
-    (queuedMessage: QueuedMessage<PreparedChatSend>, error: Error) => {
-      const retryQueuedMessage = () => {
-        retryQueuedMessageRef.current?.(queuedMessage.id)
-      }
-
+    (error: Error, retryQueuedMessage: () => void) => {
       toast({
         variant: 'destructive',
         title: error.message,
@@ -952,25 +946,20 @@ export function useChatStreamHandlers({
     [t, toast]
   )
 
-  const {
-    activeTaskQueue,
-    enqueueMessage,
-    retryMessage: retryQueuedMessage,
-    cancelMessage,
-    updateQueuedMessage,
-  } = useMessageSendQueue<PreparedChatSend>({
-    taskId: activeTaskId,
-    isDispatchBlocked: isActiveTaskBlocked,
-    dispatchMessage: dispatchQueuedMessage,
-    onDispatchError: handleQueuedDispatchError,
-    dispatchMode: 'one-per-unblock',
-  })
-  retryQueuedMessageRef.current = retryQueuedMessage
+  const { activeTaskQueue, enqueueMessage, cancelMessage, updateQueuedMessage } =
+    useMessageSendQueue<PreparedChatSend>({
+      queue: messageSendQueue,
+      taskId: activeTaskId,
+      isDispatchBlocked: isActiveTaskBlocked,
+      dispatchMessage: dispatchQueuedMessage,
+      onDispatchError: handleQueuedDispatchError,
+      dispatchMode: 'one-per-unblock',
+    })
 
   useQueuedRuntimeHealthCheck({
     taskId: activeTaskId,
     queuedMessages: activeTaskQueue,
-    blocksQueuedDispatch: runtimeDerived?.blocksQueuedDispatch ?? false,
+    blocksQueuedDispatch: isRuntimeBlockingQueue,
     isStreaming: isMachineStreaming,
     hasPendingUserMessage,
     recoverCurrentTask: () => recoverCurrentTask('queued-message-blocked'),
@@ -978,7 +967,7 @@ export function useChatStreamHandlers({
 
   const cancelQueuedMessage = useCallback(
     (id: string) => {
-      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      const queuedMessage = messageSendQueue.getMessage(activeTaskId, id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
 
       cancelMessage(id)
@@ -991,7 +980,7 @@ export function useChatStreamHandlers({
           : restoredMessage
       )
     },
-    [activeTaskQueue, cancelMessage, setTaskInputMessage, taskInputMessage]
+    [activeTaskId, cancelMessage, messageSendQueue, setTaskInputMessage, taskInputMessage]
   )
 
   const editQueuedMessage = useCallback(
@@ -1153,12 +1142,10 @@ export function useChatStreamHandlers({
       )
 
       if (canQueueMessage && activeTaskId && !sendOptions?.interactiveFormAnswer) {
-        const mergeTarget = [...activeTaskQueue]
-          .reverse()
-          .find(queuedMessage => queuedMessage.status === 'queued')
+        const mergeTarget = messageSendQueue.peekLast(activeTaskId)
 
         if (
-          mergeTarget &&
+          mergeTarget?.status === 'queued' &&
           !prepared.request.artifact_context &&
           !mergeTarget.snapshot.request.artifact_context
         ) {
@@ -1171,11 +1158,12 @@ export function useChatStreamHandlers({
             }
           })
         } else {
+          const { onMessageSent: _onMessageSent, onError: _onError, ...options } = prepared.options
           enqueueMessage({
             taskId: activeTaskId,
             localMessageId,
             displayMessage: prepared.displayMessage,
-            snapshot: prepared,
+            snapshot: { ...prepared, options },
           })
         }
         if (!sendOptions?.artifactContext) {
@@ -1220,7 +1208,7 @@ export function useChatStreamHandlers({
       prepareChatSend,
       canQueueMessage,
       activeTaskId,
-      activeTaskQueue,
+      messageSendQueue,
       enqueueMessage,
       updateQueuedMessage,
       mergePreparedChatSend,
@@ -1310,13 +1298,13 @@ export function useChatStreamHandlers({
 
   const sendQueuedAsGuidance = useCallback(
     async (id: string) => {
-      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      const queuedMessage = messageSendQueue.getMessage(activeTaskId, id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
       const text = queuedMessage.snapshot.sourceMessage || queuedMessage.displayMessage
       cancelMessage(id)
       await handleSendGuidance(text)
     },
-    [activeTaskQueue, cancelMessage, handleSendGuidance]
+    [activeTaskId, cancelMessage, handleSendGuidance, messageSendQueue]
   )
 
   const sendExpiredGuidanceAsMessage = useCallback(

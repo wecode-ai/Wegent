@@ -183,18 +183,24 @@ async function rendererPids(control) {
 }
 
 async function cpuSnapshot(pids) {
-  const { stdout } = await run('ps', ['-p', pids.join(','), '-o', 'time='])
-  const counters = stdout.trim().split(/\s+/)
-  assert.equal(counters.length, pids.length, 'A measured renderer exited')
+  const { stdout } = await run('ps', ['-p', pids.join(','), '-o', 'time=,utime=,stime='])
+  const rows = stdout
+    .trim()
+    .split('\n')
+    .map(row => row.trim().split(/\s+/))
+  assert.equal(rows.length, pids.length, 'A measured renderer exited')
   assert.ok(
-    counters.every(value => /^\d+(?::\d+)+\.\d+$/.test(value)),
+    rows.every(row => row.length === 3 && row.every(value => /^\d+(?::\d+)+\.\d+$/.test(value))),
     'Invalid macOS CPU counters'
   )
-  const seconds = counters.reduce(
-    (total, value) => total + value.split(':').reduce((sum, part) => sum * 60 + Number(part), 0),
-    0
-  )
-  return { seconds, time: performance.now() }
+  const totals = [0, 0, 0]
+  for (const row of rows) {
+    row.forEach((value, index) => {
+      totals[index] += value.split(':').reduce((sum, part) => sum * 60 + Number(part), 0)
+    })
+  }
+  const [seconds, userSeconds, systemSeconds] = totals
+  return { seconds, userSeconds, systemSeconds, time: performance.now() }
 }
 
 function cpuPercent(before, after) {
@@ -537,6 +543,8 @@ export function createDesktopScenario({
   let finished = false
   let start
   let pids
+  let readSingleTaskRendererMetrics
+  let singleTaskStartMetrics
   const singleModelRequest = Promise.withResolvers()
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
@@ -695,6 +703,7 @@ export function createDesktopScenario({
       if (started) return false
       started = true
       singleModelRequest.resolve()
+      singleTaskStartMetrics = await readSingleTaskRendererMetrics?.()
       start = await cpuSnapshot(pids)
       await emitStream(response, 'wework-benchmark-response')
       finished = true
@@ -870,6 +879,23 @@ export function createDesktopScenario({
           await command('Profiler.setSamplingInterval', { interval: 2_000 })
           await command('Profiler.start')
           recordingTurnCpu = true
+          // Keep endpoint diagnostics outside the process CPU measurement window.
+          readSingleTaskRendererMetrics = async () => {
+            const system = { availableParallelism: availableParallelism(), loadAverage: loadavg() }
+            try {
+              const { metrics } = await withTimeout(
+                command('Performance.getMetrics'),
+                2000,
+                'The renderer did not report single-task CPU diagnostics'
+              )
+              return {
+                system,
+                renderer: Object.fromEntries(metrics.map(({ name, value }) => [name, value])),
+              }
+            } catch {
+              return { system, rendererMetricsUnavailable: true }
+            }
+          }
         }
 
         const controller = new AbortController()
@@ -903,7 +929,10 @@ export function createDesktopScenario({
             await observeText(client, target, prefix, uiTimeoutMs)
             assert.ok(!finished, 'The first response text must appear while streaming')
             await observeText(client, target, suffix, textTimeoutMs)
-            return await cpuSnapshot(pids)
+            const end = await cpuSnapshot(pids)
+            controller.abort()
+            const endMetrics = await readSingleTaskRendererMetrics?.()
+            return { end, endMetrics }
           } finally {
             controller.abort()
           }
@@ -911,7 +940,7 @@ export function createDesktopScenario({
         const [interaction, sampling] = await Promise.allSettled([interact(), collect()])
         if (interaction.status === 'rejected') throw interaction.reason
         if (sampling.status === 'rejected') throw sampling.reason
-        const end = interaction.value
+        const { end, endMetrics } = interaction.value
         assert.ok(start, 'The isolated model stream did not start')
         await waitForBottom(control, 'The streamed conversation', uiTimeoutMs)
         const { taskId } = await waitForWorkbenchDebugState(
@@ -998,6 +1027,10 @@ export function createDesktopScenario({
         ].every(state => state.activity === 'foreground')
         const report = {
           measurements,
+          singleTaskWindow: {
+            start: { ...start, ...singleTaskStartMetrics },
+            end: { ...end, ...endMetrics },
+          },
           concurrentCpuPercent,
           turnUpdates,
           heapSamples: samples,

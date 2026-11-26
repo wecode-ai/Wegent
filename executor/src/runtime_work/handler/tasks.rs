@@ -900,8 +900,25 @@ impl RuntimeWorkRpcHandler {
             if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
                 return Err(super::stand_in_role_delegation::denied());
             }
-            self.retain_runtime_model_config(&local_task_id, &request.model_config);
-            self.upsert_local_task(link);
+            if link.runtime_handle["origin"]["type"] == "stand_in_task"
+                && link.runtime_handle["origin"]["roleDelegation"].is_object()
+            {
+                let link = self.store.try_upsert_task(link).map_err(|error| {
+                    log_executor_event(
+                        "Specialist task persistence failed",
+                        &[
+                            ("task_id", local_task_id.clone()),
+                            ("error", error.to_string()),
+                        ],
+                    );
+                    AppIpcError::new("runtime_task_save_failed", "Could not save delegated task")
+                })?;
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.project_runtime_link_status(&link);
+            } else {
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.upsert_local_task(link);
+            }
         }
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
@@ -1366,8 +1383,16 @@ impl RuntimeWorkRpcHandler {
         } else {
             payload
         };
-        if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
-            return Ok(receipt);
+        let question_response = request_user_input_response(&payload);
+        // Async answers own the saved execution profile. Look up their command
+        // only after the reply has restored that profile.
+        let async_answer = question_response
+            .as_ref()
+            .is_some_and(|response| response["delivery"] == "async");
+        if !async_answer {
+            if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                return Ok(receipt);
+            }
         }
         if payload.get("resourceEventKeys").is_some()
             && existing_link
@@ -1380,7 +1405,6 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
-        let question_response = request_user_input_response(&payload);
         // The desktop delivers an async answer as the next ordinary user message.
         let reply_input = question_response.is_some()
             || existing_link.as_ref().is_some_and(|link| {
@@ -1389,7 +1413,7 @@ impl RuntimeWorkRpcHandler {
         let owner_input = matches!(owner_message, Some(OwnerMessage::Direct)) && !reply_input;
         let ordinary_input = question_response.is_none();
         if let Some(response) = question_response {
-            if response["delivery"] == "async" {
+            if async_answer {
                 self.apply_prepared_async_question_reply(
                     &local_task_id,
                     &response,
@@ -1397,6 +1421,9 @@ impl RuntimeWorkRpcHandler {
                     prepared,
                 )
                 .await?;
+                if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                    return Ok(receipt);
+                }
                 if self.is_busy_local_task(&local_task_id) {
                     let guided = self.send_guidance(payload.clone()).await?;
                     if guided["code"] != "no_active_turn" {
@@ -2445,21 +2472,71 @@ impl RuntimeWorkRpcHandler {
             }) != Some(true);
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
-            .map(|value| value.trim().to_owned())
             .unwrap_or_default();
-        let steer_input = guidance_input_items(&message, payload.get("attachments"));
-        if steer_input.is_empty() {
+        let attachments: Vec<Value> = payload["attachments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|attachment| {
+                id_field(attachment, "id").is_some_and(|id| id.parse::<i64>().is_ok())
+                    && string_field(attachment, "local_path")
+                        .or_else(|| string_field(attachment, "localPath"))
+                        .is_some()
+            })
+            .cloned()
+            .collect();
+        if message.is_empty() && attachments.is_empty() {
             return Err(AppIpcError::new(
                 "bad_request",
-                "message or image attachment is required",
+                "message or local attachment is required",
             ));
         }
+        let has_attachments = !attachments.is_empty();
+        let mut payload = payload;
+        let steer_input = if has_attachments {
+            payload["message"] = json!(message);
+            payload["attachments"] = Value::Array(attachments);
+            let mut request = ExecutionRequest {
+                task_id: local_task_id.clone(),
+                prompt: Value::String(message),
+                ..Default::default()
+            };
+            request
+                .extra
+                .insert("attachments".into(), payload["attachments"].clone());
+            crate::agents::codex_guidance_input(request).await
+        } else {
+            vec![json!({ "type": "text", "text": message })]
+        };
         log_executor_event(
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
-        self.deliver_guidance(payload, event_operation, owner_input, false, steer_input)
-            .await
+        let result = self
+            .deliver_guidance(
+                payload.clone(),
+                event_operation,
+                owner_input,
+                false,
+                steer_input,
+            )
+            .await?;
+        if has_attachments && result["accepted"] == true {
+            payload["clientUserMessageId"] = result["guidanceId"].clone();
+            if let Some(mut presentation) = user_message_presentation(&payload) {
+                presentation["turnId"] = result["turnId"].clone();
+                presentation["guidance"] = json!(true);
+                presentation["ensureVisible"] = json!(false);
+                self.store
+                    .update_task_without_snapshot(&local_task_id, |link| {
+                        append_runtime_handle_user_message_presentation(
+                            &mut link.runtime_handle,
+                            presentation,
+                        );
+                    });
+            }
+        }
+        Ok(result)
     }
 
     pub(super) async fn deliver_guidance(
@@ -2737,8 +2814,17 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
+        let gateway_credentials = crate::agents::model_gateway::credentials(
+            &self.backend_connection,
+            &mut request,
+            link.gateway_binding.as_ref(),
+            false,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("model_route_failed", error))?
+        .map(|(credentials, _)| credentials);
         self.register_thread_event_route(
             thread_id,
             link.local_task_id.clone(),
@@ -2755,6 +2841,7 @@ impl RuntimeWorkRpcHandler {
             client
                 .resume_thread_for_model_action(
                     &request,
+                    gateway_credentials,
                     thread_id,
                     thread_path.as_deref(),
                     |prepared| {

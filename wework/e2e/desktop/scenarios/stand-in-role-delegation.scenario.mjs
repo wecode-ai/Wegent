@@ -588,6 +588,21 @@ export function createDesktopScenario({
             userId: USER,
             taskId: 'stand-in-chat-9001-primary',
           })
+        const waitForLocalCompletion = ids =>
+          storyUntil(
+            readBranches,
+            ({ items }) =>
+              ids.every(taskId =>
+                items.some(
+                  branch =>
+                    branch.taskId === taskId &&
+                    branch.status === 'done' &&
+                    branch.statusSource === 'local_execution'
+                )
+              ),
+            uiTimeoutMs,
+            'The dispatcher must report completed local executions'
+          )
         const selectDelegation = async taskId => {
           const { items } = await storyUntil(
             readBranches,
@@ -632,6 +647,19 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', DETAILS)
         await control.command('waitFor', ACTIVE, { text: '起草公告', visible: true })
         await control.command('waitFor', ACTIVE, { text: '等待子任务', visible: true })
+        await storyUntil(
+          readBranches,
+          ({ items }) =>
+            items.some(
+              branch =>
+                branch.taskId === taskIds.get(roles[0].id) &&
+                branch.status === 'running' &&
+                branch.statusSource === 'local_execution' &&
+                branch.waitingForChildren === true
+            ),
+          uiTimeoutMs,
+          'The dispatcher must retain the settled parent until its child finishes'
+        )
         await captureScreenshot(control, '02a-active-delegations-in-details.png')
         await control.command('press', POPOVER, { key: 'Escape' })
         await control.command('waitFor', POPOVER, { visible: false })
@@ -682,10 +710,21 @@ export function createDesktopScenario({
         await captureScreenshot(control, '04-specialist-question-inline.png', ROOT)
         await control.command('clickWhenEnabled', `${card} [data-testid="interaction-answer-0"]`)
         await waitForReply(FINAL)
+        assert.equal(taskIds.size, 3)
+        await waitForLocalCompletion([...taskIds.values()])
         await control.command('waitFor', toggle, {
           text: '已完成 3/3',
           timeoutMs: uiTimeoutMs,
         })
+        await expandDelegation()
+        assert.equal(
+          await control.command(
+            'getElementCount',
+            `${card} [data-testid="stand-in-delegated-work-cancel-branch"], ${card} [data-testid="stand-in-delegated-work-cancel-all"]`
+          ),
+          '0',
+          'Completed delegated tasks no longer offer cancellation'
+        )
         await captureScreenshot(control, '05-result-in-original-chat.png', ROOT)
         await control.command('clickWhenEnabled', DETAILS)
         await control.command('waitFor', POPOVER, { visible: true })
@@ -860,6 +899,11 @@ export function createDesktopScenario({
         await captureScreenshot(control, '13-retrying-same-task.png', ROOT)
         reply(waitingModels.get('retry').response, [assistantMessage('备用环境已就绪。')])
         await waitForReply(RETRY_FINAL)
+        const completedRetry = await waitForLocalCompletion([...retryTasks.values()])
+        assert.equal(
+          completedRetry.items.find(branch => branch.taskId === retryTasks.get(0)).attempt,
+          1
+        )
         await control.command('waitFor', toggle, {
           text: '已完成 2/2',
           timeoutMs: uiTimeoutMs,

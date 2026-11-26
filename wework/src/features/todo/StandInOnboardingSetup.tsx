@@ -10,6 +10,7 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
+import { isDingTalkSource } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -33,6 +34,7 @@ export interface StandInOnboardingConfiguration {
   localDeviceId: string
   devices?: DeviceInfo[]
   services?: WorkbenchServices
+  dingtalkSourceProblem?: string
   onSelectDevice?(deviceId: string): void
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
   onReload(): void
@@ -278,11 +280,30 @@ export function StandInOnboardingSetup({
               >
                 <p>{source.name}</p>
                 <p className="text-text-secondary">
-                  {source.configurationSummary ??
-                    t('standIn.workspace.connection_default_configuration')}
+                  {isDingTalkSource(source)
+                    ? t(
+                        source.kind === 'group'
+                          ? 'standIn.dingtalk_delegation.group_mentions'
+                          : 'standIn.dingtalk_delegation.direct'
+                      )
+                    : (source.configurationSummary ??
+                      t('standIn.workspace.connection_default_configuration'))}
                 </p>
               </div>
             ))}
+            {role.connections?.some(isDingTalkSource) && (
+              <p className="text-sm text-text-secondary">
+                {t(
+                  baseline.primary?.delegation?.authorized &&
+                    !baseline.primary.delegation.paused &&
+                    !baseline.primary.delegation.accountInvalidated &&
+                    !baseline.lifecycle &&
+                    !configuration.dingtalkSourceProblem
+                    ? 'standIn.dingtalk_delegation.enabled'
+                    : 'standIn.dingtalk_delegation.paused'
+                )}
+              </p>
+            )}
             {!role.collaboration.enabled && !role.connections?.length && (
               <p className="text-sm text-text-secondary">{t('standIn.onboarding.no_apps')}</p>
             )}
@@ -314,6 +335,46 @@ export function StandInOnboardingSetup({
               hideHeading
               onChange={setRole}
               onDetailViewChange={setDetail}
+              dingTalk={{
+                saved: baseline.primary ?? { enabled: false, prompt: '', preferences: '' },
+                services: configuration.services,
+                devices: configuration.devices,
+                primaryStopped: Boolean(baseline.lifecycle),
+                sourceProblem: configuration.dingtalkSourceProblem,
+                modelSelection: {
+                  identity:
+                    model && !models.errors[model.source === 'cloud' ? 'cloud' : 'native']
+                      ? model
+                      : null,
+                  label: models.selectedModel?.displayName,
+                  options: role.modelOptions,
+                },
+                onBusyChange(saving) {
+                  setBusy(saving)
+                  onBusyChange(saving)
+                },
+                async onSave(primary) {
+                  const saved = await configuration.onSave({ ...baseline, primary })
+                  if (!saved?.primary) return false
+                  const savedPrimary = saved.primary
+                  const dingTalkRows = (savedPrimary.connections ?? []).filter(isDingTalkSource)
+                  const updateRole = (current: StandInRole | null) =>
+                    current && {
+                      ...current,
+                      enabled: savedPrimary.enabled,
+                      model: savedPrimary.model,
+                      modelOptions: savedPrimary.modelOptions,
+                      connections: [
+                        ...(current.connections ?? []).filter(row => !isDingTalkSource(row)),
+                        ...dingTalkRows,
+                      ],
+                    }
+                  setBaseline(saved)
+                  setRole(updateRole)
+                  setInitialRole(updateRole)
+                  return true
+                },
+              }}
             />
           </>
         )

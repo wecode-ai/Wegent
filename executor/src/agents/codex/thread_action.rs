@@ -42,12 +42,17 @@ impl CodexAppServerClient {
     pub(crate) async fn resume_thread_for_model_action(
         &self,
         request: &ExecutionRequest,
+        gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
         thread_id: &str,
         thread_path: Option<&str>,
         retain_registration: impl FnOnce(Option<ModelActionRegistration>) + Send,
     ) -> Result<String, String> {
         ensure_codex_mcp_endpoints().await?;
-        let launch = build_codex_launch_config(request)?;
+        let launch = build_codex_launch_config_with_route_scope(
+            request,
+            &request.task_id,
+            gateway_credentials,
+        )?;
         let mut params = thread_resume_params(thread_id, request, &launch);
         params["excludeTurns"] = json!(true);
         if let Some(path) = thread_path {

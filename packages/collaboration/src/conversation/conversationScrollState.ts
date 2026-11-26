@@ -12,6 +12,7 @@ import {
 import {
   BOTTOM_THRESHOLD,
   SCROLLED_TO_BOTTOM_THRESHOLD,
+  type ConversationLayoutChangeReason,
   type UserViewportAnchor,
   type RuntimeTranscriptGap,
 } from './scrollableMessageTypes'
@@ -19,6 +20,7 @@ import {
   createScrollSnapshot,
   findLatestGuidanceMessageId,
   findLatestUserMessageId,
+  isConversationAnchorChunk,
   restoreConversationAnchor,
   setConversationScrollSnapshot,
 } from './conversationScrollGeometry'
@@ -222,7 +224,7 @@ export function createConversationScrollState(
     if (!owned()) return
     if (!command && readerState.anchor) readerState.selfScrollOffset += delta
   }
-  const writeOffset = (top: number) => {
+  const writeOffset = (top: number, behavior: ScrollBehavior = 'auto') => {
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport) return
@@ -238,7 +240,7 @@ export function createConversationScrollState(
         CONVERSATION_SCROLL_WRITE_SOURCE.controllerBottom,
         top,
         () => {
-          if (typeof viewport.scrollTo === 'function') viewport.scrollTo({ top, behavior: 'auto' })
+          if (typeof viewport.scrollTo === 'function') viewport.scrollTo({ top, behavior })
           else viewport.scrollTop = top
         }
       )
@@ -255,6 +257,12 @@ export function createConversationScrollState(
     if (!owned()) return
     const viewport = scrollRef.current
     if (!viewport || messages.length === 0 || autoScrollSuspended) return
+    if (state.mode === 'read' && restoring?.anchor) {
+      // Programmatic scrollend during restoration must retain the saved reader
+      // while the virtual row and text anchor materialize. User input clears restoring.
+      publishScrollButton(measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport))
+      return
+    }
     const snapshot: ConversationScrollSnapshot =
       state.mode === 'follow'
         ? { pinnedToBottom: true, distanceFromBottomPx: 0 }
@@ -287,7 +295,7 @@ export function createConversationScrollState(
         : nativeHeight
     return Math.max(0, height - viewport.clientHeight)
   }
-  const follow = (smooth = false) => {
+  const follow = (behavior: ScrollBehavior = 'auto') => {
     if (!owned()) return
     if (
       state.mode !== 'follow' ||
@@ -298,7 +306,9 @@ export function createConversationScrollState(
       return
     const viewport = scrollRef.current
     if (!viewport) return
-    const animate = nativeFollow !== null || smooth || followBehavior === 'smooth'
+    const animate =
+      behavior !== 'instant' &&
+      (nativeFollow !== null || behavior === 'smooth' || followBehavior === 'smooth')
     const end = followEnd(viewport, animate)
     const distanceFromBottom = Math.max(0, end - viewport.scrollTop)
     if (distanceFromBottom < 1) {
@@ -312,7 +322,7 @@ export function createConversationScrollState(
       typeof viewport.scrollTo !== 'function'
     ) {
       cancelMotion()
-      writeOffset(end)
+      writeOffset(end, behavior === 'instant' ? 'instant' : 'auto')
       save(Math.max(0, end - (readerState.lastScrollPosition ?? viewport.scrollTop)))
       return
     }
@@ -331,7 +341,7 @@ export function createConversationScrollState(
     viewport.scrollTo({ top: end, behavior: 'smooth' })
     if (state.showScrollButton) publish({ showScrollButton: false })
   }
-  const handleContentLayoutChange = () => {
+  const handleContentLayoutChange = (reason?: 'resize') => {
     if (!owned()) return
     if (initializedKey !== currentScrollKey) return
     if (autoScrollSuspended || state.mode === 'navigate' || state.mode === 'drag') return
@@ -345,15 +355,36 @@ export function createConversationScrollState(
       }
       restoreConversationAnchor(viewport, snapshot)
     } else if (state.mode === 'read') restoreReaderPositionFromLayout()
-    else follow()
+    else if (reason === 'resize') {
+      // A width change can reflow old rows as well as streamed text. Keep the
+      // bottom pinned in this layout commit and let only new text restart motion.
+      followBehavior = 'auto'
+      follow('instant')
+    } else follow()
     if (state.mode === 'read') publishScrollButton(getDistanceFromBottom(viewport))
     traceHistoryLayout('layout')
   }
-  const handleVirtualLayoutChange = () => {
+  const handleVirtualLayoutChange = (reason?: ConversationLayoutChangeReason) => {
     if (!owned()) return
     if (autoScrollSuspended) return
-    if (state.mode !== 'follow' || !streaming || followBehavior !== 'smooth') {
-      handleContentLayoutChange()
+    if (typeof reason === 'object') {
+      // A same-height materialization only affects a reader anchored in this chunk.
+      const anchor = restoring?.anchor ?? readerState.anchor
+      if (
+        state.mode === 'read' &&
+        anchor &&
+        isConversationAnchorChunk(reason.materializedChunk, anchor)
+      )
+        handleContentLayoutChange()
+      return
+    }
+    if (
+      reason === 'resize' ||
+      state.mode !== 'follow' ||
+      !streaming ||
+      followBehavior !== 'smooth'
+    ) {
+      handleContentLayoutChange(reason)
       return
     }
     if (layoutFrame) return
@@ -379,9 +410,20 @@ export function createConversationScrollState(
     if (!viewport || !content || typeof ResizeObserver === 'undefined') return
     // Scroll handling only needs size changes. Reading and publishing both
     // bounds on every scroll step also rerenders the entire transcript.
-    layoutObserver = new ResizeObserver(handleVirtualLayoutChange)
-    layoutObserver.observe(viewport)
-    layoutObserver.observe(content)
+    let viewportWidth = viewport.clientWidth
+    let contentWidth = content.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (layoutObserver !== observer) return
+      const nextViewportWidth = viewport.clientWidth
+      const nextContentWidth = content.clientWidth
+      const resized = nextViewportWidth !== viewportWidth || nextContentWidth !== contentWidth
+      viewportWidth = nextViewportWidth
+      contentWidth = nextContentWidth
+      handleVirtualLayoutChange(resized ? 'resize' : undefined)
+    })
+    layoutObserver = observer
+    observer.observe(viewport)
+    observer.observe(content)
     observedViewport = viewport
     observedContent = content
   }
@@ -706,7 +748,7 @@ export function createConversationScrollState(
     inputActive = false
     changeMode('follow')
     save()
-    follow(true)
+    follow('smooth')
   }
 
   let gapLoadOwner: object | null = null

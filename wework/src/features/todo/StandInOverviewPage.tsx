@@ -7,6 +7,7 @@ import {
 } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
+import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -186,7 +187,18 @@ export function StandInOverviewPage({
     deviceId ?? '',
     active && !!deviceId
   )
-  const inbox = useStandInInbox(api, props.userId, deviceId, active)
+  const inbox = useStandInInbox(
+    api,
+    props.userId,
+    deviceId,
+    active,
+    dingTalkInboxScope(saved?.primary?.delegation)
+  )
+  const dingtalkSourceProblem = inbox.sourceErrors.find(
+    ({ source, error }) =>
+      source.delegated &&
+      (error.code === 'connector_auth_required' || error.code === 'dingtalk_permissions_required')
+  )?.error.code
   const observation = useMemo(
     () => ({
       api,
@@ -820,21 +832,26 @@ export function StandInOverviewPage({
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{value.source.name}</p>
-                  <p role="alert" className="mt-1 text-sm text-text-secondary">
+                  <p
+                    role={value.error.code === 'dingtalk_delegation_gap' ? 'status' : 'alert'}
+                    className="mt-1 text-sm text-text-secondary"
+                  >
                     {getStandInErrorMessage(value.error)}
                   </p>
                 </div>
                 <ControlButton
                   variant="unstyled"
                   type="button"
-                  data-testid={`stand-in-source-retry-${value.source.id}`}
+                  data-testid={`stand-in-source-${value.error.code === 'dingtalk_delegation_gap' ? 'acknowledge' : 'retry'}-${value.source.id}`}
                   className="min-h-11 shrink-0 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
                   aria-busy={
                     sameOwner && view.retryingSources.has(standInOverviewSourceKey(value.source))
                   }
                   onClick={() => void overview.retrySource(value.source)}
                 >
-                  {t('standIn.reload')}
+                  {value.error.code === 'dingtalk_delegation_gap'
+                    ? t('standIn.dingtalk_delegation.dismiss_gap')
+                    : t('standIn.reload')}
                 </ControlButton>
               </div>
             ))}
@@ -933,12 +950,15 @@ export function StandInOverviewPage({
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()
                     }}
-                    onSave={async value => {
-                      if (await state.save(value)) {
+                    onSave={async (value, stayOpen) => {
+                      const saved = await state.save(value)
+                      if (saved && !stayOpen) {
                         setProfile(null)
                         if (initialPrimaryProfile) props.onCancel?.()
                       }
+                      return saved ?? undefined
                     }}
+                    dingtalkSourceProblem={dingtalkSourceProblem}
                     error={bindingError || state.error}
                     onReload={state.reload}
                     api={api}
@@ -1002,6 +1022,7 @@ export function StandInOverviewPage({
         localDeviceId: state.currentDeviceId,
         devices: props.devices,
         services: props.services,
+        dingtalkSourceProblem,
         onSelectDevice: primaryDeviceId
           ? undefined
           : device => {

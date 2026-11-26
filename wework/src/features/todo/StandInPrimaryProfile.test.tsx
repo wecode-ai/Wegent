@@ -2,10 +2,16 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { runnerModelKey, type RunnerModel } from '@wegent/collaboration'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import {
+  STAND_IN_DINGTALK_PROVIDER,
+  type PersonalStandInSettings,
+  type StandInIdentity,
+} from '@/api/personalStandIn'
+import { DingTalkDelegationControls } from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useState } from 'react'
 import { personalStandInFixture } from './personalStandInSettings.testFixtures'
 import { standInOverviewFixture } from './StandInOverviewPage.testFixtures'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
@@ -83,6 +89,156 @@ function openPrimaryProfile(
     },
   }
 }
+
+test.each([true, false])(
+  'DingTalk verifies exact read access before the enable action with a prepared scope: %s',
+  async prepareScope => {
+    const { services } = standInOverviewFixture().props
+    const api = services.standInApi!
+    const identity = {
+      profile: 'org:alice',
+      accountId: 'fixture-binding',
+      accountName: 'Alice',
+      organizationId: 'org',
+      organizationName: 'Studio',
+    }
+    let permissionsGranted = false
+    const checked = vi.fn()
+    api.connectionReadiness = async (device, provider, profile, sources) => {
+      if (sources) checked(device, provider, profile, sources)
+      return {
+        status: sources && !permissionsGranted ? 'permissions_required' : 'ready',
+        identity,
+        permissions: {
+          read: sources && permissionsGranted ? 'verified' : 'unchecked',
+          reply: 'unverified',
+        },
+      }
+    }
+    api.searchConnectionResources = vi.fn(async () => ({
+      items: [
+        {
+          providerId: STAND_IN_DINGTALK_PROVIDER,
+          id: 'friend',
+          kind: 'direct',
+          profile: identity.profile,
+          accountId: identity.accountId,
+          name: 'Friend',
+        },
+        {
+          providerId: STAND_IN_DINGTALK_PROVIDER,
+          id: 'other',
+          kind: 'direct',
+          profile: identity.profile,
+          accountId: 'other-binding',
+          name: 'Other',
+        },
+      ],
+    }))
+    const save = vi.fn()
+    const model = {
+      runtime: 'codex' as const,
+      source: 'native' as const,
+      provider: 'test',
+      model_id: 'model',
+    }
+    function TestSetup() {
+      const [saved, setSaved] = useState<StandInIdentity>({
+        enabled: false,
+        prompt: '',
+        preferences: '',
+      })
+      return (
+        <DingTalkDelegationControls
+          settings={{
+            saved,
+            modelSelection: { identity: model },
+            primaryStopped: false,
+            async onSave(next) {
+              save(next)
+              const delegated = next.delegation?.action === 'enable'
+              setSaved({
+                ...next,
+                delegation: next.delegation && {
+                  ...next.delegation,
+                  action: undefined,
+                  authorized: delegated,
+                  paused: !delegated,
+                },
+              })
+              return true
+            },
+          }}
+          api={api}
+          provider={{
+            id: STAND_IN_DINGTALK_PROVIDER,
+            displayName: 'DingTalk',
+            resourceKinds: ['direct', 'group'],
+            availability: { status: 'ready' },
+            dependencies: [],
+          }}
+          deviceId="device"
+          localDeviceId="device"
+          disabled={false}
+        />
+      )
+    }
+    render(<TestSetup />)
+    expect(await screen.findByTestId('stand-in-dingtalk-account')).toHaveTextContent(
+      'Alice · Studio'
+    )
+    expect(screen.getByTestId('stand-in-delegation-enable')).toBeDisabled()
+    const query = await screen.findByTestId('stand-in-dingtalk-query')
+    fireEvent.change(query, { target: { value: 'Friend' } })
+    fireEvent.click(screen.getByTestId('stand-in-dingtalk-search'))
+    fireEvent.click(await screen.findByTestId('stand-in-dingtalk-result-friend'))
+    expect(api.searchConnectionResources).toHaveBeenCalledExactlyOnceWith(
+      'device',
+      STAND_IN_DINGTALK_PROVIDER,
+      'direct',
+      'Friend',
+      undefined,
+      undefined,
+      identity.profile
+    )
+    expect(screen.queryByTestId('stand-in-dingtalk-result-other')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('stand-in-dingtalk-add-selected'))
+
+    if (prepareScope) {
+      fireEvent.click(screen.getByTestId('stand-in-dingtalk-save-scope'))
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('stand-in-dingtalk-save-scope')).toBeDisabled()
+        expect(screen.getByTestId('stand-in-delegation-enable')).toBeEnabled()
+      })
+      expect(save).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          enabled: false,
+          connections: [expect.objectContaining({ id: 'friend', accountId: identity.accountId })],
+          delegation: expect.objectContaining({ action: 'prepare', profile: identity.profile }),
+        })
+      )
+    }
+    expect(checked).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('stand-in-delegation-enable'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('所选会话缺少读取权限')
+    expect(save).toHaveBeenCalledTimes(prepareScope ? 1 : 0)
+    expect(checked).toHaveBeenCalledExactlyOnceWith(
+      'device',
+      STAND_IN_DINGTALK_PROVIDER,
+      identity.profile,
+      [{ id: 'friend', kind: 'direct' }]
+    )
+    permissionsGranted = true
+    fireEvent.click(screen.getByTestId('stand-in-delegation-enable'))
+    expect(await screen.findByTestId('stand-in-delegation-toggle-pause')).toBeEnabled()
+    expect(save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        delegation: expect.objectContaining({ action: 'enable', organizationId: 'org' }),
+      })
+    )
+  }
+)
 
 test('a model change keeps the unified instructions for a profile without learning', async () => {
   const { model, save } = openPrimaryProfile()

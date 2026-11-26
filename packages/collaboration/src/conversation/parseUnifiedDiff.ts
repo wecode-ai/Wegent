@@ -119,18 +119,6 @@ export function getDiffStats(lines: string[]) {
   );
 }
 
-export function getSectionsDiffStats(sections: DiffFileSection[]) {
-  return sections.reduce(
-    (total, section) => {
-      const stats = getDiffStats(section.lines);
-      total.additions += stats.additions;
-      total.deletions += stats.deletions;
-      return total;
-    },
-    { additions: 0, deletions: 0 },
-  );
-}
-
 export function getDiffFileStatus(section: DiffFileSection) {
   if (section.lines.some((line) => line.startsWith("new file mode")))
     return "added" as const;
