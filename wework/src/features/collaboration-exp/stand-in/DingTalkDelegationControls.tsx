@@ -155,7 +155,7 @@ export function DingTalkDelegationControls({
   else if (sourceAuthProblem || readiness?.status === 'auth_required')
     status = savedDelegation?.profile ? 'expired' : 'disconnected'
   else if (connected) status = 'connected'
-  else if (result.status === 'error' || readiness?.status === 'error') status = 'connection_failed'
+  else if (!shouldCheck || result.status === 'error' || readiness) status = 'connection_failed'
 
   const baseRole = newStandInPrimaryRole(deviceId)
   const models = useStandInModels(

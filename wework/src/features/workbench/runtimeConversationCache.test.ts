@@ -1091,9 +1091,21 @@ describe('runtimeConversationCache', () => {
     expect(isRuntimeGoalSnapshotCurrent(address, olderSnapshot)).toBe(false)
     expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(true)
 
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
     setRuntimeConversationGoal(address, null)
 
     expect(isRuntimeGoalSnapshotCurrent(address, newerSnapshot)).toBe(false)
+    expect(listener).toHaveBeenCalledOnce()
+
+    const metadata = getRuntimeConversationMetadata(address)
+    const repeatedSnapshot = beginRuntimeGoalSnapshot(address)
+    setRuntimeConversationGoal(address, null)
+
+    expect(isRuntimeGoalSnapshotCurrent(address, repeatedSnapshot)).toBe(false)
+    expect(getRuntimeConversationMetadata(address)).toBe(metadata)
+    expect(listener).toHaveBeenCalledOnce()
+    unsubscribe()
   })
 
   test('does not reuse Goal snapshot versions after conversation eviction', () => {

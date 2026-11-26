@@ -113,7 +113,7 @@ test.each([true, false])(
         },
       }
     }
-    api.searchConnectionResources = async () => ({
+    api.searchConnectionResources = vi.fn(async () => ({
       items: [
         {
           providerId: STAND_IN_DINGTALK_PROVIDER,
@@ -132,7 +132,7 @@ test.each([true, false])(
           name: 'Other',
         },
       ],
-    })
+    }))
     const save = vi.fn()
     const model = {
       runtime: 'codex' as const,
@@ -190,6 +190,15 @@ test.each([true, false])(
     fireEvent.change(query, { target: { value: 'Friend' } })
     fireEvent.click(screen.getByTestId('stand-in-dingtalk-search'))
     fireEvent.click(await screen.findByTestId('stand-in-dingtalk-result-friend'))
+    expect(api.searchConnectionResources).toHaveBeenCalledExactlyOnceWith(
+      'device',
+      STAND_IN_DINGTALK_PROVIDER,
+      'direct',
+      'Friend',
+      undefined,
+      undefined,
+      identity.profile
+    )
     expect(screen.queryByTestId('stand-in-dingtalk-result-other')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('stand-in-dingtalk-add-selected'))
 

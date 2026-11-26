@@ -4,7 +4,7 @@ import {
 } from '@/features/workbench/scopedDraftStore'
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { StrictMode, type ComponentProps } from 'react'
@@ -208,6 +208,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRetryTranscript,
     messageTarget,
     hideRequestUserInputBlocks,
+    isWaitingForAssistant,
   }: {
     messages: Array<{
       id: string
@@ -234,8 +235,13 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRetryTranscript?: () => void
     messageTarget?: { messageId: string; requestKey: string }
     hideRequestUserInputBlocks?: boolean
+    isWaitingForAssistant?: boolean
   }) => (
-    <div data-testid="mock-message-list" data-target-message={messageTarget?.messageId}>
+    <div
+      data-testid="mock-message-list"
+      data-target-message={messageTarget?.messageId}
+      data-waiting-for-assistant={isWaitingForAssistant}
+    >
       {messages.map(message => (
         <span key={message.id}>{message.content}</span>
       ))}
@@ -594,7 +600,10 @@ vi.mock('@/features/workbench/runtimeModelSelection', async importOriginal => {
 })
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
-  deriveRuntimePaneStatus: () => ({ isBusy: mocks.busy }),
+  deriveRuntimePaneStatus: () => ({
+    isBusy: mocks.busy,
+    isResponseActive: mocks.lifecycleSnapshot?.derived.isTurnActive ?? false,
+  }),
   isRuntimeTaskBusyError: () => mocks.busySendError,
 }))
 
@@ -2165,15 +2174,6 @@ describe('TemporaryChatPanel', () => {
           </I18nextProvider>
         )
       }
-      const selectModel = async (name: string) => {
-        await user.click(screen.getByTestId('model-selector-button'))
-        const menu = await screen.findByTestId('model-selector-menu')
-        if (menu.dataset.panel === 'simple') {
-          await user.click(within(menu).getByTestId('model-advanced-toggle'))
-        }
-        await waitFor(() => expect(menu).toHaveAttribute('data-panel', 'advanced'))
-        await user.click(await within(menu).findByTestId(`model-option-${name}`))
-      }
       try {
         const view = render(<Conversation />)
         await waitFor(() => expect(services.standInApi.catalog).toHaveBeenCalled())
@@ -2206,9 +2206,12 @@ describe('TemporaryChatPanel', () => {
         } else {
           await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
         }
+        await user.click(screen.getByTestId('model-selector-button'))
+        const advanced = screen.queryByTestId('model-advanced-toggle')
+        if (advanced) await user.click(advanced)
         const modelName =
           target === 'cloud' ? cloud.name : target === 'official' ? official.name : 'company-codex'
-        await selectModel(modelName)
+        await user.click(await screen.findByTestId(`model-option-${modelName}`))
         if (existing) {
           expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
             threadRouting
@@ -2226,7 +2229,10 @@ describe('TemporaryChatPanel', () => {
             expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
             if (providerFailure || providerPending)
               expect(screen.getByTestId('send-message-button')).toBeDisabled()
-            await selectModel(modelName)
+            await user.click(screen.getByTestId('model-selector-button'))
+            const advanced = screen.queryByTestId('model-advanced-toggle')
+            if (advanced) await user.click(advanced)
+            await user.click(await screen.findByTestId(`model-option-${modelName}`))
           }
           if (providerPending && !changeTargetRoundtrip) {
             expect(releaseProviderRead).toBeTypeOf('function')
@@ -2243,7 +2249,10 @@ describe('TemporaryChatPanel', () => {
           expect(releaseProviderRead).toBeTypeOf('function')
           await act(async () => releaseProviderRead?.())
           for (const name of ['company-codex', cloud.name]) {
-            await selectModel(name)
+            await user.click(screen.getByTestId('model-selector-button'))
+            const advanced = screen.queryByTestId('model-advanced-toggle')
+            if (advanced) await user.click(advanced)
+            await user.click(await screen.findByTestId(`model-option-${name}`))
             expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
             await user.keyboard('{Escape}')
           }
@@ -2254,7 +2263,10 @@ describe('TemporaryChatPanel', () => {
           'Keep this stand-in draft'
         )
         if (revertBeforeSend) {
-          await selectModel(official.name)
+          await user.click(screen.getByTestId('model-selector-button'))
+          const advanced = screen.queryByTestId('model-advanced-toggle')
+          if (advanced) await user.click(advanced)
+          await user.click(await screen.findByTestId(`model-option-${official.name}`))
           expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
         }
         if (screen.queryByTestId('model-selector-menu')) await user.keyboard('{Escape}')
@@ -2353,7 +2365,7 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          setComposerValue(screen.getByTestId('chat-message-input'), 'Continue recovered session')
+          await user.type(screen.getByTestId('chat-message-input'), 'Continue recovered session')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
@@ -2399,15 +2411,18 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          setComposerValue(screen.getByTestId('chat-message-input'), 'Continue here')
+          await user.type(screen.getByTestId('chat-message-input'), 'Continue here')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
             'startNewSession'
           )
-          await selectModel(official.name)
+          await user.click(screen.getByTestId('model-selector-button'))
+          const advanced = screen.queryByTestId('model-advanced-toggle')
+          if (advanced) await user.click(advanced)
+          await user.click(await screen.findByTestId(`model-option-${official.name}`))
           await user.click(screen.getByTestId('model-switch-warning-confirm-button'))
-          setComposerValue(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
+          await user.type(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toMatchObject({
@@ -3776,6 +3791,49 @@ describe('TemporaryChatPanel', () => {
       await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
     }
   )
+  it('stops waiting after the first visible reply even when processing is hidden without dots', async () => {
+    mocks.busy = true
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: true, isTurnActive: true },
+      turn: { id: 'active-turn' },
+    }
+    const request: WorkbenchMessage = {
+      id: 'request',
+      role: 'user',
+      content: 'Check the task',
+      status: 'done',
+    }
+    mocks.conversationMessages = [request]
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="hidden-processing-waiting"
+        nativeConversation
+        hideProcessing
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+        'data-waiting-for-assistant',
+        'true'
+      )
+    )
+    act(() => {
+      mocks.conversationMessages = [
+        request,
+        { id: 'reply', role: 'assistant', content: 'I checked the task', status: 'streaming' },
+      ]
+      for (const listener of mocks.conversationListeners) listener()
+    })
+    expect(screen.getByText('I checked the task')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+      'data-waiting-for-assistant',
+      'false'
+    )
+  })
+
   it('keeps a native send error visible across transcript synchronization', async () => {
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
     mocks.conversationMessages = [

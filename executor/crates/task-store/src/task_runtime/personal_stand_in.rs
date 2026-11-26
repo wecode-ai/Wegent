@@ -682,43 +682,7 @@ impl LocalTaskStore {
         device: &str,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_with_verified_dingtalk_account(user, device, value, None)
-    }
-
-    /// Save after Executor preflight, keeping connector-verified identity out of client input.
-    pub fn save_personal_stand_in_with_verified_dingtalk_account(
-        &self,
-        user: i64,
-        device: &str,
-        value: Value,
-        verified_account: Option<&Value>,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_with_verified_dingtalk_account_for_backend(
-            user,
-            device,
-            None,
-            value,
-            verified_account,
-        )
-    }
-
-    /// Save an Executor preflight result while syncing any changed shared definition.
-    pub fn save_personal_stand_in_with_verified_dingtalk_account_for_backend(
-        &self,
-        user: i64,
-        device: &str,
-        backend: Option<&str>,
-        value: Value,
-        verified_account: Option<&Value>,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_with_context(
-            user,
-            device,
-            value,
-            true,
-            verified_account,
-            backend,
-        )
+        self.save_personal_stand_in_for_backend(user, device, None, value)
     }
 
     pub fn save_personal_stand_in_for_backend(
@@ -728,18 +692,25 @@ impl LocalTaskStore {
         backend: Option<&str>,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_with_context(user, device, value, false, None, backend)
+        self.save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            user, device, backend, value, None,
+        )
     }
 
-    fn save_personal_stand_in_with_context(
+    /// Keep connector-verified identity out of client input when saving a delegation.
+    pub fn save_personal_stand_in_with_verified_dingtalk_account_for_backend(
         &self,
         user: i64,
         device: &str,
-        value: Value,
-        direct_save: bool,
-        verified_account: Option<&Value>,
         backend: Option<&str>,
+        value: Value,
+        verified_account: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
+        if value["primary"]["delegation"]["action"] == "prepare" && verified_account.is_none() {
+            return Err(TaskRuntimeError::Invalid(
+                "Verify the selected DingTalk account before preparing delegation".into(),
+            ));
+        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let saved = self.save_personal_stand_in_on(
@@ -748,7 +719,7 @@ impl LocalTaskStore {
             device,
             value,
             StandInSaveOptions {
-                direct_save,
+                direct_save: true,
                 verified_account,
                 backend,
             },

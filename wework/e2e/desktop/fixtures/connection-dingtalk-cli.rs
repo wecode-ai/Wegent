@@ -29,7 +29,7 @@ fn record(operation: &str) {
             .create(true)
             .open(path)
             .unwrap();
-        writeln!(log, "{operation}").unwrap();
+        log.write_all(format!("{operation}\n").as_bytes()).unwrap();
     }
 }
 

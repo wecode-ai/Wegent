@@ -32,8 +32,7 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
     'The first-run telemetry consent prompt did not close after accepting'
   )
 
-  // First-run consent loads the SDK and waits for a batched request to reach the server.
-  await control.awaitTelemetryEvent('app_started', Math.max(DEFAULT_STEP_TIMEOUT_MS, 20_000))
+  await control.awaitTelemetryEvent('app_started')
   const requests = control.telemetryRequests
   const events = requests.flatMap(request => telemetryEvents(request.payload))
   assert.ok(events.length > 0, 'The telemetry request did not contain an event')

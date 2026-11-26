@@ -46,6 +46,7 @@ export function StandInSourceConnections(props: SourceConnectionsProps) {
     props.provider.authTarget?.pluginKey,
     props.provider.authTarget?.connectorSlug,
     props.delegatedDingTalk,
+    props.delegatedDingTalk ? props.provider.availability.profile : undefined,
     props.delegatedDingTalk ? props.provider.availability.accountId : undefined,
   ])
   const [owner, setOwner] = useState({ api: props.api, scope, revision: 0 })

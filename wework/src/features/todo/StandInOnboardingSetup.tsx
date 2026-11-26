@@ -294,7 +294,11 @@ export function StandInOnboardingSetup({
             {role.connections?.some(isDingTalkSource) && (
               <p className="text-sm text-text-secondary">
                 {t(
-                  baseline.primary?.delegation?.authorized && !baseline.primary.delegation.paused
+                  baseline.primary?.delegation?.authorized &&
+                    !baseline.primary.delegation.paused &&
+                    !baseline.primary.delegation.accountInvalidated &&
+                    !baseline.lifecycle &&
+                    !configuration.dingtalkSourceProblem
                     ? 'standIn.dingtalk_delegation.enabled'
                     : 'standIn.dingtalk_delegation.paused'
                 )}

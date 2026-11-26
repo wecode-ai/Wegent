@@ -47,6 +47,7 @@ export async function verifyStandInDingTalkDelegation(control, userId, fixture, 
   const preferencesDraft = 'Keep this assistant instruction as an unsaved draft.'
   await control.command('fill', preferences, { value: preferencesDraft })
   await openDingTalk(control)
+  await control.command('waitFor', id('stand-in-delegation'), { text: '本机独立组件 · 1.0.58' })
   await control.command('waitFor', `${delegation('enable')}:disabled`)
   assert.equal(await control.command('getElementCount', dingtalk('authorize')), '0')
   for (const template of ['document', 'schedule', 'process']) {

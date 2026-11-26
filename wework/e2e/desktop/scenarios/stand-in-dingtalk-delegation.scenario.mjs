@@ -224,6 +224,7 @@ export function createDesktopScenario(options) {
       }
       async function assertDelivered(samples, timeoutMs = timeout) {
         const idsToCheck = samples.map(sample => sample.question.id)
+        // Wait for delivery receipts up to the same deadline that each reply must meet.
         const outcomes = await awaitOutcomes(
           idsToCheck,
           'sent',

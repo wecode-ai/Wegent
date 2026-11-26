@@ -234,6 +234,7 @@ export function useDesktopWorkbenchLayoutModel({
     setNotice,
   } = layoutState
 
+  const { activatePane: activateSplitPane } = splitGroups
   const routeWorkItemsOpen =
     surfaceKind === 'board' || (surfaceKind === undefined && currentPath === '/todo')
   const activeProjectSpaceContentRoute =
@@ -325,10 +326,11 @@ export function useDesktopWorkbenchLayoutModel({
     },
     [activateBlankComposer, onStartNewProjectChat]
   )
-  const activateRuntimeTaskPane = layoutSession.activateRuntimeTaskPane
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
-      activateRuntimeTaskPane(
+      setTaskView('workbench')
+      setActiveLocalHarnessSessionId(null)
+      activateSplitPane(
         getWorkbenchPaneKey({
           currentRuntimeTask: address,
           currentProject: null,
@@ -339,7 +341,14 @@ export function useDesktopWorkbenchLayoutModel({
       }
       requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
-    [activateRuntimeTaskPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
+    [
+      activateSplitPane,
+      currentPath,
+      onOpenRuntimeTask,
+      setActiveLocalHarnessSessionId,
+      setTaskView,
+      state.currentRuntimeTask,
+    ]
   )
   const registerLocalHarnessSession = useCallback(
     (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {

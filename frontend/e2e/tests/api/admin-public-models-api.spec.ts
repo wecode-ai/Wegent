@@ -5,7 +5,7 @@ import { ADMIN_USER } from '../../config/test-users'
 
 test.describe('Admin - Public Model API Tests', () => {
   let apiClient: ApiClient
-  let testModelId: number | null = null
+  const createdModelIds: number[] = []
 
   test.beforeEach(async ({ request }) => {
     apiClient = createApiClient(request)
@@ -13,9 +13,8 @@ test.describe('Admin - Public Model API Tests', () => {
   })
 
   test.afterEach(async () => {
-    if (testModelId) {
-      await apiClient.adminDeletePublicModel(testModelId).catch(() => {})
-      testModelId = null
+    for (const modelId of createdModelIds.splice(0)) {
+      await apiClient.adminDeletePublicModel(modelId).catch(() => {})
     }
   })
 
@@ -53,7 +52,7 @@ test.describe('Admin - Public Model API Tests', () => {
     expect([200, 201]).toContain(response.status)
     if (response.data) {
       const createdModel = response.data as { id: number; is_visible: boolean }
-      testModelId = createdModel.id
+      createdModelIds.push(createdModel.id)
       expect(createdModel.is_visible).toBe(true)
     }
   })
@@ -83,10 +82,11 @@ test.describe('Admin - Public Model API Tests', () => {
     })
 
     expect([200, 201]).toContain(createResponse.status)
-    testModelId = (createResponse.data as { id: number }).id
+    const createdModelId = (createResponse.data as { id: number }).id
+    createdModelIds.push(createdModelId)
 
     // Update model
-    const updateResponse = await apiClient.adminUpdatePublicModel(testModelId, {
+    const updateResponse = await apiClient.adminUpdatePublicModel(createdModelId, {
       is_visible: false,
     })
 
@@ -94,7 +94,7 @@ test.describe('Admin - Public Model API Tests', () => {
     expect((updateResponse.data as { is_active: boolean }).is_active).toBe(true)
     expect((updateResponse.data as { is_visible: boolean }).is_visible).toBe(false)
 
-    const deactivateResponse = await apiClient.adminUpdatePublicModel(testModelId, {
+    const deactivateResponse = await apiClient.adminUpdatePublicModel(createdModelId, {
       is_active: false,
     })
 
@@ -132,5 +132,55 @@ test.describe('Admin - Public Model API Tests', () => {
     // Delete model
     const deleteResponse = await apiClient.adminDeletePublicModel(modelId)
     expect([200, 204]).toContain(deleteResponse.status)
+  })
+
+  test('GET /api/admin/public-models - should filter and paginate', async () => {
+    const unique = DataBuilders.uniqueName('api-search-model')
+    const modelNames = [`${unique}-a`, `${unique}-b`, `${unique}-c`]
+
+    for (const [index, name] of modelNames.entries()) {
+      const response = await apiClient.adminCreatePublicModel({
+        name,
+        json: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: {
+            name,
+            displayName: `Qwen Search ${index} ${unique}`,
+            namespace: 'default',
+          },
+          spec: {
+            modelConfig: {
+              provider: 'openai',
+              modelId: 'gpt-4',
+              apiKey: 'test-key',
+              baseUrl: 'https://api.openai.com/v1',
+            },
+          },
+        },
+      })
+      expect([200, 201]).toContain(response.status)
+      createdModelIds.push((response.data as { id: number }).id)
+    }
+
+    const firstPage = await apiClient.adminListPublicModels({
+      search: unique.toUpperCase(),
+      page: 1,
+      limit: 2,
+    })
+    expect(firstPage.status).toBe(200)
+    const firstPageData = firstPage.data as { total: number; items: { name: string }[] }
+    expect(firstPageData.total).toBe(3)
+    expect(firstPageData.items.map(item => item.name)).toEqual(modelNames.slice(0, 2))
+
+    const secondPage = await apiClient.adminListPublicModels({
+      search: unique,
+      page: 2,
+      limit: 2,
+    })
+    expect(secondPage.status).toBe(200)
+    const secondPageData = secondPage.data as { total: number; items: { name: string }[] }
+    expect(secondPageData.total).toBe(3)
+    expect(secondPageData.items.map(item => item.name)).toEqual([modelNames[2]])
   })
 })

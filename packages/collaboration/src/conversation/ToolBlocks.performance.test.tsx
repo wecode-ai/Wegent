@@ -6,6 +6,7 @@ import { createCollaborationTranslator } from '../i18n'
 import { ConversationTranslationProvider } from './ConversationTranslation'
 import { AssistantMessage } from './AssistantMessage'
 import * as presentation from './assistantMessagePresentation'
+import * as references from './codexReferences'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import * as activity from './blocks/ProcessingActivity'
@@ -109,6 +110,7 @@ describe('processing clock render isolation', () => {
 
   it('keeps completed tool history stable while answer text streams', () => {
     const classify = vi.spyOn(activity, 'countProcessingActivityKinds')
+    const collectReferences = vi.spyOn(references, 'getAssistantReferences')
     const images = { identity: () => '', load: vi.fn(), download: vi.fn() }
     const command = tool()
     const update = (content: string, block = command) => {
@@ -136,10 +138,12 @@ describe('processing clock render isolation', () => {
     act(() => detail.click())
     expect(container.textContent).toContain('result')
     classify.mockClear()
+    collectReferences.mockClear()
 
     update('The workspace is ready for review')
 
     expect(container.textContent).toContain('The workspace is ready for review')
+    expect(collectReferences).toHaveBeenCalledTimes(1)
     expect(classify).not.toHaveBeenCalled()
     expect(container.querySelector('[data-tool-detail-toggle]')).toBe(detail)
 

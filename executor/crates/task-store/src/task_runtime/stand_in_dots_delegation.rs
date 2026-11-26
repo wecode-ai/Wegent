@@ -40,6 +40,7 @@ pub fn active_delegated_source<'a>(identity: &'a Value, source: &Value) -> Optio
         && current["paused"] == false
         && current["profile"] == delegation["profile"]
         && current["accountId"] == delegation["accountId"]
+        && current["organizationId"] == delegation["organizationId"]
         && source["accountId"] == current["accountId"])
         .then_some(current)
 }
@@ -312,6 +313,7 @@ pub(super) fn save_delegation(
         || previous["authorized"] != authorized
         || previous["paused"] != paused
         || previous["templates"] != template_settings
+        || account_metadata.get("organizationId") != previous.get("organizationId")
         || source_scope(primary) != source_scope(previous_primary);
     if !direct_save && (changed || requested.get("action").is_some()) {
         return Err(invalid(
@@ -344,7 +346,13 @@ pub(super) fn save_delegation(
         "version": version, "profile": profile, "accountId": account, "authorized": authorized,
         "paused": paused, "templates": template_settings, "templateEnabledAfter": cutoffs,
         "accountInvalidated": !preparing && previous["accountInvalidated"] == true && !authorized,
-        "effectiveAfter": if !authorized { &Value::Null } else if changed { &boundary } else { &previous["effectiveAfter"] }
+        "effectiveAfter": if preparing && !authorized {
+            &Value::Null
+        } else if changed && authorized {
+            &boundary
+        } else {
+            &previous["effectiveAfter"]
+        }
     });
     primary["delegation"]
         .as_object_mut()

@@ -19,9 +19,9 @@ while IFS= read -r line; do
   while [ -f "$directory/$method.hold" ]; do sleep 0.01; done
   error_file="$directory/$method.error-once.json"
   if [ -f "$error_file" ]; then
-    mv "$error_file" "$error_file.consumed" || exit 1
     printf '{"id":%s,"error":' "$id"
-    cat "$error_file.consumed"
+    cat "$error_file"
+    rm "$error_file"
     printf '}\n'
     continue
   fi

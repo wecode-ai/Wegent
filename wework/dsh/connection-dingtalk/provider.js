@@ -22,6 +22,7 @@ const DELEGATION_MISSED_POLLS_MS = 60_000
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
 const READINESS_ERRORS = new Map([
   ['connector_auth_required', 'auth_required'],
+  ['dingtalk_credentials_unavailable', 'auth_required'],
   ['dingtalk_account_changed', 'identity_required'],
   ['dingtalk_permissions_required', 'permissions_required'],
 ])
@@ -93,6 +94,7 @@ export function createProvider() {
       }
       const rows = kind === 'group' ? response.result?.groups : response.result
       if (!Array.isArray(rows)) throw invalid('Invalid search response')
+      if (selected) await verifyAccountToken(ctx, selected, readTool)
       return {
         items: rows.map(row => ({
           id: required(row, kind === 'group' ? 'openConversationId' : 'openDingTalkId'),
@@ -799,6 +801,7 @@ async function connectionReadiness(ctx, { profile, sources }) {
     details.identity = readinessIdentity(selected.identity)
     await verifyAccountToken(ctx, selected.identity, readTool)
     const read = await verifyMessageRead(ctx, selected.identity, sources)
+    if (read === 'verified') await verifyAccountToken(ctx, selected.identity, readTool)
     return { ...details, status: 'ready', permissions: { read, reply: 'unverified' } }
   } catch (error) {
     return {
@@ -872,7 +875,7 @@ async function ownIdentity(ctx, source, cache) {
   const profile = required(source, 'profile')
   const delegated = source.delegated === true
   const bound = delegated ? await boundAccount(ctx, source, readTool) : null
-  const key = delegated ? source.accountId : profile
+  const key = bound?.accountId ?? profile
   const cached = cache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.id
   const account =

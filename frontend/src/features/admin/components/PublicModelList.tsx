@@ -4,16 +4,15 @@
 
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { Tag } from '@/components/ui/tag'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
-import { CpuChipIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { CpuChipIcon } from '@heroicons/react/24/outline'
+import { Loader2, Search, X } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -41,115 +40,42 @@ import {
   AdminPublicModelUpdate,
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { Pagination } from '@/components/ui/pagination'
 import { ModelPrimaryGroupIconSettings } from './ModelPrimaryGroupIconSettings'
+import { PublicModelCardList } from './PublicModelCardList'
+import {
+  getPublicModelAllowedUsersEnabledFromConfig,
+  getPublicModelAllowedUsersFromConfig,
+  getPublicModelSpec,
+  getPublicModelSpecBoolean,
+  getPublicModelSpecValue,
+  getPublicModelVisibilityFromConfig,
+  parseAllowedUsersInput,
+  parsePublicModelConfig,
+  setPublicModelAllowedUsersEnabledInConfig,
+  setPublicModelAllowedUsersInConfig,
+  setPublicModelVisibilityInConfig,
+} from './publicModelConfig'
 
-const isJsonObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+const PUBLIC_MODELS_PAGE_SIZE = 50
+const SEARCH_DEBOUNCE_MS = 300
 
-export const parsePublicModelConfig = (value: string): Record<string, unknown> | null => {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    if (!isJsonObject(parsed)) {
-      return null
-    }
-    if ('spec' in parsed && !isJsonObject(parsed.spec)) {
-      return null
-    }
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-export const getPublicModelVisibilityFromConfig = (value: string): boolean | undefined => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return undefined
-  }
-  const isVisible = parsed.spec.isVisible
-  return typeof isVisible === 'boolean' ? isVisible : undefined
-}
-
-export const setPublicModelVisibilityInConfig = (value: string, isVisible: boolean): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  spec.isVisible = isVisible
-  return JSON.stringify({ ...config, spec }, null, 2)
-}
-
-export const getPublicModelAllowedUsersFromConfig = (value: string): string[] => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return []
-  }
-  const allowedUsers = parsed.spec.allowedUsers
-  if (!Array.isArray(allowedUsers)) {
-    return []
-  }
-  return allowedUsers.filter(
-    (name): name is string => typeof name === 'string' && name.trim().length > 0
-  )
-}
-
-export const getPublicModelAllowedUsersEnabledFromConfig = (value: string): boolean => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return false
-  }
-  return parsed.spec.allowedUsersEnabled === true
-}
-
-export const parseAllowedUsersInput = (value: string): string[] => {
-  const names = value
-    .split(/[\s,，]+/)
-    .map(name => name.trim())
-    .filter(Boolean)
-  return Array.from(new Set(names))
-}
-
-export const setPublicModelAllowedUsersEnabledInConfig = (
-  value: string,
-  enabled: boolean
-): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  if (enabled) {
-    spec.allowedUsersEnabled = true
-  } else {
-    delete spec.allowedUsersEnabled
-  }
-  return JSON.stringify({ ...config, spec }, null, 2)
-}
-
-export const setPublicModelAllowedUsersInConfig = (
-  value: string,
-  allowedUsers: string[]
-): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  if (allowedUsers.length > 0) {
-    spec.allowedUsers = allowedUsers
-  } else {
-    delete spec.allowedUsers
-  }
-  return JSON.stringify({ ...config, spec }, null, 2)
+const parsePageParam = (value: string | null): number => {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
 }
 
 const PublicModelList: React.FC = () => {
   const { t } = useTranslation()
   const { toast } = useToast()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialSearch = searchParams?.get('search')?.trim() ?? ''
   const [models, setModels] = useState<AdminPublicModel[]>([])
-  const [_total, setTotal] = useState(0)
-  const [page, _setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(() => parsePageParam(searchParams?.get('page') ?? null))
+  const [search, setSearch] = useState(initialSearch)
+  const [searchQuery, setSearchQuery] = useState(initialSearch)
   const [loading, setLoading] = useState(true)
 
   // Dialog states
@@ -186,27 +112,100 @@ const PublicModelList: React.FC = () => {
   })
   const [configError, setConfigError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState(false)
+  const [resultsScope, setResultsScope] = useState<{ search: string; page: number } | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshToken, setRefreshToken] = useState(0)
+  const activeScopeRef = useRef({ search, page })
+  const resultsScopeRef = useRef<{ search: string; page: number } | null>(null)
+  const requestIdRef = useRef(0)
+
+  useEffect(() => {
+    activeScopeRef.current = { search, page }
+  }, [page, search])
 
   const fetchModels = useCallback(async () => {
-    setLoading(true)
+    const requestId = ++requestIdRef.current
+    const requestScope = { search, page }
+    const isActiveScope = () => {
+      const active = activeScopeRef.current
+      return requestScope.search === active.search && requestScope.page === active.page
+    }
+    const lastResultsScope = resultsScopeRef.current
+    const sameScopeRefresh = lastResultsScope?.search === search && lastResultsScope?.page === page
+    setRefreshing(sameScopeRefresh)
+    setLoading(!sameScopeRefresh)
+    setLoadError(false)
     try {
-      // Use a larger limit to display all public models without pagination
-      const response = await adminApis.getPublicModels(page, 100)
+      const response = await adminApis.getPublicModels(
+        page,
+        PUBLIC_MODELS_PAGE_SIZE,
+        search || undefined
+      )
+      if (requestId !== requestIdRef.current || !isActiveScope()) return
       setModels(response.items)
       setTotal(response.total)
+      resultsScopeRef.current = { search, page }
+      setResultsScope({ search, page })
     } catch (_error) {
-      toast({
-        variant: 'destructive',
-        title: t('admin:public_models.errors.load_failed'),
-      })
+      if (requestId !== requestIdRef.current || !isActiveScope()) return
+      setLoadError(true)
     } finally {
-      setLoading(false)
+      if (requestId === requestIdRef.current && isActiveScope()) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
-  }, [page, toast, t])
+  }, [page, search])
 
   useEffect(() => {
     fetchModels()
-  }, [fetchModels])
+  }, [fetchModels, refreshToken])
+
+  // Persist the committed search and page in the URL so a refresh restores them.
+  useEffect(() => {
+    const currentParams = searchParams?.toString() ?? ''
+    const params = new URLSearchParams(currentParams)
+    if (search) {
+      params.set('search', search)
+    } else {
+      params.delete('search')
+    }
+    if (page > 1) {
+      params.set('page', String(page))
+    } else {
+      params.delete('page')
+    }
+    const nextParams = params.toString()
+    if (nextParams !== currentParams) {
+      router.replace(nextParams ? `?${nextParams}` : '?', { scroll: false })
+    }
+  }, [page, router, search, searchParams])
+
+  const totalPages = Math.max(1, Math.ceil(total / PUBLIC_MODELS_PAGE_SIZE))
+  const hasCurrentSearchResults = resultsScope?.search === search
+  const hasCurrentResults = hasCurrentSearchResults && resultsScope?.page === page
+  const hasVisibleResults = hasCurrentResults && models.length > 0
+
+  // Keep the current page valid after deletions or a stale URL page. Only clamp
+  // after a successful response for the current search, so a failed request
+  // cannot move the user away from a valid requested page.
+  useEffect(() => {
+    if (!loading && hasCurrentSearchResults && page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [hasCurrentSearchResults, loading, page, totalPages])
+
+  // Debounce typing, then commit the search and return to the first page.
+  const trimmedSearchQuery = searchQuery.trim()
+  useEffect(() => {
+    if (trimmedSearchQuery === search) return
+    const timer = setTimeout(() => {
+      setSearch(trimmedSearchQuery)
+      setPage(1)
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [search, trimmedSearchQuery])
 
   const validateConfig = (value: string): Record<string, unknown> | null => {
     if (!value.trim()) {
@@ -222,31 +221,9 @@ const PublicModelList: React.FC = () => {
     return parsed
   }
 
-  const getSpecValue = (json: Record<string, unknown>, key: 'modelGroup' | 'modelSubGroup') => {
-    const spec = json.spec
-    if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
-      const value = (spec as Record<string, unknown>)[key]
-      return typeof value === 'string' ? value : ''
-    }
-    return ''
-  }
-
-  const getSpecBooleanValue = (json: Record<string, unknown>, key: string) => {
-    const spec = json.spec
-    if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
-      const value = (spec as Record<string, unknown>)[key]
-      return typeof value === 'boolean' ? value : false
-    }
-    return false
-  }
-
   const applyGroupingToConfig = (config: Record<string, unknown>) => {
     const nextConfig = { ...config }
-    const currentSpec = nextConfig.spec
-    const spec =
-      typeof currentSpec === 'object' && currentSpec !== null && !Array.isArray(currentSpec)
-        ? { ...(currentSpec as Record<string, unknown>) }
-        : {}
+    const spec = getPublicModelSpec(nextConfig)
     const trimmedGroup = formData.modelGroup.trim()
     const trimmedSubGroup = formData.modelSubGroup.trim()
 
@@ -294,8 +271,8 @@ const PublicModelList: React.FC = () => {
       config: value,
       ...(config
         ? {
-            modelGroup: getSpecValue(config, 'modelGroup'),
-            modelSubGroup: getSpecValue(config, 'modelSubGroup'),
+            modelGroup: getPublicModelSpecValue(config, 'modelGroup'),
+            modelSubGroup: getPublicModelSpecValue(config, 'modelSubGroup'),
           }
         : {}),
       ...(configVisibility === undefined ? {} : { is_visible: configVisibility }),
@@ -326,7 +303,7 @@ const PublicModelList: React.FC = () => {
     const config = validateConfig(formData.config)
     if (!config) return
 
-    const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
+    const spec = getPublicModelSpec(config)
     const trimmedValue = value.trim()
     if (trimmedValue) {
       spec[key] = trimmedValue
@@ -383,7 +360,7 @@ const PublicModelList: React.FC = () => {
       toast({ title: t('admin:public_models.success.created') })
       setIsCreateDialogOpen(false)
       resetForm()
-      fetchModels()
+      setRefreshToken(token => token + 1)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -432,7 +409,7 @@ const PublicModelList: React.FC = () => {
       toast({ title: t('admin:public_models.success.updated') })
       setIsEditDialogOpen(false)
       resetForm()
-      fetchModels()
+      setRefreshToken(token => token + 1)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -453,7 +430,7 @@ const PublicModelList: React.FC = () => {
       toast({ title: t('admin:public_models.success.deleted') })
       setIsDeleteDialogOpen(false)
       setSelectedModel(null)
-      fetchModels()
+      setRefreshToken(token => token + 1)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -488,13 +465,13 @@ const PublicModelList: React.FC = () => {
     setFormData({
       name: model.name,
       namespace: model.namespace,
-      modelGroup: getSpecValue(model.json, 'modelGroup'),
-      modelSubGroup: getSpecValue(model.json, 'modelSubGroup'),
+      modelGroup: getPublicModelSpecValue(model.json, 'modelGroup'),
+      modelSubGroup: getPublicModelSpecValue(model.json, 'modelSubGroup'),
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
       is_visible: model.is_visible,
       is_advanced: model.is_advanced ?? false,
-      is_wework_available: getSpecBooleanValue(model.json, 'isWeworkAvailable'),
+      is_wework_available: getPublicModelSpecBoolean(model.json, 'isWeworkAvailable'),
       allowed_users: getPublicModelAllowedUsersFromConfig(JSON.stringify(model.json)).join(', '),
       allowed_users_enabled: getPublicModelAllowedUsersEnabledFromConfig(
         JSON.stringify(model.json)
@@ -503,39 +480,39 @@ const PublicModelList: React.FC = () => {
     setIsEditDialogOpen(true)
   }
 
-  const getModelProvider = (json: Record<string, unknown>): string => {
-    const env = (json?.env as Record<string, unknown>) || {}
-    const model = env?.model as string
-    if (model === 'openai') return 'OpenAI'
-    if (model === 'claude') return 'Anthropic'
-    return 'Unknown'
-  }
-
-  const getModelId = (json: Record<string, unknown>): string => {
-    const env = (json?.env as Record<string, unknown>) || {}
-    return (env?.model_id as string) || 'N/A'
-  }
-
-  const getDisplayName = (model: AdminPublicModel): string => {
-    // Use display_name from API response if available, otherwise fall back to name
-    return model.display_name || model.name
-  }
-
-  const getGroupPath = (model: AdminPublicModel): string | null => {
-    const group = getSpecValue(model.json, 'modelGroup')
-    const subGroup = getSpecValue(model.json, 'modelSubGroup')
-    if (group && subGroup) return `${group} / ${subGroup}`
-    return group || subGroup || null
-  }
-
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('admin:public_models.title')}
-        </h2>
-        <p className="text-sm text-text-muted">{t('admin:public_models.description')}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">
+            {t('admin:public_models.title')}
+          </h2>
+          <p className="text-sm text-text-muted">{t('admin:public_models.description')}</p>
+        </div>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={event => setSearchQuery(event.target.value)}
+            placeholder={t('admin:public_models.search_placeholder')}
+            aria-label={t('admin:public_models.search_placeholder')}
+            className="h-11 pl-9 pr-12 md:h-9 md:pr-10"
+            data-testid="public-model-search-input"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label={t('admin:public_models.clear_search')}
+              data-testid="public-model-search-clear"
+              className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-text-muted hover:text-text-primary md:right-2 md:h-8 md:w-8"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content Container */}
@@ -547,115 +524,86 @@ const PublicModelList: React.FC = () => {
           </div>
         )}
 
+        {/* Same-scope refresh keeps the current list visible */}
+        {refreshing && (
+          <div
+            className="flex items-center justify-center py-2"
+            role="status"
+            data-testid="public-model-refreshing"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+          </div>
+        )}
+
+        {/* Load Error */}
+        {!loading && loadError && (
+          <div
+            className={
+              hasVisibleResults
+                ? 'flex items-center justify-between gap-3 rounded-md border border-error/40 bg-error/10 px-3 py-2'
+                : 'flex flex-col items-center justify-center gap-3 py-12 text-center'
+            }
+            role="alert"
+          >
+            <p className="text-sm text-text-muted">{t('admin:public_models.errors.load_failed')}</p>
+            <Button variant="outline" onClick={fetchModels} data-testid="public-model-load-retry">
+              {t('common:common.retry')}
+            </Button>
+          </div>
+        )}
+
         {/* Empty State */}
-        {!loading && models.length === 0 && (
+        {!loading && !loadError && hasCurrentResults && models.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('admin:public_models.no_models')}</p>
+            <p className="text-text-muted">
+              {search
+                ? t('admin:public_models.no_search_results', { search })
+                : t('admin:public_models.no_models')}
+            </p>
           </div>
         )}
 
         {/* Model List */}
-        {!loading && models.length > 0 && (
-          <div className="flex-1 overflow-y-auto space-y-3 p-1">
-            {models.map(model => (
-              <Card
-                key={model.id}
-                className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-              >
-                <div className="flex items-center justify-between min-w-0">
-                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                    <div className="flex flex-col justify-center min-w-0 flex-1">
-                      <div className="flex items-center space-x-2 min-w-0">
-                        <h3 className="text-base font-medium text-text-primary truncate">
-                          {getDisplayName(model)}
-                        </h3>
-                        <Tag variant="info">{getModelProvider(model.json)}</Tag>
-                        {model.is_active ? (
-                          <Tag variant="success">{t('admin:public_models.status.active')}</Tag>
-                        ) : (
-                          <Tag variant="error">{t('admin:public_models.status.inactive')}</Tag>
-                        )}
-                        {!model.is_visible && (
-                          <Tag variant="error">{t('admin:public_models.status.hidden')}</Tag>
-                        )}
-                        {model.is_advanced && (
-                          <Tag variant="warning">{t('admin:public_models.status.advanced')}</Tag>
-                        )}
-                        {(getPublicModelAllowedUsersFromConfig(JSON.stringify(model.json)).length >
-                          0 ||
-                          getPublicModelAllowedUsersEnabledFromConfig(
-                            JSON.stringify(model.json)
-                          )) && (
-                          <Tag variant="warning">{t('admin:public_models.status.whitelisted')}</Tag>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
-                        <span>
-                          {t('admin:public_models.form.name')}: {model.name}
-                        </span>
-                        <span>•</span>
-                        <span>
-                          {t('admin:public_models.model_id')}: {getModelId(model.json)}
-                        </span>
-                        <span>•</span>
-                        <span>
-                          {t('admin:public_models.namespace_label')}: {model.namespace}
-                        </span>
-                        {getGroupPath(model) && (
-                          <>
-                            <span>•</span>
-                            <span>
-                              {t('admin:public_models.form.model_group')}: {getGroupPath(model)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => openEditDialog(model)}
-                      title={t('admin:public_models.edit_model')}
-                    >
-                      <PencilIcon className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 hover:text-error"
-                      onClick={() => {
-                        setSelectedModel(model)
-                        setIsDeleteDialogOpen(true)
-                      }}
-                      title={t('admin:public_models.delete_model')}
-                    >
-                      <TrashIcon className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
+        {!loading && hasCurrentResults && models.length > 0 && (
+          <PublicModelCardList
+            models={models}
+            onEdit={openEditDialog}
+            onDelete={model => {
+              setSelectedModel(model)
+              setIsDeleteDialogOpen(true)
+            }}
+          />
         )}
 
-        {/* Add Button */}
+        {/* Footer: add actions and pagination */}
         {!loading && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex flex-wrap justify-center gap-2">
               <ModelPrimaryGroupIconSettings
-                groups={models
-                  .map(model => getSpecValue(model.json, 'modelGroup').trim())
-                  .filter(Boolean)}
+                groups={
+                  hasCurrentResults
+                    ? models
+                        .map(model => getPublicModelSpecValue(model.json, 'modelGroup').trim())
+                        .filter(Boolean)
+                    : []
+                }
               />
               <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
                 {t('admin:public_models.create_model')}
               </UnifiedAddButton>
             </div>
+            {(!loadError || hasCurrentSearchResults) && (
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                totalCount={total}
+                pageSize={PUBLIC_MODELS_PAGE_SIZE}
+                showPageSizeSelector={false}
+                onGoToPage={setPage}
+                totalCountLabel={t('admin:public_models.pagination.total_count', { count: total })}
+              />
+            )}
           </div>
         )}
       </div>
@@ -983,8 +931,14 @@ const PublicModelList: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteModel} className="bg-error hover:bg-error/90">
+            <AlertDialogCancel data-testid="cancel-delete-public-model">
+              {t('admin:common.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteModel}
+              className="bg-error hover:bg-error/90"
+              data-testid="confirm-delete-public-model"
+            >
               {t('admin:common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
