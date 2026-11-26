@@ -19,6 +19,48 @@ import { useToast } from '@/hooks/use-toast'
 
 type PlaceholderLanguage = 'zh' | 'en'
 
+interface SkillCommand {
+  draft: string
+  start: number
+  end: number
+  query: string
+  showEmptyResults: boolean
+  position: { top: number; left: number }
+}
+
+function getEditorCaret(input: HTMLElement): Range | null {
+  const selection = window.getSelection()
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+  return range?.collapsed && input.contains(range.startContainer) ? range : null
+}
+
+function placeCaretInPlainText(element: HTMLElement, offset: number) {
+  const selection = window.getSelection()
+  if (!selection) return
+
+  // The composer renders plain text as text nodes and <br> elements.
+  for (const node of element.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const length = node.textContent?.length ?? 0
+      if (offset <= length) {
+        selection.collapse(node, offset)
+        return
+      }
+      offset -= length
+    } else if (offset === 0) {
+      const range = document.createRange()
+      range.setStartBefore(node)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return
+    } else {
+      offset -= 1
+    }
+  }
+  selection.collapse(element, element.childNodes.length)
+}
+
 export function resolveTeamInputPlaceholder(
   team: Team | null,
   language: PlaceholderLanguage,
@@ -71,15 +113,12 @@ interface ChatInputProps {
   disabledReason?: string
 
   // Skill selector support
-  showSkillSelector?: boolean
   availableSkills?: UnifiedSkill[]
   teamSkillNames?: string[]
   preloadedSkillNames?: string[]
   selectedSkillIds?: number[]
   onSkillSelect?: (skill: UnifiedSkill) => void
   isChatShell?: boolean
-  /** Whether skill selector is read-only (can view but not modify via / command) */
-  skillSelectorReadOnly?: boolean
   /** Ref to the skill button element for fly animation target */
   skillButtonRef?: React.RefObject<HTMLElement | null>
 
@@ -115,14 +154,12 @@ export default function ChatInput({
   onPasteFile,
   hasNoTeams = false,
   disabledReason,
-  showSkillSelector = false,
   availableSkills = [],
   teamSkillNames = [],
   preloadedSkillNames = [],
   selectedSkillIds,
   onSkillSelect,
   isChatShell = false,
-  skillSelectorReadOnly = false,
   skillButtonRef,
   isExpanded = false,
   onExpandToggle,
@@ -162,6 +199,7 @@ export default function ChatInput({
 
   // Combine disabled, hasNoTeams and disabledReason for input disabled state
   const isInputDisabled = disabled || hasNoTeams || !!disabledReason
+  const canSelectSkills = !isInputDisabled && Boolean(onSkillSelect) && availableSkills.length > 0
 
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)
@@ -181,9 +219,8 @@ export default function ChatInput({
   const [mentionQuery, setMentionQuery] = useState('')
 
   // Skill autocomplete state
-  const [showSkillMenu, setShowSkillMenu] = useState(false)
-  const [skillMenuPosition, setSkillMenuPosition] = useState({ top: 0, left: 0 })
-  const [skillQuery, setSkillQuery] = useState('')
+  const [skillCommand, setSkillCommand] = useState<SkillCommand | null>(null)
+  const closeSkillMenu = useCallback(() => setSkillCommand(null), [])
 
   // Skill fly animation state (managed here so animation persists after autocomplete closes)
   const [flyAnimation, setFlyAnimation] = useState<{
@@ -220,7 +257,7 @@ export default function ChatInput({
   }, [badge, badgeWidth])
 
   // Helper function to extract text with preserved newlines from contentEditable
-  const getTextWithNewlines = useCallback((element: HTMLElement): string => {
+  const getTextWithNewlines = useCallback((element: ParentNode): string => {
     let text = ''
     const childNodes = element.childNodes
 
@@ -251,6 +288,26 @@ export default function ChatInput({
 
     return text
   }, [])
+
+  const getTextBeforeCaret = useCallback(
+    (input: HTMLElement, caret: Range) => {
+      const prefix = caret.cloneRange()
+      prefix.selectNodeContents(input)
+      prefix.setEnd(caret.startContainer, caret.startOffset)
+      return getTextWithNewlines(prefix.cloneContents())
+    },
+    [getTextWithNewlines]
+  )
+
+  const caretIsInSkillCommand = useCallback(
+    (input: HTMLElement, command: SkillCommand) => {
+      const caret = getEditorCaret(input)
+      if (!caret) return false
+      const offset = getTextBeforeCaret(input, caret).length
+      return offset > command.start && offset <= command.end
+    },
+    [getTextBeforeCaret]
+  )
 
   // Helper function to set innerHTML with newlines converted to <br> tags
   const setContentWithNewlines = useCallback((element: HTMLElement, text: string) => {
@@ -285,6 +342,7 @@ export default function ChatInput({
       // Get current content with newlines preserved
       const currentContent = getTextWithNewlines(editableRef.current)
       if (currentContent !== message) {
+        setSkillCommand(null)
         // Only update if different to avoid cursor jumping
         const selection = window.getSelection()
         const hadFocus = document.activeElement === editableRef.current
@@ -355,6 +413,8 @@ export default function ChatInput({
     )
       return
 
+    if (e.key === 'Escape') closeSkillMenu()
+
     // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
     // Users can tap the send button to send messages
 
@@ -393,6 +453,73 @@ export default function ChatInput({
       }
     }
   }
+
+  const updateSkillCommand = useCallback(
+    (input: HTMLDivElement, text: string, allowInitialQuery = false) => {
+      if (!onSkillSelect) return
+
+      const range = getEditorCaret(input)
+      if (!range) {
+        closeSkillMenu()
+        return
+      }
+
+      if (
+        !skillCommand &&
+        !allowInitialQuery &&
+        range.startContainer.nodeType === Node.TEXT_NODE &&
+        range.startContainer.textContent?.[range.startOffset - 1] !== '/'
+      ) {
+        return
+      }
+
+      const prefix = getTextBeforeCaret(input, range)
+      const match = /(?:^|\s)\/(\S*)$/.exec(prefix)
+      if (!match || (match[1] && !skillCommand && !allowInitialQuery)) {
+        closeSkillMenu()
+        return
+      }
+
+      const queryEnd = prefix.length
+      const start = queryEnd - match[1].length - 1
+      const end = queryEnd + (text.slice(queryEnd).match(/^\S+/)?.[0].length ?? 0)
+      const currentCommand = skillCommand?.start === start ? skillCommand : undefined
+      let position = currentCommand?.position
+      if (!position) {
+        const rect = range.getBoundingClientRect()
+        const containerRect = input.getBoundingClientRect()
+        position = { top: rect.top - containerRect.top - 8, left: rect.left - containerRect.left }
+      }
+      setSkillCommand({
+        draft: text,
+        start,
+        end,
+        query: match[1],
+        showEmptyResults: currentCommand?.showEmptyResults ?? (!allowInitialQuery || !match[1]),
+        position,
+      })
+    },
+    [onSkillSelect, skillCommand, closeSkillMenu, getTextBeforeCaret]
+  )
+
+  useEffect(() => {
+    if (!skillCommand) return
+
+    const handleSelectionChange = () => {
+      const input = editableRef.current
+      // Input and paste own changes to the draft. Menu options can take focus from the editor.
+      if (
+        !input ||
+        document.activeElement !== input ||
+        getTextWithNewlines(input) !== skillCommand.draft
+      )
+        return
+      if (!caretIsInSkillCommand(input, skillCommand)) closeSkillMenu()
+    }
+
+    document.addEventListener('selectionchange', handleSelectionChange)
+    return () => document.removeEventListener('selectionchange', handleSelectionChange)
+  }, [skillCommand, caretIsInSkillCommand, closeSkillMenu, getTextWithNewlines])
 
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLDivElement>) => {
@@ -447,37 +574,7 @@ export default function ChatInput({
         }
       }
 
-      // Check for / trigger for skill selector
-      if (showSkillSelector && availableSkills.length > 0) {
-        const lastChar = text[text.length - 1]
-        // Only trigger at start of input or after whitespace
-        const charBeforeLast = text.length > 1 ? text[text.length - 2] : ''
-        const isValidTrigger = lastChar === '/' && (text.length === 1 || /\s/.test(charBeforeLast))
-
-        if (isValidTrigger) {
-          const geometry = getCursorGeometry()
-          if (geometry) {
-            setSkillMenuPosition({
-              top: geometry.rect.top - geometry.containerRect.top - 8,
-              left: geometry.rect.left - geometry.containerRect.left,
-            })
-            setShowSkillMenu(true)
-            setSkillQuery('')
-          }
-        } else if (showSkillMenu) {
-          // Update query or close menu if user continues typing after /
-          const words = text.split(/\s/)
-          const lastWord = words[words.length - 1]
-          if (lastWord.startsWith('/')) {
-            // Extract query after /
-            const query = lastWord.substring(1)
-            setSkillQuery(query)
-          } else {
-            setShowSkillMenu(false)
-            setSkillQuery('')
-          }
-        }
-      }
+      updateSkillCommand(e.currentTarget, text)
     },
     [
       isInputDisabled,
@@ -487,9 +584,7 @@ export default function ChatInput({
       team,
       enableTaskMentions,
       showMentionMenu,
-      showSkillSelector,
-      availableSkills.length,
-      showSkillMenu,
+      updateSkillCommand,
     ]
   )
 
@@ -543,49 +638,32 @@ export default function ChatInput({
     [onSelectConversation, replaceMentionQuery]
   )
 
-  // Handle skill selection from autocomplete
   const handleSkillSelect = useCallback(
     (skill: UnifiedSkill) => {
-      if (editableRef.current && onSkillSelect) {
-        const currentText = getTextWithNewlines(editableRef.current)
-        // Remove the /query from the text
-        const lastSlashIndex = currentText.lastIndexOf('/')
-        if (lastSlashIndex !== -1) {
-          // Find the position of / that triggered the menu
-          // Get text before the /
-          const textBefore = currentText.substring(0, lastSlashIndex)
-          // Get text after the / and find where the current word ends
-          const textAfterSlash = currentText.substring(lastSlashIndex + 1)
-          // Find the end of the current word (first whitespace after /)
-          const wordEndMatch = textAfterSlash.match(/^\S*/)
-          const currentWord = wordEndMatch ? wordEndMatch[0] : ''
-          const textAfterWord = textAfterSlash.substring(currentWord.length)
-          // Build new text: text before / + remaining text (remove the /query)
-          const newText = textBefore + textAfterWord.trimStart()
-          setMessage(newText)
-          setContentWithNewlines(editableRef.current, newText)
-        }
+      const input = editableRef.current
+      if (!input || !onSkillSelect || !skillCommand) return
 
-        // Call the skill selection callback
-        onSkillSelect(skill)
+      const { draft, start, end } = skillCommand
+      if (getTextWithNewlines(input) !== draft) return
+      if (document.activeElement === input && !caretIsInSkillCommand(input, skillCommand)) return
 
-        // Move cursor to end
-        const selection = window.getSelection()
-        if (selection && editableRef.current) {
-          const range = document.createRange()
-          range.selectNodeContents(editableRef.current)
-          range.collapse(false)
-          selection.removeAllRanges()
-          selection.addRange(range)
-        }
-
-        // Focus back to input
-        editableRef.current.focus()
-        setShowSkillMenu(false)
-        setSkillQuery('')
-      }
+      const newText = draft.slice(0, start) + draft.slice(end)
+      setMessage(newText)
+      setContentWithNewlines(input, newText)
+      onSkillSelect(skill)
+      input.focus()
+      placeCaretInPlainText(input, start)
+      closeSkillMenu()
     },
-    [getTextWithNewlines, setMessage, setContentWithNewlines, onSkillSelect]
+    [
+      getTextWithNewlines,
+      setMessage,
+      setContentWithNewlines,
+      onSkillSelect,
+      skillCommand,
+      closeSkillMenu,
+      caretIsInSkillCommand,
+    ]
   )
 
   const handlePaste = useCallback(
@@ -699,9 +777,17 @@ export default function ChatInput({
         const newText = getTextWithNewlines(editableRef.current)
         setMessage(newText)
         setShowPlaceholder(!newText)
+        updateSkillCommand(editableRef.current, newText, true)
       }
     },
-    [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile, collapseRangeAtContentEnd]
+    [
+      isInputDisabled,
+      setMessage,
+      getTextWithNewlines,
+      onPasteFile,
+      collapseRangeAtContentEnd,
+      updateSkillCommand,
+    ]
   )
 
   const focusEditableAtEnd = useCallback(() => {
@@ -797,21 +883,19 @@ export default function ChatInput({
       )}
 
       {/* Skill autocomplete menu */}
-      {showSkillMenu && showSkillSelector && availableSkills.length > 0 && (
+      {skillCommand && canSelectSkills && (
         <SkillAutocomplete
           skills={availableSkills}
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
-          query={skillQuery}
+          query={skillCommand.query}
+          showEmptyResults={skillCommand.showEmptyResults}
+          editorRef={editableRef}
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
-          onClose={() => {
-            setShowSkillMenu(false)
-            setSkillQuery('')
-          }}
-          position={skillMenuPosition}
+          onClose={closeSkillMenu}
+          position={skillCommand.position}
           isChatShell={isChatShell}
-          readOnly={skillSelectorReadOnly}
           skillButtonRef={skillButtonRef}
           onTriggerFlyAnimation={handleTriggerFlyAnimation}
         />
@@ -864,6 +948,7 @@ export default function ChatInput({
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
                     onFocus={handleFocus}
+                    onBlur={canSelectSkills ? undefined : closeSkillMenu}
                     data-testid="message-input"
                     data-team-id={team?.id}
                     data-roleid="message-input"
