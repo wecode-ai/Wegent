@@ -430,35 +430,36 @@ describe('ProcessExplorerService', () => {
       table.setRows([])
       const snapshot = await service.snapshot()
       expect(snapshot.recentlyExited.map(row => row.pid)).toEqual([40, 41])
-    }) +
-      it('does not renew the baseline from a stale table reused by a preview', async () => {
-        let resolveRead!: (value: {
-          processes: ReturnType<typeof systemRow>[]
-          degraded: ProcessDegradation[]
-        }) => void
-        const read = vi.fn(
-          () =>
-            new Promise(resolve => {
-              resolveRead = resolve
-            })
-        )
-        const { service, advance } = createService({ systemTable: { read } })
-        const first = service.snapshot()
-        await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
-        resolveRead({
-          processes: [systemRow(40, 10, 'c40'), systemRow(41, 40, 'c41')],
-          degraded: [],
-        })
-        await first
+    })
 
-        // Hidden for a minute; the first sample on return reuses the old table.
-        advance(60_000)
-        await service.snapshot({ waitForSystemProcesses: false })
-        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
-        resolveRead({ processes: [systemRow(41, 1, 'c41')], degraded: [] })
-        const fresh = await service.snapshot()
-        expect(fresh.recentlyExited).toEqual([])
+    it('does not renew the baseline from a stale table reused by a preview', async () => {
+      let resolveRead!: (value: {
+        processes: ReturnType<typeof systemRow>[]
+        degraded: ProcessDegradation[]
+      }) => void
+      const read = vi.fn(
+        () =>
+          new Promise(resolve => {
+            resolveRead = resolve
+          })
+      )
+      const { service, advance } = createService({ systemTable: { read } })
+      const first = service.snapshot()
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+      resolveRead({
+        processes: [systemRow(40, 10, 'c40'), systemRow(41, 40, 'c41')],
+        degraded: [],
       })
+      await first
+
+      // Hidden for a minute; the first sample on return reuses the old table.
+      advance(60_000)
+      await service.snapshot({ waitForSystemProcesses: false })
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+      resolveRead({ processes: [systemRow(41, 1, 'c41')], degraded: [] })
+      const fresh = await service.snapshot()
+      expect(fresh.recentlyExited).toEqual([])
+    })
 
     it('ignores an older collection that resumes after a newer one', async () => {
       const table = mutableTable()

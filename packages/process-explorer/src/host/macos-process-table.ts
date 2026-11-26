@@ -58,11 +58,11 @@ export class MacosProcessTable implements SystemProcessTable {
       if (row.pid === ps.pid) continue
       processes.push(row)
     }
-    // A single unexpected row must not hide the whole table; only an output
-    // format that yields nothing is a failed read.
-    if (processes.length === 0 && malformed > 0) {
+    // Keep the parsed rows, but mark the table incomplete so a process whose
+    // row failed to parse is not treated as exited.
+    if (malformed > 0) {
       return {
-        processes: [],
+        processes,
         degraded: [
           {
             code: 'system-process-table-failed',

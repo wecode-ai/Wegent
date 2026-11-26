@@ -81,7 +81,7 @@ describe('MacosProcessTable', () => {
     expect(parsePsLine('garbage')).toBeNull()
   })
 
-  it('hides its own ps process and skips an unparseable line', async () => {
+  it('hides its own ps process and marks the table incomplete when a line is unparseable', async () => {
     const readPs = vi.fn(async () => ({
       pid: 99,
       output: [
@@ -93,14 +93,17 @@ describe('MacosProcessTable', () => {
     }))
     const result = await new MacosProcessTable(readPs).read()
     expect(result.processes.map(row => row.pid)).toEqual([2])
-    expect(result.degraded).toEqual([])
+    expect(result.degraded).toEqual([
+      { code: 'system-process-table-failed', detail: '1 ps line could not be parsed' },
+    ])
   })
 
-  it('reports a failed read only when no line parses', async () => {
+  it('reports an output format that yields no rows', async () => {
     const result = await new MacosProcessTable(async () => ({
       pid: 99,
       output: ['not a ps line', ''].join('\n'),
     })).read()
+    expect(result.processes).toEqual([])
     expect(result.degraded).toEqual([
       { code: 'system-process-table-failed', detail: '1 ps line could not be parsed' },
     ])
