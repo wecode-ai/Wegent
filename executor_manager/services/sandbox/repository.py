@@ -637,6 +637,8 @@ class SandboxRepository(metaclass=SingletonMeta):
         task_id: int,
         executor_name: str,
         ttl: Optional[int] = None,
+        *,
+        sandbox: bool = False,
         **extra_fields,
     ) -> bool:
         """Save executor binding for task continuity.
@@ -645,6 +647,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             task_id: Task ID
             executor_name: Executor container name
             ttl: TTL in seconds (defaults to config value)
+            sandbox: Store the binding in the sandbox scope.
             **extra_fields: Additional fields to store
 
         Returns:
@@ -654,7 +657,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return False
 
         try:
-            binding_key = f"task_executor:{task_id}"
+            binding_key = self._executor_binding_key(task_id, sandbox)
             binding_value = {
                 "executor_name": executor_name,
                 "task_id": task_id,
@@ -673,7 +676,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
             return True
         except Exception as e:
-            logger.error(f"[SandboxRepository] Failed to save executor binding: {e}")
+            logger.error("Failed to save executor binding: %s", type(e).__name__)
             return False
 
     def load_executor_binding(self, task_id: int) -> Optional[str]:
@@ -687,52 +690,6 @@ class SandboxRepository(metaclass=SingletonMeta):
         """
         binding = self.load_executor_binding_full(task_id)
         return binding.get("executor_name") if binding else None
-
-    def reserve_executor_callback_token(
-        self, task_id: int, executor_name: str, candidate: str, *, sandbox: bool = False
-    ) -> Optional[str]:
-        """Reuse a runtime's credential across retries and rotate on replacement."""
-        if self.redis_client is None:
-            return None
-
-        key = self._executor_binding_key(task_id, sandbox)
-        new_binding = {
-            "executor_name": executor_name,
-            "task_id": task_id,
-            "created_at": time.time(),
-            "callback_token": candidate,
-        }
-        try:
-            token = self.redis_client.eval(
-                """
-                local current = redis.call('GET', KEYS[1])
-                if current then
-                    local binding = cjson.decode(current)
-                    local token = binding.callback_token
-                    if binding.executor_name == ARGV[4]
-                        and type(token) == 'string' and token ~= '' then
-                        redis.call('EXPIRE', KEYS[1], ARGV[1])
-                        return token
-                    end
-                end
-                redis.call('SETEX', KEYS[1], ARGV[1], ARGV[2])
-                return ARGV[3]
-                """,
-                1,
-                key,
-                self._config.executor.executor_binding_ttl,
-                json.dumps(new_binding),
-                candidate,
-                executor_name,
-            )
-            return token.decode() if isinstance(token, bytes) else token
-        except (redis.RedisError, ValueError) as error:
-            logger.error(
-                "Could not reserve executor callback credential for task %s: %s",
-                task_id,
-                type(error).__name__,
-            )
-            return None
 
     def renew_docker_callback_binding(
         self, task_id: int, executor_name: str, token: str, *, sandbox: bool = False

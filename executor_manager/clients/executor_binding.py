@@ -67,17 +67,3 @@ def bind_executor_for_dispatch(
         raise RuntimeError("Executor binding acknowledgement is invalid")
     del runtime_metadata[BINDING_TOKEN]
     return runtime_task
-
-
-def prepare_callback_token(
-    task_id: int, executor_name: str, *, sandbox: bool = False
-) -> str:
-    """Return the callback credential for the task's prepared runtime."""
-    from executor_manager.services.sandbox.repository import get_sandbox_repository
-
-    callback_token = get_sandbox_repository().reserve_executor_callback_token(
-        task_id, executor_name, generate_callback_token(), sandbox=sandbox
-    )
-    if not callback_token:
-        raise RuntimeError("Could not persist executor callback credential")
-    return callback_token

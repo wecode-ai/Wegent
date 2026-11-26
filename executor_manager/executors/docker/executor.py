@@ -24,7 +24,7 @@ from executor_manager.clients.executor_binding import (
     CALLBACK_TOKEN,
     ObsoleteExecutorDispatch,
     bind_executor_for_dispatch,
-    prepare_callback_token,
+    generate_callback_token,
 )
 from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
@@ -424,21 +424,7 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
-        try:
-            callback_token = prepare_callback_token(
-                int(task_info["task_id"]), executor_name, sandbox=is_sandbox_task
-            )
-        except RuntimeError:
-            if get_metadata_field(task, "type") == "validation":
-                self._report_validation_stage(
-                    task,
-                    stage="starting_container",
-                    status="failed",
-                    progress=100,
-                    message="Could not persist executor callback credential",
-                    valid=False,
-                )
-            raise
+        callback_token = generate_callback_token()
         metadata = task.get("metadata")
         if isinstance(metadata, dict) and "task_id" in metadata:
             metadata[CALLBACK_TOKEN] = callback_token
@@ -503,6 +489,9 @@ class DockerExecutor(Executor):
 
             # Record container ID
             container_id = result.stdout.strip()
+            callback_token = get_metadata_field(task, CALLBACK_TOKEN)
+            if callback_token:
+                self._publish_callback_binding(task, executor_name, container_id)
             logger.info(
                 f"Started Docker container {executor_name} with ID {container_id}"
             )
@@ -551,6 +540,34 @@ class DockerExecutor(Executor):
                     valid=False,
                 )
             raise
+
+    def _publish_callback_binding(
+        self, task: Dict[str, Any], executor_name: str, container_id: str
+    ) -> None:
+        """Publish the credential only after Docker has created this instance."""
+        from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+        task_type = get_metadata_field(task, "type")
+        if get_sandbox_repository().save_executor_binding(
+            int(get_metadata_field(task, "task_id")),
+            executor_name,
+            sandbox=task_type == "sandbox",
+            callback_token=get_metadata_field(task, CALLBACK_TOKEN),
+        ):
+            return
+
+        delete_container(container_id)
+        message = "Could not persist executor callback credential"
+        if task_type == "validation":
+            self._report_validation_stage(
+                task,
+                stage="starting_container",
+                status="failed",
+                progress=100,
+                message=message,
+                valid=False,
+            )
+        raise RuntimeError(message)
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait for a Docker container instance to become ready."""
