@@ -18,10 +18,7 @@ SANDBOX_PROXY = "/executor-manager/e2b/proxy"
 
 @pytest.fixture
 def sandbox_files() -> Iterator[tuple[httpx.Client, str]]:
-    manager_url = os.getenv("E2E_EXECUTOR_MANAGER_URL")
-    if not manager_url:
-        pytest.fail("E2E_EXECUTOR_MANAGER_URL must point to the running test Manager")
-
+    manager_url = os.getenv("E2E_EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001")
     sandbox_identity = uuid4()
     task_id = (1 << 48) + (sandbox_identity.int >> 80)
     proxy_id = str(sandbox_identity)

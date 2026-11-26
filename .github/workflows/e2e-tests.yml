@@ -2100,11 +2100,10 @@ jobs:
             && wait_for_url http://localhost:8191/health \
             || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && cat backend/executor-recovery.log && exit 1)
 
-      - name: Run Executor Manager E2E tests
+      - name: Run Executor Manager resilience E2E tests
         if: matrix.suite == 'device'
         working-directory: ./executor_manager
         env:
-          E2E_EXECUTOR_MANAGER_URL: http://127.0.0.1:8001
           E2E_REDIS_URL: redis://localhost:6379/15
           OTEL_ENABLED: "false"
           PYTHONPATH: ${{ github.workspace }}
