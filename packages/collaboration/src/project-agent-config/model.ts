@@ -106,7 +106,7 @@ export function normalizeProjectAgent(
 }
 
 export function createSharedAgentBindingInput(
-  team: CollaborationOwnedAgent,
+  team: Pick<CollaborationOwnedAgent, "name" | "team_id">,
 ): Record<string, unknown> {
   if (!team.team_id) {
     throw new Error("Selected Wegent Agent is missing team_id");

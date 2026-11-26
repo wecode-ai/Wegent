@@ -89,7 +89,7 @@ type ProjectChatAgentEditorProps = {
   projectId?: string
   skillApi?: SkillApi
   onClose(): void
-  onSaved(): Promise<void>
+  onSaved(agentId: string): Promise<void>
   ownerLabel?: string
 }
 
@@ -420,16 +420,11 @@ function ProjectChatAgentEditorContent({
         maxConcurrentExecutions: legacyConfig.maxConcurrentExecutions,
         plugins: definition.plugins,
       }
-      if (editingAgentId) {
-        await api.update(projectId, editingAgentId, {
-          version: legacyConfig.version,
-          ...input,
-        })
-      } else {
-        await api.create(projectId, input)
-      }
+      const saved = editingAgentId
+        ? await api.update(projectId, editingAgentId, { version: legacyConfig.version, ...input })
+        : await api.create(projectId, input)
       if (!saveOperation.owns(token)) return
-      await onSaved()
+      await onSaved(saved.id)
     } catch (cause) {
       if (!saveOperation.owns(token)) return
       setError(

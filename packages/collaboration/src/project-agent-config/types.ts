@@ -59,7 +59,7 @@ export interface ProjectAgentConfigurationHost {
   }): ReactNode;
   renderLocalAgentCreator?(props: {
     onClose(): void;
-    onCreated(): Promise<void>;
+    onCreated(agentId: string): Promise<void>;
     projectId?: string;
   }): ReactNode;
   /**

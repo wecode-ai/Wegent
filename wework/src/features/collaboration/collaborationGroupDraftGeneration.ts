@@ -10,18 +10,13 @@ import type {
   ProjectCreateCollaborationGroupGenerationEvent,
 } from '@wegent/collaboration'
 
+import { isDefaultLocalAgentName } from './defaultLocalAgent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 type TextGenerationApi = NonNullable<WorkbenchServices['textGenerationApi']>
 
 function currentDeviceAgentId(input: ProjectCreateCollaborationGroupDraftInput): string | null {
-  return (
-    input.agents.find(agent => {
-      const binding = agent.project_binding_input
-      const resourceName = binding && typeof binding.name === 'string' ? binding.name.trim() : ''
-      return resourceName === 'current-device-agent' || resourceName === 'current-device-assistant'
-    })?.id ?? null
-  )
+  return input.agents.find(agent => isDefaultLocalAgentName(agent.agent_id))?.id ?? null
 }
 
 function parseJsonObject(content: string): Record<string, unknown> {

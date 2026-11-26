@@ -363,31 +363,7 @@ export function createLocalWorkspaceApi(
       execution_environment_ids: agent.executionDeviceId
         ? [`device:${agent.executionDeviceId}`]
         : [],
-      project_binding_input: {
-        name: agent.name,
-        displayName: agent.displayName,
-        namespace: agent.namespace,
-        runtime: agent.runtime,
-        executionPolicy: agent.executionPolicy,
-        modelPolicy: agent.modelPolicy,
-        model: agent.model,
-        modelType: agent.modelType,
-        modelNamespace: agent.modelNamespace,
-        allowedModels: agent.allowedModels ?? [],
-        capabilityDescription: agent.capabilityDescription,
-        capabilityMode: agent.capabilityMode,
-        systemPrompt: agent.systemPrompt,
-        additionalSkills: agent.additionalSkills,
-        mcpServers: agent.mcpServers,
-        visibility: agent.visibility,
-        executionEnvironment: agent.executionEnvironment,
-        executionMode: agent.executionMode,
-        executionDeviceId: agent.executionDeviceId,
-        localProjectId: agent.localProjectId,
-        maxConcurrentExecutions: agent.maxConcurrentExecutions,
-        workspacePolicy: agent.workspacePolicy,
-        plugins: agent.plugins,
-      },
+      project_binding_input: { team_ref: agent.teamRef ?? agent.id },
     }))
   }
   const projectCollaborationGroups = async (projectId: string): Promise<CollaborationGroup[]> => {
@@ -949,7 +925,10 @@ export function createLocalWorkspaceApi(
   }
 }
 
-function toLocalAgentCreateInput(input: Record<string, unknown>): LocalProjectChatAgentCreateInput {
+function toLocalAgentCreateInput(
+  input: Record<string, unknown>
+): LocalProjectChatAgentCreateInput | { team_ref: string } {
+  if (typeof input.team_ref === 'string') return { team_ref: input.team_ref }
   if (typeof input.name !== 'string' || !input.name.trim()) {
     throw new Error('Local Agent name is required')
   }

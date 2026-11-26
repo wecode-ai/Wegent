@@ -144,6 +144,7 @@ interface LocalAccessRecord {
 }
 
 export interface LocalProjectChatAgent {
+  teamRef?: string
   executionPolicy?: AgentExecutionPolicy
   modelPolicy?: AgentModelPolicy
   id: string
@@ -464,6 +465,7 @@ export function createExternalIssueApi(request: LocalRequest) {
 }
 
 type LocalAgentRecord = Record<string, unknown> & {
+  team_ref?: string
   execution_policy?: AgentExecutionPolicy
   model_policy?: AgentModelPolicy
   id: string
@@ -507,6 +509,7 @@ export function projectChatAgentFromRecord(record: LocalAgentRecord): LocalProje
   return {
     id: record.id,
     projectId: record.project_id ?? '',
+    teamRef: record.team_ref,
     name: record.name ?? 'AI',
     displayName: record.display_name ?? record.name ?? 'AI',
     namespace: record.namespace ?? 'default',
@@ -640,11 +643,11 @@ export function createLocalProjectChatAgentApi(
     },
     async create(
       projectId: string,
-      input: LocalProjectChatAgentCreateInput
+      input: LocalProjectChatAgentCreateInput | { team_ref: string }
     ): Promise<LocalProjectChatAgent> {
       const record = await request<LocalAgentRecord>('chat_agents.create', {
         project_id: projectId,
-        agent: createPayload(input),
+        agent: 'team_ref' in input ? { team_ref: input.team_ref } : createPayload(input),
       })
       cache.invalidate('agents:')
       return projectChatAgentFromRecord(record)
