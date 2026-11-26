@@ -41,7 +41,6 @@ use crate::{
     server::TaskRunner,
 };
 
-mod cancellation;
 mod capability;
 mod client;
 mod config;
@@ -60,17 +59,15 @@ mod terminal_relay;
 mod tests;
 mod upgrade;
 
-pub use cancellation::LocalCancellationSnapshot;
 pub use capability::{CapabilityReportProvider, CapabilitySyncRpcHandler, HttpPackageProvider};
 pub use client::{build_runtime_auth_file_report, LocalBackendClient, LocalBackendEventSink};
 pub use config::{is_usable_device_ip, LocalBackendConfig};
 pub use connection_controller::LocalBackendConnectionController;
 pub use extension::{DeviceExtensionHandler, DeviceExtensionRunner};
 pub use socket_transport::SocketIoTransport;
-pub use tasks::{LocalRunningTaskTracker, LocalTaskController, ManagedLocalTaskRunner};
+pub use tasks::{LocalTaskController, PlatformTaskAdapter};
 pub use upgrade::{LocalDeviceUpgradeHandler, LocalUpgradeService};
 
-use cancellation::LocalCancellationRegistry;
 use capability::{default_capability_sync_handler, DefaultCapabilityReporter};
 use extension::default_extension_handler;
 use runtime_rpc_encoding::encode_runtime_rpc_response;
@@ -168,7 +165,7 @@ pub trait LocalBackendTransport: Clone + Send + Sync + 'static {
 
 pub struct LocalBackendRunner<
     T,
-    R = ManagedLocalTaskRunner<AgentProcessEngine, LocalBackendEventSink<T>>,
+    R = PlatformTaskAdapter<AgentProcessEngine, LocalBackendEventSink<T>>,
 > where
     T: LocalBackendTransport,
     R: TaskRunner,
@@ -185,7 +182,6 @@ pub struct LocalBackendRunner<
     upgrade_handler: Option<Arc<dyn DeviceUpgradeHandler>>,
     upgrade_service: Option<Arc<dyn LocalUpgradeService>>,
     extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
-    cancellations: LocalCancellationRegistry,
     runtime_event_forwarder: Option<JoinHandle<()>>,
     runtime_event_hub: Option<ExecutorEventHub>,
     runtime_event_cursor: Arc<AtomicU64>,
@@ -306,24 +302,29 @@ where
         session_gateway_profile: SessionGatewayProfile,
         connection_snapshot: Option<crate::agents::model_gateway::ConnectionSnapshot>,
     ) -> Self {
-        let running_tasks = LocalRunningTaskTracker::default();
-        let client = LocalBackendClient::with_capability_reporter_and_tracker(
+        let scope = config.backend_url.trim_end_matches('/').to_owned();
+        let heartbeat_scope = scope.clone();
+        let scheduler = runtime_work_handler.clone();
+        let client = LocalBackendClient::with_capability_reporter(
             config,
             transport,
             DefaultCapabilityReporter::new(),
-            running_tasks.clone(),
-        );
+        )
+        .with_running_task_ids(move || scheduler.running_platform_task_ids(&heartbeat_scope));
+        let connection_snapshot = connection_snapshot.unwrap_or_else(|| {
+            Arc::new(Mutex::new(connection_snapshot_from_config(&client.config)))
+        });
         let sink = LocalBackendEventSink::new(client.clone());
-        let runner = ManagedLocalTaskRunner::new(
+        let runner = PlatformTaskAdapter::new(
             AgentProcessEngine::new(AgentCommandPlanner::from_env())
-                .with_gateway_connection(connection_snapshot.clone()),
+                .with_gateway_connection(Some(connection_snapshot.clone())),
             sink,
-            running_tasks,
-        );
+            runtime_work_handler.clone(),
+            scope,
+        )
+        .with_connection(client.config.clone(), connection_snapshot.clone());
         let mut backend = Self::from_client_and_runner(client, runner.clone());
-        if let Some(snapshot) = connection_snapshot {
-            backend.connection_snapshot = snapshot;
-        }
+        backend.connection_snapshot = connection_snapshot;
         backend.task_controller = Some(Arc::new(runner));
         backend.runtime_work_handler = Some(runtime_work_handler);
         backend.runtime_event_hub = Some(event_hub);
@@ -376,7 +377,6 @@ where
             upgrade_handler: None,
             upgrade_service: None,
             extension_handler: None,
-            cancellations: LocalCancellationRegistry::default(),
             runtime_event_forwarder: None,
             runtime_event_hub: None,
             runtime_event_cursor: Arc::new(AtomicU64::new(0)),
@@ -414,7 +414,12 @@ where
     where
         C: LocalTaskController,
     {
-        self.task_controller = Some(Arc::new(controller));
+        let controller = Arc::new(controller);
+        self.task_controller = Some(controller.clone());
+        self.client = self
+            .client
+            .clone()
+            .with_running_task_ids(move || controller.running_task_ids());
         self
     }
 
@@ -460,14 +465,6 @@ where
     {
         self.extension_handler = Some(Arc::new(handler));
         self
-    }
-
-    pub fn cancellation_snapshot(&self) -> LocalCancellationSnapshot {
-        self.cancellations.snapshot()
-    }
-
-    pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
-        self.cancellations.is_cancel_requested(task_id, subtask_id)
     }
 
     pub fn register_handlers(&self) {

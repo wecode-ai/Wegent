@@ -193,6 +193,7 @@ fn block_created_event(id: &str) -> EventEnvelope {
         executor_name: None,
         executor_namespace: None,
         validation_id: None,
+        execution_attempt_id: None,
     }
 }
 
@@ -205,7 +206,7 @@ fn isolated_handler() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
 
 #[test]
 fn claude_transcript_merges_streamed_block_updates() {
-    let mut transcript = ClaudeTurnTranscript::default();
+    let mut transcript = TurnTranscript::default();
     transcript.record(&EventEnvelope {
         event_type: "response.block.created".to_owned(),
         task_id: "task-1".to_owned(),
@@ -221,6 +222,7 @@ fn claude_transcript_merges_streamed_block_updates() {
         executor_name: None,
         executor_namespace: None,
         validation_id: None,
+        execution_attempt_id: None,
     });
     transcript.record(&EventEnvelope {
         event_type: "response.block.updated".to_owned(),
@@ -237,6 +239,7 @@ fn claude_transcript_merges_streamed_block_updates() {
         executor_name: None,
         executor_namespace: None,
         validation_id: None,
+        execution_attempt_id: None,
     });
 
     assert_eq!(
@@ -288,7 +291,7 @@ async fn claude_event_sink_drops_events_after_cancellation_starts() {
     let (_stopped_tx, stopped_rx) = oneshot::channel();
     let execution_id =
         handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
-    let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
+    let transcript = Arc::new(Mutex::new(TurnTranscript::default()));
     let sink = ClaudeRuntimeEventSink {
         handler: handler.clone(),
         local_task_id: "task-1".to_owned(),
@@ -415,7 +418,7 @@ async fn claude_completed_and_follow_up_turns_survive_store_restart() {
         };
         handler.prepare_claude_send("claude-1", "/tmp/project", &request,
             &json!({"message": format!("request {turn}"), "clientUserMessageId": format!("user-{turn}")}));
-        handler.persist_claude_assistant_message("claude-1", &request, &format!("answer {turn}"),
+        handler.persist_shell_assistant_message("claude-1", &request, &format!("answer {turn}"),
             vec![json!({"id": format!("tool-{turn}"), "type":"tool", "tool_name":"pwd", "tool_output":"/tmp/project", "status":"done"})], status, None);
     }
     handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));

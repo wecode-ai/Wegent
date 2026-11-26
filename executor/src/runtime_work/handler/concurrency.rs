@@ -14,6 +14,22 @@ pub(super) enum RuntimeTaskKind {
 }
 
 impl SpawnTurnRequest {
+    pub(super) fn new(local_task_id: String, runtime: String, request: ExecutionRequest) -> Self {
+        Self {
+            platform_command: None,
+            task_kind: None,
+            local_task_id,
+            runtime,
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        }
+    }
+
     pub(super) fn is_automatic_input(&self) -> bool {
         super::automatic_turns::is_automatic_input(&self.request)
     }
@@ -176,6 +192,9 @@ pub(super) struct RuntimeTurnScheduler {
     pub(super) active_task_ids: HashMap<String, RuntimeTaskKind>,
     pub(super) queued_turns: VecDeque<SpawnTurnRequest>,
     waiting_automatic_task_ids: HashSet<String>,
+    bound_sessions: HashMap<String, String>,
+    occupied_sessions: HashSet<String>,
+    pub(super) platform_turns: platform_turns::DeliveryBindings,
 }
 
 impl RuntimeTurnScheduler {
@@ -185,6 +204,9 @@ impl RuntimeTurnScheduler {
             active_task_ids: HashMap::new(),
             queued_turns,
             waiting_automatic_task_ids: HashSet::new(),
+            platform_turns: Default::default(),
+            bound_sessions: Default::default(),
+            occupied_sessions: Default::default(),
         }
     }
 
@@ -209,16 +231,46 @@ impl RuntimeTurnScheduler {
     }
 
     pub(super) fn has_capacity(&self, turn: &SpawnTurnRequest) -> bool {
-        super::quota_recovery::is_ready(turn, now_ms())
+        self.ready(turn, now_ms())
             && self.active(turn.task_kind()) < self.settings.limit(turn.task_kind())
-            && !self.active_task_ids.contains_key(&turn.local_task_id)
+            && !self.session_reserved(turn)
+    }
+
+    fn local_session<'a>(&'a self, turn: &SpawnTurnRequest) -> Option<&'a String> {
+        self.platform_turns
+            .get(&(turn.local_task_id.clone(), turn.platform_command.clone()?))?
+            .local_session
+            .as_ref()
+    }
+
+    pub(super) fn session_reserved(&self, turn: &SpawnTurnRequest) -> bool {
+        let session = self.local_session(turn).unwrap_or(&turn.local_task_id);
+        self.active_task_ids.contains_key(&turn.local_task_id)
+            || self.active_task_ids.contains_key(session)
+            || self.occupied_sessions.contains(session)
+    }
+
+    pub(super) fn release_session(&mut self, task: &str) {
+        self.active_task_ids.remove(task);
+        if let Some(session) = self.bound_sessions.remove(task) {
+            self.occupied_sessions.remove(&session);
+        }
+    }
+
+    fn ready(&self, turn: &SpawnTurnRequest, now: i64) -> bool {
+        if let Some(command) = &turn.platform_command {
+            return self
+                .platform_turns
+                .contains_key(&(turn.local_task_id.clone(), command.clone()));
+        }
+        super::quota_recovery::is_ready(turn, now)
     }
 
     fn ready_queued_turns(&self, kind: RuntimeTaskKind) -> impl Iterator<Item = &SpawnTurnRequest> {
         let now = now_ms();
-        self.queued_turns.iter().filter(move |turn| {
-            turn.task_kind() == kind && super::quota_recovery::is_ready(turn, now)
-        })
+        self.queued_turns
+            .iter()
+            .filter(move |turn| turn.task_kind() == kind && self.ready(turn, now))
     }
 
     pub(super) fn has_ready_queued_kind(&self, kind: RuntimeTaskKind) -> bool {
@@ -265,6 +317,11 @@ impl RuntimeTurnScheduler {
     }
 
     pub(super) fn enqueue_forced(&mut self, turn: SpawnTurnRequest) -> SpawnTurnRequest {
+        if let Some(session) = self.local_session(&turn).cloned() {
+            self.occupied_sessions.insert(session.clone());
+            self.bound_sessions
+                .insert(turn.local_task_id.clone(), session);
+        }
         self.active_task_ids
             .insert(turn.local_task_id.clone(), turn.task_kind());
         turn
@@ -277,7 +334,7 @@ impl RuntimeTurnScheduler {
     pub(super) fn queued_position(&self, local_task_id: &str) -> Option<usize> {
         self.queued_turns
             .iter()
-            .position(|turn| turn.local_task_id == local_task_id)
+            .position(|turn| turn.platform_command.is_none() && turn.local_task_id == local_task_id)
     }
 
     pub(super) fn reordered_queue(
@@ -297,13 +354,15 @@ impl RuntimeTurnScheduler {
     }
 
     pub(super) fn finish(&mut self, local_task_id: &str) -> Vec<SpawnTurnRequest> {
-        self.active_task_ids.remove(local_task_id);
+        self.release_session(local_task_id);
         self.take_available()
     }
 
     pub(super) fn force_start(&mut self, local_task_id: &str) -> Option<SpawnTurnRequest> {
         let position = self.queued_position(local_task_id)?;
-        if self.automatic_waits(&self.queued_turns[position]) {
+        if self.session_reserved(&self.queued_turns[position])
+            || self.automatic_waits(&self.queued_turns[position])
+        {
             return None;
         }
         let turn = self.queued_turns.remove(position)?;

@@ -157,6 +157,7 @@ fn sample_event() -> EventEnvelope {
         executor_name: None,
         executor_namespace: None,
         validation_id: Some("validation-1".to_owned()),
+        execution_attempt_id: None,
     }
 }
 

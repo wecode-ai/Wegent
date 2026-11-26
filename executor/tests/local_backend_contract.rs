@@ -181,8 +181,8 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         transport.clone(),
         StaticCapabilityReporter,
     );
+    let client = client.with_running_task_ids(|| vec!["10".to_owned(), "20".to_owned()]);
     client.set_runtime_transfer_port(Some(23456));
-    client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
     client.emit_liveness_heartbeat().await.unwrap();

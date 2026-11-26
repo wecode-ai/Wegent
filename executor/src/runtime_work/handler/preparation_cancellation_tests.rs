@@ -89,18 +89,7 @@ fn owner_preparation(owner: &Value) -> SpawnTurnRequest {
         "deferred_worktree_source_path".into(),
         json!("/tmp/project"),
     );
-    SpawnTurnRequest {
-        task_kind: None,
-        local_task_id: "task".into(),
-        runtime: "codex".into(),
-        request,
-        send_payload: None,
-        direct_thread_id: None,
-        fork_thread_id: None,
-        fork_thread_path: None,
-        resume_thread_id: None,
-        initial_thread_goal: None,
-    }
+    SpawnTurnRequest::new("task".into(), "codex".into(), request)
 }
 
 async fn check_owner_invalidation(replacement_admitted: bool) {

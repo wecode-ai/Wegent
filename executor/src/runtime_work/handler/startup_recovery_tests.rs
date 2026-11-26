@@ -139,18 +139,7 @@ async fn failed_start_recovers_native_sessions_without_replaying_unconfirmed_com
         request
             .extra
             .insert("runtime_command_id".into(), json!("original-command"));
-        let turn = SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: "failed-issue".into(),
-            runtime: "codex".into(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        };
+        let turn = SpawnTurnRequest::new("failed-issue".into(), "codex".into(), request);
         let mut command = RuntimeCommand::from_turn(&turn, state.clone())
             .unwrap()
             .unwrap();

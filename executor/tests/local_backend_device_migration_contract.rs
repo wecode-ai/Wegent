@@ -35,10 +35,7 @@ use wegent_executor::{
 #[cfg(unix)]
 use wegent_executor::{
     emitter::EventEnvelope,
-    local::backend::{
-        DeviceExtensionHandler, DeviceExtensionRunner, LocalRunningTaskTracker,
-        ManagedLocalTaskRunner,
-    },
+    local::backend::{DeviceExtensionHandler, DeviceExtensionRunner, PlatformTaskAdapter},
     process::{CommandSpec, StreamProcessEngine},
     runner::EventSink,
 };
@@ -1067,6 +1064,8 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
     ));
     let _ = std::fs::remove_dir_all(&temp);
     std::fs::create_dir_all(&temp).unwrap();
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", temp.to_str().unwrap());
     let pid_file = temp.join("child.pid");
     let script = temp.join("long-running.sh");
     std::fs::write(
@@ -1078,13 +1077,27 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
     )
     .unwrap();
 
-    let tracker = LocalRunningTaskTracker::default();
     let sink = RecordingEventSink::default();
     let heartbeat_transport = RecordingTransport::with_responses(vec![
         json!({"success": true}),
         json!({"success": true}),
     ]);
-    let heartbeat_client = LocalBackendClient::with_capability_reporter_and_tracker(
+    let runner = PlatformTaskAdapter::new(
+        StreamProcessEngine::new(
+            // Execute the installed interpreter so macOS does not scan a fresh executable.
+            CommandSpec::new("/bin/sh").arg(script.display().to_string()),
+            TEST_PROCESS_TIMEOUT_SECONDS,
+            std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+            env!("CARGO_PKG_VERSION"),
+        ),
+        sink.clone(),
+        std::sync::Arc::new(wegent_executor::runtime_work::RuntimeWorkRpcHandler::new(
+            "test", "unused",
+        )),
+        uuid::Uuid::new_v4().to_string(),
+    );
+    let heartbeat_runner = runner.clone();
+    let heartbeat_client = LocalBackendClient::with_capability_reporter(
         local_backend_config(),
         heartbeat_transport.clone(),
         StaticCapabilityReporter::new(json!({
@@ -1096,19 +1109,8 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
             "mcps": [],
             "last_sync_at": null
         })),
-        tracker.clone(),
-    );
-    let runner = ManagedLocalTaskRunner::new(
-        StreamProcessEngine::new(
-            // Execute the installed interpreter so macOS does not scan a fresh executable.
-            CommandSpec::new("/bin/sh").arg(script.display().to_string()),
-            TEST_PROCESS_TIMEOUT_SECONDS,
-            std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
-            env!("CARGO_PKG_VERSION"),
-        ),
-        sink.clone(),
-        tracker.clone(),
-    );
+    )
+    .with_running_task_ids(move || heartbeat_runner.running_task_ids());
     let request = ExecutionRequest {
         task_id: "501".to_owned(),
         subtask_id: "502".to_owned(),
@@ -1124,13 +1126,13 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
             format!(
                 "Child did not write {}: running={:?}, events={:?}",
                 pid_file.display(),
-                tracker.running_task_ids(),
+                runner.running_task_ids(),
                 sink.events()
             )
         },
     )
     .await;
-    assert_eq!(tracker.running_task_ids(), vec!["501".to_owned()]);
+    assert_eq!(runner.running_task_ids(), vec!["501".to_owned()]);
     assert!(heartbeat_client
         .send_heartbeat(Duration::from_secs(1))
         .await
@@ -1150,7 +1152,7 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         .parse::<u32>()
         .unwrap();
     wait_until(|| !process_is_alive(pid)).await;
-    assert!(tracker.running_task_ids().is_empty());
+    assert!(runner.running_task_ids().is_empty());
     assert!(heartbeat_client
         .send_heartbeat(Duration::from_secs(1))
         .await

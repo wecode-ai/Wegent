@@ -14,7 +14,7 @@ use crate::{
     agents::request_backend_url,
     config::device::ConnectionConfig,
     emitter::{EventEnvelope, ResponsesEventBuilder},
-    runner::{AgentEngine, EventSink, ExecutionOutcome},
+    runner::{EventSink, ExecutionOutcome},
 };
 
 use super::*;
@@ -56,16 +56,16 @@ struct ClaudeRuntimeEventSink {
     local_task_id: String,
     execution_id: u64,
     request: ExecutionRequest,
-    transcript: Arc<Mutex<ClaudeTurnTranscript>>,
+    transcript: Arc<Mutex<TurnTranscript>>,
 }
 
 #[derive(Default)]
-struct ClaudeTurnTranscript {
+pub(super) struct TurnTranscript {
     blocks: BTreeMap<String, Value>,
 }
 
-impl ClaudeTurnTranscript {
-    fn record(&mut self, event: &EventEnvelope) {
+impl TurnTranscript {
+    pub(super) fn record(&mut self, event: &EventEnvelope) {
         match event.event_type.as_str() {
             "response.block.created" => {
                 let Some(block) = event.data.get("block").filter(|block| block.is_object()) else {
@@ -98,7 +98,7 @@ impl ClaudeTurnTranscript {
         }
     }
 
-    fn blocks(&self) -> Vec<Value> {
+    pub(super) fn blocks(&self) -> Vec<Value> {
         self.blocks.values().cloned().collect()
     }
 }
@@ -113,7 +113,10 @@ impl EventSink for ClaudeRuntimeEventSink {
             .lock()
             .expect("active local execution map lock should not be poisoned");
         if !active.get(&self.local_task_id).is_some_and(|control| {
-            control.execution_id == self.execution_id && !control.stop_requested
+            control.execution_id == self.execution_id
+                && (!control.stop_requested
+                    || (event.event_type == "response.incomplete"
+                        && event.data["response"]["status"] == "cancelled"))
         }) {
             return ready(Ok(()));
         }
@@ -226,57 +229,12 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    pub(super) async fn spawn_claude_turn(
-        &self,
-        local_task_id: String,
-        request: ExecutionRequest,
-        force_start: bool,
-    ) -> Result<(), AppIpcError> {
-        let turn = SpawnTurnRequest {
-            task_kind: None,
-            local_task_id,
-            runtime: "claude_code".to_owned(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        };
-        if force_start {
-            self.spawn_forced_turn(turn).await
-        } else {
-            self.spawn_turn(turn).await
-        }
-    }
-
-    pub(super) async fn queue_claude_turn(
-        &self,
-        local_task_id: String,
-        request: ExecutionRequest,
-    ) -> Result<(), AppIpcError> {
-        self.queue_turn(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id,
-            runtime: "claude_code".to_owned(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        })
-        .await
-    }
-
-    pub(super) fn start_claude_turn(
+    pub(super) fn prepare_claude_shell(
         &self,
         local_task_id: String,
         mut request: ExecutionRequest,
         restore_startup: Option<Arc<RestoreStartupGate>>,
-    ) {
+    ) -> Option<PreparedShell<'_>> {
         // Claude does not deliver Codex additionalContext fragments as turn input.
         if let Some(snapshot) = request.extra.get_mut("standInDeliveryContext") {
             snapshot["ghostVersion"] = Value::Null;
@@ -286,7 +244,7 @@ impl RuntimeWorkRpcHandler {
             Ok(connection) => connection,
             Err(error) => {
                 self.fail_local_task_execution_start(&local_task_id, &error);
-                return;
+                return None;
             }
         };
         let backend_credentials = match backend_connection
@@ -300,7 +258,7 @@ impl RuntimeWorkRpcHandler {
                     &local_task_id,
                     &AppIpcError::new("invalid_model_configuration", message),
                 );
-                return;
+                return None;
             }
         };
         if let Err(message) =
@@ -310,9 +268,8 @@ impl RuntimeWorkRpcHandler {
                 &local_task_id,
                 &AppIpcError::new("invalid_model_configuration", message),
             );
-            return;
+            return None;
         }
-        let (cancel_tx, cancel_rx) = oneshot::channel();
         let (mut request, model_proxy_token) = match prepare_claude_model_proxy(request) {
             Ok(prepared) => prepared,
             Err(message) => {
@@ -320,298 +277,226 @@ impl RuntimeWorkRpcHandler {
                     &local_task_id,
                     &AppIpcError::new("invalid_model_configuration", message),
                 );
-                return;
+                return None;
             }
         };
-        let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
-        if let Some(restore_startup) = restore_startup.as_ref() {
-            self.schedule_restore_startup_timeout(
-                local_task_id.clone(),
-                execution_id,
-                Arc::clone(restore_startup),
-            );
-        }
-        let handler = self.clone();
-        tokio::spawn(async move {
-            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
-            let mut scheduled_turn_guard = ScheduledTurnGuard::new(
-                handler.clone(),
-                local_task_id.clone(),
-                execution_id,
-                request
-                    .extra
-                    .get("runtime_command_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            );
-            handler.recall_stand_in_context(&mut request).await;
-            let model = string_field(&request.model_config, "model_id").unwrap_or_default();
-            let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
-            let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
-            let sink = ClaudeRuntimeEventSink {
-                handler: handler.clone(),
-                local_task_id: local_task_id.clone(),
-                execution_id,
-                request: request.clone(),
-                transcript: Arc::clone(&transcript),
-            };
-            if let Some(restore_startup) = restore_startup.as_ref() {
-                if !restore_startup.try_activate() {
-                    if let Some(token) = model_proxy_token.as_deref() {
-                        local_model_proxy::unregister_harness(token);
-                    }
-                    return;
+        let session = local_task_id.clone();
+        let command = request
+            .extra
+            .get("runtime_command_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        Some(PreparedShell::new(
+            session.clone(),
+            session,
+            command,
+            None,
+            move |execution_id, cancel_rx, guard| {
+                if let Some(restore_startup) = restore_startup.as_ref() {
+                    self.schedule_restore_startup_timeout(
+                        local_task_id.clone(),
+                        execution_id,
+                        Arc::clone(restore_startup),
+                    );
                 }
-                log_executor_event(
-                    "runtime restored turn reached active state",
-                    &[("local_task_id", local_task_id.clone())],
-                );
-            }
-            if !handler.is_current_local_task_execution(&local_task_id, execution_id) {
-                if let Some(token) = model_proxy_token.as_deref() {
-                    local_model_proxy::unregister_harness(token);
-                }
-                return;
-            }
-            let mut authorization = if request
-                .extra
-                .get("origin")
-                .is_some_and(|origin| origin["type"] == "project_assessment")
-            {
-                Err("Read-only project assessments require the Codex text-only runtime".into())
-            } else {
-                match handler.validate_project_coordinator_request(&request).await {
-                    Err(error) => Err(error),
-                    Ok(()) => {
-                        match handler
-                            .automatic_input_admission(&local_task_id, &request)
-                            .map(|admit| admit())
-                            .transpose()
-                        {
-                            Err(error) => Err(error),
-                            Ok(_) => {
-                                handler
-                                    .admit_claude_event_goal(&local_task_id, &request)
-                                    .await
+                let handler = self.clone();
+                async move {
+                    let completion = guard;
+                    handler.recall_stand_in_context(&mut request).await;
+                    let model = string_field(&request.model_config, "model_id").unwrap_or_default();
+                    let builder =
+                        ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
+                    let transcript = Arc::new(Mutex::new(TurnTranscript::default()));
+                    let sink = ClaudeRuntimeEventSink {
+                        handler: handler.clone(),
+                        local_task_id: local_task_id.clone(),
+                        execution_id,
+                        request: request.clone(),
+                        transcript: Arc::clone(&transcript),
+                    };
+                    if let Some(restore_startup) = restore_startup.as_ref() {
+                        if !restore_startup.try_activate() {
+                            if let Some(token) = model_proxy_token.as_deref() {
+                                local_model_proxy::unregister_harness(token);
                             }
+                            return;
                         }
+                        log_executor_event(
+                            "runtime restored turn reached active state",
+                            &[("local_task_id", local_task_id.clone())],
+                        );
                     }
-                }
-            };
-            if matches!(authorization.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
-            {
-                if let Some(token) = model_proxy_token.as_deref() {
-                    local_model_proxy::unregister_harness(token);
-                }
-                match handler
-                    .defer_automatic_input(&local_task_id, &request, execution_id)
-                    .await
-                {
-                    Ok(true) => {
-                        scheduled_turn_guard.transferred = true;
+                    if !handler.is_current_local_task_execution(&local_task_id, execution_id) {
+                        if let Some(token) = model_proxy_token.as_deref() {
+                            local_model_proxy::unregister_harness(token);
+                        }
                         return;
                     }
-                    Ok(false) => {}
-                    Err(error) => authorization = Err(error.message),
-                }
-            }
-            let _ = sink
-                .send(builder.response_created(Some("ClaudeCode")))
-                .await;
-            let mut lifecycle = if authorization.is_ok() {
-                handler.begin_lifecycle_hooks(&request, &local_task_id, "ClaudeCode")
-            } else {
-                None
-            };
-            if let Some(hooks) = lifecycle.as_mut() {
-                hooks.started(&local_task_id, &request.subtask_id);
-            }
-            let outcome = match authorization {
-                Err(message) if message == CODEX_APP_SERVER_TURN_CANCELLED => {
-                    ExecutionOutcome::Cancelled {
-                        message: "cancelled".to_owned(),
-                    }
-                }
-                Err(message) => ExecutionOutcome::Failed { message },
-                Ok(()) => tokio::select! {
-                _ = cancel_rx => ExecutionOutcome::Cancelled {
-                    message: "cancelled".to_owned(),
-                },
-                outcome = handler.claude_process_engine.run_with_events(
-                    request.clone(),
-                    sink.clone(),
-                    builder.clone(),
-                ) => outcome,
-                },
-            };
-            if matches!(outcome, ExecutionOutcome::Failed { .. }) {
-                handler.event_goal_admission_failed(&local_task_id, &request);
-            }
-
-            if let Some(hooks) = lifecycle.as_mut() {
-                if let Some(session_id) = crate::agent_session::saved_executor_session(&request)
-                    .and_then(|session| string_field(&session, "sessionId"))
-                {
-                    hooks.started(&session_id, &request.subtask_id);
-                }
-                hooks.finish(super::hooks::lifecycle_status(&outcome));
-            }
-            scheduled_turn_guard.command_outcome =
-                Some(command_journal::CommandState::from_execution(&outcome));
-            if let Some(session) = crate::agent_session::saved_executor_session(&request) {
-                handler.store.update_task(&local_task_id, |link| {
-                    link.runtime_handle["executorSession"] = session;
-                });
-            }
-            match &outcome {
-                ExecutionOutcome::Completed { content } => {
-                    let result_content = content.clone();
-                    let blocks = transcript
-                        .lock()
-                        .map(|transcript| transcript.blocks())
-                        .unwrap_or_default();
-                    handler.persist_claude_assistant_message(
-                        &local_task_id,
-                        &request,
-                        content,
-                        blocks,
-                        "done",
-                        None,
-                    );
-                    if is_claude_goal_invocation(&request) {
-                        if let Some(goal) = handler.complete_claude_goal(&local_task_id) {
-                            handler.emit_claude_runtime_event(
-                                &local_task_id,
-                                &request,
-                                "runtime.goal.updated",
-                                json!({
-                                    "thread_id": local_task_id,
-                                    "turn_id": request.subtask_id,
-                                    "goal": goal,
-                                }),
-                            );
+                    let mut authorization = if request
+                        .extra
+                        .get("origin")
+                        .is_some_and(|origin| origin["type"] == "project_assessment")
+                    {
+                        Err(
+                            "Read-only project assessments require the Codex text-only runtime"
+                                .into(),
+                        )
+                    } else {
+                        match handler.validate_project_coordinator_request(&request).await {
+                            Err(error) => Err(error),
+                            Ok(()) => {
+                                match handler
+                                    .automatic_input_admission(&local_task_id, &request)
+                                    .map(|admit| admit())
+                                    .transpose()
+                                {
+                                    Err(error) => Err(error),
+                                    Ok(_) => {
+                                        handler
+                                            .admit_claude_event_goal(&local_task_id, &request)
+                                            .await
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    if matches!(authorization.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
+                    {
+                        if let Some(token) = model_proxy_token.as_deref() {
+                            local_model_proxy::unregister_harness(token);
+                        }
+                        match handler
+                            .defer_automatic_input(&local_task_id, &request, execution_id)
+                            .await
+                        {
+                            Ok(true) => {
+                                completion.transfer();
+                                return;
+                            }
+                            Ok(false) => {}
+                            Err(error) => authorization = Err(error.message),
                         }
                     }
-                    let _ = sink.send(builder.response_completed(content)).await;
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
-                    handler.finish_automation_run(
-                        &local_task_id,
-                        &request,
-                        AutomationRunStatus::Succeeded,
-                        None,
-                    );
-                    handler.finish_queue_run(
-                        &local_task_id,
-                        &request,
-                        AutomationRunStatus::Succeeded,
-                        None,
-                        Some(result_content),
-                    );
-                }
-                ExecutionOutcome::WaitingForUserInput { stop_reason } => {
-                    let stop_reason = stop_reason.clone();
+                    let _ = sink
+                        .send(builder.response_created(Some("ClaudeCode")))
+                        .await;
+                    let mut lifecycle = if authorization.is_ok() {
+                        handler.begin_lifecycle_hooks(&request, &local_task_id, "ClaudeCode")
+                    } else {
+                        None
+                    };
+                    if let Some(hooks) = lifecycle.as_mut() {
+                        hooks.started(&local_task_id, &request.subtask_id);
+                    }
+                    let outcome = match authorization {
+                        Err(message) if message == CODEX_APP_SERVER_TURN_CANCELLED => {
+                            ExecutionOutcome::Cancelled {
+                                message: "cancelled".to_owned(),
+                            }
+                        }
+                        Err(message) => ExecutionOutcome::Failed { message },
+                        Ok(()) => {
+                            let shell = crate::runner::EngineTurn {
+                                engine: handler.claude_process_engine.clone(),
+                                request: request.clone(),
+                                sink: sink.clone(),
+                                builder: builder.clone(),
+                            };
+                            crate::runner::run_bound_shell(&shell, cancel_rx, "cancelled").await
+                        }
+                    };
+                    if matches!(outcome, ExecutionOutcome::Failed { .. }) {
+                        handler.event_goal_admission_failed(&local_task_id, &request);
+                    }
+
+                    let session = crate::agent_session::saved_executor_session(&request);
+                    if let Some(hooks) = lifecycle.as_mut() {
+                        if let Some(session_id) = session
+                            .as_ref()
+                            .and_then(|session| string_field(session, "sessionId"))
+                        {
+                            hooks.started(&session_id, &request.subtask_id);
+                        }
+                        hooks.finish(super::hooks::lifecycle_status(&outcome));
+                    }
+                    completion.settle(command_journal::CommandState::from_execution(&outcome));
+                    if let Some(session) = session {
+                        handler.store.update_task(&local_task_id, |link| {
+                            link.runtime_handle["executorSession"] = session;
+                        });
+                    }
                     let blocks = transcript
                         .lock()
                         .map(|transcript| transcript.blocks())
                         .unwrap_or_default();
-                    handler.persist_claude_assistant_message(
-                        &local_task_id,
-                        &request,
-                        "",
-                        blocks,
-                        "done",
-                        None,
-                    );
-                    let _ = sink
-                        .send(builder.response_waiting_for_user_input(&stop_reason))
+                    handler
+                        .finish_claude_outcome(&sink, &builder, outcome, blocks)
                         .await;
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
-                    handler.finish_automation_run(
-                        &local_task_id,
-                        &request,
-                        AutomationRunStatus::NeedsAttention,
-                        Some(stop_reason.clone()),
-                    );
-                    handler.finish_queue_run(
-                        &local_task_id,
-                        &request,
-                        AutomationRunStatus::NeedsAttention,
-                        Some(stop_reason),
-                        Some(String::new()),
-                    );
-                }
-                ExecutionOutcome::Failed { message } => {
-                    let message = message.clone();
-                    handler.persist_claude_assistant_message(
-                        &local_task_id,
-                        &request,
-                        "",
-                        transcript.lock().expect("Claude transcript lock").blocks(),
-                        "failed",
-                        Some(&message),
-                    );
-                    let _ = sink.send(builder.error(&message, "runtime_error")).await;
-                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
-                    handler.finish_automation_run(
-                        &local_task_id,
-                        &request,
-                        AutomationRunStatus::Failed,
-                        Some(message.clone()),
-                    );
-                    handler.finish_queue_run(
-                        &local_task_id,
-                        &request,
-                        AutomationRunStatus::Failed,
-                        Some(message),
-                        None,
-                    );
-                }
-                ExecutionOutcome::Cancelled { message } => {
-                    let message = message.clone();
-                    handler.persist_claude_assistant_message(
-                        &local_task_id,
-                        &request,
-                        "",
-                        transcript.lock().expect("Claude transcript lock").blocks(),
-                        "cancelled",
-                        Some(&message),
-                    );
-                    if handler.settle_cancelled_local_task_execution(&local_task_id, execution_id) {
-                        handler.finish_automation_run(
-                            &local_task_id,
-                            &request,
-                            AutomationRunStatus::Cancelled,
-                            Some(message.clone()),
-                        );
-                        handler.finish_queue_run(
-                            &local_task_id,
-                            &request,
-                            AutomationRunStatus::Cancelled,
-                            Some(message.clone()),
-                            None,
-                        );
+                    if let Some(token) = model_proxy_token {
+                        local_model_proxy::unregister_harness(&token);
                     }
-                    handler.emit_claude_runtime_event(
-                        &local_task_id,
-                        &request,
-                        "response.incomplete",
-                        json!({
-                            "type": "cancelled",
-                            "error": {"message": message},
-                        }),
-                    );
+                    if let Some(restore_startup) = restore_startup.as_ref() {
+                        restore_startup.finish();
+                    }
                 }
-                ExecutionOutcome::Running => {}
+            },
+        ))
+    }
+
+    async fn finish_claude_outcome(
+        &self,
+        sink: &ClaudeRuntimeEventSink,
+        builder: &ResponsesEventBuilder,
+        outcome: ExecutionOutcome,
+        blocks: Vec<Value>,
+    ) {
+        let id = &sink.local_task_id;
+        if !self.is_current_local_task_execution(id, sink.execution_id) {
+            return;
+        }
+        let request = &sink.request;
+        let Some(settlement) = super::turns::TurnSettlement::from_outcome(Ok(&outcome)) else {
+            return;
+        };
+        self.persist_shell_assistant_message(
+            id,
+            request,
+            settlement.content.as_deref().unwrap_or_default(),
+            blocks,
+            settlement.status,
+            settlement
+                .reason
+                .as_deref()
+                .filter(|_| settlement.content.is_none()),
+        );
+        if self.settle_personal_pipeline(id, request, &outcome) {
+            self.finish_local_task_execution(id, sink.execution_id);
+            return;
+        }
+        if matches!(outcome, ExecutionOutcome::Completed { .. })
+            && is_claude_goal_invocation(request)
+        {
+            if let Some(goal) = self.complete_claude_goal(id) {
+                self.emit_claude_runtime_event(
+                    id,
+                    request,
+                    "runtime.goal.updated",
+                    json!({"thread_id": id, "turn_id": request.subtask_id, "goal": goal}),
+                );
             }
-            if let Some(token) = model_proxy_token {
-                local_model_proxy::unregister_harness(&token);
-            }
-            if let Some(restore_startup) = restore_startup.as_ref() {
-                restore_startup.finish();
-            }
-        });
+        }
+        let cancelled = matches!(outcome, ExecutionOutcome::Cancelled { .. });
+        if let Some(event) = crate::runner::result_event(builder, outcome) {
+            let _ = sink.send(event).await;
+        }
+        let settled = if cancelled {
+            self.settle_cancelled_local_task_execution(id, sink.execution_id)
+        } else {
+            self.finish_local_task(id, sink.execution_id, None, settlement.status)
+        };
+        if settled {
+            settlement.deliver(self, id, request);
+        }
     }
 
     fn emit_claude_runtime_event(
@@ -621,52 +506,18 @@ impl RuntimeWorkRpcHandler {
         event_type: &str,
         data: Value,
     ) {
-        let Some(event_tx) = &self.event_tx else {
-            return;
-        };
-        let mut payload = json!({
-            "type": "event",
-            "event": event_type,
-            "payload": {
-                "event_type": event_type,
-                "taskId": local_task_id,
-                "subtaskId": request.subtask_id,
-                "data": data,
-                "deviceId": self.device_id,
-                "runtime": "claude_code",
-                "eventSeq": next_runtime_event_sequence(),
-            },
-        });
-        super::super::events::apply_runtime_event_conversation_context(
-            &mut payload["payload"],
-            request,
-        );
-        if let Some(client_user_message_id) = request
-            .extra
-            .get("client_user_message_id")
-            .or_else(|| request.extra.get("clientUserMessageId"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            payload["payload"]["clientUserMessageId"] =
-                Value::String(client_user_message_id.to_owned());
-        }
-        if let Some(source) = request.extra.get("source") {
-            payload["payload"]["source"] = source.clone();
-        }
-        if matches!(
+        super::super::events::emit_shell_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "claude_code",
             event_type,
-            "response.completed" | "response.failed" | "response.incomplete" | "error"
-        ) {
-            if let Some(title) = runtime_task_title(request) {
-                payload["payload"]["taskTitle"] = Value::String(title);
-            }
-        }
-        let _ = event_tx.send(payload);
+            local_task_id,
+            request,
+            data,
+        );
     }
 
-    fn persist_claude_assistant_message(
+    pub(super) fn persist_shell_assistant_message(
         &self,
         local_task_id: &str,
         request: &ExecutionRequest,
@@ -695,7 +546,17 @@ impl RuntimeWorkRpcHandler {
             message["error"] = Value::String(error.to_owned());
         }
         self.store.update_task(local_task_id, |link| {
-            append_runtime_handle_message(&mut link.runtime_handle, message.clone());
+            if link.runtime == "codex" {
+                if let Some(thread) = &link.thread_id {
+                    append_completed_transcript_messages(
+                        &mut link.runtime_handle,
+                        thread,
+                        vec![message.clone()],
+                    );
+                }
+            } else {
+                append_runtime_handle_message(&mut link.runtime_handle, message.clone());
+            }
             link.updated_at = timestamp;
         });
     }

@@ -101,9 +101,9 @@ pub(super) async fn compile_request(
     let mut payload =
         compile_wire(app, command, actor, &context, request, prepared, continuing).await?;
     if group_dispatch {
-        let members = member_profiles(app, command, row, prepared, &selection, &context).await?;
+        let members = dispatch_profiles(app, command, row, prepared, &selection, &context).await?;
         return Ok(json!({
-            "dispatchKind": "collaboration_group", "dispatchTaskId": prepared.runtime_task_id,
+            "dispatchProtocolVersion":context["dispatch_protocol_version"].as_i64().unwrap_or(1), "dispatchKind": "collaboration_group", "dispatchTaskId": prepared.runtime_task_id,
             "managerRuntimeRequest": payload, "memberRuntimeProfiles": members
         }));
     }
@@ -128,9 +128,9 @@ pub(super) async fn compile_request(
                 && crate::background_jobs::robot::authority::authorized(app, &original).await?,
             "The collaboration manager dispatch is unavailable"
         );
-        let members = member_profiles(app, command, row, prepared, &selection, &context).await?;
+        let members = dispatch_profiles(app, command, row, prepared, &selection, &context).await?;
         payload["runtimeHandle"] = json!({
-            "collaborationDispatchTaskId": dispatch.runtime_task_id,
+            "dispatchProtocolVersion":context["dispatch_protocol_version"].as_i64().unwrap_or(1), "collaborationDispatchTaskId": dispatch.runtime_task_id,
             "collaborationManagerContext": context["execution_prompt"],
             "collaborationMemberRuntimeProfiles": members
         });
@@ -246,7 +246,7 @@ fn claude_application_prompt(message: &str, context: &Value) -> String {
     )
 }
 
-async fn member_profiles(
+async fn dispatch_profiles(
     app: &AppState,
     command: &super::device_pull::PullCommand<'_>,
     row: &QueueExecutionRow,
@@ -254,6 +254,9 @@ async fn member_profiles(
     selection: &Value,
     context: &Value,
 ) -> Result<Vec<Value>> {
+    if context["dispatch_protocol_version"] == 2 {
+        return Ok(Vec::new());
+    }
     let group = &context["collaboration_group"];
     ensure!(
         group.is_object(),

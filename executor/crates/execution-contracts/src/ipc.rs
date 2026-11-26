@@ -7,8 +7,66 @@ use std::{future::Future, pin::Pin};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+pub type TurnObserver = std::sync::Arc<dyn Fn(&crate::emitter::EventEnvelope) + Send + Sync>;
+
+/// Releases a suspended Shell interaction and returns the bound attempt and its terminal delivery.
+pub type CancelSuspendedTurn =
+    Box<dyn FnOnce() -> Option<(String, BoxFuture<'static, bool>)> + Send>;
+
+pub trait ShellTurn: Send + Sync {
+    fn start(&self) -> BoxFuture<'_, crate::ExecutionOutcome>;
+    fn interrupt(&self);
+}
+
+/// Authenticated protocol destination for one platform attempt.
+pub trait PlatformTurn: Send + Sync {
+    fn request(&self) -> wegent_protocol::ExecutionRequest;
+    fn task_id(&self) -> &str;
+    fn authorized(&self) -> bool;
+    fn backend_origin(&self) -> Option<&str>;
+    fn starting(&self, observer: Option<TurnObserver>);
+    fn created(&self) -> BoxFuture<'_, Result<(), String>>;
+    fn terminal(
+        &self,
+        outcome: crate::ExecutionOutcome,
+    ) -> BoxFuture<'_, Option<crate::emitter::EventEnvelope>>;
+    fn deliver_terminal(
+        &self,
+        event: crate::emitter::EventEnvelope,
+    ) -> BoxFuture<'_, Result<(), String>>;
+}
+
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+
+    fn running_platform_task_ids(&self, _scope: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn submit_platform_turn<'a>(
+        &'a self,
+        _session: String,
+        _subtask: String,
+        _turn: std::sync::Arc<dyn PlatformTurn>,
+        _shell: std::sync::Arc<dyn ShellTurn>,
+    ) -> BoxFuture<'a, Result<crate::RunnerResult, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "runtime_unavailable",
+                "Device scheduler unavailable",
+            ))
+        })
+    }
+
+    fn cancel_platform_turn<'a>(
+        &'a self,
+        _session: String,
+        _subtask: Option<String>,
+        _remember: bool,
+        _suspended: CancelSuspendedTurn,
+    ) -> BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
 
     /// Resolve the authenticated service owner without exposing account credentials to plugins.
     fn connection_service_owner<'a>(&'a self) -> BoxFuture<'a, Result<i64, AppIpcError>> {

@@ -137,3 +137,26 @@ mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }
+
+/// Restores one environment variable when a test finishes.
+pub struct ScalarEnv {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScalarEnv {
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScalarEnv {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}

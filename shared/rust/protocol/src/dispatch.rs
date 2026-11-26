@@ -258,6 +258,8 @@ pub struct ExecutionRequest {
     // part of this struct's wire shape, so chat-shell/SSE request bodies are
     // unchanged; only `device_execution_payload` renders them.
     #[serde(skip)]
+    pub device_execution_attempt_id: Option<String>,
+    #[serde(skip)]
     pub device_project_id: i64,
     #[serde(skip)]
     pub device_task_mode: String,
@@ -356,6 +358,7 @@ impl Default for ExecutionRequest {
             is_group_chat: false,
             history_limit: None,
             stateless: false,
+            device_execution_attempt_id: None,
             device_project_id: 0,
             device_task_mode: String::new(),
             device_timezone: DEVICE_TIMEZONE.to_string(),
@@ -528,6 +531,12 @@ pub fn device_execution_payload(request: &ExecutionRequest, device_id: &str) -> 
                 .unwrap_or_else(|| canonical_default(key)),
         };
         payload.insert(key.to_string(), value);
+    }
+    if let Some(attempt) = &request.device_execution_attempt_id {
+        payload.insert(
+            "execution_attempt_id".into(),
+            Value::String(attempt.clone()),
+        );
     }
     Value::Object(payload)
 }

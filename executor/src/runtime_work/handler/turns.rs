@@ -27,6 +27,67 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+pub(super) struct TurnSettlement {
+    pub status: &'static str,
+    run_status: AutomationRunStatus,
+    pub content: Option<String>,
+    pub reason: Option<String>,
+}
+
+impl TurnSettlement {
+    pub(super) fn from_outcome(outcome: Result<&ExecutionOutcome, &str>) -> Option<Self> {
+        let (status, run_status, content, reason) = match outcome {
+            Ok(ExecutionOutcome::Completed { content }) => (
+                "done",
+                AutomationRunStatus::Succeeded,
+                Some(content.clone()),
+                None,
+            ),
+            Ok(ExecutionOutcome::WaitingForUserInput { stop_reason }) => (
+                "done",
+                AutomationRunStatus::NeedsAttention,
+                Some(String::new()),
+                Some(stop_reason.clone()),
+            ),
+            Ok(ExecutionOutcome::Failed { message }) => (
+                "failed",
+                AutomationRunStatus::Failed,
+                None,
+                Some(message.clone()),
+            ),
+            Err(message) => (
+                "failed",
+                AutomationRunStatus::Failed,
+                None,
+                Some(message.to_owned()),
+            ),
+            Ok(ExecutionOutcome::Cancelled { message }) => (
+                "cancelled",
+                AutomationRunStatus::Cancelled,
+                None,
+                Some(message.clone()),
+            ),
+            Ok(ExecutionOutcome::Running) => return None,
+        };
+        Some(Self {
+            status,
+            run_status,
+            content,
+            reason,
+        })
+    }
+
+    pub(super) fn deliver(
+        self,
+        handler: &RuntimeWorkRpcHandler,
+        task: &str,
+        request: &ExecutionRequest,
+    ) {
+        handler.finish_automation_run(task, request, self.run_status, self.reason.clone());
+        handler.finish_queue_run(task, request, self.run_status, self.reason, self.content);
+    }
+}
+
 fn personal_runtime_scope(request: &ExecutionRequest, runtime_handle: &Value) -> bool {
     let is_empty_origin = |origin: &Value| {
         origin.is_null() || origin.as_object().is_some_and(|object| object.is_empty())
@@ -228,6 +289,21 @@ pub(super) fn write_runtime_turn_state(
                 .map(|command| &mut command.turn),
         )
     {
+        if turn.platform_command.is_some() {
+            let request = &mut turn.request;
+            request.clear_backend_credentials();
+            redact_execution_profile_secrets(&mut request.bot);
+            redact_execution_profile_secrets(&mut request.model_config);
+            redact_execution_profile_secrets(&mut request.validation_params);
+            for server in &mut request.mcp_servers {
+                redact_execution_profile_secrets(server);
+            }
+            let mut extra = Value::Object(std::mem::take(&mut request.extra));
+            redact_execution_profile_secrets(&mut extra);
+            if let Value::Object(fields) = extra {
+                request.extra = fields;
+            }
+        }
         submitted_model::redact_persisted_submitted_interface(turn);
     }
     let plaintext = serde_json::to_vec(&payload)
@@ -380,6 +456,10 @@ pub(super) enum TurnAdmission {
     Continuation,
 }
 
+pub(super) struct RemovedTurn {
+    delivery: Option<((String, String), Arc<platform_turns::Delivery>)>,
+}
+
 const USE_SAVED_STAND_IN_PERMISSIONS: &str = "useSavedStandInTaskPermissions";
 
 impl RuntimeWorkRpcHandler {
@@ -422,6 +502,7 @@ impl RuntimeWorkRpcHandler {
         let owner_admissions: Vec<_> = turns
             .iter()
             .chain(starting)
+            .filter(|turn| turn.platform_command.is_none())
             .filter_map(|turn| {
                 turn.request
                     .extra
@@ -455,7 +536,10 @@ impl RuntimeWorkRpcHandler {
         }
         // Only admitted turns replace the current request. Queued follow-ups
         // retain their own context without changing the active native turn.
-        for turn in starting {
+        for turn in starting
+            .iter()
+            .filter(|turn| turn.platform_command.is_none())
+        {
             self.store.update_task(&turn.local_task_id, |link| {
                 // Admission owns capacity before preparation or the native RPC starts.
                 crate::runtime_work::lifecycle::begin_native_request(link);
@@ -477,15 +561,7 @@ impl RuntimeWorkRpcHandler {
             .map(|_| ())
     }
 
-    pub(super) async fn spawn_forced_turn(
-        &self,
-        turn: SpawnTurnRequest,
-    ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, TurnAdmission::Forced, false)
-            .await
-            .map(|_| ())
-    }
-
+    #[cfg(test)]
     pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
         self.schedule_turn(turn, TurnAdmission::Queue, false)
             .await
@@ -527,17 +603,137 @@ impl RuntimeWorkRpcHandler {
             self.refresh_stand_in_confirmation(&turn.local_task_id, &mut turn.request)?;
         }
         self.apply_project_workspace_roots(&mut turn.request);
+        self.submit_turn(turn, admission, None)
+            .await
+            .map(|(accepted, _)| accepted)
+    }
+
+    pub(super) async fn submit_turn(
+        &self,
+        turn: SpawnTurnRequest,
+        admission: TurnAdmission,
+        delivery: Option<((String, String), Arc<platform_turns::Delivery>)>,
+    ) -> Result<(bool, crate::protocol::TaskStatus), AppIpcError> {
+        use crate::protocol::TaskStatus;
         let local_task_id = turn.local_task_id.clone();
-        let _operation = self.turn_queue_operation.lock().await;
+        let operation = self.turn_queue_operation.lock().await;
+        let command = turn.platform_command.clone();
+        let starting: Vec<SpawnTurnRequest> = if let Some((key, binding)) = delivery {
+            if let Some(status) = self.delivery_receipt_locked(&turn, &key).await? {
+                let pending = self
+                    .command_journal
+                    .lock()
+                    .expect("command journal poisoned")
+                    .get(&command_journal::key(&key.0, &key.1))
+                    .and_then(|command| command.pending_terminal.clone());
+                let needs_delivery =
+                    matches!(pending, Some(command_journal::TerminalDelivery::Pending(_)))
+                        || (pending.is_none() && status == TaskStatus::Cancelled);
+                let claimed = needs_delivery && {
+                    let mut scheduler =
+                        self.turn_scheduler.lock().expect("turn scheduler poisoned");
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        scheduler.platform_turns.entry(key.clone())
+                    {
+                        entry.insert(binding.clone());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                drop(operation);
+                if claimed {
+                    let result =
+                        if let Some(command_journal::TerminalDelivery::Pending(event)) = pending {
+                            self.deliver_saved_terminal(&key, binding.job.as_ref(), event)
+                                .await
+                        } else {
+                            binding.deliver_queue_cancellation(self, &key).await
+                        };
+                    self.close_delivery(&key.0, &key.1, 0);
+                    result?;
+                }
+                return Ok((false, status));
+            }
+            let restored = self
+                .command_journal
+                .lock()
+                .expect("command journal poisoned")
+                .contains_key(&command_journal::key(&key.0, &key.1));
+            if restored {
+                let (previous, starting, remaining) = {
+                    let mut scheduler =
+                        self.turn_scheduler.lock().expect("turn scheduler poisoned");
+                    let previous = scheduler.clone();
+                    scheduler.platform_turns.insert(key, binding);
+                    scheduler.refresh_automatic_waits(&self.store, None);
+                    let starting = if self.startup_recovery_deferred.load(Ordering::Acquire) {
+                        Vec::new()
+                    } else {
+                        scheduler.take_available()
+                    };
+                    (previous, starting, scheduler.queued_turns.clone())
+                };
+                self.commit_reserved_turns(previous, remaining, &starting)
+                    .await?;
+                starting
+            } else {
+                self.reserve_authorized_turn(turn, admission, false, Some((key, binding)))
+                    .await?
+                    .0
+                    .into_iter()
+                    .collect()
+            }
+        } else {
+            if self.existing_command(&turn)?.is_some() {
+                return Ok((false, TaskStatus::Running));
+            }
+            let mut turn = turn;
+            self.begin_personal_pipeline(&mut turn)?;
+            let Some((reserved, diagnostics)) = self.reserve_local_request(turn, admission).await?
+            else {
+                return Ok((false, TaskStatus::Running));
+            };
+            if let Some(diagnostics) = diagnostics {
+                log_executor_event(
+                    "runtime work turn queued",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("admission", diagnostics.to_string()),
+                    ],
+                );
+            }
+            reserved.into_iter().collect()
+        };
+        drop(operation);
+        let running = starting
+            .iter()
+            .any(|turn| turn.local_task_id == local_task_id && turn.platform_command == command);
+        for turn in starting {
+            self.launch_reserved_turn(turn).await?;
+        }
+        Ok((
+            true,
+            if running {
+                TaskStatus::Running
+            } else {
+                TaskStatus::Pending
+            },
+        ))
+    }
+
+    async fn reserve_local_request(
+        &self,
+        mut turn: SpawnTurnRequest,
+        admission: TurnAdmission,
+    ) -> Result<Option<(Option<SpawnTurnRequest>, Option<Value>)>, AppIpcError> {
+        let local_task_id = turn.local_task_id.clone();
         // Request preparation can overlap the previous turn's queue drain.
         // Use the live ownership state while holding the admission lock.
         let queue_only = admission == TurnAdmission::Queue
             || (admission == TurnAdmission::Continuation
                 && (self.is_busy_local_task(&local_task_id)
                     || self.native_task_holds_capacity(&local_task_id)));
-        if self.existing_command(&turn)?.is_some() {
-            return Ok(false);
-        }
         let goal_resume =
             turn.request.extra.get(RESUME_GOAL_ONLY_MARKER) == Some(&Value::Bool(true));
         if goal_resume {
@@ -556,7 +752,7 @@ impl RuntimeWorkRpcHandler {
                     || self.native_task_holds_capacity(&local_task_id)
                     || self.queued_local_task_position(&local_task_id).is_some())
             {
-                return Ok(false);
+                return Ok(None);
             }
         }
         // Existing threads retain their native model, even without a per-turn selection.
@@ -636,21 +832,60 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
+        let (turn_to_start, admission_diagnostics) = match self
+            .reserve_authorized_turn(turn, admission, queue_only, None)
+            .await
+        {
+            Ok(reservation) => reservation,
+            Err(error) => {
+                if journaled_goal {
+                    let mut goals = self
+                        .active_goal_turns
+                        .lock()
+                        .expect("active Goal turn map lock should not be poisoned");
+                    if let Some(previous) = previous_goal {
+                        goals.insert(local_task_id.clone(), previous);
+                    } else {
+                        goals.remove(&local_task_id);
+                    }
+                    drop(goals);
+                    self.set_goal_execution_status(&local_task_id, previous_goal_status.as_deref());
+                }
+                return Err(error);
+            }
+        };
+        Ok(Some((turn_to_start, admission_diagnostics)))
+    }
+
+    /// The caller holds the admission lock across replay checks, reservation and queue persistence.
+    pub(super) async fn reserve_authorized_turn(
+        &self,
+        turn: SpawnTurnRequest,
+        admission: TurnAdmission,
+        queue_only: bool,
+        delivery: Option<((String, String), Arc<platform_turns::Delivery>)>,
+    ) -> Result<(Option<SpawnTurnRequest>, Option<Value>), AppIpcError> {
+        let local_task_id = turn.local_task_id.clone();
         let (previous, turn_to_start, queued_turns, mut admission_diagnostics) = {
             let mut scheduler = self
                 .turn_scheduler
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
+            if let Some((key, binding)) = delivery {
+                scheduler.platform_turns.insert(key, binding);
+            }
             scheduler.refresh_automatic_waits(&self.store, Some(&local_task_id));
-            if !turn.request.extra.contains_key(quota_recovery::MARKER) {
+            if turn.platform_command.is_none()
+                && !turn.request.extra.contains_key(quota_recovery::MARKER)
+            {
                 scheduler.queued_turns.retain(|queued| {
                     queued.local_task_id != local_task_id
                         || !queued.request.extra.contains_key(quota_recovery::MARKER)
                 });
             }
             let kind = turn.task_kind();
-            let task_reserved = scheduler.active_task_ids.contains_key(&local_task_id);
+            let task_reserved = scheduler.session_reserved(&turn);
             let active_kind_count = scheduler.active(kind);
             let kind_limit = scheduler.settings.limit(kind);
             let ready_predecessor = scheduler.has_ready_queued_kind(kind);
@@ -660,7 +895,7 @@ impl RuntimeWorkRpcHandler {
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
-            } else if admission == TurnAdmission::Forced {
+            } else if admission == TurnAdmission::Forced && !task_reserved {
                 Some(scheduler.enqueue_forced(turn))
             } else {
                 scheduler.enqueue(turn)
@@ -690,64 +925,9 @@ impl RuntimeWorkRpcHandler {
             // projects the queued follow-up onto native execution state.
             diagnostics["ownership"] = self.turn_admission_ownership(&local_task_id);
         }
-        if let Err(error) = self
-            .persist_turn_queue(
-                queued_turns,
-                Some(&previous),
-                &turn_to_start.iter().cloned().collect::<Vec<_>>(),
-            )
-            .await
-        {
-            *self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned") = previous;
-            if journaled_goal {
-                let mut goals = self
-                    .active_goal_turns
-                    .lock()
-                    .expect("active Goal turn map lock should not be poisoned");
-                if let Some(previous) = previous_goal {
-                    goals.insert(local_task_id.clone(), previous);
-                } else {
-                    goals.remove(&local_task_id);
-                }
-                drop(goals);
-                self.set_goal_execution_status(&local_task_id, previous_goal_status.as_deref());
-            }
-            return Err(error);
-        }
-        if let Some(turn) = turn_to_start.as_ref() {
-            self.reserve_turn_preparation(turn);
-        }
-        drop(_operation);
-        if let Some(turn) = turn_to_start {
-            if turn
-                .request
-                .extra
-                .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
-            {
-                self.start_queued_turn(turn);
-            } else if project_preparation::needs_preparation(&turn) {
-                self.prepare_and_start_reserved_turn(turn).await?;
-            } else {
-                self.start_turn(turn);
-            }
-        } else {
-            log_executor_event(
-                "runtime work turn queued",
-                &[
-                    ("local_task_id", local_task_id),
-                    (
-                        "admission",
-                        admission_diagnostics
-                            .expect("queued turn has admission facts")
-                            .to_string(),
-                    ),
-                ],
-            );
-        }
-        Ok(true)
+        self.commit_reserved_turns(previous, queued_turns, turn_to_start.as_slice())
+            .await?;
+        Ok((turn_to_start, admission_diagnostics))
     }
 
     fn turn_admission_ownership(&self, local_task_id: &str) -> Value {
@@ -883,6 +1063,7 @@ impl RuntimeWorkRpcHandler {
                 .and_then(|link| link.thread_id)
         });
         let persisted_turn = SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
@@ -1123,8 +1304,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn reserve_turn_preparation(&self, turn: &SpawnTurnRequest) {
-        if !project_preparation::needs_preparation(turn)
-            && !turn.request.extra.contains_key(quota_recovery::MARKER)
+        if turn.platform_command.is_some()
+            || (!project_preparation::needs_preparation(turn)
+                && !turn.request.extra.contains_key(quota_recovery::MARKER))
         {
             return;
         }
@@ -1345,6 +1527,24 @@ impl RuntimeWorkRpcHandler {
         Err(error)
     }
 
+    /// Start an admitted turn, propagating synchronous worktree preparation failures to the caller.
+    pub(super) async fn launch_reserved_turn(
+        &self,
+        turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        if project_preparation::needs_preparation(&turn)
+            && !turn
+                .request
+                .extra
+                .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+            && !turn.request.extra.contains_key(quota_recovery::MARKER)
+        {
+            return self.prepare_and_start_reserved_turn(turn).await;
+        }
+        self.start_queued_turn(turn);
+        Ok(())
+    }
+
     pub(super) fn start_queued_turn(&self, turn: SpawnTurnRequest) {
         if turn.request.extra.contains_key(quota_recovery::MARKER) {
             let handler = self.clone();
@@ -1541,9 +1741,27 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn start_authorized_turn(
         &self,
-        mut turn: SpawnTurnRequest,
+        turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
+        let _lifecycle_guard = self
+            .stand_in_lifecycle_gate
+            .lock()
+            .expect("stand-in lifecycle gate poisoned");
+        let shell = match self.delivery_for_turn(&turn) {
+            Some(binding) => Some(self.prepare_delivery_shell(turn, binding)),
+            None => self.prepare_session_shell(turn, restore_permit),
+        };
+        if let Some(shell) = shell {
+            self.launch_shell_turn(shell);
+        }
+    }
+
+    fn prepare_session_shell(
+        &self,
+        mut turn: SpawnTurnRequest,
+        restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Option<PreparedShell<'_>> {
         if turn
             .request
             .extra
@@ -1558,10 +1776,6 @@ impl RuntimeWorkRpcHandler {
         {
             turn.request.runtime_auth_token = None;
         }
-        let _lifecycle_guard = self
-            .stand_in_lifecycle_gate
-            .lock()
-            .expect("stand-in lifecycle gate poisoned");
         if let Err(error) = self.validate_stand_in_lifecycle(&turn.request, &turn.local_task_id) {
             self.retain_failed_runtime_task(&turn.local_task_id, &error);
             let handler = self.clone();
@@ -1571,14 +1785,14 @@ impl RuntimeWorkRpcHandler {
                     .await;
                 handler.finish_scheduled_turn(&turn.local_task_id).await;
             });
-            return;
+            return None;
         }
         if self.automatic_input_waits(&turn) {
             let handler = self.clone();
             tokio::spawn(async move {
                 handler.park_waiting_automatic_turn(turn).await;
             });
-            return;
+            return None;
         }
         if !self.stand_in_owner_request_matches(&turn.request, &turn.local_task_id) {
             let handler = self.clone();
@@ -1588,13 +1802,13 @@ impl RuntimeWorkRpcHandler {
                     .await;
                 handler.finish_scheduled_turn(&turn.local_task_id).await;
             });
-            return;
+            return None;
         }
         if let Err(error) =
             self.validate_stand_in_schedule_start(&turn.request, &turn.local_task_id)
         {
             self.reject_stand_in_schedule_turn(&turn.request, &turn.local_task_id, error);
-            return;
+            return None;
         }
         let use_saved_stand_in_permissions = turn.request.extra.get(USE_SAVED_STAND_IN_PERMISSIONS)
             == Some(&Value::Bool(true))
@@ -1667,8 +1881,14 @@ impl RuntimeWorkRpcHandler {
             &turn.local_task_id,
         );
         if is_claude_runtime(&turn.runtime) {
-            self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
-            return;
+            if let Err(message) = execution_context {
+                self.fail_local_task_execution_start(
+                    &turn.local_task_id,
+                    &AppIpcError::new("invalid_execution_context", message),
+                );
+                return None;
+            }
+            return self.prepare_claude_shell(turn.local_task_id, turn.request, restore_startup);
         }
         let witness = crate::task_runtime::mcp::begin_stand_in_turn_witness(&mut turn.request);
         let recovery_turn = turn.clone();
@@ -1678,6 +1898,7 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .is_some_and(|payload| payload[super::control::connection_events::OWNER_INPUT] == true);
         let SpawnTurnRequest {
+            platform_command: _,
             task_kind: _,
             local_task_id,
             runtime: _,
@@ -1715,9 +1936,7 @@ impl RuntimeWorkRpcHandler {
             mpsc::Sender<Value>,
             CodexRequestUserInputReceiver,
         ) = mpsc::channel(1);
-        let (cancel_tx, cancel_rx) = oneshot::channel();
-        let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id = if request.extra.contains_key(quota_recovery::MARKER) {
+        let preparing = if request.extra.contains_key(quota_recovery::MARKER) {
             let mut preparing = self
                 .preparing_turns
                 .lock()
@@ -1733,554 +1952,626 @@ impl RuntimeWorkRpcHandler {
                 });
                 let handler = self.clone();
                 tokio::spawn(async move { handler.finish_quota_command(&recovery_turn).await });
-                return;
+                return None;
             }
-            let execution =
-                self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
-            preparing.remove(&local_task_id);
-            execution
+            Some(preparing)
         } else {
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx)
+            None
         };
-        self.active_local_executions
-            .lock()
-            .expect("active local execution map lock should not be poisoned")
-            .get_mut(&local_task_id)
-            .expect("the newly admitted execution must exist")
-            .request = Some(request.clone());
-        if let Some(restore_startup) = restore_startup.as_ref() {
-            self.schedule_restore_startup_timeout(
-                local_task_id.clone(),
-                execution_id,
-                Arc::clone(restore_startup),
-            );
-        }
-        if let Ok(mut requests) = self.active_request_user_inputs.lock() {
-            requests.insert(
-                local_task_id.clone(),
-                ActiveRequestUserInput {
-                    execution_id,
-                    sender: request_user_input_tx,
-                },
-            );
-        }
-        let handler = self.clone();
-        let turn_local_task_id = local_task_id.clone();
-        let turn_handle = tokio::spawn(async move {
-            let _witness = witness;
-            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
-            let mut scheduled_turn_guard = ScheduledTurnGuard::new(
-                handler.clone(),
-                turn_local_task_id.clone(),
-                execution_id,
-                request
-                    .extra
-                    .get("runtime_command_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            );
-            if let Err(error) = handler
-                .refresh_shared_conversation_request(&mut request)
-                .await
-            {
-                handler.store.update_task(&turn_local_task_id, |link| {
-                    let active = handler
-                        .active_local_executions
-                        .lock()
-                        .expect("active local execution map lock should not be poisoned");
-                    if active
-                        .get(&turn_local_task_id)
-                        .is_some_and(|control| control.execution_id == execution_id)
-                    {
-                        apply_local_task_failure(link, &error);
-                    }
-                });
-                scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
-                return;
-            }
-            handler.ensure_notification_router().await;
-            let (notification_tx, mut notification_rx) =
-                mpsc::unbounded_channel::<CodexNotification>();
-            let mapper_handler = handler.clone();
-            let mapper_local_task_id = turn_local_task_id.clone();
-            let mapper_execution_id = execution_id;
-            let hook_request = Arc::new(Mutex::new(Arc::new(request.clone())));
-            let mapper_hook_request = Arc::clone(&hook_request);
-            let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
-            let mapper_hook_turn = Arc::clone(&hook_turn);
-            let lifecycle = Arc::new(Mutex::new(None::<crate::hooks::lifecycle::LifecycleHooks>));
-            let mapper_lifecycle = Arc::clone(&lifecycle);
-            let mapper_handle = tokio::spawn(async move {
-                while let Some(message) = notification_rx.recv().await {
-                    let mapper_request =
-                        Arc::clone(&mapper_hook_request.lock().expect("hook request lock"));
-                    let active_turn = mapper_hook_turn
-                        .lock()
-                        .expect("hook turn context lock should not be poisoned")
-                        .clone();
-                    if let Some(turn) = active_turn.as_ref() {
-                        if let Some(hooks) =
-                            mapper_lifecycle.lock().expect("lifecycle lock").as_mut()
-                        {
-                            hooks.observe_codex(&turn.thread_id, &message);
-                        }
-                    }
-                    mapper_handler
-                        .observe_execution_codex_notification(
-                            &mapper_local_task_id,
-                            mapper_execution_id,
-                            &mapper_request,
-                            active_turn,
-                            message,
-                        )
-                        .await;
+        let session = local_task_id.clone();
+        let command = request
+            .extra
+            .get("runtime_command_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        Some(PreparedShell::new(
+            session.clone(),
+            session,
+            command,
+            None,
+            move |execution_id, cancel_rx, guard| {
+                if let Some(mut preparing) = preparing {
+                    preparing.remove(&local_task_id);
                 }
-            });
-            let route_handler = handler.clone();
-            let route_local_task_id = turn_local_task_id.clone();
-            let route_request = request.clone();
-            let is_new_thread = resume_thread_id.is_none() && direct_thread_id.is_none();
-            let route_hook_request = Arc::clone(&hook_request);
-            let thread_started: CodexThreadStartedCallback =
-                Box::new(move |thread_id, model, provider| {
-                    let native_model = model.clone();
-                    let native_provider = provider.clone();
-                    let resolved = Arc::new(super::hooks::resolved_codex_hook_request(
-                        &route_request,
-                        model,
-                        provider,
-                    ));
-                    let (hook_model, hook_provider) = super::hooks::hook_model_identity(&resolved);
-                    log_executor_event(
-                        "runtime lifecycle hook model resolved",
-                        &[
-                            ("local_task_id", route_local_task_id.clone()),
-                            ("thread_id", thread_id.clone()),
-                            (
-                                "model_kind",
-                                route_request.model_config["wework_model_kind"]
-                                    .as_str()
-                                    .unwrap_or("unspecified")
-                                    .to_owned(),
-                            ),
-                            (
-                                "request_model",
-                                super::string_field(&route_request.model_config, "model_id")
-                                    .unwrap_or_default(),
-                            ),
-                            ("native_model", native_model.unwrap_or_default()),
-                            ("native_provider", native_provider.unwrap_or_default()),
-                            ("hook_model", hook_model.unwrap_or_default()),
-                            ("hook_provider", hook_provider.unwrap_or_default()),
-                            (
-                                "compat_proxy",
-                                (route_request.model_config["codex_responses_compat_proxy"]
-                                    == true)
-                                    .to_string(),
-                            ),
-                        ],
-                    );
-                    *route_hook_request.lock().expect("hook request lock") = Arc::clone(&resolved);
-                    route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
-                    route_handler.record_active_goal_thread(&route_local_task_id, &thread_id);
-                    route_handler.register_codex_thread_workspace_root(
-                        &thread_id,
-                        &resolved,
-                        is_new_thread,
-                    );
-                });
-            let active_turn_handler = handler.clone();
-            let active_turn_local_task_id = turn_local_task_id.clone();
-            let active_turn_execution_id = execution_id;
-            let pending_turn_presentation =
-                Arc::new(Mutex::new(initial_turn_presentation(&request)));
-            let active_hook_request = Arc::clone(&hook_request);
-            let active_turn_request = request.clone();
-            let callback_hook_turn = Arc::clone(&hook_turn);
-            let callback_lifecycle = Arc::clone(&lifecycle);
-            let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
-            let active_turn_restore_startup = restore_startup.clone();
-            let active_turn_started: CodexActiveTurnCallback =
-                Box::new(move |thread_id, turn_id| {
-                    if let Some(restore_startup) = active_turn_restore_startup.as_ref() {
-                        if !restore_startup.try_activate() {
-                            return;
-                        }
-                        log_executor_event(
-                            "runtime restored turn reached active state",
-                            &[("local_task_id", active_turn_local_task_id.clone())],
-                        );
-                    }
-                    if !active_turn_handler.is_current_local_task_execution(
-                        &active_turn_local_task_id,
-                        active_turn_execution_id,
-                    ) {
-                        return;
-                    }
-                    crate::task_runtime::mcp::observe_stand_in_turn_boundary(
-                        &active_turn_request,
-                        Some(&turn_id),
-                    );
-                    active_turn_handler
-                        .start_queue_run(&active_turn_local_task_id, &active_turn_request);
-                    *callback_hook_turn
-                        .lock()
-                        .expect("hook turn context lock should not be poisoned") =
-                        Some(ActiveCodexTurn {
-                            execution_id: active_turn_execution_id,
-                            thread_id: thread_id.clone(),
-                            turn_id: turn_id.clone(),
-                        });
-                    {
-                        let mut lifecycle = callback_lifecycle.lock().expect("lifecycle lock");
-                        if lifecycle.is_none() {
-                            let hook_request =
-                                Arc::clone(&active_hook_request.lock().expect("hook request lock"));
-                            *lifecycle = active_turn_handler.begin_lifecycle_hooks(
-                                &hook_request,
-                                &active_turn_local_task_id,
-                                "Codex",
-                            );
-                        }
-                        if let Some(hooks) = lifecycle.as_mut() {
-                            hooks.started(&thread_id, &turn_id);
-                        }
-                    }
-                    active_turn_handler.record_active_codex_turn(
-                        &active_turn_local_task_id,
-                        active_turn_execution_id,
-                        thread_id.clone(),
-                        turn_id.clone(),
-                    );
-                    active_turn_handler
-                        .event_goal_turn_started(&active_turn_local_task_id, &active_turn_request);
-                    active_turn_handler.bind_native_turn_start(
-                        &active_turn_local_task_id,
-                        &active_turn_request,
-                        active_turn_execution_id,
-                        &thread_id,
-                        &turn_id,
-                    );
-                    let presentation = callback_turn_presentation
-                        .lock()
-                        .expect("turn presentation lock should not be poisoned")
-                        .clone();
-                    if owner_input && presentation.is_some() {
-                        active_turn_handler
-                            .resume_goal_after_owner_input(&active_turn_local_task_id, &thread_id);
-                    }
-                    active_turn_handler.bind_command_turn(
-                        &active_turn_local_task_id,
-                        &active_turn_request,
-                        active_turn_execution_id,
-                        &thread_id,
-                        &turn_id,
-                    );
-                    active_turn_handler.record_runtime_turn_id(
-                        &active_turn_local_task_id,
-                        presentation
-                            .as_ref()
-                            .map(|(subtask_id, _)| subtask_id.as_str())
-                            .unwrap_or(&turn_id),
-                        &turn_id,
-                        presentation.as_ref().and_then(|(_, id)| id.as_deref()),
-                    );
-                    let mut event_request = active_turn_request.clone();
-                    event_request.subtask_id = turn_id.clone();
-                    if presentation.is_none() {
-                        event_request.extra.remove("client_user_message_id");
-                        event_request.extra.remove("clientUserMessageId");
-                        event_request.extra.remove("runtime_generated_user_message");
-                    }
-                    active_turn_handler.register_thread_event_route(
-                        &thread_id,
-                        active_turn_local_task_id.clone(),
-                        event_request.clone(),
-                        true,
-                    );
-                    active_turn_handler.emit_task_response(
-                        "response.created",
-                        &active_turn_local_task_id,
-                        &event_request,
-                        json!({
-                            "response": {
-                                "status": "in_progress",
-                                "turnId": turn_id,
-                            }
-                        }),
-                    );
-                });
-            let finished_turn_handler = handler.clone();
-            let finished_turn_local_task_id = turn_local_task_id.clone();
-            let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
-            let finished_turn_request = request.clone();
-            let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
-                crate::task_runtime::mcp::observe_stand_in_turn_boundary(
-                    &finished_turn_request,
-                    None,
-                );
-                *finished_turn_presentation
+                self.active_local_executions
                     .lock()
-                    .expect("turn presentation lock should not be poisoned") = None;
-                finished_turn_handler
-                    .clear_active_codex_turn(&finished_turn_local_task_id, execution_id);
-            });
-            let recovery_handler = handler.clone();
-            let recovery_local_task_id = turn_local_task_id.clone();
-            let overload_turn_recovering: CodexActiveTurnCallback = Box::new(move |_, turn_id| {
-                recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
-            });
-            let mut result = async {
-                execution_context?;
-                let mut request = request.clone();
-                handler.recall_stand_in_context(&mut request).await;
-                handler
-                    .validate_project_coordinator_request(&request)
-                    .await?;
-                crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
-                let event_goal = handler
-                    .event_goal_admission(&turn_local_task_id, &request)
-                    .await?;
-                if let Some(thread) = direct_thread_id.as_deref().or(resume_thread_id.as_deref()) {
-                    handler
-                        .append_connection_event_context(&turn_local_task_id, thread, &mut request)
-                        .await;
+                    .expect("active local execution map lock should not be poisoned")
+                    .get_mut(&local_task_id)
+                    .expect("the newly admitted execution must exist")
+                    .request = Some(request.clone());
+                if let Some(restore_startup) = restore_startup.as_ref() {
+                    self.schedule_restore_startup_timeout(
+                        local_task_id.clone(),
+                        execution_id,
+                        Arc::clone(restore_startup),
+                    );
                 }
-                let resume_goal_only =
-                    request.extra.get(RESUME_GOAL_ONLY_MARKER) == Some(&Value::Bool(true));
-                let gateway_credentials = handler
-                    .model_gateway_credentials(&turn_local_task_id, &mut request, resume_goal_only)
-                    .await?;
-                handler
-                    .codex_app_server
-                    .run_turn_with_cancel(
-                        request.clone(),
-                        CodexAppServerTurnOptions {
-                            gateway_credentials,
-                            input_admission: handler
-                                .automatic_input_admission(&turn_local_task_id, &request),
-                            event_goal,
-                            recover_usage_limits: true,
-                            quota_resume: quota_recovery::wait(&recovery_turn)
-                                .map(|wait| wait.recovery),
-                            defer_interactive_forms: false,
-                            direct_thread_id,
-                            fork_thread_id,
-                            fork_thread_path,
-                            resume_thread_id,
-                            resume_goal_only,
-                            initial_thread_goal,
-                            notifications: Some(notification_tx),
-                            cancellation: Some(cancel_rx),
-                            request_user_input_answers: Some(request_user_input_rx),
-                            thread_started: Some(thread_started),
-                            active_turn_started: Some(active_turn_started),
-                            active_turn_finished: Some(active_turn_finished),
-                            overload_turn_recovering: Some(overload_turn_recovering),
+                if let Ok(mut requests) = self.active_request_user_inputs.lock() {
+                    requests.insert(
+                        local_task_id.clone(),
+                        ActiveRequestUserInput {
+                            execution_id,
+                            sender: request_user_input_tx,
                         },
-                    )
-                    .await
-            }
-            .await;
-            handler.log_turn_cleanup_stage(&turn_local_task_id, execution_id, "result_received");
-            let mapper_result = mapper_handle.await;
-            handler.log_turn_cleanup_stage(
-                &turn_local_task_id,
-                execution_id,
-                if mapper_result.is_ok() {
-                    "observer_drained"
-                } else {
-                    "observer_failed"
-                },
-            );
-            if matches!(result.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
-            {
-                if let Some(startup) = restore_startup.as_ref() {
-                    startup.finish();
+                    );
                 }
-                match handler
-                    .defer_automatic_input(&turn_local_task_id, &request, execution_id)
-                    .await
-                {
-                    Ok(true) => {
-                        scheduled_turn_guard.transferred = true;
+                let handler = self.clone();
+                let turn_local_task_id = local_task_id.clone();
+                async move {
+                    let completion = guard;
+                    let _witness = witness;
+                    if let Err(error) = handler
+                        .refresh_shared_conversation_request(&mut request)
+                        .await
+                    {
+                        handler.store.update_task(&turn_local_task_id, |link| {
+                            let active = handler
+                                .active_local_executions
+                                .lock()
+                                .expect("active local execution map lock should not be poisoned");
+                            if active
+                                .get(&turn_local_task_id)
+                                .is_some_and(|control| control.execution_id == execution_id)
+                            {
+                                apply_local_task_failure(link, &error);
+                            }
+                        });
+                        completion.settle(command_journal::CommandState::Failed);
                         return;
                     }
-                    Ok(false) => {}
-                    Err(error) => result = Err(error.message),
-                }
-            }
-            if result.is_err() {
-                handler.event_goal_admission_failed(&turn_local_task_id, &request);
-            }
-            let runtime_was_stopped = interrupted_by_runtime_stop(&result);
-            scheduled_turn_guard.command_outcome = Some(match result.as_ref() {
-                Ok(turn) => command_journal::CommandState::from_execution(&turn.outcome),
-                Err(_) if runtime_was_stopped => command_journal::CommandState::RecoveryRequired,
-                Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => {
-                    command_journal::CommandState::Cancelled
-                }
-                Err(_) => command_journal::CommandState::Failed,
-            });
-            let goal_execution_needs_attention = match result.as_ref() {
-                Err(_) if runtime_was_stopped => false,
-                Err(_) => true,
-                Ok(turn) => matches!(
-                    turn.outcome,
-                    ExecutionOutcome::Failed { .. } | ExecutionOutcome::WaitingForUserInput { .. }
-                ),
-            };
-            if let Some(restore_startup) = restore_startup.as_ref() {
-                restore_startup.finish();
-            }
-
-            if let Some(hooks) = lifecycle.lock().expect("lifecycle lock").as_mut() {
-                let status = match &result {
-                    Ok(turn) => super::hooks::lifecycle_status(&turn.outcome),
-                    Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => "interrupted",
-                    Err(_) if runtime_was_stopped => "interrupted",
-                    Err(_) => "failed",
-                };
-                hooks.finish(status);
-            }
-            if let Some(recovery) = result
-                .as_mut()
-                .ok()
-                .and_then(|turn| turn.quota_recovery.take())
-            {
-                let deferred = match recovery_account {
-                    Ok(account) => {
+                    handler.ensure_notification_router().await;
+                    let (notification_tx, mut notification_rx) =
+                        mpsc::unbounded_channel::<CodexNotification>();
+                    let mapper_handler = handler.clone();
+                    let mapper_local_task_id = turn_local_task_id.clone();
+                    let mapper_execution_id = execution_id;
+                    let hook_request = Arc::new(Mutex::new(Arc::new(request.clone())));
+                    let mapper_hook_request = Arc::clone(&hook_request);
+                    let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
+                    let mapper_hook_turn = Arc::clone(&hook_turn);
+                    let lifecycle =
+                        Arc::new(Mutex::new(None::<crate::hooks::lifecycle::LifecycleHooks>));
+                    let mapper_lifecycle = Arc::clone(&lifecycle);
+                    let mapper_handle = tokio::spawn(async move {
+                        while let Some(message) = notification_rx.recv().await {
+                            let mapper_request =
+                                Arc::clone(&mapper_hook_request.lock().expect("hook request lock"));
+                            let active_turn = mapper_hook_turn
+                                .lock()
+                                .expect("hook turn context lock should not be poisoned")
+                                .clone();
+                            if let Some(turn) = active_turn.as_ref() {
+                                if let Some(hooks) =
+                                    mapper_lifecycle.lock().expect("lifecycle lock").as_mut()
+                                {
+                                    hooks.observe_codex(&turn.thread_id, &message);
+                                }
+                            }
+                            mapper_handler
+                                .observe_execution_codex_notification(
+                                    &mapper_local_task_id,
+                                    mapper_execution_id,
+                                    &mapper_request,
+                                    active_turn,
+                                    message,
+                                )
+                                .await;
+                        }
+                    });
+                    let route_handler = handler.clone();
+                    let route_local_task_id = turn_local_task_id.clone();
+                    let route_request = request.clone();
+                    let is_new_thread = resume_thread_id.is_none() && direct_thread_id.is_none();
+                    let route_hook_request = Arc::clone(&hook_request);
+                    let thread_started: CodexThreadStartedCallback =
+                        Box::new(move |thread_id, model, provider| {
+                            let native_model = model.clone();
+                            let native_provider = provider.clone();
+                            let resolved = Arc::new(super::hooks::resolved_codex_hook_request(
+                                &route_request,
+                                model,
+                                provider,
+                            ));
+                            let (hook_model, hook_provider) =
+                                super::hooks::hook_model_identity(&resolved);
+                            log_executor_event(
+                                "runtime lifecycle hook model resolved",
+                                &[
+                                    ("local_task_id", route_local_task_id.clone()),
+                                    ("thread_id", thread_id.clone()),
+                                    (
+                                        "model_kind",
+                                        route_request.model_config["wework_model_kind"]
+                                            .as_str()
+                                            .unwrap_or("unspecified")
+                                            .to_owned(),
+                                    ),
+                                    (
+                                        "request_model",
+                                        super::string_field(
+                                            &route_request.model_config,
+                                            "model_id",
+                                        )
+                                        .unwrap_or_default(),
+                                    ),
+                                    ("native_model", native_model.unwrap_or_default()),
+                                    ("native_provider", native_provider.unwrap_or_default()),
+                                    ("hook_model", hook_model.unwrap_or_default()),
+                                    ("hook_provider", hook_provider.unwrap_or_default()),
+                                    (
+                                        "compat_proxy",
+                                        (route_request.model_config
+                                            ["codex_responses_compat_proxy"]
+                                            == true)
+                                            .to_string(),
+                                    ),
+                                ],
+                            );
+                            *route_hook_request.lock().expect("hook request lock") =
+                                Arc::clone(&resolved);
+                            route_handler
+                                .record_local_task_thread(&route_local_task_id, &thread_id);
+                            route_handler
+                                .record_active_goal_thread(&route_local_task_id, &thread_id);
+                            route_handler.register_codex_thread_workspace_root(
+                                &thread_id,
+                                &resolved,
+                                is_new_thread,
+                            );
+                        });
+                    let active_turn_handler = handler.clone();
+                    let active_turn_local_task_id = turn_local_task_id.clone();
+                    let active_turn_execution_id = execution_id;
+                    let pending_turn_presentation =
+                        Arc::new(Mutex::new(initial_turn_presentation(&request)));
+                    let active_hook_request = Arc::clone(&hook_request);
+                    let active_turn_request = request.clone();
+                    let callback_hook_turn = Arc::clone(&hook_turn);
+                    let callback_lifecycle = Arc::clone(&lifecycle);
+                    let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
+                    let active_turn_restore_startup = restore_startup.clone();
+                    let active_turn_started: CodexActiveTurnCallback =
+                        Box::new(move |thread_id, turn_id| {
+                            if let Some(restore_startup) = active_turn_restore_startup.as_ref() {
+                                if !restore_startup.try_activate() {
+                                    return;
+                                }
+                                log_executor_event(
+                                    "runtime restored turn reached active state",
+                                    &[("local_task_id", active_turn_local_task_id.clone())],
+                                );
+                            }
+                            if !active_turn_handler.is_current_local_task_execution(
+                                &active_turn_local_task_id,
+                                active_turn_execution_id,
+                            ) {
+                                return;
+                            }
+                            crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                                &active_turn_request,
+                                Some(&turn_id),
+                            );
+                            active_turn_handler
+                                .start_queue_run(&active_turn_local_task_id, &active_turn_request);
+                            *callback_hook_turn
+                                .lock()
+                                .expect("hook turn context lock should not be poisoned") =
+                                Some(ActiveCodexTurn {
+                                    execution_id: active_turn_execution_id,
+                                    thread_id: thread_id.clone(),
+                                    turn_id: turn_id.clone(),
+                                });
+                            {
+                                let mut lifecycle =
+                                    callback_lifecycle.lock().expect("lifecycle lock");
+                                if lifecycle.is_none() {
+                                    let hook_request = Arc::clone(
+                                        &active_hook_request.lock().expect("hook request lock"),
+                                    );
+                                    *lifecycle = active_turn_handler.begin_lifecycle_hooks(
+                                        &hook_request,
+                                        &active_turn_local_task_id,
+                                        "Codex",
+                                    );
+                                }
+                                if let Some(hooks) = lifecycle.as_mut() {
+                                    hooks.started(&thread_id, &turn_id);
+                                }
+                            }
+                            active_turn_handler.record_active_codex_turn(
+                                &active_turn_local_task_id,
+                                active_turn_execution_id,
+                                thread_id.clone(),
+                                turn_id.clone(),
+                            );
+                            active_turn_handler.event_goal_turn_started(
+                                &active_turn_local_task_id,
+                                &active_turn_request,
+                            );
+                            active_turn_handler.bind_native_turn_start(
+                                &active_turn_local_task_id,
+                                &active_turn_request,
+                                active_turn_execution_id,
+                                &thread_id,
+                                &turn_id,
+                            );
+                            let presentation = callback_turn_presentation
+                                .lock()
+                                .expect("turn presentation lock should not be poisoned")
+                                .clone();
+                            if owner_input && presentation.is_some() {
+                                active_turn_handler.resume_goal_after_owner_input(
+                                    &active_turn_local_task_id,
+                                    &thread_id,
+                                );
+                            }
+                            active_turn_handler.bind_command_turn(
+                                &active_turn_local_task_id,
+                                &active_turn_request,
+                                active_turn_execution_id,
+                                &thread_id,
+                                &turn_id,
+                            );
+                            active_turn_handler.record_runtime_turn_id(
+                                &active_turn_local_task_id,
+                                presentation
+                                    .as_ref()
+                                    .map(|(subtask_id, _)| subtask_id.as_str())
+                                    .unwrap_or(&turn_id),
+                                &turn_id,
+                                presentation.as_ref().and_then(|(_, id)| id.as_deref()),
+                            );
+                            let mut event_request = active_turn_request.clone();
+                            event_request.subtask_id = turn_id.clone();
+                            if presentation.is_none() {
+                                event_request.extra.remove("client_user_message_id");
+                                event_request.extra.remove("clientUserMessageId");
+                                event_request.extra.remove("runtime_generated_user_message");
+                            }
+                            active_turn_handler.register_thread_event_route(
+                                &thread_id,
+                                active_turn_local_task_id.clone(),
+                                event_request.clone(),
+                                true,
+                            );
+                            active_turn_handler.emit_task_response(
+                                "response.created",
+                                &active_turn_local_task_id,
+                                &event_request,
+                                json!({
+                                    "response": {
+                                        "status": "in_progress",
+                                        "turnId": turn_id,
+                                    }
+                                }),
+                            );
+                        });
+                    let finished_turn_handler = handler.clone();
+                    let finished_turn_local_task_id = turn_local_task_id.clone();
+                    let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
+                    let finished_turn_request = request.clone();
+                    let active_turn_finished: CodexActiveTurnFinishedCallback =
+                        Box::new(move || {
+                            crate::task_runtime::mcp::observe_stand_in_turn_boundary(
+                                &finished_turn_request,
+                                None,
+                            );
+                            *finished_turn_presentation
+                                .lock()
+                                .expect("turn presentation lock should not be poisoned") = None;
+                            finished_turn_handler.clear_active_codex_turn(
+                                &finished_turn_local_task_id,
+                                execution_id,
+                            );
+                        });
+                    let recovery_handler = handler.clone();
+                    let recovery_local_task_id = turn_local_task_id.clone();
+                    let overload_turn_recovering: CodexActiveTurnCallback =
+                        Box::new(move |_, turn_id| {
+                            recovery_handler
+                                .record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
+                        });
+                    let mut result = async {
+                        execution_context?;
+                        let mut request = request.clone();
+                        handler.recall_stand_in_context(&mut request).await;
                         handler
-                            .defer_quota_turn(recovery_turn, execution_id, recovery, account)
+                            .validate_project_coordinator_request(&request)
+                            .await?;
+                        crate::agents::runtime_capabilities::prepare_codex_runtime(&request)
+                            .await?;
+                        let event_goal = handler
+                            .event_goal_admission(&turn_local_task_id, &request)
+                            .await?;
+                        if let Some(thread) =
+                            direct_thread_id.as_deref().or(resume_thread_id.as_deref())
+                        {
+                            handler
+                                .append_connection_event_context(
+                                    &turn_local_task_id,
+                                    thread,
+                                    &mut request,
+                                )
+                                .await;
+                        }
+                        let resume_goal_only =
+                            request.extra.get(RESUME_GOAL_ONLY_MARKER) == Some(&Value::Bool(true));
+                        let gateway_credentials = handler
+                            .model_gateway_credentials(
+                                &turn_local_task_id,
+                                &mut request,
+                                resume_goal_only,
+                            )
+                            .await?;
+                        crate::agents::CodexTurnConnection::Shared(&handler.codex_app_server)
+                            .run(
+                                request.clone(),
+                                CodexAppServerTurnOptions {
+                                    gateway_credentials,
+                                    input_admission: handler
+                                        .automatic_input_admission(&turn_local_task_id, &request),
+                                    event_goal,
+                                    recover_usage_limits: true,
+                                    quota_resume: quota_recovery::wait(&recovery_turn)
+                                        .map(|wait| wait.recovery),
+                                    defer_interactive_forms: false,
+                                    direct_thread_id,
+                                    fork_thread_id,
+                                    fork_thread_path,
+                                    resume_thread_id,
+                                    resume_goal_only,
+                                    initial_thread_goal,
+                                    notifications: Some(notification_tx),
+                                    cancellation: Some(cancel_rx),
+                                    request_user_input_answers: Some(request_user_input_rx),
+                                    thread_started: Some(thread_started),
+                                    active_turn_started: Some(active_turn_started),
+                                    active_turn_finished: Some(active_turn_finished),
+                                    overload_turn_recovering: Some(overload_turn_recovering),
+                                },
+                            )
                             .await
                     }
-                    Err(error) => Err(AppIpcError::new("quota_recovery_unavailable", error)),
-                };
-                match deferred {
-                    Ok(true) => {
-                        scheduled_turn_guard.command_id = None;
-                        handler.persist_and_clear_active_codex_transcript(
-                            &turn_local_task_id,
-                            "completed",
-                            hook_turn
-                                .lock()
-                                .expect("hook turn context poisoned")
-                                .as_ref()
-                                .map(|turn| turn.turn_id.as_str()),
+                    .await;
+                    handler.log_turn_cleanup_stage(
+                        &turn_local_task_id,
+                        execution_id,
+                        "result_received",
+                    );
+                    let mapper_result = mapper_handle.await;
+                    handler.log_turn_cleanup_stage(
+                        &turn_local_task_id,
+                        execution_id,
+                        if mapper_result.is_ok() {
+                            "observer_drained"
+                        } else {
+                            "observer_failed"
+                        },
+                    );
+                    if matches!(result.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
+                    {
+                        if let Some(startup) = restore_startup.as_ref() {
+                            startup.finish();
+                        }
+                        match handler
+                            .defer_automatic_input(&turn_local_task_id, &request, execution_id)
+                            .await
+                        {
+                            Ok(true) => {
+                                completion.transfer();
+                                return;
+                            }
+                            Ok(false) => {}
+                            Err(error) => result = Err(error.message),
+                        }
+                    }
+                    if result.is_err() {
+                        handler.event_goal_admission_failed(&turn_local_task_id, &request);
+                    }
+                    let runtime_was_stopped = interrupted_by_runtime_stop(&result);
+                    completion.settle(match result.as_ref() {
+                        Ok(turn) => command_journal::CommandState::from_execution(&turn.outcome),
+                        Err(_) if runtime_was_stopped => {
+                            command_journal::CommandState::RecoveryRequired
+                        }
+                        Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => {
+                            command_journal::CommandState::Cancelled
+                        }
+                        Err(_) => command_journal::CommandState::Failed,
+                    });
+                    let goal_execution_needs_attention = match result.as_ref() {
+                        Err(_) if runtime_was_stopped => false,
+                        Err(_) => true,
+                        Ok(turn) => matches!(
+                            turn.outcome,
+                            ExecutionOutcome::Failed { .. }
+                                | ExecutionOutcome::WaitingForUserInput { .. }
+                        ),
+                    };
+                    if let Some(restore_startup) = restore_startup.as_ref() {
+                        restore_startup.finish();
+                    }
+
+                    if let Some(hooks) = lifecycle.lock().expect("lifecycle lock").as_mut() {
+                        let status = match &result {
+                            Ok(turn) => super::hooks::lifecycle_status(&turn.outcome),
+                            Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => "interrupted",
+                            Err(_) if runtime_was_stopped => "interrupted",
+                            Err(_) => "failed",
+                        };
+                        hooks.finish(status);
+                    }
+                    if let Some(recovery) = result
+                        .as_mut()
+                        .ok()
+                        .and_then(|turn| turn.quota_recovery.take())
+                    {
+                        let deferred = match recovery_account {
+                            Ok(account) => {
+                                handler
+                                    .defer_quota_turn(
+                                        recovery_turn,
+                                        execution_id,
+                                        recovery,
+                                        account,
+                                    )
+                                    .await
+                            }
+                            Err(error) => {
+                                Err(AppIpcError::new("quota_recovery_unavailable", error))
+                            }
+                        };
+                        match deferred {
+                            Ok(true) => {
+                                completion.detach_command();
+                                handler.persist_and_clear_active_codex_transcript(
+                                    &turn_local_task_id,
+                                    "completed",
+                                    hook_turn
+                                        .lock()
+                                        .expect("hook turn context poisoned")
+                                        .as_ref()
+                                        .map(|turn| turn.turn_id.as_str()),
+                                );
+                                handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                                handler.clear_active_request_user_input(
+                                    &turn_local_task_id,
+                                    execution_id,
+                                );
+                                handler.mark_thread_event_routes_idle_for_local_task(
+                                    &turn_local_task_id,
+                                );
+                                return;
+                            }
+                            Ok(false) => {
+                                result =
+                                    Err("Quota recovery cancelled by newer task activity"
+                                        .to_owned())
+                            }
+                            Err(error) => result = Err(error.message),
+                        }
+                        completion.settle(command_journal::CommandState::Failed);
+                    }
+                    if !handler.is_current_local_task_execution(&turn_local_task_id, execution_id) {
+                        log_executor_event(
+                            "runtime work stale execution result ignored",
+                            &[
+                                ("local_task_id", turn_local_task_id.clone()),
+                                ("execution_id", execution_id.to_string()),
+                            ],
                         );
                         handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                         handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-                        handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                         return;
                     }
-                    Ok(false) => {
-                        result = Err("Quota recovery cancelled by newer task activity".to_owned())
+
+                    if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED)
+                    {
+                        let active_turn = hook_turn
+                            .lock()
+                            .expect("hook turn context lock should not be poisoned")
+                            .clone();
+                        let event_request = handler.request_for_codex_event(
+                            &turn_local_task_id,
+                            &request,
+                            active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
+                        );
+                        handler.persist_and_clear_active_codex_transcript(
+                            &turn_local_task_id,
+                            "cancelled",
+                            active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
+                        );
+                        if handler.settle_cancelled_local_task_execution(
+                            &turn_local_task_id,
+                            execution_id,
+                        ) {
+                            handler.finish_automation_run(
+                                &turn_local_task_id,
+                                &event_request,
+                                AutomationRunStatus::Cancelled,
+                                Some("cancelled".to_owned()),
+                            );
+                            handler.finish_queue_run(
+                                &turn_local_task_id,
+                                &event_request,
+                                AutomationRunStatus::Cancelled,
+                                Some("cancelled".to_owned()),
+                                None,
+                            );
+                            handler.emit_task_response(
+                                "response.incomplete",
+                                &turn_local_task_id,
+                                &event_request,
+                                json!({
+                                    "type": "cancelled",
+                                    "error": {"message": "cancelled"},
+                                }),
+                            );
+                        }
+                        handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                        handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
+                        handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+                        handler.clear_active_goal_turn(&turn_local_task_id);
+                        return;
                     }
-                    Err(error) => result = Err(error.message),
-                }
-                scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
-            }
-            if !handler.is_current_local_task_execution(&turn_local_task_id, execution_id) {
-                log_executor_event(
-                    "runtime work stale execution result ignored",
-                    &[
-                        ("local_task_id", turn_local_task_id.clone()),
-                        ("execution_id", execution_id.to_string()),
-                    ],
-                );
-                handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
-                handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-                return;
-            }
 
-            if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
-                let active_turn = hook_turn
-                    .lock()
-                    .expect("hook turn context lock should not be poisoned")
-                    .clone();
-                let event_request = handler.request_for_codex_event(
-                    &turn_local_task_id,
-                    &request,
-                    active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
-                );
-                handler.persist_and_clear_active_codex_transcript(
-                    &turn_local_task_id,
-                    "cancelled",
-                    active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
-                );
-                if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
-                {
-                    handler.finish_automation_run(
+                    let transcript_status = match result.as_ref() {
+                        Ok(turn) => match turn.outcome {
+                            ExecutionOutcome::Completed { .. }
+                            | ExecutionOutcome::WaitingForUserInput { .. } => "completed",
+                            ExecutionOutcome::Cancelled { .. } => "cancelled",
+                            ExecutionOutcome::Failed { .. } => "failed",
+                            ExecutionOutcome::Running => "inProgress",
+                        },
+                        Err(_) if interrupted_by_runtime_stop(&result) => "inProgress",
+                        Err(_) => "failed",
+                    };
+                    let active_turn = hook_turn
+                        .lock()
+                        .expect("hook turn context lock should not be poisoned")
+                        .clone();
+                    handler.persist_and_clear_active_codex_transcript(
                         &turn_local_task_id,
-                        &event_request,
-                        AutomationRunStatus::Cancelled,
-                        Some("cancelled".to_owned()),
+                        transcript_status,
+                        active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
                     );
-                    handler.finish_queue_run(
+                    let intermediate = result.as_ref().ok().is_some_and(|turn| {
+                        handler.settle_personal_pipeline(
+                            &turn_local_task_id,
+                            &request,
+                            &turn.outcome,
+                        )
+                    });
+                    if intermediate {
+                        handler.finish_local_task_execution(&turn_local_task_id, execution_id);
+                        handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                        handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+                        return;
+                    }
+                    handler.handle_turn_result(
                         &turn_local_task_id,
-                        &event_request,
-                        AutomationRunStatus::Cancelled,
-                        Some("cancelled".to_owned()),
-                        None,
+                        execution_id,
+                        &request,
+                        active_turn.as_ref(),
+                        result,
                     );
-                    handler.emit_task_response(
-                        "response.incomplete",
+                    handler.log_turn_cleanup_stage(
                         &turn_local_task_id,
-                        &event_request,
-                        json!({
-                            "type": "cancelled",
-                            "error": {"message": "cancelled"},
-                        }),
+                        execution_id,
+                        "local_result_settled",
+                    );
+                    handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                    handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+                    if runtime_was_stopped {
+                        return;
+                    }
+                    handler.settle_native_request_journal(
+                        &turn_local_task_id,
+                        goal_execution_needs_attention,
                     );
                 }
-                handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
-                handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
-                handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-                handler.clear_active_goal_turn(&turn_local_task_id);
-                return;
-            }
-
-            let transcript_status = match result.as_ref() {
-                Ok(turn) => match turn.outcome {
-                    ExecutionOutcome::Completed { .. }
-                    | ExecutionOutcome::WaitingForUserInput { .. } => "completed",
-                    ExecutionOutcome::Cancelled { .. } => "cancelled",
-                    ExecutionOutcome::Failed { .. } => "failed",
-                    ExecutionOutcome::Running => "inProgress",
-                },
-                Err(_) if interrupted_by_runtime_stop(&result) => "inProgress",
-                Err(_) => "failed",
-            };
-            let active_turn = hook_turn
-                .lock()
-                .expect("hook turn context lock should not be poisoned")
-                .clone();
-            handler.persist_and_clear_active_codex_transcript(
-                &turn_local_task_id,
-                transcript_status,
-                active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
-            );
-            handler.handle_turn_result(
-                &turn_local_task_id,
-                execution_id,
-                &request,
-                active_turn.as_ref(),
-                result,
-            );
-            handler.log_turn_cleanup_stage(
-                &turn_local_task_id,
-                execution_id,
-                "local_result_settled",
-            );
-            handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
-            handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-            if runtime_was_stopped {
-                return;
-            }
-            handler
-                .settle_native_request_journal(&turn_local_task_id, goal_execution_needs_attention);
-        });
-        drop(turn_handle);
+            },
+        ))
     }
 
     pub(super) fn is_queued_local_task(&self, local_task_id: &str) -> bool {
@@ -2324,13 +2615,37 @@ impl RuntimeWorkRpcHandler {
         if command_id.is_none() && self.cancel_preparing_turn(local_task_id) {
             self.request_active_turn_stop(local_task_id);
         }
-        let (previous, remaining_turns) = {
+        let removed = self
+            .remove_queued_command_locked(local_task_id, command_id, true)
+            .await?;
+        drop(_operation);
+        if let Some((key, delivery)) = removed.as_ref().and_then(|turn| turn.delivery.as_ref()) {
+            delivery.deliver_queue_cancellation(self, key).await?;
+        }
+        Ok(removed.is_some())
+    }
+
+    pub(super) async fn remove_queued_command_locked(
+        &self,
+        session: &str,
+        command_id: Option<&str>,
+        match_local_session: bool,
+    ) -> Result<Option<RemovedTurn>, AppIpcError> {
+        let (previous, remaining_turns, delivery) = {
             let mut scheduler = self
                 .turn_scheduler
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let Some(position) = scheduler.queued_turns.iter().position(|turn| {
-                turn.local_task_id == local_task_id
+                let bound = match_local_session
+                    && turn.platform_command.as_ref().is_some_and(|id| {
+                        scheduler
+                            .platform_turns
+                            .get(&(turn.local_task_id.clone(), id.clone()))
+                            .and_then(|binding| binding.local_session.as_deref())
+                            == Some(session)
+                    });
+                (turn.local_task_id == session || bound)
                     && command_id.map_or(true, |id| {
                         turn.request
                             .extra
@@ -2339,11 +2654,21 @@ impl RuntimeWorkRpcHandler {
                             == Some(id)
                     })
             }) else {
-                return Ok(false);
+                return Ok(None);
             };
             let previous = scheduler.clone();
-            scheduler.queued_turns.remove(position);
-            (previous, scheduler.queued_turns.clone())
+            let turn = scheduler
+                .queued_turns
+                .remove(position)
+                .expect("matched queue entry");
+            let delivery = turn.platform_command.and_then(|id| {
+                let key = (turn.local_task_id, id);
+                scheduler
+                    .platform_turns
+                    .remove(&key)
+                    .map(|delivery| (key, delivery))
+            });
+            (previous, scheduler.queued_turns.clone(), delivery)
         };
         if let Err(error) = self
             .persist_turn_queue(remaining_turns, Some(&previous), &[])
@@ -2355,7 +2680,27 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
-        Ok(true)
+        Ok(Some(RemovedTurn { delivery }))
+    }
+
+    /// Commit the reservation and register cancellable preparation before the admission lock is released.
+    pub(super) async fn commit_reserved_turns(
+        &self,
+        previous: RuntimeTurnScheduler,
+        remaining: VecDeque<SpawnTurnRequest>,
+        starting: &[SpawnTurnRequest],
+    ) -> Result<(), AppIpcError> {
+        if let Err(error) = self
+            .persist_turn_queue(remaining, Some(&previous), starting)
+            .await
+        {
+            *self.turn_scheduler.lock().expect("turn scheduler poisoned") = previous;
+            return Err(error);
+        }
+        for turn in starting {
+            self.reserve_turn_preparation(turn);
+        }
+        Ok(())
     }
 
     pub(super) async fn finish_scheduled_turn(&self, local_task_id: &str) {
@@ -2394,7 +2739,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             *scheduler = previous;
-            scheduler.active_task_ids.remove(local_task_id);
+            scheduler.release_session(local_task_id);
             log_executor_event(
                 "runtime turn queue drain persistence failed",
                 &[("error", error.message)],
@@ -2467,21 +2812,14 @@ impl RuntimeWorkRpcHandler {
             (previous, turns, scheduler.queued_turns.clone())
         };
         if let Err(error) = self
-            .persist_turn_queue(remaining_turns, Some(&previous), &turns)
+            .commit_reserved_turns(previous, remaining_turns, &turns)
             .await
         {
-            *self
-                .turn_scheduler
-                .lock()
-                .expect("runtime turn scheduler lock should not be poisoned") = previous;
             log_executor_event(
                 "runtime turn queue drain persistence failed",
                 &[("error", error.message)],
             );
             return;
-        }
-        for turn in &turns {
-            self.reserve_turn_preparation(turn);
         }
         drop(_operation);
         for turn in turns {
@@ -2512,49 +2850,16 @@ impl RuntimeWorkRpcHandler {
             request,
             active_turn.map(|turn| turn.turn_id.as_str()),
         );
-        let automation_result = match &result {
-            Ok(turn) => match &turn.outcome {
-                ExecutionOutcome::Completed { .. } => Some((AutomationRunStatus::Succeeded, None)),
-                ExecutionOutcome::WaitingForUserInput { stop_reason } => Some((
-                    AutomationRunStatus::NeedsAttention,
-                    Some(stop_reason.clone()),
-                )),
-                ExecutionOutcome::Cancelled { message } => {
-                    Some((AutomationRunStatus::Cancelled, Some(message.clone())))
-                }
-                ExecutionOutcome::Failed { message } => {
-                    Some((AutomationRunStatus::Failed, Some(message.clone())))
-                }
-                ExecutionOutcome::Running => None,
-            },
-            Err(error) => Some((AutomationRunStatus::Failed, Some(error.clone()))),
-        };
-        let queue_result_content = match &result {
-            Ok(turn) => match &turn.outcome {
-                ExecutionOutcome::Completed { content } => Some(content.clone()),
-                ExecutionOutcome::WaitingForUserInput { .. } => Some(String::new()),
-                ExecutionOutcome::Cancelled { .. }
-                | ExecutionOutcome::Failed { .. }
-                | ExecutionOutcome::Running => None,
-            },
-            Err(_) => None,
-        };
-        self.record_project_router_assessment(
-            request,
-            result
-                .as_ref()
-                .map(|turn| &turn.outcome)
-                .map_err(String::as_str),
-        );
+        let outcome = result
+            .as_ref()
+            .map(|turn| &turn.outcome)
+            .map_err(String::as_str);
+        let settlement = TurnSettlement::from_outcome(outcome);
+        self.record_project_router_assessment(request, outcome);
+        let Some(settlement) = settlement else { return };
         match result {
             Ok(turn) => {
-                let status = match &turn.outcome {
-                    ExecutionOutcome::Completed { .. } => "done",
-                    ExecutionOutcome::WaitingForUserInput { .. } => "done",
-                    ExecutionOutcome::Cancelled { .. } => "cancelled",
-                    ExecutionOutcome::Failed { .. } => "failed",
-                    ExecutionOutcome::Running => return,
-                };
+                let status = settlement.status;
                 let thread_id = turn.thread_id.clone();
                 if !self.finish_local_task(
                     local_task_id,
@@ -2708,16 +3013,7 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
-        if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, &event_request, status, error.clone());
-            self.finish_queue_run(
-                local_task_id,
-                &event_request,
-                status,
-                error,
-                queue_result_content,
-            );
-        }
+        settlement.deliver(self, local_task_id, &event_request);
     }
 
     pub(super) fn persist_failed_assistant_message(
@@ -2933,18 +3229,11 @@ mod tests {
     }
 
     fn scheduled_turn(local_task_id: &str) -> SpawnTurnRequest {
-        SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: local_task_id.to_owned(),
-            runtime: "codex".to_owned(),
-            request: ExecutionRequest::default(),
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        }
+        SpawnTurnRequest::new(
+            local_task_id.to_owned(),
+            "codex".to_owned(),
+            ExecutionRequest::default(),
+        )
     }
 
     #[tokio::test]
@@ -3037,6 +3326,7 @@ mod tests {
 
         assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("task-1")).is_none());
+        assert!(scheduler.force_start("task-1").is_none());
         assert_eq!(scheduler.queued_turns.len(), 1);
         assert_eq!(scheduler.active_task_ids.len(), 1);
 

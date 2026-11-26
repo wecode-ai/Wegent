@@ -18,7 +18,6 @@ use crate::{emitter::EventEnvelope, runner::EventSink, runtime_work::runtime_fea
 
 use super::{
     capability::{CapabilityReportProvider, DefaultCapabilityReporter},
-    tasks::LocalRunningTaskTracker,
     LocalBackendConfig, LocalBackendTransport,
 };
 
@@ -64,7 +63,7 @@ where
 {
     pub(super) config: Arc<LocalBackendConfig>,
     pub(super) transport: T,
-    running_tasks: LocalRunningTaskTracker,
+    running_tasks: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     capability_reporter: Arc<dyn CapabilityReportProvider>,
     runtime_transfer_port: Arc<Mutex<Option<u16>>>,
     pub(super) remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess,
@@ -86,27 +85,10 @@ where
     where
         R: CapabilityReportProvider,
     {
-        Self::with_capability_reporter_and_tracker(
-            config,
-            transport,
-            capability_reporter,
-            LocalRunningTaskTracker::default(),
-        )
-    }
-
-    pub fn with_capability_reporter_and_tracker<R>(
-        config: LocalBackendConfig,
-        transport: T,
-        capability_reporter: R,
-        running_tasks: LocalRunningTaskTracker,
-    ) -> Self
-    where
-        R: CapabilityReportProvider,
-    {
         Self {
             config: Arc::new(config),
             transport,
-            running_tasks,
+            running_tasks: Arc::new(Vec::new),
             capability_reporter: Arc::new(capability_reporter),
             runtime_transfer_port: Arc::new(Mutex::new(None)),
             remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env(
@@ -186,7 +168,7 @@ where
             .transport
             .call(
                 RUNTIME_TASK_PULL_EVENT,
-                json!({"runner_catalog": catalog}),
+                json!({"runner_catalog": catalog, "dispatch_protocol_version": 2}),
                 timeout,
             )
             .await?;
@@ -377,11 +359,12 @@ where
         })
     }
 
-    pub fn set_running_task_ids<I>(&self, task_ids: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.running_tasks.set(task_ids);
+    pub fn with_running_task_ids(
+        mut self,
+        read: impl Fn() -> Vec<String> + Send + Sync + 'static,
+    ) -> Self {
+        self.running_tasks = Arc::new(read);
+        self
     }
 
     pub fn set_runtime_transfer_port(&self, port: Option<u16>) {
@@ -431,7 +414,7 @@ where
     }
 
     pub(super) fn heartbeat_payload(&self) -> Value {
-        let running_task_ids = self.running_tasks.running_task_ids();
+        let running_task_ids = (self.running_tasks)();
         let runtime_transfer_port = *self
             .runtime_transfer_port
             .lock()
@@ -518,6 +501,9 @@ fn backend_event_payload(event: EventEnvelope) -> Result<Value, String> {
         numeric_backend_id(&event.subtask_id)?,
     );
     object.insert("data".to_owned(), event.data);
+    if let Some(attempt) = event.execution_attempt_id {
+        object.insert("execution_attempt_id".into(), Value::String(attempt));
+    }
     if let Some(message_id) = event.message_id {
         object.insert("message_id".to_owned(), json!(message_id));
     }

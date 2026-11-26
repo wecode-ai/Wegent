@@ -14,6 +14,7 @@ pub(crate) async fn verify_candidate_selection(mysql: MysqlService) {
         runtime_instance_id: "runtime",
         environment: "local",
         runner_catalog: None,
+        dispatch_protocol_version: 2,
     };
     assert_eq!(
         pull_execution(&app, &command).await.unwrap(),

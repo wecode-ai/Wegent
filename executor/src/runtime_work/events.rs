@@ -96,6 +96,31 @@ pub(crate) fn emit_response_event(
     request: &ExecutionRequest,
     data: Value,
 ) {
+    emit_shell_response_event(
+        event_tx,
+        device_id,
+        "codex",
+        event,
+        local_task_id,
+        request,
+        data,
+    );
+}
+
+pub(crate) fn emit_shell_response_event(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    runtime: &str,
+    event: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    data: Value,
+) {
+    let data = if event == "response.incomplete" && data["response"]["status"] == "cancelled" {
+        json!({"type":"cancelled","error":data["response"]["error"]})
+    } else {
+        data
+    };
     let terminal = is_terminal_response_event(event);
     let Some(event_tx) = event_tx else {
         if terminal {
@@ -146,7 +171,7 @@ pub(crate) fn emit_response_event(
             "subtaskId": request.subtask_id.to_string(),
             "data": data,
             "deviceId": device_id,
-            "runtime": "codex",
+            "runtime": runtime,
             "eventSeq": next_runtime_event_sequence(),
         },
     });

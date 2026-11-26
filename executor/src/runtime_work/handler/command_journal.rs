@@ -15,11 +15,19 @@ pub(super) enum CommandState {
     RecoveryRequired,
 }
 
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) enum TerminalDelivery {
+    Pending(crate::emitter::EventEnvelope),
+    Acknowledged,
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RuntimeCommand {
     pub(super) id: String,
     pub(super) fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) pending_terminal: Option<TerminalDelivery>,
     pub(super) state: CommandState,
     pub(super) accepted_at: i64,
     pub(super) turn: SpawnTurnRequest,
@@ -49,6 +57,28 @@ pub(super) fn key(task: &str, command: &str) -> String {
     json!([task, command]).to_string()
 }
 
+/// An early platform cancellation precedes the request and has no payload fingerprint to match.
+pub(super) fn replayed_command<'a>(
+    journal: &'a CommandJournal,
+    incoming: &RuntimeCommand,
+) -> Result<Option<&'a RuntimeCommand>, AppIpcError> {
+    let Some(existing) = journal.get(&incoming.key()) else {
+        return Ok(None);
+    };
+    let early_cancel = existing.state == CommandState::Cancelled
+        && existing.turn.platform_command.is_some()
+        && existing
+            .turn
+            .request
+            .extra
+            .get("runtime_command_input")
+            .is_some_and(|input| input[1].as_str() == Some(""));
+    if !early_cancel {
+        existing.validate_replay(incoming)?;
+    }
+    Ok(Some(existing))
+}
+
 impl RuntimeCommand {
     pub(super) fn require_confirmed_delivery(&self) -> Result<(), AppIpcError> {
         if self.is_owner_abandoned() {
@@ -73,12 +103,13 @@ impl RuntimeCommand {
                 "commandId must contain 1-256 bytes without surrounding whitespace",
             ));
         }
-        if !turn
-            .request
-            .extra
-            .get("user_id")
-            .and_then(Value::as_i64)
-            .is_some_and(|user| user >= 0)
+        if turn.platform_command.is_none()
+            && !turn
+                .request
+                .extra
+                .get("user_id")
+                .and_then(Value::as_i64)
+                .is_some_and(|user| user >= 0)
         {
             return Err(AppIpcError::new(
                 "bad_request",
@@ -121,6 +152,7 @@ impl RuntimeCommand {
         Ok(Some(Self {
             id,
             fingerprint,
+            pending_terminal: None,
             state,
             accepted_at: now_ms(),
             turn: turn.clone(),
@@ -136,6 +168,18 @@ impl RuntimeCommand {
     }
 
     pub(super) fn validate_replay(&self, incoming: &Self) -> Result<(), AppIpcError> {
+        if self
+            .turn
+            .request
+            .extra
+            .get("user_id")
+            .is_some_and(|actor| Some(actor) != incoming.turn.request.extra.get("user_id"))
+        {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Execution replay belongs to a different owner",
+            ));
+        }
         if self.fingerprint == incoming.fingerprint {
             return Ok(());
         }
@@ -167,7 +211,7 @@ impl RuntimeCommand {
         self.turn.initial_thread_goal = None;
     }
 
-    fn finish(&mut self, generation: Option<u64>, state: CommandState) -> bool {
+    pub(super) fn finish(&mut self, generation: Option<u64>, state: CommandState) -> bool {
         if self
             .native
             .as_ref()
@@ -370,6 +414,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required with commandId"))?;
         let runtime = string_field(payload, "runtime").unwrap_or_else(|| "codex".to_owned());
         let turn = SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: task,
             runtime,
@@ -406,10 +451,12 @@ impl RuntimeWorkRpcHandler {
             .command_journal
             .lock()
             .expect("command journal lock should not be poisoned");
-        let existing = if let Some(existing) = commands.get(&incoming.key()) {
-            existing.validate_replay(&incoming)?;
+        let existing = if let Some(existing) = replayed_command(&commands, &incoming)? {
             existing
         } else {
+            if incoming.resource_event_keys.is_empty() {
+                return Ok(None);
+            }
             self.validate_resource_event_keys(&turn.local_task_id, &incoming.resource_event_keys)?;
             let same_owner = |command: &&RuntimeCommand| {
                 command.turn.local_task_id == turn.local_task_id
@@ -417,13 +464,11 @@ impl RuntimeWorkRpcHandler {
                         == turn.request.extra.get("user_id")
             };
             let owned: Vec<_> = commands.values().filter(same_owner).collect();
-            if incoming.resource_event_keys.is_empty()
-                || !incoming.resource_event_keys.iter().all(|key| {
-                    owned
-                        .iter()
-                        .any(|command| command.resource_event_keys.contains(key))
-                })
-            {
+            if !incoming.resource_event_keys.iter().all(|key| {
+                owned
+                    .iter()
+                    .any(|command| command.resource_event_keys.contains(key))
+            }) {
                 return Ok(None);
             }
             let relevant: Vec<_> = owned
@@ -613,48 +658,54 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
             if let Some(id) = id {
-                let previous = self
-                    .command_journal
-                    .lock()
-                    .expect("command journal poisoned")
-                    .clone();
-                {
+                let id = key(task, id);
+                let changed = {
                     let mut commands = self
                         .command_journal
                         .lock()
                         .expect("command journal poisoned");
-                    if let Some(command) = commands.get_mut(&key(task, id)) {
-                        if command
-                            .native
-                            .as_ref()
-                            .is_some_and(|(recorded, _, _)| *recorded != generation)
+                    match commands.get_mut(&id) {
+                        Some(command)
+                            if command
+                                .native
+                                .as_ref()
+                                .is_some_and(|(recorded, _, _)| *recorded != generation) =>
                         {
-                            return;
+                            return
                         }
-                        if matches!(
-                            command.state,
-                            CommandState::Dispatching | CommandState::Started
-                        ) {
-                            let outcome = outcome.unwrap_or(CommandState::RecoveryRequired);
-                            command.finish(Some(generation), outcome);
+                        Some(command)
+                            if matches!(
+                                command.state,
+                                CommandState::Dispatching | CommandState::Started
+                            ) =>
+                        {
+                            let previous = command.clone();
+                            command.finish(
+                                Some(generation),
+                                outcome.unwrap_or(CommandState::RecoveryRequired),
+                            );
+                            Some(previous)
                         }
+                        _ => None,
                     }
-                }
-                let queued = self
-                    .turn_scheduler
-                    .lock()
-                    .expect("turn scheduler poisoned")
-                    .queued_turns
-                    .clone();
-                if let Err(error) = self.persist_turn_queue(queued, None, &[]).await {
-                    *self
-                        .command_journal
+                };
+                if let Some(previous) = changed {
+                    let queued = self
+                        .turn_scheduler
                         .lock()
-                        .expect("command journal poisoned") = previous;
-                    log_executor_event(
-                        "runtime command result persistence failed",
-                        &[("task_id", task.to_owned()), ("code", error.code)],
-                    );
+                        .expect("turn scheduler poisoned")
+                        .queued_turns
+                        .clone();
+                    if let Err(error) = self.persist_turn_queue(queued, None, &[]).await {
+                        self.command_journal
+                            .lock()
+                            .expect("command journal poisoned")
+                            .insert(id, previous);
+                        log_executor_event(
+                            "runtime command result persistence failed",
+                            &[("task_id", task.to_owned()), ("code", error.code)],
+                        );
+                    }
                 }
             }
         }

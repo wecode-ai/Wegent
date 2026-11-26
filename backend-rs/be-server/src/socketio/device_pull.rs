@@ -60,6 +60,7 @@ pub(super) struct PullCommand<'a> {
     pub(super) runtime_instance_id: &'a str,
     pub(super) environment: &'static str,
     runner_catalog: Option<&'a Value>,
+    dispatch_protocol_version: u64,
 }
 
 /// `on_runtime_tasks_pull`: validate the session, run `pull_execution`, and
@@ -110,6 +111,7 @@ fn pull_command<'a>(
         runtime_instance_id,
         environment,
         runner_catalog,
+        dispatch_protocol_version: data["dispatch_protocol_version"].as_u64().unwrap_or(1),
     })
 }
 
@@ -148,10 +150,19 @@ async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Re
     Ok(ack)
 }
 
+fn supports_dispatch(command: &PullCommand<'_>, row: &claim::QueueExecutionRow) -> bool {
+    row.execution().context()["dispatch_protocol_version"]
+        .as_u64()
+        .unwrap_or(1)
+        <= command.dispatch_protocol_version
+}
+
 /// `_claim_execution`: redeliver an unconfirmed claim, otherwise claim the
 /// next eligible queued run.
 async fn claim_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
-    if let Some(reserved) = unconfirmed_claim(app, command).await? {
+    if let Some(reserved) = unconfirmed_claim(app, command).await?
+        && supports_dispatch(command, &reserved)
+    {
         let Some(mut prepared) = claim::redelivery_preparation(&reserved) else {
             return Ok(json!({
                 "success": false, "task": null, "error": "Claimed execution has no Runtime task identity"
@@ -177,11 +188,12 @@ async fn claim_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::R
         .as_ref()
         .map(device_identity_ids)
         .unwrap_or_else(|| vec![command.execution_target_id.to_owned()]);
-    let queued =
+    let mut queued =
         claim::queue_rows(app, command.owner_user_id, &identities, command.environment).await?;
     // `claim_next_for_device`'s post-queue filters: only a row whose current
     // authority, device set, route/affinity and execution scope allow it may
     // be claimed.
+    queued.retain(|row| supports_dispatch(command, row));
     let candidate = claim::select_claimable(
         app,
         command.owner_user_id,
