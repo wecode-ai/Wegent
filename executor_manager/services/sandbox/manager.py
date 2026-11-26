@@ -14,7 +14,8 @@ This service handles:
 import asyncio
 import os
 import time
-from contextlib import suppress
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -740,6 +741,49 @@ class SandboxManager(metaclass=SingletonMeta):
 
         return sandbox
 
+    @asynccontextmanager
+    async def _lock_current_sandbox(
+        self, observed: Sandbox
+    ) -> AsyncIterator[Tuple[Optional[Sandbox], Optional[str]]]:
+        """Revalidate the observed runtime while holding its lifecycle lease."""
+        sandbox_id = observed.sandbox_id
+        lease, error = await self._acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            yield None, error
+            return
+        try:
+            try:
+                current = self._repository.load_sandbox(
+                    sandbox_id, require_definitive_result=True
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not reload sandbox %s: %s", sandbox_id, type(exc).__name__
+                )
+                yield None, f"Sandbox {sandbox_id} storage is unavailable"
+                return
+            if lease.lost.is_set():
+                yield None, (
+                    "Lost the distributed sandbox lifecycle lock; retry the request"
+                )
+            elif current is None or (
+                current.container_name,
+                current.created_at,
+            ) != (observed.container_name, observed.created_at):
+                yield None, f"Sandbox {sandbox_id} changed; retry the request"
+            else:
+                yield current, None
+        finally:
+            await self._release_task_lifecycle_lease(lease)
+
+    async def refresh_sandbox_activity(self, observed: Sandbox) -> bool:
+        """Refresh the current runtime without writing a stale sandbox record."""
+        async with self._lock_current_sandbox(observed) as (current, _):
+            if current is None:
+                return False
+            current.touch()
+            return self._repository.save_sandbox(current)
+
     async def terminate_sandbox(self, sandbox_id: str) -> Tuple[bool, str]:
         """Terminate a sandbox and revoke its credentials after runtime removal."""
         sandbox = self._repository.load_sandbox(sandbox_id)
@@ -1422,21 +1466,16 @@ class SandboxManager(metaclass=SingletonMeta):
         def on_error(exec: Execution):
             self._repository.save_execution(exec)
 
-        def on_complete(exec: Execution):
-            # Update sandbox touch time
-            sandbox.touch()
-            self._repository.save_sandbox(sandbox)
-
         success = await self._execution_runner.run_with_timeout(
             sandbox=sandbox,
             execution=execution,
             timeout=timeout,
             on_running=on_running,
-            on_complete=on_complete,
             on_error=on_error,
         )
 
         if success:
+            await self.refresh_sandbox_activity(sandbox)
             logger.info(
                 f"[SandboxManager] Execution accepted: execution_id={execution.execution_id}"
             )

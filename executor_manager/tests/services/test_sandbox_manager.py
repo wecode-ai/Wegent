@@ -1250,6 +1250,27 @@ class TestSandboxManager:
     # ----- terminate_sandbox Tests -----
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("replaced", [False, True])
+    async def test_refresh_activity_only_writes_current_sandbox(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, replaced
+    ):
+        manager = sandbox_manager_with_mock_redis
+        current = copy.copy(sample_sandbox)
+        if replaced:
+            current.created_at += 1
+        mocker.patch.object(manager._repository, "load_sandbox", return_value=current)
+        save = mocker.patch.object(
+            manager._repository, "save_sandbox", return_value=True
+        )
+
+        assert await manager.refresh_sandbox_activity(sample_sandbox) is not replaced
+        if replaced:
+            save.assert_not_called()
+        else:
+            assert current.last_activity_at > sample_sandbox.last_activity_at
+            assert save.call_args.args[0] is current
+
+    @pytest.mark.asyncio
     async def test_repeated_cancellation_keeps_cleanup_lease(
         self, sandbox_manager_with_mock_redis, mocker
     ):
