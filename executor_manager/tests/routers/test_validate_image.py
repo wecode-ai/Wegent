@@ -39,8 +39,10 @@ async def test_validate_image_schedules_background_submission(mocker, shell_type
 
     assert result["status"] == "submitted"
     assert isinstance(result["validation_task_id"], int)
+    assert -(1 << 52) <= result["validation_task_id"] < 0
     mocked_bg.assert_called_once()
     validation_task = mocked_bg.call_args.args[0]
+    assert validation_task["metadata"]["task_id"] == result["validation_task_id"]
     assert validation_task["metadata"]["validation_params"] == {
         "shell_type": shell_type,
         "image": request.image,

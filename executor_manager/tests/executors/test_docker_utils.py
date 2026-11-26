@@ -264,7 +264,10 @@ def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
         "run",
         side_effect=[
             mocker.Mock(
-                stdout="active-id sandbox-id old-sandbox-id exited-id foreign-id legacy-id"
+                stdout=(
+                    "active-id sandbox-id old-sandbox-id validation-id "
+                    "exited-id foreign-id legacy-id"
+                )
             ),
             mocker.Mock(
                 stdout="\n".join(
@@ -272,6 +275,7 @@ def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
                         f'true /active executor_manager 42 ["EXECUTOR_CALLBACK_TOKEN={token}", "EXECUTOR_CALLBACK_SCOPE=task", "HEARTBEAT_TYPE=sandbox"]',
                         f'true /sandbox executor_manager 42 ["EXECUTOR_CALLBACK_TOKEN={token}", "EXECUTOR_CALLBACK_SCOPE=sandbox"]',
                         f'true /old-sandbox executor_manager 46 ["EXECUTOR_CALLBACK_TOKEN={token}", "HEARTBEAT_TYPE=sandbox"]',
+                        f'true /validation executor_manager -47 ["EXECUTOR_CALLBACK_TOKEN={token}", "EXECUTOR_CALLBACK_SCOPE=task"]',
                         f'false /exited executor_manager 43 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
                         f'true /foreign other-owner 44 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
                         'true /legacy executor_manager 45 ["OTHER=true"]',
@@ -288,4 +292,5 @@ def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
         mocker.call(42, "active", token, sandbox=False),
         mocker.call(42, "sandbox", token, sandbox=True),
         mocker.call(46, "old-sandbox", token, sandbox=True),
+        mocker.call(-47, "validation", token, sandbox=False),
     ]

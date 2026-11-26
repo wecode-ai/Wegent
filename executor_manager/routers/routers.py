@@ -943,13 +943,8 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
             "errors": [f"Unknown shell type: {shell_type}"],
         }
 
-    # Build validation task data
-    # Use a unique negative task_id to distinguish validation tasks from regular tasks
-    import time
-
-    validation_task_id = (
-        int(time.time() * 1000) % 1000000
-    )  # Negative ID for validation tasks
+    # Keep validation bindings separate from normal tasks and the legacy ID JSON-safe.
+    validation_task_id = -(uuid.uuid4().int % (1 << 52) + 1)
 
     # Build validation task in OpenAI Responses API format (same as normal code tasks)
     # Build callback URL from environment variables

@@ -560,7 +560,11 @@ def _inspect_docker_callback_bindings(
         if len(fields) != 5:
             continue
         running, name, owner, task_id, environment = fields
-        if running != "true" or owner != CONTAINER_OWNER or not task_id.isdecimal():
+        if (
+            running != "true"
+            or owner != CONTAINER_OWNER
+            or not task_id.removeprefix("-").isdecimal()
+        ):
             continue
         try:
             entries = json.loads(environment) or []
