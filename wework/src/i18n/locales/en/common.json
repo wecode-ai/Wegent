@@ -126,7 +126,6 @@
     "always_on_top": "Keep on top",
     "always_on_top_active": "Stop keeping on top",
     "resize_column_hint": "Drag to resize; double-click to reset",
-    "sort_by": "Sort by {{column}}",
     "exited": "Exited",
     "copy_launch_details": "Copy launch details",
     "copied": "Copied",

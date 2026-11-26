@@ -10,16 +10,7 @@ import type {
   ProcessOwnerRef,
   ProcessSnapshot,
 } from '@wegent/process-explorer'
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  Pin,
-  RefreshCw,
-} from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
 import {
   useCallback,
   useMemo,
@@ -44,12 +35,9 @@ import {
   buildProcessTree,
   filterProcessTree,
   flattenProcessTree,
-  DEFAULT_PROCESS_SORT,
   isExited,
   type ProcessRow,
-  type ProcessSort,
   type ProcessTreeNode,
-  type SortColumn,
 } from './processTree'
 
 export interface ProcessExplorerViewProps {
@@ -62,35 +50,13 @@ export interface ProcessExplorerViewProps {
 
 const DEFAULT_REFRESH_INTERVAL_MS = 1000
 
-interface ProcessColumn {
-  key: SortColumn
-  label: string
-  align: 'text-left' | 'text-right'
-  padding: string
-}
-
-const COLUMNS: readonly ProcessColumn[] = [
-  {
-    key: 'name',
-    label: 'process_explorer.column_process',
-    align: 'text-left',
-    padding: 'pl-3 pr-3',
-  },
-  { key: 'pid', label: 'process_explorer.column_pid', align: 'text-right', padding: 'pl-2 pr-3' },
-  { key: 'cpu', label: 'process_explorer.column_cpu', align: 'text-right', padding: 'pl-2 pr-3' },
-  {
-    key: 'memory',
-    label: 'process_explorer.column_memory',
-    align: 'text-right',
-    padding: 'pl-2 pr-3',
-  },
-  {
-    key: 'uptime',
-    label: 'process_explorer.column_uptime',
-    align: 'text-right',
-    padding: 'pl-2 pr-3',
-  },
-]
+const COLUMN_LABELS = [
+  { label: 'process_explorer.column_process', align: 'text-left', padding: 'pl-3 pr-3' },
+  { label: 'process_explorer.column_pid', align: 'text-right', padding: 'pl-2 pr-3' },
+  { label: 'process_explorer.column_cpu', align: 'text-right', padding: 'pl-2 pr-3' },
+  { label: 'process_explorer.column_memory', align: 'text-right', padding: 'pl-2 pr-3' },
+  { label: 'process_explorer.column_uptime', align: 'text-right', padding: 'pl-2 pr-3' },
+] as const
 
 interface RenderGroup {
   owner: ProcessOwnerRef
@@ -118,7 +84,6 @@ export function ProcessExplorerView({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [collapsedOwners, setCollapsedOwners] = useState<Set<string>>(() => new Set())
   const [columnWidths, setColumnWidths] = useState<number[]>(() => [...DEFAULT_COLUMN_WIDTHS])
-  const [sort, setSort] = useState<ProcessSort>(DEFAULT_PROCESS_SORT)
   const tableRef = useRef<HTMLTableElement>(null)
   const { startResize: startPanelResize, stopResize } = usePanelResizeDrag()
 
@@ -141,7 +106,7 @@ export function ProcessExplorerView({
     }
   })
 
-  const groups = useMemo(() => buildRenderGroups(snapshot, filter, sort), [snapshot, filter, sort])
+  const groups = useMemo(() => buildRenderGroups(snapshot, filter), [snapshot, filter])
   const totalCpu = groups.reduce((total, group) => total + group.cpuPercent, 0)
   const totalMemory = groups.reduce((total, group) => total + group.memoryBytes, 0)
   const totalCount = groups.reduce((total, group) => total + group.count, 0)
@@ -320,7 +285,7 @@ export function ProcessExplorerView({
           <colgroup>
             {columnWidths.map((width, index) => (
               <col
-                key={COLUMNS[index]?.key ?? index}
+                key={COLUMN_LABELS[index]?.label ?? index}
                 data-testid={`process-explorer-column-${index}`}
                 style={{ width: `${width}%` }}
               />
@@ -328,76 +293,36 @@ export function ProcessExplorerView({
           </colgroup>
           <thead className="sticky top-0 z-10 bg-surface text-xs text-text-secondary">
             <tr>
-              {COLUMNS.map((column, index) => {
-                const sorted = sort.column === column.key
-                return (
-                  <th
-                    key={column.key}
-                    data-testid={`process-explorer-header-${index}`}
-                    aria-sort={
-                      sorted ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined
-                    }
-                    className={cn(
-                      'relative overflow-hidden py-1.5 font-medium',
-                      column.align,
-                      column.padding
-                    )}
-                  >
-                    <ControlButton
-                      variant="unstyled"
-                      type="button"
-                      data-testid={`process-explorer-sort-${column.key}`}
-                      onClick={() =>
-                        setSort(current =>
-                          current.column === column.key
-                            ? {
-                                column: column.key,
-                                direction: current.direction === 'asc' ? 'desc' : 'asc',
-                              }
-                            : {
-                                column: column.key,
-                                direction:
-                                  column.key === 'name' || column.key === 'pid' ? 'asc' : 'desc',
-                              }
-                        )
-                      }
-                      aria-label={t('process_explorer.sort_by', { column: t(column.label) })}
-                      title={t('process_explorer.sort_by', { column: t(column.label) })}
-                      className={cn(
-                        'flex w-full items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
-                        column.align === 'text-right' ? 'justify-end' : 'justify-start',
-                        sorted ? 'text-text-primary' : 'hover:text-text-primary'
-                      )}
-                    >
-                      <span>{t(column.label)}</span>
-                      {sorted ? (
-                        sort.direction === 'asc' ? (
-                          <ArrowUp className="h-3 w-3 shrink-0" />
-                        ) : (
-                          <ArrowDown className="h-3 w-3 shrink-0" />
-                        )
-                      ) : null}
-                    </ControlButton>
-                    {index < COLUMNS.length - 1 ? (
-                      <span
-                        role="separator"
-                        aria-orientation="vertical"
-                        aria-label={t('process_explorer.resize_column_hint')}
-                        aria-valuemin={8}
-                        aria-valuemax={100}
-                        aria-valuenow={Math.round(columnWidths[index] ?? 0)}
-                        title={t('process_explorer.resize_column_hint')}
-                        data-testid={`process-explorer-resize-${index}`}
-                        tabIndex={0}
-                        onPointerDown={event => startResize(event, index)}
-                        onDoubleClick={resetColumnWidths}
-                        onKeyDown={event => resizeWithKeyboard(event, index)}
-                        className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize touch-none select-none after:absolute after:inset-y-1 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:content-[''] hover:after:bg-text-muted focus-visible:after:bg-text-muted focus-visible:outline-none"
-                      />
-                    ) : null}
-                  </th>
-                )
-              })}
+              {COLUMN_LABELS.map((column, index) => (
+                <th
+                  key={column.label}
+                  data-testid={`process-explorer-header-${index}`}
+                  className={cn(
+                    'relative overflow-hidden py-1.5 font-medium',
+                    column.align,
+                    column.padding
+                  )}
+                >
+                  {t(column.label)}
+                  {index < COLUMN_LABELS.length - 1 ? (
+                    <span
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={t('process_explorer.resize_column_hint')}
+                      aria-valuemin={8}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(columnWidths[index] ?? 0)}
+                      title={t('process_explorer.resize_column_hint')}
+                      data-testid={`process-explorer-resize-${index}`}
+                      tabIndex={0}
+                      onPointerDown={event => startResize(event, index)}
+                      onDoubleClick={resetColumnWidths}
+                      onKeyDown={event => resizeWithKeyboard(event, index)}
+                      className="absolute inset-y-0 right-0 z-20 w-2 cursor-col-resize touch-none select-none after:absolute after:inset-y-1 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:content-[''] hover:after:bg-text-muted focus-visible:after:bg-text-muted focus-visible:outline-none"
+                    />
+                  ) : null}
+                </th>
+              ))}
             </tr>
           </thead>
           {groups.length === 0 ? (
@@ -596,17 +521,13 @@ function traceSnapshotLoad(
   )
 }
 
-function buildRenderGroups(
-  snapshot: ProcessSnapshot | null,
-  filter: string,
-  sort: ProcessSort
-): RenderGroup[] {
+function buildRenderGroups(snapshot: ProcessSnapshot | null, filter: string): RenderGroup[] {
   const normalizedFilter = filter.trim().toLowerCase()
   // Exited processes stay in the tree while they fade, so a short-lived child
   // remains visible under the parent that forked it.
   const rows = snapshot?.processes.concat(snapshot.recentlyExited) ?? []
   return groupProcesses(rows).flatMap(group => {
-    let tree = buildProcessTree(group.processes, sort)
+    let tree = buildProcessTree(group.processes)
     if (normalizedFilter) {
       tree = filterProcessTree(tree, record => matchesFilter(record, normalizedFilter))
     }

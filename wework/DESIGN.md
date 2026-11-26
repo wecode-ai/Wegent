@@ -2264,7 +2264,6 @@ implementation and WCAG conflict.
   置顶但失焦时继续刷新，便于边操作边观察。
 - 退出的进程变灰并在原父进程下保留 5 秒，运行时长停在退出时刻，不计入分组和顶部汇总；
   采集失败或采样间隔超过保留时长时不得把进程误报为已退出。
-- 点击列头只在同一父进程下对兄弟进程排序，分组顺序和层级不变；已退出行始终排在最后。
 - Process Explorer snapshots must settle when their native window closes or its
   renderer is destroyed, preserving the existing absent-window result. Register
   lifecycle listeners before executing renderer code, remove them after every
@@ -2275,8 +2274,6 @@ implementation and WCAG conflict.
 - An exited process fades to grey and stays under its parent for 5 seconds with
   uptime frozen at exit, excluded from group and header totals. Failed reads and
   sampling gaps longer than the linger window must not report exits.
-- Clicking a header sorts only the siblings under one parent; group order and
-  hierarchy stay unchanged, and exited rows always sort last.
 
   ```mermaid
   sequenceDiagram

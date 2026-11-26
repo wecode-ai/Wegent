@@ -2,15 +2,6 @@ import type { ExitedProcessRecord, ProcessRecord } from '@wegent/process-explore
 
 export type ProcessRow = ProcessRecord | ExitedProcessRecord
 
-export type SortColumn = 'name' | 'pid' | 'cpu' | 'memory' | 'uptime'
-
-export interface ProcessSort {
-  column: SortColumn
-  direction: 'asc' | 'desc'
-}
-
-export const DEFAULT_PROCESS_SORT: ProcessSort = { column: 'memory', direction: 'desc' }
-
 export function isExited(record: ProcessRow): record is ExitedProcessRecord {
   return 'exitedAt' in record
 }
@@ -26,43 +17,15 @@ export interface FlatProcessNode {
 }
 
 /**
- * Orders siblings of one parent. Exited processes sink below running ones so
- * a process keeps its neighbours' order while it fades out, and unknown values
- * sort last regardless of direction.
+ * Orders siblings of one parent by memory, largest first. Exited processes
+ * sink below running ones so a process keeps its neighbours' order while it
+ * fades out.
  */
-export function compareProcessRows(left: ProcessRow, right: ProcessRow, sort: ProcessSort): number {
+function compareRecords(left: ProcessRow, right: ProcessRow): number {
   const exited = Number(isExited(left)) - Number(isExited(right))
   if (exited !== 0) return exited
-
-  const leftValue = sortValue(left, sort.column)
-  const rightValue = sortValue(right, sort.column)
-  if (leftValue === null || rightValue === null) {
-    if (leftValue !== rightValue) return leftValue === null ? 1 : -1
-  } else {
-    const delta =
-      typeof leftValue === 'string'
-        ? leftValue.localeCompare(rightValue as string)
-        : leftValue - (rightValue as number)
-    if (delta !== 0) return sort.direction === 'asc' ? delta : -delta
-  }
-  return left.pid - right.pid
-}
-
-/** Ascending value of one column, or null when the platform did not report it. */
-function sortValue(record: ProcessRow, column: SortColumn): string | number | null {
-  switch (column) {
-    case 'name':
-      return record.name
-    case 'pid':
-      return record.pid
-    case 'cpu':
-      return record.cpuPercent
-    case 'memory':
-      return record.memoryBytes
-    case 'uptime':
-      // Older start times mean longer uptime, so negate to sort uptime ascending.
-      return record.startedAt === null ? null : -record.startedAt
-  }
+  const memoryDelta = (right.memoryBytes ?? -1) - (left.memoryBytes ?? -1)
+  return memoryDelta !== 0 ? memoryDelta : left.pid - right.pid
 }
 
 /**
@@ -70,10 +33,7 @@ function sortValue(record: ProcessRow, column: SortColumn): string | number | nu
  * outside the group become roots. A cycle is broken after the first visit so a
  * corrupt process table cannot drop the whole group.
  */
-export function buildProcessTree(
-  processes: readonly ProcessRow[],
-  sort: ProcessSort = DEFAULT_PROCESS_SORT
-): ProcessTreeNode[] {
+export function buildProcessTree(processes: readonly ProcessRow[]): ProcessTreeNode[] {
   const byPid = new Map(processes.map(record => [record.pid, record]))
   const childrenByParent = new Map<number, ProcessRow[]>()
   for (const record of processes) {
@@ -94,7 +54,7 @@ export function buildProcessTree(
     visited.add(record.pid)
     const children = (childrenByParent.get(record.pid) ?? [])
       .filter(child => !visited.has(child.pid))
-      .sort((left, right) => compareProcessRows(left, right, sort))
+      .sort(compareRecords)
       .map(build)
     return { record, children }
   }
@@ -102,10 +62,7 @@ export function buildProcessTree(
   const isRoot = (record: ProcessRow) =>
     record.parentPid === null || record.parentPid === record.pid || !byPid.has(record.parentPid)
 
-  const roots = processes
-    .filter(isRoot)
-    .sort((left, right) => compareProcessRows(left, right, sort))
-    .map(build)
+  const roots = processes.filter(isRoot).sort(compareRecords).map(build)
   for (const record of processes) {
     if (!visited.has(record.pid)) roots.push(build(record))
   }
