@@ -90,6 +90,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     downgrade(mysql, "d47dd270f4b6").await?;
     upgrade(mysql).await?;
     check(mysql).await?;
+    historical::project_agent_teams_round_trip(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
     crate::socketio::issue_timestamp_tests::verify(mysql).await?;

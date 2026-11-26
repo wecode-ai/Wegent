@@ -13,6 +13,7 @@ mod data_changes;
 pub mod graph;
 mod legacy;
 mod plugin_publication;
+mod project_agent_teams;
 mod rows;
 mod runtime_profiles;
 mod schema_changes;
@@ -135,6 +136,11 @@ async fn migrate(
     for revision in &plan {
         legacy::validate(revision, down)?;
     }
+    // MySQL implicitly commits even CREATE TABLE IF NOT EXISTS. Keep DDL
+    // outside the revision transaction so data and version advance together.
+    if !plan.is_empty() {
+        mysql.execute(VERSION_TABLE, ()).await?;
+    }
     let mut applied = graph.ancestors(&heads)?;
     for revision in plan {
         tracing::info!(
@@ -153,7 +159,6 @@ async fn migrate(
         mysql
             .with_transaction(async |tx| {
                 legacy::execute(tx, revision, down).await?;
-                tx.execute(VERSION_TABLE, ()).await?;
                 write_heads(tx, &heads_for(&applied, graph), &frontier).await?;
                 Ok(())
             })

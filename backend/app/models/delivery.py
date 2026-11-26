@@ -316,6 +316,24 @@ class ProjectChatAgent(LoopNode):
         super().__init__(**kwargs)
 
 
+@event.listens_for(ProjectChatAgent, "after_insert")
+@event.listens_for(ProjectChatAgent, "after_update")
+def _persist_project_agent_team(
+    _mapper, connection: Connection, target: ProjectChatAgent
+) -> None:
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    from app.services.project_agent_teams import write_project_agent_team
+
+    metadata = write_project_agent_team(connection, target)
+    if metadata != (target.metadata_json or {}):
+        nodes = LoopNode.__table__
+        connection.execute(
+            nodes.update().where(nodes.c.id == target.id).values(metadata=metadata)
+        )
+        set_committed_value(target, "metadata_json", metadata)
+
+
 @event.listens_for(LoopItem, "before_update")
 def _preserve_issue_runner_binding(
     _mapper: object, connection: Connection, target: LoopItem
