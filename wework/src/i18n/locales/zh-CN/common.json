@@ -5766,6 +5766,9 @@
     "connect": "连接云端后查看通知"
   },
   "standIn": {
+    "preference_loading": "正在读取助理偏好…",
+    "preference_error": "无法读取助理偏好",
+    "preference_retry": "重试",
     "dingtalk_delegation": {
       "account_identity": "钉钉账号和组织",
       "provider": "钉钉",

@@ -6,7 +6,7 @@ import {
 import { assertDesktopPanes } from './collaboration-exp-pane-verification.mjs'
 import {
   assertMobileAssistantPriority,
-  assertMobileNavigation,
+  assertMobileCollaborationControls,
   assertNativeWorkOpened,
   assertReducedPlanMotion,
   assertReducedStateMotion,
@@ -88,8 +88,10 @@ export async function verifyCollaborationExpViewports({
       value: JSON.stringify({ width, height }),
     })
     onWindowSizeCaptured(oldSize)
-    await selectCollaborationExpAppearance(control, appearanceMode, route())
-    await click(control, testId('collaboration-exp-navigation-assistant'))
+    await selectCollaborationExpAppearance(control, appearanceMode, '/stand-in')
+    await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-experience"]`, {
+      visible: true,
+    })
     await control.command('setReducedMotion', 'body', { value: 'no-preference' })
     const relay = testId('collaboration-exp-team-relay')
     const runningRole = `${relay} [data-assistant-id="${COLLABORATION_EXP_RHYTHM_ROLE}"]`
@@ -108,7 +110,6 @@ export async function verifyCollaborationExpViewports({
     )
     await assertStableStateGeometry(control, relay)
     if (width === 390) {
-      await assertMobileNavigation(control, testId)
       await assertMobileAssistantPriority(control, testId, runningRole)
       await assertNoOverflow(control, testId('collaboration-exp-assistant-home'), width)
     }
@@ -120,10 +121,20 @@ export async function verifyCollaborationExpViewports({
       })
       await click(control, testId('collaboration-exp-assistant-current'))
       await assertNativeWorkOpened(control, runningAddress, uiTimeoutMs)
-      await control.command('navigate', 'body', { value: route() })
-      await control.command('waitFor', APP, { visible: true })
     }
-    await click(control, testId('collaboration-exp-navigation-tasks'))
+    await control.command('navigate', 'body', { value: route() })
+    await control.command('waitFor', APP, { visible: true })
+    for (const id of [
+      'collaboration-exp-navigation-assistant',
+      'collaboration-exp-navigation-tasks',
+      'collaboration-exp-mobile-navigation',
+      'collaboration-exp-account',
+    ])
+      assert.equal(
+        Number(await control.command('getElementCount', testId(id))),
+        0,
+        'The collaboration content must not render a duplicate navigation control'
+      )
     if (width >= 1024) {
       await control.command('waitFor', `${runningRole}[data-state="running"]`, {
         visible: true,
@@ -227,6 +238,8 @@ export async function verifyCollaborationExpViewports({
       await control.command('waitFor', testId(`collaboration-exp-task-${runningIssue.id}`), {
         visible: true,
       })
+      await assertMobileCollaborationControls(control, testId)
+      await verifyMobileCollaborationModes(control, APP, testId)
     }
     const listState = await readTaskListState(control, APP)
     await click(
@@ -244,7 +257,7 @@ export async function verifyCollaborationExpViewports({
       'local',
       JSON.stringify(['local', localProject.id])
     )
-    await returnToTasks(control, testId, click, width, 'timeline')
+    await click(control, testId('collaboration-exp-pane-header-timeline-back'))
     await assertTaskListRestored(control, APP, listState)
     await control.command('waitFor', testId(`collaboration-exp-task-${localIssue.id}`), {
       visible: true,
@@ -256,7 +269,7 @@ export async function verifyCollaborationExpViewports({
       testId('collaboration-exp-project-plan') + '[aria-current="page"]'
     )
     await assertReducedPlanMotion(control, testId('collaboration-exp-project'))
-    await returnToTasks(control, testId, click, width, 'project')
+    await click(control, testId('collaboration-exp-pane-header-project-back'))
     await assertTaskListRestored(control, APP, listState)
     await click(control, testId(`collaboration-exp-task-${localIssue.id}`))
     await assertSingleton(
@@ -348,12 +361,28 @@ async function assertTaskListRestored(control, app, expected) {
   )
 }
 
-async function returnToTasks(control, testId, click, width, pane) {
-  const back = testId(`collaboration-exp-pane-header-${pane}-back`)
-  if (width >= 1024) {
-    await control.command('waitFor', back, { visible: false })
-    await click(control, testId('collaboration-exp-navigation-tasks'))
-  } else await click(control, back)
+async function verifyMobileCollaborationModes(control, app, testId) {
+  const before = await readTaskListState(control, app)
+  const switcher = testId('collaboration-exp-task-view-mode')
+  const menu = '[data-testid="collaboration-exp-task-view-mode-menu"]'
+  for (const [key, mode] of [
+    ['End', 'projects'],
+    ['Home', 'tasks'],
+  ]) {
+    await control.command('nativePress', switcher, { key: 'Enter' })
+    await control.command('waitFor', menu, { visible: true })
+    await control.command('nativePress', ':focus', { key })
+    await control.command(
+      'waitFor',
+      `${menu} [data-testid="collaboration-exp-task-view-mode-${mode}"][data-highlighted]`,
+      { visible: true }
+    )
+    await control.command('nativePress', ':focus', { key: 'Enter' })
+    await control.command('waitFor', `${switcher}[data-value="${mode}"]:focus`, {
+      visible: true,
+    })
+  }
+  await assertTaskListRestored(control, app, before)
 }
 
 async function verifyConclusionPreview({

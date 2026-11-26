@@ -388,14 +388,9 @@ export function createDesktopScenario({
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId('stand-in-onboarding-setup'))
-      const firstUse = await binding(control)
-      assert.equal(firstUse.target.userId, USER)
-      assert.equal('username' in firstUse.target, false)
-      assert.ok(firstUse.target.backendUrl)
-      assert.ok(
-        [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].includes(firstUse.target.deviceId),
-        'First use may bind an available cloud device'
-      )
+      const beforeSetup = await binding(control)
+      assert.equal(beforeSetup.status, 'unbound')
+      assert.equal(beforeSetup.target, null)
       assert.equal(
         await control.command('getElementCount', testId('stand-in-device')),
         '0',
@@ -404,6 +399,16 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-continue'))
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
       await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
+      const firstUse = await binding(control)
+      assert.equal(firstUse.status, 'active')
+      assert.ok(firstUse.target, 'Confirmed onboarding must bind a device')
+      assert.equal(firstUse.target.userId, USER)
+      assert.equal('username' in firstUse.target, false)
+      assert.ok(firstUse.target.backendUrl)
+      assert.ok(
+        [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].includes(firstUse.target.deviceId),
+        'First use may bind an available cloud device'
+      )
       const readInitialAssistant = () =>
         fetchJson(`${cloud.backendUrl}/api/v1/personal-assistant`, {
           headers: { Authorization: `Bearer ${cloud.authToken}` },

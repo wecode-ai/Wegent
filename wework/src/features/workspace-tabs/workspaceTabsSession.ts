@@ -6,6 +6,7 @@ import {
   COLLABORATION_EXP_TAB_ID,
   isCollaborationExpPath,
 } from '@/features/collaboration-exp/collaborationExpFeature'
+import { restoreCollaborationTabRoute } from '@/features/collaboration-exp/integration/deepLinks'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -98,7 +99,11 @@ function normalizePersistedTab(tab: WorkspaceTab, labels: WorkspaceTabLabels): W
       'Collaboration',
       'Collaboration (Beta)',
     ].includes(tab.title)
-  const normalized = { ...tab, fixed: tab.fixed === true }
+  const normalized = {
+    ...tab,
+    fixed: tab.fixed === true,
+    contentRoute: restoreCollaborationTabRoute(tab.contentRoute),
+  }
   if (
     normalized.fixed &&
     tab.kind !== 'auxiliary' &&

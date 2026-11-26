@@ -4,29 +4,21 @@ export const EXPERIENCE_HEADER_HEIGHT = 60
 export const EXPERIENCE_SEPARATOR_WIDTH = 8
 export const EXPERIENCE_MOBILE_MAX_WIDTH = 767
 export const EXPERIENCE_DEFAULT_PANE_MIN_WIDTH = 280
-export const EXPERIENCE_DEFAULT_NAVIGATION_WIDTH = 164
-
 export function paneMinimumWidth(pane: ExperiencePane): number {
   return Math.max(1, pane.minWidth ?? EXPERIENCE_DEFAULT_PANE_MIN_WIDTH)
 }
 
-export function selectVisiblePaneIds(
-  panes: readonly ExperiencePane[],
-  width: number,
-  navigationWidth: number | null
-): string[] {
+export function selectVisiblePaneIds(panes: readonly ExperiencePane[], width: number): string[] {
   if (!panes.length) return []
   const newestPane = panes[panes.length - 1]
   if (width <= EXPERIENCE_MOBILE_MAX_WIDTH) return [newestPane.id]
 
-  const available =
-    width - (navigationWidth === null ? 0 : navigationWidth + EXPERIENCE_SEPARATOR_WIDTH)
   const visible = [newestPane.id]
   let occupied = paneMinimumWidth(newestPane)
   for (let index = panes.length - 2; index >= 0; index -= 1) {
     const pane = panes[index]
     occupied += paneMinimumWidth(pane) + EXPERIENCE_SEPARATOR_WIDTH
-    if (occupied > available) break
+    if (occupied > width) break
     visible.unshift(pane.id)
   }
   return visible
