@@ -33,8 +33,11 @@ export function IssueCoordinationActions({
   refresh(): Promise<void>
   t: CollaborationTranslate
 }) {
+  const members = round.members.filter(
+    member => member.kind !== round.leader.kind || member.id !== round.leader.id
+  )
   const [items, setItems] = useState<CoordinationAssignment[]>(() =>
-    round.members.length ? [assignment(round.members[0])] : []
+    members.length ? [assignment(members[0])] : []
   )
   const [decision, setDecision] = useState<Decision>('in_review')
   const [reason, setReason] = useState('')
@@ -42,7 +45,6 @@ export function IssueCoordinationActions({
   const [busy, setBusy] = useState(false)
   const [accepted, setAccepted] = useState(false)
   const [error, setError] = useState('')
-  const members = round.members
   const memberOptions = members.map(member => ({
     value: JSON.stringify([member.kind, member.id]),
     label: member.name || member.id,

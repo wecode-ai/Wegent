@@ -26,8 +26,13 @@ function matchesResource(
 ): boolean {
   const agent = normalizeProjectAgent(binding);
   if (resource.team_id) return agent.wegentTeamId === resource.team_id;
-  const ref = resource.project_binding_input?.team_ref;
-  return typeof ref === "string" && (binding.teamRef ?? binding.team_ref ?? binding.id) === ref;
+  const input = resource.project_binding_input;
+  if (typeof input?.team_ref === "string")
+    return (binding.teamRef ?? binding.team_ref ?? binding.id) === input.team_ref;
+  // Older hosts expose a named local resource before persistent Team references.
+  return typeof input?.name === "string" &&
+    (binding.agent_id ?? binding.name) === input.name &&
+    binding.namespace === input.namespace && binding.runtime === input.runtime;
 }
 
 /** Enable a workspace resource explicitly before using it as an Issue assignee. */

@@ -166,6 +166,7 @@ function ScopedProjectCollaborationGroups({
                   onCreated(agent: CollaborationAgent): Promise<void>
                 }) => {
                   if (location === 'local' && agentConfiguration.renderLocalAgentCreator) {
+                    const known = new Set(availableAgents.map(agent => agent.id))
                     return agentConfiguration.renderLocalAgentCreator({
                       projectId,
                       onClose,
@@ -173,7 +174,10 @@ function ScopedProjectCollaborationGroups({
                         requireActive()
                         const projectAgents = await reload()
                         requireActive()
-                        const created = projectAgents.find(agent => agent.id === agentId)
+                        const candidates = projectAgents.filter(agent =>
+                          agentId ? agent.id === agentId : !known.has(agent.id)
+                        )
+                        const created = candidates.length === 1 ? candidates[0] : undefined
                         if (!created) {
                           throw new Error('Created collaboration group agent was not found')
                         }
