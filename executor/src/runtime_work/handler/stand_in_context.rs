@@ -148,8 +148,8 @@ impl RuntimeWorkRpcHandler {
             .find(|link| link.local_task_id == task)
             .ok_or_else(invalid)?;
         let current = self.local_task_link(&task).ok_or_else(invalid)?;
-        if !self.memory_review_source_visible(original, identity.user, &store)
-            || !self.memory_review_source_visible(&current, identity.user, &store)
+        if !self.source_visible_for_search(original, identity, &store)
+            || !self.source_visible_for_search(&current, identity, &store)
         {
             return Err(AppIpcError::new(
                 "permission_denied",
@@ -252,7 +252,7 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(|link| {
                         self.validate_history_delivery(&identity, &link, store)
                             .is_ok()
-                            && self.memory_review_source_visible(&link, identity.user, store)
+                            && self.source_visible_for_search(&link, &identity, store)
                     })
             })
         });
