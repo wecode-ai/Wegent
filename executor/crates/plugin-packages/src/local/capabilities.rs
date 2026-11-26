@@ -53,9 +53,11 @@ mod runtime_skill_config;
 mod shared_packages;
 mod support;
 
-use plugin_skills::scan_plugin_skills;
+pub(super) use plugin_skills::scan_plugin_skills;
 pub use runtime_recovery::PluginRuntimeRecoveryReport;
 use support::*;
+
+pub(super) const PLUGIN_MANIFEST_PATHS: [&str; 2] = support::PLUGIN_MANIFEST_PATHS;
 
 const MANIFEST_VERSION: i64 = 1;
 const DEFAULT_NAMESPACE: &str = "default";

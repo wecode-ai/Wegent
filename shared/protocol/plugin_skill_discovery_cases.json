@@ -1,0 +1,65 @@
+[
+  {
+    "name": "default-nested-skills",
+    "manifest": {"name": "example"},
+    "files": ["skills/zeta/SKILL.md", "skills/group/SKILL.md", "skills/group/child/SKILL.md", "skills/SKILL.md", "docs/SKILL.md", "SKILL.md"],
+    "directories": [],
+    "paths": ["skills", "skills/group", "skills/group/child", "skills/zeta"]
+  },
+  {
+    "name": "single-root-skill",
+    "manifest": {"name": "example"},
+    "files": ["SKILL.md", "docs/SKILL.md"],
+    "directories": [],
+    "paths": ["."]
+  },
+  {
+    "name": "empty-default-directory-suppresses-root-fallback",
+    "manifest": {"name": "example"},
+    "files": ["SKILL.md"],
+    "directories": ["skills/"],
+    "paths": []
+  },
+  {
+    "name": "explicit-custom-collection-adds-to-default",
+    "manifest": {"name": "example", "skills": "./extra-skills/"},
+    "files": ["skills/default/SKILL.md", "extra-skills/review/SKILL.md", "extra-skills/nested/build/SKILL.md", "SKILL.md", "docs/SKILL.md"],
+    "directories": [],
+    "paths": ["extra-skills/nested/build", "extra-skills/review", "skills/default"]
+  },
+  {
+    "name": "explicit-single-skill-directory",
+    "manifest": {"name": "example", "skills": "./review"},
+    "files": ["review/SKILL.md", "review/references/example/SKILL.md"],
+    "directories": [],
+    "paths": ["review"]
+  },
+  {
+    "name": "normalized-custom-root-is-a-single-skill",
+    "manifest": {"name": "example", "skills": "review"},
+    "files": ["review/./SKILL.md", "review/references/example/SKILL.md"],
+    "directories": [],
+    "paths": ["review"]
+  },
+  {
+    "name": "explicit-root-and-overlapping-default-paths",
+    "manifest": {"name": "example", "skills": [".", "./skills", "skills/default", "./skills/"]},
+    "files": ["SKILL.md", "skills/default/SKILL.md", "docs/SKILL.md"],
+    "directories": [],
+    "paths": [".", "skills/default"]
+  },
+  {
+    "name": "explicit-empty-list-suppresses-root-fallback",
+    "manifest": {"name": "example", "skills": []},
+    "files": ["SKILL.md"],
+    "directories": [],
+    "paths": []
+  },
+  {
+    "name": "missing-custom-directory-keeps-default",
+    "manifest": {"name": "example", "skills": "optional"},
+    "files": ["skills/default/SKILL.md", "SKILL.md"],
+    "directories": [],
+    "paths": ["skills/default"]
+  }
+]

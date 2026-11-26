@@ -8,7 +8,7 @@
 //! script produced.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     time::{Instant, UNIX_EPOCH},
@@ -17,6 +17,8 @@ use std::{
 use serde_json::{json, Value};
 
 use wegent_execution_contracts::command::CommandResult;
+
+use super::capabilities::{scan_plugin_skills, PLUGIN_MANIFEST_PATHS};
 
 const CODEX_USER_PRIORITY: i64 = 0;
 const CODEX_SYSTEM_PRIORITY: i64 = 10;
@@ -196,45 +198,100 @@ fn scan_skill_dir(
 }
 
 fn scan_plugin_dir(root: &Path, source: &'static str) -> Vec<SkillEntry> {
-    if !root.is_dir() {
-        return Vec::new();
-    }
-
-    let mut skill_files = Vec::new();
-    collect_skill_md_files(root, &mut skill_files);
-    skill_files.sort_by(|left, right| {
-        left.to_string_lossy()
-            .to_lowercase()
-            .cmp(&right.to_string_lossy().to_lowercase())
-    });
-
-    let mut output = Vec::new();
-    for skill_md in skill_files {
-        let skill_dir = match skill_md.parent() {
-            Some(dir) => dir.to_path_buf(),
-            None => continue,
+    let root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        let Ok(current_dir) = env::current_dir() else {
+            return Vec::new();
         };
-        // Only skills that live directly under a `skills` directory are valid.
-        if skill_dir
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            != Some("skills")
-        {
+        current_dir.join(root)
+    };
+    let plugin_roots = collect_plugin_roots(&root);
+    let manifest_roots: HashSet<_> = plugin_roots
+        .iter()
+        .filter(|(_, has_manifest)| *has_manifest)
+        .map(|(path, _)| path.clone())
+        .collect();
+    let mut skill_files = HashSet::new();
+    let mut output = Vec::new();
+    for (plugin_root, _) in plugin_roots {
+        let Ok(skills) = scan_plugin_skills(&plugin_root) else {
+            continue;
+        };
+        let (plugin_name, provider, version) = plugin_metadata(&root, &plugin_root);
+        for skill in skills {
+            let Some(relative) = skill["path"].as_str() else {
+                continue;
+            };
+            let directory = if relative == "." {
+                plugin_root.clone()
+            } else {
+                plugin_root.join(relative)
+            };
+            let owner = directory
+                .ancestors()
+                .find(|path| manifest_roots.contains(*path));
+            if owner.is_some_and(|owner| owner != plugin_root.as_path()) {
+                continue;
+            }
+            let skill_md = directory.join("SKILL.md");
+            if !skill_files.insert(skill_md.clone()) {
+                continue;
+            }
+            output.push(SkillEntry {
+                name: skill["name"].as_str().unwrap_or_default().to_owned(),
+                description: skill["description"].as_str().unwrap_or_default().to_owned(),
+                path: skill_md.to_string_lossy().into_owned(),
+                source,
+                scope: "user",
+                source_priority: plugin_source_priority(provider.as_deref()),
+                plugin_name: Some(plugin_name.clone()),
+                plugin_provider: provider.clone(),
+                plugin_version: version.clone(),
+                mtime: file_mtime(&skill_md),
+            });
+        }
+    }
+    output
+}
+
+fn collect_plugin_roots(root: &Path) -> Vec<(PathBuf, bool)> {
+    let mut pending = vec![(root.to_path_buf(), None, false)];
+    let mut ancestors = HashSet::new();
+    let mut output = Vec::new();
+    while let Some((directory, owner, leaving)) = pending.pop() {
+        if leaving {
+            ancestors.remove(&directory);
             continue;
         }
-
-        let (plugin_name, provider, version) = plugin_metadata(root, &skill_dir);
-        if let Some(mut entry) = skill_entry(
-            &skill_dir,
-            source,
-            "user",
-            plugin_source_priority(provider.as_deref()),
-            Some(plugin_name),
-        ) {
-            entry.plugin_provider = provider;
-            entry.plugin_version = version;
-            output.push(entry);
+        if !directory.is_dir() {
+            continue;
+        }
+        let has_manifest = PLUGIN_MANIFEST_PATHS
+            .iter()
+            .any(|relative| fs::symlink_metadata(directory.join(relative)).is_ok());
+        let is_plugin_root =
+            has_manifest || (owner != Some(true) && directory.join("skills").is_dir());
+        // Only configured collection anchors and plugin roots may be links.
+        if directory.is_symlink() && directory != root && (owner.is_some() || !is_plugin_root) {
+            continue;
+        }
+        let Ok(canonical) = fs::canonicalize(&directory) else {
+            continue;
+        };
+        if !ancestors.insert(canonical.clone()) {
+            continue;
+        }
+        let owner = if is_plugin_root {
+            output.push((directory.clone(), has_manifest));
+            Some(has_manifest)
+        } else {
+            owner
+        };
+        pending.push((canonical, None, true));
+        if let Some(mut children) = sorted_dir_entries(&directory) {
+            children.sort();
+            pending.extend(children.into_iter().rev().map(|path| (path, owner, false)));
         }
     }
     output
@@ -283,14 +340,7 @@ fn skill_entry(
     })
 }
 
-fn plugin_metadata(root: &Path, skill_dir: &Path) -> (String, Option<String>, Option<String>) {
-    // skill_dir is `<plugin_root>/skills/<skill>`, so the plugin root is two
-    // levels up.
-    let plugin_root = skill_dir
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| skill_dir.to_path_buf());
+fn plugin_metadata(root: &Path, plugin_root: &Path) -> (String, Option<String>, Option<String>) {
     let mut plugin_name = plugin_root
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -330,11 +380,16 @@ fn plugin_source_priority(provider: Option<&str>) -> i64 {
 }
 
 fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
-    let mut metadata = HashMap::new();
     let content = match fs::read(path) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(_) => return metadata,
+        Err(_) => return HashMap::new(),
     };
+    parse_frontmatter_content(&content)
+}
+
+/// Parse already-decoded content with the local skill frontmatter rules.
+pub(super) fn parse_frontmatter_content(content: &str) -> HashMap<String, String> {
+    let mut metadata = HashMap::new();
     let lines = content.split('\n').collect::<Vec<_>>();
     if lines.first().map(|line| line.trim()) != Some("---") {
         return metadata;
@@ -444,7 +499,17 @@ fn strip_quotes(value: &str) -> String {
         let first = chars[0];
         let last = chars[chars.len() - 1];
         if first == last && (first == '"' || first == '\'') {
-            return chars[1..chars.len() - 1].iter().collect();
+            if first == '"' {
+                if let Ok(decoded) = serde_json::from_str::<String>(stripped) {
+                    return decoded;
+                }
+            }
+            let unquoted: String = chars[1..chars.len() - 1].iter().collect();
+            return if first == '\'' {
+                unquoted.replace("''", "'")
+            } else {
+                unquoted
+            };
         }
     }
     stripped.to_owned()
@@ -484,20 +549,6 @@ fn sorted_dir_entries(root: &Path) -> Option<Vec<PathBuf>> {
     )
 }
 
-fn collect_skill_md_files(root: &Path, output: &mut Vec<PathBuf>) {
-    let Ok(read_dir) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in read_dir.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_skill_md_files(&path, output);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
-            output.push(path);
-        }
-    }
-}
-
 fn entry_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -531,6 +582,357 @@ fn elapsed_seconds(started_at: Instant) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_inventory_file(root: &Path, relative: &str, content: &str) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    fn write_inventory_manifest(root: &Path, relative: &str, manifest: Value) {
+        write_inventory_file(root, relative, &manifest.to_string());
+    }
+
+    #[test]
+    fn plugin_inventory_matches_shared_discovery_cases() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../shared/protocol/plugin_skill_discovery_cases.json"
+        )))
+        .unwrap();
+        for case in cases {
+            for manifest_path in PLUGIN_MANIFEST_PATHS {
+                let temp = tempfile::tempdir().unwrap();
+                let plugins = temp.path().join("plugins");
+                let plugin = plugins.join("cache/openai-curated-remote/cache-name/1.2.3");
+                write_inventory_manifest(&plugin, manifest_path, case["manifest"].clone());
+                for directory in case["directories"].as_array().unwrap() {
+                    fs::create_dir_all(plugin.join(directory.as_str().unwrap())).unwrap();
+                }
+                for file in case["files"].as_array().unwrap() {
+                    write_inventory_file(&plugin, file.as_str().unwrap(), "# Skill");
+                }
+
+                let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+                let mut paths = Vec::new();
+                for entry in entries {
+                    let path = Path::new(&entry.path);
+                    assert!(path.is_absolute() && path.is_file());
+                    assert_eq!(path.file_name().unwrap(), "SKILL.md");
+                    let relative = path.parent().unwrap().strip_prefix(&plugin).unwrap();
+                    paths.push(if relative.as_os_str().is_empty() {
+                        ".".to_owned()
+                    } else {
+                        relative.to_string_lossy().replace('\\', "/")
+                    });
+                    assert_eq!(entry.source, "codex-plugin");
+                    if paths.last().unwrap() == "." {
+                        assert_eq!(entry.name, "example");
+                    }
+                }
+                paths.sort();
+                assert_eq!(
+                    json!(paths),
+                    case["paths"],
+                    "{}: {manifest_path}",
+                    case["name"]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn plugin_inventory_uses_codex_manifest_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins = temp.path().join("plugins");
+        let plugin = plugins.join("example");
+        for (manifest, selection) in PLUGIN_MANIFEST_PATHS.into_iter().zip(["codex", "claude"]) {
+            write_inventory_manifest(&plugin, manifest, json!({"skills":selection}));
+            write_inventory_file(&plugin, &format!("{selection}/SKILL.md"), "# Skill");
+        }
+        write_inventory_file(&plugin, "SKILL.md", "# Root");
+        write_inventory_file(&plugin, "codex/references/example/SKILL.md", "# Reference");
+
+        let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].path,
+            plugin.join("codex/SKILL.md").to_string_lossy()
+        );
+        write_inventory_manifest(&plugin, PLUGIN_MANIFEST_PATHS[0], json!({"skills":[]}));
+        assert!(scan_plugin_dir(&plugins, "codex-plugin").is_empty());
+        fs::remove_file(plugin.join(PLUGIN_MANIFEST_PATHS[0])).unwrap();
+        let entries = scan_plugin_dir(&plugins, "codex-plugin");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].path,
+            plugin.join("claude/SKILL.md").to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn plugin_inventory_uses_nearest_manifest_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins = temp.path().join("plugins");
+        let parent = plugins.join("cache/provider/package/3.0");
+        let child = parent.join("skills/nested");
+        write_inventory_manifest(&parent, PLUGIN_MANIFEST_PATHS[0], json!({}));
+        write_inventory_file(&parent, "skills/parent/SKILL.md", "# Parent");
+        write_inventory_manifest(&child, PLUGIN_MANIFEST_PATHS[1], json!({"skills":"review"}));
+        write_inventory_file(&child, "SKILL.md", "# Excluded root");
+        write_inventory_file(&child, "review/SKILL.md", "# Review");
+        write_inventory_file(&child, "review/references/example/SKILL.md", "# Reference");
+
+        let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+        let paths: HashSet<_> = entries
+            .iter()
+            .map(|entry| PathBuf::from(&entry.path))
+            .collect();
+        assert_eq!(
+            paths,
+            HashSet::from([
+                parent.join("skills/parent/SKILL.md"),
+                child.join("review/SKILL.md"),
+            ])
+        );
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            assert_eq!(entry.plugin_name.as_deref(), Some("package"));
+            assert_eq!(entry.plugin_provider.as_deref(), Some("provider"));
+            assert_eq!(entry.plugin_version.as_deref(), Some("3.0"));
+        }
+    }
+
+    #[test]
+    fn plugin_inventory_preserves_provider_version_and_priority() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins = temp.path().join("plugins");
+        for (provider, version) in [
+            ("openai-curated-remote", "old"),
+            ("openai-curated-remote", "new"),
+            ("openai-bundled", "1.0"),
+            ("openai-primary-runtime", "2.0"),
+            ("openai-curated", "3.0"),
+            ("third-party", "4.0"),
+        ] {
+            let plugin = plugins
+                .join("cache")
+                .join(provider)
+                .join("reviewer")
+                .join(version);
+            write_inventory_manifest(&plugin, PLUGIN_MANIFEST_PATHS[0], json!({}));
+            write_inventory_file(
+                &plugin,
+                "SKILL.md",
+                "---\nname: Shared\ndescription: 'It''s ready.'\n---\n",
+            );
+            let seconds = if version == "new" { 2000 } else { 1000 };
+            fs::OpenOptions::new()
+                .write(true)
+                .open(plugin.join("SKILL.md"))
+                .unwrap()
+                .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+                .unwrap();
+        }
+
+        let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+        assert_eq!(entries.len(), 6);
+        for entry in &entries {
+            let provider = entry.plugin_provider.as_deref().unwrap();
+            let expected = match provider {
+                "openai-curated-remote" => 20,
+                "openai-bundled" | "openai-primary-runtime" => 30,
+                "openai-curated" => 40,
+                "third-party" => 50,
+                _ => panic!("Unexpected provider: {provider}"),
+            };
+            assert_eq!(entry.source_priority, expected);
+            assert_eq!(entry.description, "It's ready.");
+            assert_eq!(entry.plugin_name.as_deref(), Some("reviewer"));
+            assert!(entry.mtime.is_some());
+            assert_eq!(
+                entry.to_json()["plugin_version"],
+                entry.plugin_version.as_deref().unwrap()
+            );
+        }
+        let entries = deduplicate_and_sort(entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].plugin_provider.as_deref(),
+            Some("openai-curated-remote")
+        );
+        assert_eq!(entries[0].plugin_version.as_deref(), Some("new"));
+        assert_eq!(entries[0].mtime, Some(2000.0));
+    }
+
+    #[test]
+    fn standalone_skills_and_manifest_free_nested_defaults_remain_listed() {
+        let temp = tempfile::tempdir().unwrap();
+        let user = temp.path().join("skills");
+        let plugins = temp.path().join("plugins");
+        for relative in ["shared/SKILL.md", ".system/system/SKILL.md"] {
+            write_inventory_file(&user, relative, "# Standalone");
+        }
+        let legacy = plugins.join("legacy-folder");
+        write_inventory_file(&legacy, "skills/group/SKILL.md", "# Group");
+        write_inventory_file(&legacy, "skills/group/child/SKILL.md", "# Child");
+        write_inventory_file(&legacy, "skills/group/skills/leaf/SKILL.md", "# Leaf");
+        write_inventory_file(&legacy, "vendor/addon/skills/addon/SKILL.md", "# Addon");
+        write_inventory_file(&legacy, "skills/shared/SKILL.md", "# Duplicate");
+        write_inventory_file(&legacy, "docs/SKILL.md", "# Excluded");
+        write_inventory_file(&plugins, "unregistered/SKILL.md", "# Excluded");
+        let mut entries = scan_skill_dir(&user, "codex", "user", CODEX_USER_PRIORITY);
+        entries.extend(scan_skill_dir(
+            &user.join(".system"),
+            "codex",
+            "system",
+            CODEX_SYSTEM_PRIORITY,
+        ));
+        entries.extend(scan_plugin_dir(&plugins, "codex-plugin"));
+
+        let entries = deduplicate_and_sort(entries);
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["shared", "system", "addon", "child", "group", "leaf"]
+        );
+        assert_eq!(
+            entries[0].path,
+            user.join("shared/SKILL.md").to_string_lossy()
+        );
+        assert_eq!(entries[0].scope, "user");
+        assert_eq!(entries[1].scope, "system");
+        assert!(entries[0].plugin_name.is_none() && entries[1].plugin_name.is_none());
+        assert_eq!(
+            entries[3].path,
+            legacy.join("skills/group/child/SKILL.md").to_string_lossy()
+        );
+        assert_eq!(entries[2].plugin_name.as_deref(), Some("legacy-folder"));
+        assert!(entries[2].plugin_provider.is_none() && entries[2].plugin_version.is_none());
+        assert_eq!(entries[2].source_priority, 50);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn plugin_inventory_keeps_linked_roots_and_cache_alias_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins = temp.path().join("plugins");
+        let external = temp.path().join("external");
+        write_inventory_manifest(&external, PLUGIN_MANIFEST_PATHS[0], json!({}));
+        write_inventory_file(&external, "SKILL.md", "# Root");
+        write_inventory_file(&external, "docs/SKILL.md", "# Excluded");
+        for provider in ["openai-curated-remote", "third-party"] {
+            let alias = plugins
+                .join("cache")
+                .join(provider)
+                .join("linked")
+                .join("7.0");
+            fs::create_dir_all(alias.parent().unwrap()).unwrap();
+            crate::directory_link::create(&external, &alias).unwrap();
+        }
+
+        let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+        assert_eq!(entries.len(), 2);
+        for entry in &entries {
+            assert!(entry.path.starts_with(plugins.to_str().unwrap()));
+            assert_eq!(entry.plugin_name.as_deref(), Some("linked"));
+            assert_eq!(entry.plugin_version.as_deref(), Some("7.0"));
+        }
+        assert_eq!(
+            deduplicate_and_sort(entries)[0].plugin_provider.as_deref(),
+            Some("openai-curated-remote")
+        );
+        let legacy = plugins.join("legacy-link");
+        fs::remove_file(external.join(PLUGIN_MANIFEST_PATHS[0])).unwrap();
+        write_inventory_file(&external, "skills/group/child/SKILL.md", "# Child");
+        crate::directory_link::create(&external, &legacy).unwrap();
+        assert!(scan_plugin_dir(&plugins, "codex-plugin")
+            .iter()
+            .any(|entry| {
+                entry.path == legacy.join("skills/group/child/SKILL.md").to_string_lossy()
+            }));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn plugin_inventory_rejects_directory_link_escapes_and_cycles() {
+        for relative in [
+            "skills",
+            "skills/escape",
+            "skills/loop",
+            "custom",
+            ".codex-plugin",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let plugins = temp.path().join("plugins");
+            let unsafe_plugin = plugins.join("unsafe");
+            let external = temp.path().join("external");
+            write_inventory_manifest(&external, PLUGIN_MANIFEST_PATHS[0], json!({}));
+            write_inventory_file(&external, "skills/external/SKILL.md", "# External");
+            write_inventory_manifest(
+                &unsafe_plugin,
+                PLUGIN_MANIFEST_PATHS[0],
+                json!({"skills":"custom"}),
+            );
+            write_inventory_file(&unsafe_plugin, "skills/valid/SKILL.md", "# Valid");
+            write_inventory_file(
+                &plugins.join("healthy"),
+                "skills/healthy/SKILL.md",
+                "# Healthy",
+            );
+            let link = unsafe_plugin.join(relative);
+            if link.exists() {
+                fs::remove_dir_all(&link).unwrap();
+            }
+            let destination = if relative == "skills/loop" {
+                unsafe_plugin.join("skills")
+            } else if relative == ".codex-plugin" {
+                external.join(".codex-plugin")
+            } else {
+                external
+            };
+            crate::directory_link::create(&destination, &link).unwrap();
+            crate::directory_link::create(&plugins, &plugins.join("collection-cycle")).unwrap();
+
+            let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+            assert_eq!(entries.len(), 1, "{relative}");
+            assert_eq!(entries[0].name, "healthy", "{relative}");
+        }
+    }
+
+    #[test]
+    fn parse_frontmatter_decodes_quoted_scalars_with_legacy_fallback() {
+        for (value, expected) in [
+            (
+                r#""Use \"USB attach\" at C:\\tools.""#,
+                r#"Use "USB attach" at C:\tools."#,
+            ),
+            (
+                "'Use ''USB attach''; it''s ready.'",
+                "Use 'USB attach'; it's ready.",
+            ),
+            (r#""Legacy \q USB trigger""#, r#"Legacy \q USB trigger"#),
+        ] {
+            let content = format!("---\ndescription: {value}\n---\n");
+
+            let metadata = parse_frontmatter_content(&content);
+
+            assert_eq!(
+                metadata.get("description").map(String::as_str),
+                Some(expected),
+                "value={value}",
+            );
+        }
+    }
 
     #[test]
     fn parse_frontmatter_handles_literal_block_scalar() {
