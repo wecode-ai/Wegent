@@ -1,3 +1,4 @@
+import { ApiError } from '@/api/http'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -6,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
@@ -23,7 +24,13 @@ async function loadSetup(
   preferredDevice?: string
 ) {
   const cloud = services.personalAssistantAccountApi!
-  const account = await cloud.get(signal)
+  const account = await cloud.get(signal).catch((cause: unknown) => {
+    signal.throwIfAborted()
+    reportStandInError('load_cloud_assistant', cause)
+    if (cause instanceof ApiError && cause.status === 404)
+      throw new Error('cloud_assistant_api_unavailable', { cause })
+    throw new Error(getStandInErrorMessage(cause, 'load_cloud_assistant_failed'), { cause })
+  })
   if (account) return { account, local: undefined }
   signal.throwIfAborted()
   const api = services.standInApi

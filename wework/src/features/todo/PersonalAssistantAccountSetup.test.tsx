@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -97,8 +98,9 @@ test('a missing cloud and legacy profile takes ordinary initialization', async (
 })
 
 test('a failed cloud read cannot trigger initialization or local import', async () => {
-  const { personalGet, initialize } = setup(new Error('Cloud read failed'))
+  const { personalGet, initialize } = setup(new ApiError('Not Found', 404))
   expect(await screen.findByTestId('personal-assistant-account-retry')).toBeVisible()
+  expect(screen.getByTestId('personal-assistant-account-setup')).toHaveTextContent('HTTP 404')
   expect(personalGet).not.toHaveBeenCalled()
   expect(initialize).not.toHaveBeenCalled()
 })
