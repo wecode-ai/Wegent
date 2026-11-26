@@ -21,8 +21,10 @@ import httpx
 import requests
 
 from executor_manager.clients.executor_binding import (
+    CALLBACK_TOKEN,
     ObsoleteExecutorDispatch,
     bind_executor_for_dispatch,
+    prepare_callback_token,
 )
 from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
@@ -46,6 +48,7 @@ from executor_manager.executors.docker.utils import (
     get_container_ports,
     get_container_status,
     get_running_task_details,
+    renew_running_docker_callback_bindings,
 )
 from executor_manager.utils.executor_info import attach_executor_info
 from executor_manager.utils.executor_name import generate_executor_name
@@ -62,6 +65,9 @@ logger = setup_logger(__name__)
 
 class DockerExecutor(Executor):
     """Docker executor for running tasks in Docker containers"""
+
+    def renew_callback_bindings(self) -> None:
+        renew_running_docker_callback_bindings()
 
     def __init__(self, subprocess_module=subprocess, requests_module=None):
         """
@@ -418,6 +424,14 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
+        callback_token = prepare_callback_token(
+            int(task_info["task_id"]), executor_name, sandbox=is_sandbox_task
+        )
+        metadata = task.get("metadata")
+        if isinstance(metadata, dict) and "task_id" in metadata:
+            metadata[CALLBACK_TOKEN] = callback_token
+        else:
+            task[CALLBACK_TOKEN] = callback_token
         self.create_instance(task, task_info, executor_name)
 
         if not is_sandbox_task:
@@ -508,12 +522,13 @@ class DockerExecutor(Executor):
         except subprocess.CalledProcessError as e:
             # For validation tasks, report image pull or container start failure
             if is_validation_task:
-                error_msg = e.stderr or str(e)
+                stderr = (e.stderr or "").lower()
                 stage = (
                     "pulling_image"
-                    if "pull" in error_msg.lower() or "not found" in error_msg.lower()
+                    if "pull" in stderr or "not found" in stderr
                     else "starting_container"
                 )
+                error_msg = f"Docker exited with status {e.returncode}"
                 self._report_validation_stage(
                     task,
                     stage=stage,
@@ -1119,10 +1134,23 @@ class DockerExecutor(Executor):
             cmd.extend(["--network", network])
 
     def _add_callback_url(self, cmd: List[str], task: Dict[str, Any]) -> None:
-        """Add callback URL configuration"""
+        """Add callback URL and task-scoped authentication configuration."""
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+        callback_token = get_metadata_field(task, CALLBACK_TOKEN)
+        if callback_token:
+            scope = (
+                "sandbox" if get_metadata_field(task, "type") == "sandbox" else "task"
+            )
+            cmd.extend(
+                [
+                    "-e",
+                    f"EXECUTOR_CALLBACK_TOKEN={callback_token}",
+                    "-e",
+                    f"EXECUTOR_CALLBACK_SCOPE={scope}",
+                ]
+            )
 
     def _add_heartbeat_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
         """Add environment variables for heartbeat service.
@@ -1249,8 +1277,9 @@ class DockerExecutor(Executor):
     ) -> None:
         """Handle exceptions during execution uniformly"""
         if isinstance(exception, subprocess.CalledProcessError):
-            logger.error(f"Docker run error for task {task_id}: {exception.stderr}")
-            error_msg = f"Docker run error: {exception.stderr}"
+            # Docker can include runtime environment values in its diagnostics.
+            error_msg = f"Docker run error: exited with status {exception.returncode}"
+            logger.error("Task %s: %s", task_id, error_msg)
         else:
             logger.error(f"Error for task {task_id}: {str(exception)}")
             error_msg = f"Error: {str(exception)}"
@@ -1607,7 +1636,9 @@ class DockerExecutor(Executor):
 
         return get_container_task_id(executor_name)
 
-    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+    def delete_executor_by_task_id(
+        self, task_id: str, *, sandbox_only: bool = False
+    ) -> Dict[str, Any]:
         """Delete a Docker container by task_id label (fallback method).
 
         This is used when the container name is not known or the container
@@ -1616,10 +1647,13 @@ class DockerExecutor(Executor):
 
         Args:
             task_id: Task ID to search for
+            sandbox_only: Restrict cleanup to sandbox runtimes.
 
         Returns:
             Dict with status and error_msg if failed
         """
+        from executor_manager.services.sandbox.repository import get_sandbox_repository
+
         try:
             # Find containers with the matching task_id label
             result = get_running_task_details(label_selector=f"task_id={task_id}")
@@ -1630,6 +1664,8 @@ class DockerExecutor(Executor):
                 }
 
             containers = result.get("containers", [])
+            if sandbox_only:
+                containers = [c for c in containers if c.get("task_type") == "sandbox"]
             if not containers:
                 logger.warning(f"No container found with task_id label '{task_id}'")
                 return {
@@ -1637,24 +1673,33 @@ class DockerExecutor(Executor):
                     "error_msg": f"No container found with task_id '{task_id}'",
                 }
 
-            # Delete all matching containers (should typically be one)
             deleted_containers = []
+            failed_containers = []
             for container in containers:
                 container_name = container.get("container_name")
-                if container_name:
-                    try:
-                        delete_result = delete_container(container_name)
-                        if delete_result.get("status") == "success":
-                            deleted_containers.append(container_name)
-                            logger.info(
-                                f"Deleted Docker container '{container_name}' "
-                                f"found by task_id label '{task_id}'"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to delete container '{container_name}': {e}"
-                        )
+                if not container_name:
+                    continue
+                delete_result = delete_container(container_name)
+                status = delete_result.get("status")
+                if status == "success":
+                    deleted_containers.append(container_name)
+                elif status != "not_found":
+                    failed_containers.append(container_name)
+                    continue
 
+                if container.get("task_type") == "sandbox":
+                    get_sandbox_repository().delete_executor_binding(
+                        int(task_id),
+                        expected_executor_name=container_name,
+                        sandbox=True,
+                    )
+
+            if failed_containers:
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to delete containers: {', '.join(failed_containers)}",
+                    "deleted_containers": deleted_containers,
+                }
             if deleted_containers:
                 return {
                     "status": "success",

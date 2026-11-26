@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{error::Error, future::Future, pin::Pin, time::Duration};
+use std::{
+    env,
+    error::Error,
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    time::Duration,
+};
 
 use reqwest::Client;
 use serde_json::{Map, Number, Value};
@@ -10,6 +17,7 @@ use serde_json::{Map, Number, Value};
 use crate::{emitter::EventEnvelope, logging::log_executor_event, runner::EventSink};
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 10;
+pub const BINDING_SCHEME: &str = "WegentExecutorBinding";
 const DEFAULT_MAX_CALLBACK_ATTEMPTS: usize = 10;
 const DEFAULT_CALLBACK_RETRY_BASE_DELAY_MS: u64 = 1_000;
 const DEFAULT_CALLBACK_RETRY_MAX_DELAY_MS: u64 = 8_000;
@@ -51,9 +59,11 @@ impl Default for CallbackRetryConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CallbackSink {
     callback_url: String,
+    callback_token: Option<String>,
+    runtime_config_dir: Option<PathBuf>,
     client: Client,
     retry_config: CallbackRetryConfig,
 }
@@ -67,14 +77,59 @@ impl CallbackSink {
         callback_url: impl Into<String>,
         retry_config: CallbackRetryConfig,
     ) -> Result<Self, String> {
+        Self::new_with_credentials_and_reload(
+            callback_url,
+            env::var("EXECUTOR_CALLBACK_TOKEN").ok(),
+            Some(runtime_config_dir()),
+            retry_config,
+        )
+    }
+
+    pub fn new_with_credentials(
+        callback_url: impl Into<String>,
+        callback_token: Option<String>,
+        retry_config: CallbackRetryConfig,
+    ) -> Result<Self, String> {
+        Self::new_with_credentials_and_reload(callback_url, callback_token, None, retry_config)
+    }
+
+    fn new_with_credentials_and_reload(
+        callback_url: impl Into<String>,
+        callback_token: Option<String>,
+        runtime_config_dir: Option<PathBuf>,
+        retry_config: CallbackRetryConfig,
+    ) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS))
             .build()
             .map_err(|error| error.to_string())?;
         Ok(Self {
-            callback_url: callback_url.into(),
+            callback_url: callback_url.into().trim().to_owned(),
+            callback_token: callback_token
+                .map(|token| token.trim().to_owned())
+                .filter(|token| !token.is_empty()),
+            runtime_config_dir,
             client,
             retry_config,
+        })
+    }
+
+    fn callback_url(&self) -> String {
+        if self.callback_url.is_empty() {
+            return self
+                .runtime_config_dir
+                .as_deref()
+                .and_then(|dir| read_config_value(dir, "callback_url"))
+                .unwrap_or_default();
+        }
+        self.callback_url.clone()
+    }
+
+    fn callback_token(&self) -> Option<String> {
+        self.callback_token.clone().or_else(|| {
+            self.runtime_config_dir
+                .as_deref()
+                .and_then(|dir| read_config_value(dir, "executor_callback_token"))
         })
     }
 }
@@ -83,10 +138,9 @@ impl EventSink for CallbackSink {
     type SendFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 
     fn send(&self, event: EventEnvelope) -> Self::SendFuture {
-        let callback_url = self.callback_url.trim().to_owned();
-        let client = self.client.clone();
-        let retry_config = self.retry_config.clone();
+        let sink = self.clone();
         Box::pin(async move {
+            let callback_url = sink.callback_url();
             if callback_url.is_empty() {
                 log_executor_event(
                     "callback skipped because url is empty",
@@ -104,27 +158,20 @@ impl EventSink for CallbackSink {
                 log_executor_event("callback payload rejected", &failed_fields);
             })?;
 
-            send_callback_with_retries(
-                &client,
-                &callback_url,
-                &callback_payload,
-                fields,
-                log_success,
-                retry_config,
-            )
-            .await
+            send_callback_with_retries(&sink, &callback_url, &callback_payload, fields, log_success)
+                .await
         })
     }
 }
 
 async fn send_callback_with_retries(
-    client: &Client,
+    sink: &CallbackSink,
     callback_url: &str,
     callback_payload: &Value,
     fields: Vec<(&'static str, String)>,
     log_success: bool,
-    retry_config: CallbackRetryConfig,
 ) -> Result<(), String> {
+    let retry_config = &sink.retry_config;
     let mut last_error = String::new();
     for attempt in 1..=retry_config.max_attempts {
         let attempt_fields = callback_attempt_fields(&fields, attempt, retry_config.max_attempts);
@@ -132,11 +179,13 @@ async fn send_callback_with_retries(
             log_executor_event("callback request started", &attempt_fields);
         }
 
+        let callback_token = sink.callback_token();
         let is_final_attempt = attempt == retry_config.max_attempts;
         let started = std::time::Instant::now();
         match send_callback_once(
-            client,
+            &sink.client,
             callback_url,
+            callback_token.as_deref(),
             callback_payload,
             &attempt_fields,
             log_success || is_final_attempt,
@@ -173,21 +222,24 @@ async fn send_callback_with_retries(
 async fn send_callback_once(
     client: &Client,
     callback_url: &str,
+    callback_token: Option<&str>,
     callback_payload: &Value,
     fields: &[(&'static str, String)],
     log_failure: bool,
 ) -> Result<u16, String> {
-    let response = client
-        .post(callback_url)
-        .json(callback_payload)
-        .send()
-        .await
-        .map_err(|error| {
-            if log_failure {
-                log_callback_transport_error(fields, &error);
-            }
-            error.to_string()
-        })?;
+    let mut request = client.post(callback_url).json(callback_payload);
+    if let Some(callback_token) = callback_token {
+        request = request.header(
+            "Authorization",
+            format!("{BINDING_SCHEME} {callback_token}"),
+        );
+    }
+    let response = request.send().await.map_err(|error| {
+        if log_failure {
+            log_callback_transport_error(fields, &error);
+        }
+        error.to_string()
+    })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -220,6 +272,32 @@ fn should_log_successful_callback(event: &EventEnvelope) -> bool {
         event.event_type.as_str(),
         "response.output_text.delta" | "response.reasoning_summary_text.delta"
     )
+}
+
+fn runtime_config_dir() -> PathBuf {
+    env::var("WEGENT_CONFIG_DIR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/root/.wegent/.config"))
+}
+
+/// Confirm the warm-pool projection without returning the callback credential.
+pub(crate) fn projected_callback_ready(digest: &str) -> bool {
+    use sha2::{Digest, Sha256};
+
+    let config_dir = runtime_config_dir();
+    let Some(token) = read_config_value(&config_dir, "executor_callback_token") else {
+        return false;
+    };
+    read_config_value(&config_dir, "callback_url").is_some()
+        && format!("{:x}", Sha256::digest(token.as_bytes())) == digest
+}
+
+fn read_config_value(config_dir: &Path, file_name: &str) -> Option<String> {
+    let content = std::fs::read_to_string(config_dir.join(file_name)).ok()?;
+    let content = content.trim();
+    (!content.is_empty()).then(|| content.to_owned())
 }
 
 fn callback_fields(callback_url: &str, event: &EventEnvelope) -> Vec<(&'static str, String)> {

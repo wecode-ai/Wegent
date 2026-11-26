@@ -20,6 +20,7 @@ def test_ready_container_requires_binding_before_dispatch(status):
         "task_id": 42,
         "subtask_id": 43,
         "executor_binding_token": TOKEN,
+        "executor_callback_token": "test-callback-credential",
     }
     task = {"metadata": metadata}
     dispatch = Mock(return_value={"status": "success"})
@@ -60,6 +61,13 @@ def test_ready_container_requires_binding_before_dispatch(status):
 
     assert len(binding_requests) == 1
     assert task["metadata"]["executor_binding_token"] == TOKEN
+
+
+def test_legacy_executor_can_receive_an_already_queued_turn():
+    task = {"metadata": {"task_id": 42, "subtask_id": 43}}
+    assert executor_binding.bind_executor_for_dispatch(task, "legacy-executor", "") == (
+        task
+    )
 
 
 @pytest.mark.parametrize(

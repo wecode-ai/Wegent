@@ -34,6 +34,19 @@ class TestDockerUtils:
         assert url == "http://env.callback.url"
 
     @patch.dict(
+        "os.environ", {"EXECUTOR_MANAGER_CALLBACK_URL": "http://manager/callback"}
+    )
+    def test_credentialed_callback_uses_the_configured_manager(self):
+        task = {
+            "metadata": {
+                "task_id": 42,
+                "callback_url": "http://custom.callback.url",
+                "executor_callback_token": "test-credential",
+            }
+        }
+        assert build_callback_url(task) == "http://manager/callback"
+
+    @patch.dict(
         "os.environ",
         {"CALLBACK_HOST": "192.168.1.100", "CALLBACK_PORT": "9090"},
         clear=False,
@@ -217,3 +230,42 @@ class TestDockerUtils:
         assert result["status"] == "success"
         assert "123" not in result["task_ids"]  # Task 123 is completed
         assert "124" in result["task_ids"]  # Task 124 is still running
+
+
+def test_running_docker_callback_renewal_recovers_only_owned_runtime(mocker):
+    from executor_manager.executors.docker import utils
+
+    token = "a" * 64
+    repository = mocker.patch(
+        "executor_manager.services.sandbox.repository.get_sandbox_repository"
+    ).return_value
+    docker = mocker.patch.object(
+        utils.subprocess,
+        "run",
+        side_effect=[
+            mocker.Mock(
+                stdout="active-id sandbox-id old-sandbox-id exited-id foreign-id legacy-id"
+            ),
+            mocker.Mock(
+                stdout="\n".join(
+                    [
+                        f'true /active executor_manager 42 ["EXECUTOR_CALLBACK_TOKEN={token}", "EXECUTOR_CALLBACK_SCOPE=task", "HEARTBEAT_TYPE=sandbox"]',
+                        f'true /sandbox executor_manager 42 ["EXECUTOR_CALLBACK_TOKEN={token}", "EXECUTOR_CALLBACK_SCOPE=sandbox"]',
+                        f'true /old-sandbox executor_manager 46 ["EXECUTOR_CALLBACK_TOKEN={token}", "HEARTBEAT_TYPE=sandbox"]',
+                        f'false /exited executor_manager 43 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        f'true /foreign other-owner 44 ["EXECUTOR_CALLBACK_TOKEN={token}"]',
+                        'true /legacy executor_manager 45 ["OTHER=true"]',
+                    ]
+                )
+            ),
+        ],
+    )
+
+    utils.renew_running_docker_callback_bindings()
+
+    assert "label=owner=executor_manager" in docker.call_args_list[0].args[0]
+    assert repository.renew_docker_callback_binding.call_args_list == [
+        mocker.call(42, "active", token, sandbox=False),
+        mocker.call(42, "sandbox", token, sandbox=True),
+        mocker.call(46, "old-sandbox", token, sandbox=True),
+    ]

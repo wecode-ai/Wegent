@@ -10,13 +10,16 @@
 Utility functions for Docker executor
 """
 
+import json
 import os
 import re
 import subprocess
 from typing import Optional
 from urllib.parse import urlparse
 
+from executor_manager.clients.executor_binding import CALLBACK_TOKEN
 from executor_manager.common.config import ROUTE_PREFIX
+from executor_manager.executors.docker.constants import CONTAINER_OWNER
 from shared.logger import setup_logger
 from shared.models.openai_converter import get_metadata_field
 from shared.utils.ip_util import get_host_ip, is_ip_address
@@ -34,9 +37,11 @@ def build_callback_url(task: dict) -> str:
     Returns:
         str: Callback URL
     """
-    callback_url = get_metadata_field(
-        task, "callback_url", os.getenv("CALLBACK_URL", "")
-    )
+    callback_url = os.getenv("CALLBACK_URL", "")
+    if get_metadata_field(task, CALLBACK_TOKEN):
+        callback_url = os.getenv("EXECUTOR_MANAGER_CALLBACK_URL") or callback_url
+    else:
+        callback_url = get_metadata_field(task, "callback_url", callback_url)
     if not callback_url:
         # Get the host IP that's accessible from containers
         # 127.0.0.1 won't work for container-to-container communication
@@ -486,6 +491,93 @@ def get_container_status(container_name: str) -> dict:
             "exit_code": -1,
             "error_msg": str(e),
         }
+
+
+def renew_running_docker_callback_bindings() -> None:
+    """Reconcile Redis leases from running, locally managed Docker executors."""
+    from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+    try:
+        listing = subprocess.run(
+            ["docker", "ps", "--filter", f"label=owner={CONTAINER_OWNER}", "--quiet"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.warning(
+            "Could not list Docker executors for callback renewal: %s",
+            type(error).__name__,
+        )
+        return
+
+    containers = listing.stdout.split()
+    if not containers:
+        return
+    repository = get_sandbox_repository()
+    for offset in range(0, len(containers), 100):
+        for task_id, name, token, sandbox in _inspect_docker_callback_bindings(
+            containers[offset : offset + 100]
+        ):
+            repository.renew_docker_callback_binding(
+                task_id, name, token, sandbox=sandbox
+            )
+
+
+def _inspect_docker_callback_bindings(
+    containers: list[str],
+) -> list[tuple[int, str, str, bool]]:
+    template = (
+        '{{.State.Running}} {{.Name}} {{index .Config.Labels "owner"}} '
+        '{{index .Config.Labels "task_id"}} {{json .Config.Env}}'
+    )
+    try:
+        result = subprocess.run(
+            ["docker", "container", "inspect", "--format", template, *containers],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.warning(
+            "Could not inspect Docker executors for callback renewal: %s",
+            type(error).__name__,
+        )
+        return []
+
+    bindings = []
+    for line in result.stdout.splitlines():
+        fields = line.split(maxsplit=4)
+        if len(fields) != 5:
+            continue
+        running, name, owner, task_id, environment = fields
+        if running != "true" or owner != CONTAINER_OWNER or not task_id.isdecimal():
+            continue
+        try:
+            entries = json.loads(environment) or []
+        except json.JSONDecodeError:
+            continue
+        # The heartbeat type identifies sandboxes created before the scope marker.
+        sandbox = "EXECUTOR_CALLBACK_SCOPE=sandbox" in entries or (
+            "EXECUTOR_CALLBACK_SCOPE=task" not in entries
+            and "HEARTBEAT_TYPE=sandbox" in entries
+        )
+        for entry in entries:
+            key, _, token = entry.partition("=")
+            if key == "EXECUTOR_CALLBACK_TOKEN" and re.fullmatch(
+                r"[0-9a-f]{64}", token
+            ):
+                bindings.append(
+                    (
+                        int(task_id),
+                        name.removeprefix("/"),
+                        token,
+                        sandbox,
+                    )
+                )
+                break
+    return bindings
 
 
 def get_container_task_id(container_name: str) -> Optional[str]:

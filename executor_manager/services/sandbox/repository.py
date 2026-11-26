@@ -318,11 +318,18 @@ class SandboxRepository(metaclass=SingletonMeta):
 
         try:
             task_id = int(sandbox_id)
+            hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
 
-            # Load sandbox first to get e2b_sandbox_id for index cleanup
-            sandbox = self.load_sandbox(sandbox_id)
-            if sandbox:
-                e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
+            # Keep the session available for retry if lookup or revocation fails.
+            record = self.redis_client.hget(hash_key, SANDBOX_FIELD_NAME)
+            if record is not None:
+                sandbox = json.loads(record)
+                container_name = sandbox.get("container_name")
+                if container_name and not self.delete_executor_binding(
+                    task_id, expected_executor_name=container_name, sandbox=True
+                ):
+                    return False
+                e2b_sandbox_id = (sandbox.get("metadata") or {}).get("e2b_sandbox_id")
                 if e2b_sandbox_id:
                     self._delete_e2b_index(e2b_sandbox_id)
 
@@ -330,7 +337,6 @@ class SandboxRepository(metaclass=SingletonMeta):
             self._remove_sandbox_from_active_indexes(str(task_id))
 
             # Delete entire session Hash
-            hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
             self.redis_client.delete(hash_key)
 
             logger.debug(
@@ -621,6 +627,11 @@ class SandboxRepository(metaclass=SingletonMeta):
     # Executor Binding Operations
     # =========================================================================
 
+    @staticmethod
+    def _executor_binding_key(task_id: int, sandbox: bool) -> str:
+        prefix = "sandbox_executor" if sandbox else "task_executor"
+        return f"{prefix}:{task_id}"
+
     def save_executor_binding(
         self,
         task_id: int,
@@ -677,11 +688,125 @@ class SandboxRepository(metaclass=SingletonMeta):
         binding = self.load_executor_binding_full(task_id)
         return binding.get("executor_name") if binding else None
 
-    def load_executor_binding_full(self, task_id: int) -> Optional[Dict[str, Any]]:
+    def reserve_executor_callback_token(
+        self, task_id: int, executor_name: str, candidate: str, *, sandbox: bool = False
+    ) -> Optional[str]:
+        """Reuse a runtime's credential across retries and rotate on replacement."""
+        if self.redis_client is None:
+            return None
+
+        key = self._executor_binding_key(task_id, sandbox)
+        new_binding = {
+            "executor_name": executor_name,
+            "task_id": task_id,
+            "created_at": time.time(),
+            "callback_token": candidate,
+        }
+        try:
+            token = self.redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if current then
+                    local binding = cjson.decode(current)
+                    local token = binding.callback_token
+                    if binding.executor_name == ARGV[4]
+                        and type(token) == 'string' and token ~= '' then
+                        redis.call('EXPIRE', KEYS[1], ARGV[1])
+                        return token
+                    end
+                end
+                redis.call('SETEX', KEYS[1], ARGV[1], ARGV[2])
+                return ARGV[3]
+                """,
+                1,
+                key,
+                self._config.executor.executor_binding_ttl,
+                json.dumps(new_binding),
+                candidate,
+                executor_name,
+            )
+            return token.decode() if isinstance(token, bytes) else token
+        except (redis.RedisError, ValueError) as error:
+            logger.error(
+                "Could not reserve executor callback credential for task %s: %s",
+                task_id,
+                type(error).__name__,
+            )
+            return None
+
+    def renew_docker_callback_binding(
+        self, task_id: int, executor_name: str, token: str, *, sandbox: bool = False
+    ) -> None:
+        """Refresh a running Docker executor's lease without replacing another binding."""
+        if self.redis_client is None:
+            return
+
+        binding = {
+            "executor_name": executor_name,
+            "task_id": task_id,
+            "created_at": time.time(),
+            "callback_token": token,
+        }
+        try:
+            self.redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if not current then
+                    redis.call('SETEX', KEYS[1], ARGV[1], ARGV[2])
+                    return
+                end
+                local binding = cjson.decode(current)
+                if binding.executor_name == ARGV[3] and binding.callback_token == ARGV[4] then
+                    redis.call('EXPIRE', KEYS[1], ARGV[1])
+                end
+                """,
+                1,
+                self._executor_binding_key(task_id, sandbox),
+                self._config.executor.executor_binding_ttl,
+                json.dumps(binding),
+                executor_name,
+                token,
+            )
+        except (redis.RedisError, ValueError) as error:
+            logger.warning(
+                "Could not renew Docker callback binding for task %s: %s",
+                task_id,
+                type(error).__name__,
+            )
+
+    def load_executor_callback_token(
+        self,
+        task_id: int,
+        *,
+        expected_executor_name: Optional[str] = None,
+        sandbox: bool = False,
+    ) -> Optional[str]:
+        """Load the callback credential issued for one task runtime.
+
+        Args:
+            task_id: Task ID
+            expected_executor_name: Restrict lookup to the runtime being reused.
+            sandbox: Read the isolated sandbox lease for the task.
+
+        Returns:
+            Callback credential if found, None otherwise
+        """
+        binding = self.load_executor_binding_full(task_id, sandbox=sandbox)
+        if not binding or (
+            expected_executor_name is not None
+            and binding.get("executor_name") != expected_executor_name
+        ):
+            return None
+        return binding.get("callback_token")
+
+    def load_executor_binding_full(
+        self, task_id: int, *, sandbox: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Load full executor binding info for task continuity.
 
         Args:
             task_id: Task ID
+            sandbox: Read the isolated sandbox binding for the task.
 
         Returns:
             Binding dict with executor_name, sandbox_claim_name, etc. if found
@@ -690,26 +815,49 @@ class SandboxRepository(metaclass=SingletonMeta):
             return None
 
         try:
-            binding_key = f"task_executor:{task_id}"
+            binding_key = self._executor_binding_key(task_id, sandbox)
             binding_json = self.redis_client.get(binding_key)
 
-            if binding_json:
-                return json.loads(binding_json)
-            return None
+            if not binding_json:
+                return None
+            binding = json.loads(binding_json)
+            return None if binding.get("revoked") else binding
         except Exception as e:
             logger.warning(f"[SandboxRepository] Failed to load executor binding: {e}")
             return None
 
-    def delete_executor_binding(self, task_id: int) -> bool:
+    def delete_executor_binding(
+        self, task_id: int, *, expected_executor_name: str = "", sandbox: bool = False
+    ) -> bool:
         """Delete a task-to-executor binding after runtime cleanup."""
         if self.redis_client is None:
             return False
 
         try:
-            binding_key = f"task_executor:{task_id}"
-            self.redis_client.delete(binding_key)
+            binding_key = self._executor_binding_key(task_id, sandbox)
+            # An inventory pass may have inspected the container before deletion.
+            # Retain no credential and prevent that pass from restoring the lease.
+            revoked = self.redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if current and ARGV[2] ~= '' then
+                    local binding = cjson.decode(current)
+                    if not binding.revoked and binding.executor_name ~= ARGV[2] then
+                        return 0
+                    end
+                end
+                redis.call('SETEX', KEYS[1], ARGV[1], '{"revoked":true}')
+                return 1
+                """,
+                1,
+                binding_key,
+                max(300, self._config.executor.executor_binding_ttl),
+                expected_executor_name,
+            )
+            if not revoked:
+                return False
             logger.info(
-                "[SandboxRepository] Deleted executor binding: task_id=%s",
+                "[SandboxRepository] Revoked executor binding: task_id=%s",
                 task_id,
             )
             return True

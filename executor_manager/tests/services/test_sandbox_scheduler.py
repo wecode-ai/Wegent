@@ -132,6 +132,11 @@ class TestSandboxScheduler:
         mock_scheduler_instance.running = False
         mock_scheduler_class.return_value = mock_scheduler_instance
 
+        mocker.patch(
+            "executor_manager.services.sandbox.scheduler.ExecutorDispatcher.registered_executors",
+            return_value=(),
+        )
+
         # Patch the interval trigger to capture intervals
         mocker.patch("executor_manager.services.sandbox.scheduler.IntervalTrigger")
 
@@ -140,6 +145,55 @@ class TestSandboxScheduler:
         # Verify four jobs were added: sandbox_heartbeat_check,
         # task_heartbeat_check, sandbox_gc and queue_stall_check.
         assert mock_scheduler_instance.add_job.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_callback_renewal_covers_all_configured_executors(
+        self, sandbox_scheduler, mocker
+    ):
+        from executor_manager.services.sandbox import scheduler
+
+        docker = mocker.Mock()
+        secondary = mocker.Mock()
+        mocker.patch.object(
+            scheduler.ExecutorDispatcher,
+            "registered_executors",
+            return_value=[
+                ("docker", docker),
+                ("secondary", secondary),
+                ("without_renewal", object()),
+            ],
+        )
+        mocker.patch.object(
+            scheduler,
+            "get_config",
+            return_value=mocker.Mock(executor=mocker.Mock(executor_binding_ttl=30)),
+        )
+        clock_start = scheduler.datetime.now(scheduler.timezone.utc)
+        scheduler_instance = mocker.patch.object(
+            scheduler, "AsyncIOScheduler"
+        ).return_value
+
+        await sandbox_scheduler.start()
+
+        jobs = {
+            call.kwargs["id"]: call
+            for call in scheduler_instance.add_job.call_args_list
+            if call.kwargs["id"].startswith("executor_callback_lease_")
+        }
+        assert set(jobs) == {
+            "executor_callback_lease_docker",
+            "executor_callback_lease_secondary",
+        }
+        for name, executor in (("docker", docker), ("secondary", secondary)):
+            job = jobs[f"executor_callback_lease_{name}"]
+            assert job.args[1].interval.total_seconds() == 10
+            assert (
+                clock_start
+                <= job.kwargs["next_run_time"]
+                <= scheduler.datetime.now(scheduler.timezone.utc)
+            )
+            await job.args[0](*job.kwargs["args"])
+            executor.renew_callback_bindings.assert_called_once_with()
 
     # ----- stop Tests -----
 
