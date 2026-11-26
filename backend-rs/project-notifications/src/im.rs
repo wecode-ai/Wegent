@@ -357,6 +357,12 @@ fn card_headline(kind: &str, title: &str, payload: &Value) -> String {
             .as_str()
             .map(|actor| format!("📌 {actor} 把任务分配给了你"))
             .unwrap_or_else(|| format!("📌 {title}")),
+        "issue_dispatch_assignment" => payload["actorName"]
+            .as_str()
+            .map(str::trim)
+            .filter(|actor| !actor.is_empty())
+            .map(|actor| format!("{actor} 将任务分配给你"))
+            .unwrap_or_else(|| "你收到一项任务".into()),
         _ => title.into(),
     }
 }
@@ -470,11 +476,19 @@ fn card_params(
     facts: &[(String, String)],
     links: &[(String, String)],
 ) -> Value {
+    let is_dispatch_assignment = kind == "issue_dispatch_assignment";
+    let task_title = is_dispatch_assignment
+        .then(|| payload["taskTitle"].as_str().unwrap_or("").trim())
+        .filter(|title| !title.is_empty());
     if builtin {
         let mut lines: Vec<_> = facts
             .iter()
+            .filter(|(label, _)| task_title.is_none() || label != "任务标题")
             .map(|(label, value)| format!("**{label}**：{}", escape(value)))
             .collect();
+        if let Some(task_title) = task_title {
+            lines.insert(0, format!("**任务标题**：{}", escape(task_title)));
+        }
         if !body.is_empty() {
             if !lines.is_empty() {
                 lines.push(String::new());
@@ -528,7 +542,15 @@ fn card_params(
         },
         _ => ("任务通知", "gray"),
     };
-    json!({"kindLabel":label,"tone":tone,"headline":title,"itemTitle":payload["itemTitle"].as_str().unwrap_or(""),"itemKey":payload["itemKey"].as_str().unwrap_or(""),"metaLine":meta,"detailLabel":detail_label(payload),"detail":detail,"showDetail":if body.is_empty(){"false"}else{"true"},"primaryLabel":primary.map(|value|value.0.as_str()).unwrap_or(""),"primaryUrl":primary.map(|value|value.1.as_str()).unwrap_or(""),"secondaryLabel":secondary.map(|value|value.0.as_str()).unwrap_or(""),"secondaryUrl":secondary.map(|value|value.1.as_str()).unwrap_or("")})
+    let headline = if is_dispatch_assignment {
+        headline
+    } else {
+        title
+    };
+    let item_title = task_title
+        .or_else(|| payload["itemTitle"].as_str())
+        .unwrap_or("");
+    json!({"kindLabel":label,"tone":tone,"headline":headline,"itemTitle":item_title,"itemKey":payload["itemKey"].as_str().unwrap_or(""),"metaLine":meta,"detailLabel":detail_label(payload),"detail":detail,"showDetail":if body.is_empty(){"false"}else{"true"},"primaryLabel":primary.map(|value|value.0.as_str()).unwrap_or(""),"primaryUrl":primary.map(|value|value.1.as_str()).unwrap_or(""),"secondaryLabel":secondary.map(|value|value.0.as_str()).unwrap_or(""),"secondaryUrl":secondary.map(|value|value.1.as_str()).unwrap_or("")})
 }
 
 async fn dingtalk_recipient(mysql: &MysqlService, session: &Value) -> Result<String> {
@@ -781,6 +803,28 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn assignment_cards_show_the_assigner_above_the_dispatched_task() {
+        let kind = "issue_dispatch_assignment";
+        let title = "新任务：验收登录";
+        let payload =
+            json!({"actorName": "项目经理", "taskTitle": "验收登录", "itemTitle": "修复登录"});
+        let headline = card_headline(kind, title, &payload);
+        let facts = super::super::push_facts(&payload);
+
+        let custom = card_params(false, kind, title, &headline, "", &payload, &facts, &[]);
+        let builtin = card_params(true, kind, title, &headline, "", &payload, &facts, &[]);
+
+        assert_eq!(custom["headline"], "项目经理 将任务分配给你");
+        assert_eq!(custom["itemTitle"], "验收登录");
+        assert_eq!(builtin["title"], custom["headline"]);
+        assert_eq!(builtin["markdown"], "**任务标题**：验收登录");
+        assert_eq!(
+            card_headline(kind, title, &json!({"actorName": " "})),
+            "你收到一项任务"
+        );
+    }
+
     #[test]
     fn custom_cards_limit_detail_and_expose_each_destination() {
         let value = card_params(

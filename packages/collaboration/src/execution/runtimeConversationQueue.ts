@@ -223,6 +223,7 @@ export function runtimeQueuedMessageRequest(
     ...context,
     // Public (undefined) is also captured intent, never inherited from a later pane.
     conversationContext: message.conversationContext,
+    assistantPrompt: message.assistantPrompt,
     ...(message.origin ? { origin: message.origin } : {}),
     ...(message.cloudProjectId
       ? { cloudProjectId: message.cloudProjectId }

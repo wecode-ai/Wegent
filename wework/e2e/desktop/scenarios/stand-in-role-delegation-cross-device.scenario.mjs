@@ -275,6 +275,13 @@ export function createDesktopScenario({
       })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command(
+        'clickWhenEnabled',
+        testId('personal-assistant-account-migrate-confirm'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('clickWhenEnabled', PRIMARY)
       await control.command('waitFor', CHAT)
       const language = await control.command('getAttribute', 'html', { value: 'lang' })

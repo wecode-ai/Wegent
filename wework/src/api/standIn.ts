@@ -602,12 +602,17 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<void>
-  personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
+  personalGet(
+    userId: number,
+    deviceId: string,
+    options?: { deviceSettingsOnly?: boolean }
+  ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
     deviceId: string,
-    transferRoleId?: string
+    transferRoleId?: string,
+    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string }
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,

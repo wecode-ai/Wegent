@@ -1,4 +1,6 @@
+import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
 import { LOCAL_USER } from '@/api/local/localSession'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { isStandInBindingOwner } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Button } from '@/components/ui/button'
@@ -11,12 +13,15 @@ import {
   type WorkspaceNavigationDetail,
 } from '@/lib/navigation'
 import { getStandInErrorMessage, requiresStandInUpgrade } from '@/lib/stand-in-error-message'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createLocalWorkspaceApi } from './localWorkspaceApi'
+import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
+import { personalAssistantDeviceSettings } from './personalAssistantDeviceSettings'
 import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
 import { availableStandInDevices } from './standInDevices'
 import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
@@ -45,12 +50,35 @@ type PersonalStandInWorkspaceProps = {
 
 export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
-  return (
-    <AccountStandInWorkspace
-      key={JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])}
-      {...props}
-    />
-  )
+  if (!cloud?.isConnected || !cloud.user) return <StandInCloudConnectionPrompt />
+  const key = JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])
+  if (
+    cloud?.isConnected &&
+    cloud.user?.id === props.user.id &&
+    props.user.id !== LOCAL_USER.id &&
+    props.services.personalAssistantAccountApi
+  ) {
+    const available = availableStandInDevices(props.devices)
+    return (
+      <PersonalAssistantAccountSetup
+        preferredDevice={(available.find(device => device.is_default) ?? available[0])?.device_id}
+        key={key}
+        services={props.services}
+        userId={Number(props.user.id)}
+        active={props.active}
+      >
+        {(account, publishAccount, readAccount) => (
+          <AccountStandInWorkspace
+            {...props}
+            account={account}
+            publishAccount={publishAccount}
+            readAccount={readAccount}
+          />
+        )}
+      </PersonalAssistantAccountSetup>
+    )
+  }
+  return <StandInCloudConnectionPrompt />
 }
 
 /** Scope binding, project errors and recovery actions to the connected account. */
@@ -66,7 +94,14 @@ function AccountStandInWorkspace({
   embedded = false,
   homeProjects = [],
   collaborationWork,
-}: PersonalStandInWorkspaceProps) {
+  account: connectedAccount,
+  publishAccount,
+  readAccount,
+}: PersonalStandInWorkspaceProps & {
+  account?: PersonalAssistantAccount
+  publishAccount?: (account: PersonalAssistantAccount) => void
+  readAccount?: () => PersonalAssistantAccount | undefined
+}) {
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
   const [reentry, setReentry] = useState(0)
@@ -104,8 +139,18 @@ function AccountStandInWorkspace({
   const { binding, localDeviceId, busy } = instance
   const target = binding?.target
   const ownerId = target?.userId ?? Number(user.id)
+  const account = ownerId === userId ? connectedAccount : undefined
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
+  const boundDeviceOffline = findWorkbenchDevice(devices, deviceId)?.status === 'offline'
+  const cloudAssistantServices = useMemo(
+    () =>
+      readAccount && publishAccount
+        ? personalAssistantDeviceSettings(services, readAccount, publishAccount)
+        : services,
+    [services, readAccount, publishAccount]
+  )
+  const assistantServices = ownerId === userId ? cloudAssistantServices : services
   const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
   const ownerAvailable =
     notificationOwnerMatches &&
@@ -264,7 +309,6 @@ function AccountStandInWorkspace({
           <p className="text-sm text-text-secondary">{t('standIn.instance.bind_help')}</p>
           <div className="flex flex-wrap gap-2">
             {[
-              { userId: LOCAL_USER.id, deviceId: localDeviceId, name: t('standIn.local_profile') },
               ...(Number(user.id) === LOCAL_USER.id
                 ? []
                 : [
@@ -312,7 +356,8 @@ function AccountStandInWorkspace({
                 const role = await instance.migrate(
                   { userId, backendUrl, deviceId },
                   roleId,
-                  t('standIn.title')
+                  t('standIn.title'),
+                  cloudAssistantServices.standInApi
                 )
                 if (!role) throw new Error(t('standIn.migration.not_stopped'))
                 navigateTo(
@@ -329,9 +374,14 @@ function AccountStandInWorkspace({
           </p>
           {actions}
         </section>
+      ) : target?.userId === LOCAL_USER.id ? (
+        <section className="space-y-3 p-5" data-testid="stand-in-legacy-binding">
+          <p>{t('standIn.account.legacy_binding')}</p>
+          {actions}
+        </section>
       ) : target && embedded ? (
         <StandInHomeSetup
-          api={services.standInApi}
+          api={assistantServices.standInApi}
           userId={ownerId}
           deviceId={target.deviceId}
           active={active}
@@ -339,13 +389,14 @@ function AccountStandInWorkspace({
           {settings => (
             <StandInHomeWorkspace
               key={`${ownerId}:${target.deviceId}`}
-              services={services}
+              services={assistantServices}
               userId={ownerId}
               deviceId={target.deviceId}
               localDeviceId={localDeviceId}
               active={active}
               onOpenTask={onOpenTask}
               settings={settings}
+              account={account}
               projects={homeProjects}
               collaborationWork={collaborationWork}
             />
@@ -353,17 +404,39 @@ function AccountStandInWorkspace({
         </StandInHomeSetup>
       ) : target && api ? (
         <>
-          {directory?.error && (
-            <p role="alert" className="px-5 py-2 text-sm text-error">
-              {directory.error}
-            </p>
+          {(directory?.error || boundDeviceOffline) && (
+            <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+              <p role="alert" className="text-sm text-error">
+                {directory?.error || t('standIn.errors.device_offline')}
+              </p>
+              {boundDeviceOffline && actions}
+            </div>
           )}
           <StandInOverviewPage
             key={`${ownerId}:${selectedDevice}`}
             ref={overview}
             workspaceView={workspaceView}
             onWorkspaceViewChange={setWorkspaceView}
-            headerActions={actions}
+            headerActions={boundDeviceOffline ? undefined : actions}
+            account={account}
+            onBindDevice={
+              account && publishAccount && services.personalAssistantAccountApi
+                ? async (roleId, device) => {
+                    const definitions = account.definitions.map(entry => ({
+                      roleId: entry.roleId,
+                      name: entry.bot.metadata.displayName ?? '',
+                      prompt: entry.ghost.spec.systemPrompt,
+                      executionDeviceId: entry.roleId === roleId ? device : undefined,
+                    }))
+                    publishAccount(
+                      await services.personalAssistantAccountApi!.updateDefinitions(
+                        account.revision,
+                        definitions
+                      )
+                    )
+                  }
+                : undefined
+            }
             initialProfileId={
               roleLocation?.settings
                 ? roleLocation.roleId
@@ -387,7 +460,7 @@ function AccountStandInWorkspace({
             onSelectLocation={workspaceSource.selectLocation}
             api={api}
             projects={projects}
-            services={services}
+            services={assistantServices}
             devices={devices}
             userId={ownerId}
             active={active}

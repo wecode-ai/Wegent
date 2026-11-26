@@ -19,9 +19,11 @@ import { StandInImConnections } from './StandInImConnections'
 
 function openPrimaryProfile(
   selfLearningEnabled?: boolean,
-  imSessionApi?: WorkbenchServices['imSessionApi']
+  imSessionApi?: WorkbenchServices['imSessionApi'],
+  cloudDefinitionRevision?: string
 ) {
   const { settings } = personalStandInFixture()
+  settings.cloudDefinitionRevision = cloudDefinitionRevision
   const { services } = standInOverviewFixture().props
   const model: RunnerModel = {
     runtime: 'codex',
@@ -381,6 +383,18 @@ test('editing private preferences preserves the independently learned Ghost, inc
   const preferences = screen.getByTestId('stand-in-preferences')
   expect(preferences).toHaveValue('Private context')
   fireEvent.change(preferences, { target: { value: 'Edited private context' } })
+  expect(save()).toMatchObject({
+    prompt: 'Ask for evidence',
+    preferences: 'Edited private context',
+  })
+})
+
+test('a migrated default assistant keeps its shared instructions when private preferences change', () => {
+  const { save } = openPrimaryProfile(undefined, undefined, 'cloud-revision')
+  expect(screen.getByTestId('stand-in-primary-ghost-prompt')).toHaveValue('Ask for evidence')
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'Edited private context' },
+  })
   expect(save()).toMatchObject({
     prompt: 'Ask for evidence',
     preferences: 'Edited private context',

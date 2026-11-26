@@ -82,6 +82,7 @@ function rebasePrimaryDraft(
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
   settings: incomingSettings,
+  executionDeviceId = incomingSettings.executionDeviceId,
   saving,
   loading = false,
   error,
@@ -104,6 +105,7 @@ export function StandInPrimaryProfile({
   dingtalkSourceProblem,
 }: {
   settings: PersonalStandInSettings
+  executionDeviceId?: string
   saving: boolean
   loading?: boolean
   error: string | null
@@ -142,15 +144,16 @@ export function StandInPrimaryProfile({
       : incomingSettings
   if (receipt && settings === incomingSettings) setReceipt(null)
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
-  const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
+  const defaultRole = newStandInRole(executionDeviceId, '@primary')
   const defaultCollaboration = {
     ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
   }
-  const separatePrompt = saved.selfLearningEnabled !== undefined
+  const usesSeparatePrompt = (primary: StandInIdentity) =>
+    settings.cloudDefinitionRevision !== undefined || primary.selfLearningEnabled !== undefined
+  const separatePrompt = usesSeparatePrompt(saved)
   const normalizePrimary = (primary: StandInIdentity): NormalizedPrimary => {
-    // Legacy profiles retain their single editor. Learning-enabled profiles keep sources and private preferences separate.
-    const separatePrompt = primary.selfLearningEnabled !== undefined
+    const separatePrompt = usesSeparatePrompt(primary)
     return {
       ...primary,
       delegation: primary.delegation,
@@ -190,7 +193,7 @@ export function StandInPrimaryProfile({
   const [discard, setDiscard] = useState(false)
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
-    settings.executionDeviceId,
+    executionDeviceId,
     view === 'advanced'
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
@@ -489,7 +492,8 @@ export function StandInPrimaryProfile({
             deviceControl={
               <StandInDeviceSelect
                 readOnly={deviceReadOnly}
-                value={settings.executionDeviceId}
+                value={executionDeviceId}
+                testId="personal-assistant-execution-device"
                 currentDeviceId={localDeviceId}
                 devices={devices}
                 disabled={blocked || dirty}

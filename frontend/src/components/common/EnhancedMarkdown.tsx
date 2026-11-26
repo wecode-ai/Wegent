@@ -7,7 +7,7 @@
 import React, { memo, useMemo, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfmSafe from '@/lib/remark-gfm-safe'
-import { autolinkUrls } from '@/lib/autolink-urls'
+import { rehypeAutolinkUrls } from '@/lib/autolink-urls'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
@@ -626,9 +626,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return normalizedParts.flatMap(part => {
       if (part.type === 'artifact') return [part]
 
-      const processedMarkdown = autolinkUrls(
-        preprocessCjkEmphasis(preprocessLatexSyntax(part.content))
-      )
+      const processedMarkdown = preprocessCjkEmphasis(preprocessLatexSyntax(part.content))
       return splitSpecialMarkdownBlocks(processedMarkdown)
     })
   }, [body])
@@ -718,8 +716,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   }, [hasMath])
 
   const rehypePlugins = useMemo(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = []
+    const plugins: NonNullable<Options['rehypePlugins']> = []
     // rehypeKatex must come before rehypeRaw to properly render math formulas
     if (hasMath) {
       // Configure rehypeKatex with strict: false to handle edge cases
@@ -731,7 +728,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
         },
       ])
     }
-    plugins.push(rehypeRaw)
+    plugins.push(rehypeRaw, rehypeAutolinkUrls)
     if (extraRehypePlugins) plugins.push(...extraRehypePlugins)
     return plugins
   }, [hasMath, extraRehypePlugins])

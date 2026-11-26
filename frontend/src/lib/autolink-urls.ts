@@ -1,213 +1,314 @@
-/**
- * Autolink URLs pre-processor for Markdown
- *
- * This module provides a function to convert bare URLs in markdown text
- * to proper markdown link format before rendering.
- *
- * This is needed because remark-gfm-safe excludes the autolink literal
- * feature for iOS 16 Safari compatibility (Safari iOS 16 doesn't support
- * lookbehind assertions used in the original implementation).
- *
- * The pre-processor detects bare URLs and converts them to [url](url) format,
- * while preserving:
- * - URLs already in markdown link format: [text](url)
- * - URLs in image format: ![alt](url)
- * - URLs in code blocks: ```code``` or `inline code`
- * - URLs in HTML anchor tags: <a href="url">
- *
- * @see src/lib/remark-gfm-safe.ts
- */
+import { decodeHTML } from 'entities/decode'
+import type { Element, Root, RootContent, Text } from 'hast'
+import { decodeString } from 'micromark-util-decode-string'
+import { normalizeUri } from 'micromark-util-sanitize-uri'
 
-/**
- * Regular expression to match URLs
- * Matches http://, https://, and www. URLs
- */
+// GFM autolink literals are disabled for iOS 16.
 const URL_REGEX =
   /(?:https?:\/\/|www\.)[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]*[^\s<>\[\]()\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF.,;:!?'")\]}>]/gi
+const URL_PREFIX_REGEX = new RegExp(`^${URL_REGEX.source}`, 'i')
+const TRAILING_REFERENCE = /&(?:#(?:\d{1,7}|x[\da-f]{1,6})|[\da-z]{1,31});$/i
+const LINE_ENDING = /(\r\n?|\n)/
+const CONTINUATION_PREFIX = /^[\t >]*/
 
-/**
- * Check if a position is inside a code block or inline code
- */
-function isInsideCode(text: string, position: number): boolean {
-  // Check for code blocks (```)
-  let inCodeBlock = false
-  let i = 0
-  while (i < position) {
-    if (text.slice(i, i + 3) === '```') {
-      inCodeBlock = !inCodeBlock
-      i += 3
-    } else {
-      i++
-    }
-  }
-  if (inCodeBlock) return true
+const NON_LINKABLE_ELEMENTS = new Set([
+  'a',
+  'button',
+  'code',
+  'math',
+  'option',
+  'pre',
+  'script',
+  'select',
+  'style',
+  'svg',
+  'textarea',
+  'title',
+])
 
-  // Check for inline code (`)
-  // Count backticks before position - if odd, we're inside inline code
-  const textBefore = text.slice(0, position)
-  // Split by escaped backticks and code blocks to only count single backticks
-  const withoutCodeBlocks = textBefore.replace(/```[\s\S]*?```/g, '')
-  const backtickCount = (withoutCodeBlocks.match(/`/g) || []).length
-  return backtickCount % 2 === 1
+type SourcePart<Child> = {
+  node: Child
+  start: number
+  end: number
+  decode?: (value: string) => string
 }
 
-/**
- * Check if a URL at the given position is already part of a markdown link
- * Patterns to skip:
- * - [text](url) - markdown link
- * - ![alt](url) - markdown image
- * - <url> - angle bracket URL (auto-linked by markdown)
- * - <a href="url"> - HTML anchor
- */
-function isAlreadyLinked(text: string, urlStart: number, urlEnd: number): boolean {
-  // Check if URL is inside parentheses preceded by ] or ![...]
-  // This handles both [text](url) and ![alt](url)
-  const beforeUrl = text.slice(0, urlStart)
-
-  // Check for markdown link pattern: ](url)
-  if (beforeUrl.endsWith('](')) {
-    return true
-  }
-
-  // Check for markdown link pattern with optional title: ]( url or ]("title" url
-  const parenMatch = beforeUrl.match(/\]\(\s*$/)
-  if (parenMatch) {
-    return true
-  }
-
-  // Check if inside angle brackets: <url>
-  const lastOpenAngle = beforeUrl.lastIndexOf('<')
-  const lastCloseAngle = beforeUrl.lastIndexOf('>')
-  if (lastOpenAngle > lastCloseAngle) {
-    // We're inside angle brackets, check if the closing > comes after the URL
-    const afterUrl = text.slice(urlEnd)
-    if (afterUrl.match(/^[^<]*>/)) {
-      return true
-    }
-  }
-
-  // Check if inside href attribute: href="url" or href='url'
-  const hrefMatch = beforeUrl.match(/href\s*=\s*["']?$/)
-  if (hrefMatch) {
-    return true
-  }
-
-  // Check if inside src attribute: src="url" or src='url' (for images)
-  const srcMatch = beforeUrl.match(/src\s*=\s*["']?$/)
-  if (srcMatch) {
-    return true
-  }
-
-  return false
+function decodeMarkdownText(value: string): string {
+  return decodeString(value.replace(/\0/g, '\uFFFD'))
 }
 
-/**
- * Protect link/image labels too: a URL used as display text is not a bare URL.
- * Match balanced brackets so formatted labels and nested images stay intact.
- */
-function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = []
-  const brackets: number[] = []
-  const referenceLabels = new Set(
-    Array.from(text.matchAll(/^ {0,3}\[([^\]]+)\]:/gm), match => normalizeReferenceLabel(match[1]))
+function decodeHtmlText(value: string): string {
+  return decodeHTML(value.replace(/\r\n?/g, '\n'))
+}
+
+function continuationParts(node: Text, raw: string, afterHardBreak = false): SourcePart<Text>[] {
+  const sourceLines = raw.split(LINE_ENDING)
+  if ((sourceLines.length === 1 && !afterHardBreak) || !node.position) return []
+
+  const parts: SourcePart<Text>[] = []
+  const { offset: startOffset } = node.position.start
+  if (startOffset === undefined) return []
+  let offset = startOffset
+  let textOffset = 0
+  let { line, column } = node.position.start
+
+  // Markdown strips indentation and quote markers on continuation lines.
+  // Keep the real source offsets after each stripped prefix.
+  for (let index = 0; index < sourceLines.length; index += 2) {
+    const sourceLine = sourceLines[index]
+    const lineEnding = sourceLines[index + 1] ?? ''
+    const prefix =
+      index === 0 && !afterHardBreak ? '' : (CONTINUATION_PREFIX.exec(sourceLine)?.[0] ?? '')
+    const body = decodeMarkdownText(sourceLine.slice(prefix.length)) + lineEnding
+    const rendered = node.value.slice(textOffset, textOffset + prefix.length + body.length)
+    // An entity can add a line break to the rendered text. Match the decoded
+    // source line as a whole instead of splitting the rendered text into lines.
+    const keptPrefix = lineEnding
+      ? rendered.indexOf(body)
+      : node.value.length - textOffset - body.length
+    if (keptPrefix < 0 || keptPrefix > prefix.length) return []
+    const prefixLength = prefix.length - keptPrefix
+    const value = prefix.slice(prefixLength) + body
+    if (!rendered.startsWith(value)) return []
+
+    const start = offset + prefixLength
+    const end = offset + sourceLine.length + lineEnding.length
+    if (start < end) {
+      parts.push({
+        start,
+        end,
+        node: {
+          type: 'text',
+          value,
+          position: {
+            start: { offset: start, line, column: column + prefixLength },
+            end: lineEnding
+              ? { offset: end, line: line + 1, column: 1 }
+              : { offset: end, line, column: column + sourceLine.length },
+          },
+        },
+      })
+    }
+    offset = end
+    textOffset += value.length
+    line++
+    column = 1
+  }
+  return textOffset === node.value.length ? parts : []
+}
+
+function hardBreakContinuation(
+  node: RootContent,
+  previous: RootContent | undefined,
+  source: string
+): SourcePart<Text>[] {
+  if (
+    node.type !== 'text' ||
+    node.position?.start ||
+    !node.value.startsWith('\n') ||
+    previous?.type !== 'element' ||
+    previous.tagName !== 'br'
+  ) {
+    return []
+  }
+  const start = previous.position?.end
+  const end = node.position?.end
+  if (start?.offset === undefined || end?.offset === undefined || start.offset >= end.offset) {
+    return []
+  }
+
+  // rehypeRaw merges the generated newline with the next text node and drops
+  // its start position. The break's end anchors the remaining source text.
+  return continuationParts(
+    { ...node, value: node.value.slice(1), position: { start, end } },
+    source.slice(start.offset, end.offset),
+    true
   )
-  for (let index = 0; index < text.length; index++) {
-    if (text[index] === '\\') {
-      index++
-    } else if (text[index] === '`') {
-      let runLength = 1
-      while (text[index + runLength] === '`') runLength++
-      let closingIndex = -1
-      for (let cursor = index + runLength; cursor < text.length; ) {
-        const candidate = text.indexOf('`', cursor)
-        if (candidate === -1) break
-        let candidateLength = 1
-        while (text[candidate + candidateLength] === '`') candidateLength++
-        if (candidateLength === runLength) {
-          closingIndex = candidate
-          break
+}
+
+function sourceParts<Child extends RootContent>(
+  node: Child,
+  source: string
+): SourcePart<Child | Text>[] {
+  const start = node.position?.start?.offset
+  const end = node.position?.end?.offset
+  if (start === undefined || end === undefined || start >= end) return []
+  if (node.type === 'text') {
+    const raw = source.slice(start, end)
+    if (decodeMarkdownText(raw) === node.value) return [{ node, start, end }]
+
+    const parts = continuationParts(node, raw)
+    if (parts.length) return parts
+
+    // Raw HTML normalizes physical line endings and leaves backslashes literal.
+    if (decodeHtmlText(raw) === node.value) {
+      return [{ node, start, end, decode: decodeHtmlText }]
+    }
+    return []
+  }
+  if (node.type === 'element') {
+    const marker = source[start]
+    const isMarkdownFormatting =
+      (node.tagName === 'del' && marker === '~') ||
+      ((node.tagName === 'em' || node.tagName === 'strong') && (marker === '*' || marker === '_'))
+    if (isMarkdownFormatting) return [{ node, start, end }]
+  }
+  return []
+}
+
+function createLink(url: string): Element {
+  return {
+    type: 'element',
+    tagName: 'a',
+    properties: { href: normalizeUri(/^www\./i.test(url) ? `https://${url}` : url) },
+    children: [{ type: 'text', value: url }],
+  }
+}
+
+function includeReferenceTerminator(value: string, start: number, end: number): number {
+  if (value[end] !== ';') return end
+  const reference = TRAILING_REFERENCE.exec(value.slice(Math.max(start, end - 32), end + 1))?.[0]
+  return reference && decodeString(reference) !== reference ? end + 1 : end
+}
+
+function linkRun<Child extends RootContent>(
+  parts: SourcePart<Child>[],
+  source: string,
+  visit: (node: Child) => Child
+): Array<Child | Element | Text> {
+  const first = parts[0]
+  const limit = parts[parts.length - 1].end
+  const value = source.slice(first.start, limit)
+  const matcher = new RegExp(URL_REGEX)
+  const output: Array<Child | Element | Text> = []
+  let cursor = first.start
+  let partIndex = 0
+
+  const advance = (end: number, keepText: boolean) => {
+    while (cursor < end) {
+      const part = parts[partIndex]
+      const next = Math.min(end, part.end)
+      if (keepText) {
+        if (cursor === part.start && next === part.end) {
+          output.push(visit(part.node))
+        } else {
+          const decode = part.decode ?? decodeMarkdownText
+          output.push({ type: 'text', value: decode(source.slice(cursor, next)) })
         }
-        cursor = candidate + candidateLength
       }
-      if (closingIndex !== -1) index = closingIndex + runLength - 1
-    } else if (text[index] === '[') {
-      brackets.push(index)
-    } else if (text[index] === ']') {
-      const start = brackets.pop()
-      if (start === undefined) continue
-      if (text[index + 1] === '(') {
-        ranges.push({ start, end: index })
-        continue
-      }
-      const label = text.slice(start + 1, index)
-      if (text[index + 1] === '[') {
-        const referenceEnd = text.indexOf(']', index + 2)
-        if (referenceEnd === -1) continue
-        const reference = text.slice(index + 2, referenceEnd) || label
-        if (referenceLabels.has(normalizeReferenceLabel(reference))) {
-          ranges.push({ start, end: index })
-        }
-      } else if (referenceLabels.has(normalizeReferenceLabel(label))) {
-        ranges.push({ start, end: index })
-      }
+      cursor = next
+      if (cursor === part.end) partIndex++
     }
   }
-  return ranges
-}
 
-function normalizeReferenceLabel(label: string): string {
-  return label.trim().replace(/\s+/g, ' ').toLowerCase()
-}
+  let positionOffset = first.start
+  let line = first.node.position?.start.line ?? 1
+  let column = first.node.position?.start.column ?? 1
+  let startIndex = 0
+  for (let match = matcher.exec(value); match; match = matcher.exec(value)) {
+    const start = first.start + match.index
+    matcher.lastIndex = includeReferenceTerminator(value, match.index, matcher.lastIndex)
+    let end = first.start + matcher.lastIndex
 
-/**
- * Pre-process markdown text to convert bare URLs to markdown link format
- *
- * @param text - The markdown text to process
- * @returns The processed text with bare URLs converted to markdown links
- *
- * @example
- * // Input: "Check out https://example.com for more info"
- * // Output: "Check out [https://example.com](https://example.com) for more info"
- */
-export function autolinkUrls(text: string): string {
-  if (!text) return text
-
-  const matches: Array<{ start: number; end: number; url: string }> = []
-  const labels = linkLabelRanges(text)
-
-  // Find all URL matches
-  let match: RegExpExecArray | null
-  while ((match = URL_REGEX.exec(text)) !== null) {
-    const url = match[0]
-    const start = match.index
-    const end = start + url.length
-
-    // Skip if inside code
-    if (isInsideCode(text, start)) {
+    // A URL starts in text. It may consume paired delimiters inside its own path
+    // when it covers the whole emphasis node, but never borrow an outer delimiter.
+    while (parts[startIndex].end <= start) startIndex++
+    const startPart = parts[startIndex]
+    if (startPart.node.type !== 'text') {
+      matcher.lastIndex = startPart.end - first.start
       continue
     }
 
-    // Skip if already linked
-    if (
-      isAlreadyLinked(text, start, end) ||
-      labels.some(label => start > label.start && end <= label.end)
-    ) {
-      continue
+    let endIndex = startIndex
+    while (parts[endIndex].end < end) endIndex++
+    const endPart = parts[endIndex]
+    if (endPart.node.type === 'element' && end < endPart.end) {
+      const beforeEmphasis = source.slice(start, endPart.start)
+      const prefix = URL_PREFIX_REGEX.exec(beforeEmphasis)?.[0]
+      matcher.lastIndex = endPart.end - first.start
+      if (!prefix) continue
+      end = start + includeReferenceTerminator(beforeEmphasis, 0, prefix.length)
     }
 
-    matches.push({ start, end, url })
+    advance(start, true)
+    advance(end, false)
+    const decode = startPart.decode ?? decodeMarkdownText
+    const link = createLink(decode(source.slice(start, end)))
+    const before = source.slice(positionOffset, start).split(/\r\n?|\n/)
+    line += before.length - 1
+    column = before.length === 1 ? column + before[0].length : before[before.length - 1].length + 1
+    link.position = {
+      start: { line, column, offset: start },
+      end: { line, column: column + end - start, offset: end },
+    }
+    positionOffset = end
+    column += end - start
+    output.push(link)
+  }
+  advance(limit, true)
+  return output
+}
+
+function linkRenderedText(node: Text): Array<Text | Element> {
+  const output: Array<Text | Element> = []
+  let cursor = 0
+  for (const { 0: url, index } of node.value.matchAll(URL_REGEX)) {
+    if (cursor < index) output.push({ type: 'text', value: node.value.slice(cursor, index) })
+    output.push(createLink(url))
+    cursor = index + url.length
+  }
+  if (cursor === 0) return [node]
+  if (cursor < node.value.length) output.push({ type: 'text', value: node.value.slice(cursor) })
+  return output
+}
+
+function autolinkChildren<Child extends RootContent>(
+  children: Child[],
+  source: string
+): Array<Child | Element | Text> {
+  const output: Array<Child | Element | Text> = []
+  const run: SourcePart<Child | Text>[] = []
+  const visit = (child: Child | Text) => {
+    if (child.type === 'element' && !NON_LINKABLE_ELEMENTS.has(child.tagName)) {
+      const { className } = child.properties
+      if (!Array.isArray(className) || !className.includes('katex')) {
+        child.children = autolinkChildren(child.children, source)
+      }
+    }
+    return child
+  }
+  const flush = () => {
+    if (run.length === 0) return
+    for (const node of linkRun(run, source, visit)) output.push(node)
+    run.length = 0
   }
 
-  // Replace matches from end to start to preserve positions
-  let result = text
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const { start, end, url } = matches[i]
-    // Ensure URL has protocol for the href
-    const href = url.startsWith('www.') ? `https://${url}` : url
-    // Use the original URL as display text, href as the link target
-    const markdownLink = `[${url}](${href})`
-    result = result.slice(0, start) + markdownLink + result.slice(end)
+  for (const [index, child] of children.entries()) {
+    const continued = hardBreakContinuation(child, children[index - 1], source)
+    if (continued.length) {
+      flush()
+      output.push({ type: 'text', value: '\n' })
+    }
+    const parts = continued.length ? continued : sourceParts(child, source)
+    if (parts.length) {
+      for (const part of parts) {
+        if (run.length && part.start !== run[run.length - 1].end) flush()
+        run.push(part)
+      }
+    } else if (child.type === 'text') {
+      flush()
+      for (const node of linkRenderedText(child)) output.push(node)
+    } else {
+      flush()
+      output.push(visit(child))
+    }
   }
+  flush()
+  return output
+}
 
-  return result
+export function rehypeAutolinkUrls() {
+  return (tree: Root, file: { toString(): string }) => {
+    tree.children = autolinkChildren(tree.children, file.toString())
+  }
 }
