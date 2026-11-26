@@ -15,6 +15,7 @@
   },
   "paths": [
     "patches/@pierre__diffs@1.6.4.patch",
+    "packages/collaboration/src/conversation/parseUnifiedDiff.ts",
     "wework/e2e/desktop/modules/workspace-review-refresh-flow.mjs",
     "wework/src/components/chat/FileChangesReviewPanel.tsx",
     "wework/src/components/chat/FileChangesPatchDiff.tsx",

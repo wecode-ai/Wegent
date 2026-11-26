@@ -64,6 +64,53 @@ it('restores the bottom as soon as Markdown restores the native range', () => {
   expect(viewport.scrollTop).toBe(19_000)
 })
 
+it('treats the first rendered width as initialization when a restored pane docks', () => {
+  const list = document.createElement('div')
+  const port = createMessageListViewportPort()
+  const options = { enabled: false }
+  const measure = vi.fn()
+  const virtualizer = { options, measure } as unknown as ConversationVirtualizer
+  const measureRows = vi.fn()
+  const onLayoutChange = vi.fn()
+  const input = {
+    scope: createMarkdownWindowingScope(undefined, vi.fn()),
+    virtual: true,
+    ready: true,
+    layoutKey: 'wide',
+    layoutWidth: 736,
+    layoutPropertiesKey: 'properties',
+    measurementKey: null,
+    measurementLayout: { key: 'wide', messages: new Map() },
+    virtualizer,
+    rows: [],
+    totalSize: 210,
+    measureRow: vi.fn(),
+    measureRows,
+    onLayoutChange,
+  }
+  port.attach(list)
+  port.update(input)
+
+  // The same engine becomes enabled before React commits its first rows.
+  options.enabled = true
+  port.update({ ...input, totalSize: 1000 })
+  onLayoutChange.mockClear()
+
+  port.update({
+    ...input,
+    layoutKey: 'narrow',
+    layoutWidth: 624,
+    measurementLayout: { key: 'narrow', messages: new Map() },
+    rows: [{ key: 'reply', index: 0, start: 0, end: 1000, size: 1000, lane: 0 }],
+    totalSize: 1000,
+  })
+  // Initial scroll restoration must run in the layout commit instead of
+  // waiting for a resize measurement batch for geometry that never existed.
+  expect(onLayoutChange).toHaveBeenCalledExactlyOnceWith()
+  expect(measureRows).not.toHaveBeenCalled()
+  expect(measure).not.toHaveBeenCalled()
+})
+
 it('retains live geometry on resize but persists only heights measured for the committed layout', async () => {
   const conversationKey = 'viewport-width-change'
   const viewport = document.createElement('div')

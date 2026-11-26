@@ -8,6 +8,248 @@ import {
   GIT_SEED_NAME,
   REVIEW_RESTORE_MARKER,
 } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
+
+async function withReviewCleanup(verify, cleanupSteps) {
+  let failed = false
+  try {
+    return await verify()
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    const errors = []
+    for (const [label, cleanup] of cleanupSteps) {
+      try {
+        await cleanup()
+      } catch (error) {
+        console.error(`[workspace-review] ${label} cleanup failed:`, error)
+        errors.push(error)
+      }
+    }
+    if (!failed && errors.length)
+      throw new AggregateError(errors, 'Workspace review cleanup failed')
+  }
+}
+
+async function verifyUnchangedRefresh({
+  renderer,
+  detach,
+  reviewLinesSelector,
+  clickRefresh,
+  waitForReviewLine,
+}) {
+  let previousReviewId
+  await withReviewCleanup(async () => {
+    const previousReview = await renderer('Runtime.evaluate', {
+      expression: `document.querySelector(${JSON.stringify(reviewLinesSelector)})`,
+    })
+    previousReviewId = previousReview.result.objectId
+    assert.ok(previousReviewId, 'Missing the original loaded Diff view')
+    await clickRefresh()
+    const replaced = await renderer('Runtime.callFunctionOn', {
+      objectId: previousReviewId,
+      functionDeclaration: `function (timeout) {
+          if (!this.isConnected) return true
+          return new Promise(resolve => {
+            const finish = replaced => {
+              observer.disconnect()
+              clearTimeout(timer)
+              resolve(replaced)
+            }
+            const observer = new MutationObserver(() => {
+              if (!this.isConnected) finish(true)
+            })
+            observer.observe(document, { childList: true, subtree: true })
+            const timer = setTimeout(() => finish(false), timeout)
+          })
+        }`,
+      arguments: [{ value: DEFAULT_STEP_TIMEOUT_MS }],
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    assert.equal(replaced.result?.value, true, 'Unchanged review refresh did not reload the Diff')
+    const unchangedReview = await waitForReviewLine(REVIEW_RESTORE_MARKER)
+    assert.ok(unchangedReview.includes(FILE_PREVIEW_RESTORE_MARKER))
+  }, [
+    [
+      'release original Diff',
+      async () => {
+        if (previousReviewId)
+          await renderer('Runtime.releaseObject', { objectId: previousReviewId })
+      },
+    ],
+    ['detach renderer', detach],
+  ])
+}
+
+async function readDiffGeometry(renderer, diffContainerId, expected = null) {
+  const result = await renderer('Runtime.callFunctionOn', {
+    objectId: diffContainerId,
+    functionDeclaration: `function (expected, timeout) {
+      const read = () => {
+        if (!this.isConnected) return { connected: false }
+        const body = this.closest('[data-testid="file-changes-review-file-diff-body"]')
+        const scroller = body.closest('.scrollbar-soft')
+        const rect = scroller.getBoundingClientRect()
+        const top = rect.top + scroller.clientTop
+        const lines = [...this.shadowRoot.querySelectorAll('[data-line][data-line-index]')]
+          .map(line => {
+            const bounds = line.getBoundingClientRect()
+            return { index: line.dataset.lineIndex, text: line.textContent, offset: bounds.top - top, height: bounds.height }
+          })
+        const visible = lines.filter(line => line.offset + line.height > 0 && line.offset < scroller.clientHeight)
+        const anchor = expected?.anchor
+          ? lines.find(line => line.index === expected.anchor.index && line.text === expected.anchor.text)
+          : visible.find(line => line.offset >= 0)
+        return {
+          connected: this.isConnected,
+          font: parseFloat(getComputedStyle(this).getPropertyValue('--text-code')),
+          bodyHeight: body?.getBoundingClientRect().height,
+          renderedRows: lines.length,
+          visibleRows: visible.length,
+          anchor,
+          scrollTop: scroller.scrollTop,
+          max: scroller.scrollHeight - scroller.clientHeight,
+          viewportHeight: scroller.clientHeight,
+          x: rect.left + scroller.clientWidth / 2,
+          y: top + Math.min(200, scroller.clientHeight / 2)
+        }
+      }
+      if (expected === null) return read()
+      return new Promise(resolve => {
+        let frame, last, previous, stable = 0
+        const finish = converged => {
+          cancelAnimationFrame(frame)
+          clearTimeout(timer)
+          resolve({ geometry: last, converged })
+        }
+        const timer = setTimeout(() => finish(false), timeout)
+        const check = () => {
+          last = read()
+          const ready = last.connected && last.visibleRows > 0 && last.anchor &&
+            (expected.middle
+              ? last.scrollTop > last.viewportHeight && last.scrollTop < last.max - last.viewportHeight / 4
+              : last.font === expected.font &&
+                Math.abs(last.anchor.height - Math.round(expected.font * 1.8)) <= 1 &&
+                Math.abs(last.bodyHeight - expected.bodyHeight) <= 3 &&
+                Math.abs(last.anchor.offset - expected.anchor.offset) <= 2)
+          const fingerprint = JSON.stringify(last)
+          stable = ready && fingerprint === previous ? stable + 1 : 0
+          previous = fingerprint
+          if (stable >= 2) finish(true)
+          else frame = requestAnimationFrame(check)
+        }
+        check()
+      })
+    }`,
+    arguments: [{ value: expected }, { value: DEFAULT_STEP_TIMEOUT_MS }],
+    awaitPromise: true,
+    returnByValue: true,
+  })
+  assert.ok(!result.exceptionDetails, JSON.stringify(result.exceptionDetails))
+  const sample = result.result.value
+  if (expected === null) return sample
+  assert.ok(
+    sample?.converged,
+    `Diff geometry did not converge: ${JSON.stringify({ expected, sample })}`
+  )
+  return sample.geometry
+}
+
+async function activateFontAction(control, action) {
+  assert.equal(
+    JSON.parse(
+      await control.command('activateApplicationMenu', 'body', {
+        value: JSON.stringify({ id: `view.${action}` }),
+      })
+    ),
+    true,
+    'The native font-size action did not activate'
+  )
+}
+
+async function verifyLiveFontRoundTrip({
+  control,
+  renderer,
+  detach,
+  reviewLinesSelector,
+  expectedRows,
+}) {
+  let diffContainerId
+  let fontIncreased = false
+  await withReviewCleanup(async () => {
+    const container = await renderer('Runtime.evaluate', {
+      expression: `document.querySelector(${JSON.stringify(reviewLinesSelector + ' [data-review-path="' + GIT_SEED_NAME + '"] diffs-container')})`,
+    })
+    diffContainerId = container.result.objectId
+    assert.ok(diffContainerId, 'Missing the actual large Diff renderer')
+    const readGeometry = expected => readDiffGeometry(renderer, diffContainerId, expected)
+    const topViewport = await readGeometry()
+    assert.ok(topViewport.max > 2 * topViewport.viewportHeight, 'The large Diff did not overflow')
+    await renderer('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: topViewport.x,
+      y: topViewport.y,
+      deltaX: 0,
+      deltaY: Math.floor(topViewport.max / 2) - topViewport.scrollTop,
+    })
+    const beforeFont = await readGeometry({ middle: true })
+    assert.ok(
+      beforeFont.anchor &&
+        beforeFont.visibleRows > 0 &&
+        beforeFont.scrollTop > beforeFont.viewportHeight &&
+        beforeFont.scrollTop < beforeFont.max - beforeFont.viewportHeight / 4,
+      'Native wheel did not reach the middle of the large Diff'
+    )
+    assert.ok(
+      beforeFont.renderedRows > 0 &&
+        beforeFont.renderedRows < expectedRows &&
+        Math.abs(beforeFont.anchor.height - Math.round(beforeFont.font * 1.8)) <= 1,
+      'The live font fixture did not exercise Diff row virtualization'
+    )
+    const changeFont = async (action, font, expectedHeight) => {
+      await activateFontAction(control, action)
+      fontIncreased = action === 'increaseFontSize'
+      const geometry = await readGeometry({
+        font,
+        bodyHeight: expectedHeight,
+        anchor: beforeFont.anchor,
+      })
+      assert.ok(
+        geometry.connected &&
+          geometry.font === font &&
+          geometry.anchor?.index === beforeFont.anchor.index &&
+          geometry.anchor.text === beforeFont.anchor.text &&
+          Math.abs(geometry.anchor.height - Math.round(font * 1.8)) <= 1 &&
+          Math.abs(geometry.anchor.offset - beforeFont.anchor.offset) <= 2 &&
+          geometry.visibleRows > 0 &&
+          Math.abs(geometry.bodyHeight - expectedHeight) <= 3,
+        `The existing Diff did not update all virtual row heights and preserve its reader line: ${JSON.stringify({ geometry, expectedHeight })}`
+      )
+      assert.ok(geometry.renderedRows > 0 && geometry.renderedRows < expectedRows)
+    }
+    const largerFont = beforeFont.font + 1
+    const heightDelta =
+      expectedRows * (Math.round(largerFont * 1.8) - Math.round(beforeFont.font * 1.8))
+    await changeFont('increaseFontSize', largerFont, beforeFont.bodyHeight + heightDelta)
+    await changeFont('decreaseFontSize', beforeFont.font, beforeFont.bodyHeight)
+  }, [
+    [
+      'restore font',
+      async () => {
+        if (fontIncreased) await activateFontAction(control, 'decreaseFontSize')
+      },
+    ],
+    [
+      'release large Diff',
+      async () => {
+        if (diffContainerId) await renderer('Runtime.releaseObject', { objectId: diffContainerId })
+      },
+    ],
+    ['detach renderer', detach],
+  ])
+}
 
 export async function verifyWorkspaceReviewRefresh({
   control,
@@ -26,10 +268,14 @@ export async function verifyWorkspaceReviewRefresh({
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-  const refreshReview = async marker => {
-    await control.command('clickWhenEnabled', reviewRefreshSelector, {
+  const toolbarSelector = `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-toolbar"]`
+  const readToolbar = () => control.command('getText', toolbarSelector)
+  const clickRefresh = () =>
+    control.command('clickWhenEnabled', reviewRefreshSelector, {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+  const refreshReview = async marker => {
+    await clickRefresh()
     return waitForReviewLine(marker)
   }
   await waitForReviewLine(REVIEW_RESTORE_MARKER)
@@ -41,53 +287,20 @@ export async function verifyWorkspaceReviewRefresh({
   assert.ok(reviewTarget, 'Missing the actual workbench renderer for review inspection')
   const renderer = (method, params) =>
     devtools({ action: 'command', target: reviewTarget, method, params })
-  let previousReviewId
-  try {
-    const previousReview = await renderer('Runtime.evaluate', {
-      expression: `document.querySelector(${JSON.stringify(reviewLinesSelector)})`,
-    })
-    previousReviewId = previousReview.result.objectId
-    assert.ok(previousReviewId, 'Missing the original loaded Diff view')
-    await control.command('clickWhenEnabled', reviewRefreshSelector, {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    const replaced = await renderer('Runtime.callFunctionOn', {
-      objectId: previousReviewId,
-      functionDeclaration: `function (timeout) {
-        if (!this.isConnected) return true
-        return new Promise(resolve => {
-          const finish = replaced => {
-            observer.disconnect()
-            clearTimeout(timer)
-            resolve(replaced)
-          }
-          const observer = new MutationObserver(() => {
-            if (!this.isConnected) finish(true)
-          })
-          observer.observe(document, { childList: true, subtree: true })
-          const timer = setTimeout(() => finish(false), timeout)
-        })
-      }`,
-      arguments: [{ value: DEFAULT_STEP_TIMEOUT_MS }],
-      awaitPromise: true,
-      returnByValue: true,
-    })
-    assert.equal(replaced.result?.value, true, 'Unchanged review refresh did not reload the Diff')
-    const unchangedReview = await waitForReviewLine(REVIEW_RESTORE_MARKER)
-    assert.ok(unchangedReview.includes(FILE_PREVIEW_RESTORE_MARKER))
-  } finally {
-    try {
-      if (previousReviewId) await renderer('Runtime.releaseObject', { objectId: previousReviewId })
-    } finally {
-      await devtools({ action: 'detach', target: reviewTarget })
-    }
-  }
+  const detach = () => devtools({ action: 'detach', target: reviewTarget })
+  await verifyUnchangedRefresh({
+    renderer,
+    detach,
+    reviewLinesSelector,
+    clickRefresh,
+    waitForReviewLine,
+  })
 
   const readmePath = join(workspacePath, GIT_SEED_NAME)
   const originalReadme = await readFile(readmePath, 'utf8')
   const refreshedReviewMarker = 'WEWORK_DESKTOP_E2E_REVIEW_REFRESHED'
   assert.ok(originalReadme.includes(REVIEW_RESTORE_MARKER))
-  try {
+  await withReviewCleanup(async () => {
     await writeFile(
       readmePath,
       originalReadme.replace(REVIEW_RESTORE_MARKER, refreshedReviewMarker)
@@ -96,10 +309,7 @@ export async function verifyWorkspaceReviewRefresh({
     assert.ok(changedReview.includes(FILE_PREVIEW_RESTORE_MARKER))
     assert.ok(!changedReview.includes(REVIEW_RESTORE_MARKER), 'The review rendered stale code')
     assert.match(
-      await control.command(
-        'getText',
-        `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-toolbar"]`
-      ),
+      await readToolbar(),
       /\+2\s*-0/,
       'Changing content without changing the line count altered the review statistics'
     )
@@ -109,157 +319,17 @@ export async function verifyWorkspaceReviewRefresh({
     await writeFile(readmePath, originalReadme + extraLines.join('\n') + '\n')
     await refreshReview(extraLines[0])
     const expectedRows = originalReadme.trimEnd().split('\n').length + extraLines.length
-    let diffContainerId
-    let fontIncreased = false
-    try {
-      const container = await renderer('Runtime.evaluate', {
-        expression: `document.querySelector(${JSON.stringify(reviewLinesSelector + ' [data-review-path="' + GIT_SEED_NAME + '"] diffs-container')})`,
-      })
-      diffContainerId = container.result.objectId
-      assert.ok(diffContainerId, 'Missing the actual large Diff renderer')
-      const readGeometry = async (expected = null) => {
-        const result = await renderer('Runtime.callFunctionOn', {
-          objectId: diffContainerId,
-          functionDeclaration: `function (expected, timeout) {
-            const read = () => {
-              if (!this.isConnected) return { connected: false }
-              const body = this.closest('[data-testid="file-changes-review-file-diff-body"]')
-              const scroller = body.closest('.scrollbar-soft')
-              const rect = scroller.getBoundingClientRect()
-              const top = rect.top + scroller.clientTop
-              const lines = [...this.shadowRoot.querySelectorAll('[data-line][data-line-index]')]
-                .map(line => {
-                  const bounds = line.getBoundingClientRect()
-                  return { index: line.dataset.lineIndex, text: line.textContent, offset: bounds.top - top, height: bounds.height }
-                })
-              const visible = lines.filter(line => line.offset + line.height > 0 && line.offset < scroller.clientHeight)
-              const anchor = expected?.anchor
-                ? lines.find(line => line.index === expected.anchor.index && line.text === expected.anchor.text)
-                : visible.find(line => line.offset >= 0)
-              return {
-                connected: this.isConnected,
-                font: parseFloat(getComputedStyle(this).getPropertyValue('--text-code')),
-                bodyHeight: body?.getBoundingClientRect().height,
-                renderedRows: lines.length,
-                visibleRows: visible.length,
-                anchor,
-                scrollTop: scroller.scrollTop,
-                max: scroller.scrollHeight - scroller.clientHeight,
-                viewportHeight: scroller.clientHeight,
-                x: rect.left + scroller.clientWidth / 2,
-                y: top + Math.min(200, scroller.clientHeight / 2)
-              }
-            }
-            if (expected === null) return read()
-            return new Promise(resolve => {
-              let frame, last, previous, stable = 0
-              const finish = () => {
-                cancelAnimationFrame(frame)
-                clearTimeout(timer)
-                resolve(last)
-              }
-              const timer = setTimeout(finish, timeout)
-              const check = () => {
-                last = read()
-                const ready = last.connected && last.visibleRows > 0 && last.anchor &&
-                  (expected.middle
-                    ? last.scrollTop > last.viewportHeight && last.scrollTop < last.max - last.viewportHeight / 4
-                    : last.font === expected.font &&
-                      Math.abs(last.anchor.height - Math.round(expected.font * 1.8)) <= 1 &&
-                      Math.abs(last.bodyHeight - expected.bodyHeight) <= 3 &&
-                      Math.abs(last.anchor.offset - expected.anchor.offset) <= 2)
-                const fingerprint = JSON.stringify(last)
-                stable = ready && fingerprint === previous ? stable + 1 : 0
-                previous = fingerprint
-                if (stable >= 2) finish()
-                else frame = requestAnimationFrame(check)
-              }
-              check()
-            })
-          }`,
-          arguments: [{ value: expected }, { value: DEFAULT_STEP_TIMEOUT_MS }],
-          awaitPromise: true,
-          returnByValue: true,
-        })
-        assert.ok(!result.exceptionDetails, JSON.stringify(result.exceptionDetails))
-        return result.result.value
-      }
-      const topViewport = await readGeometry()
-      assert.ok(topViewport.max > 2 * topViewport.viewportHeight, 'The large Diff did not overflow')
-      await renderer('Input.dispatchMouseEvent', {
-        type: 'mouseWheel',
-        x: topViewport.x,
-        y: topViewport.y,
-        deltaX: 0,
-        deltaY: Math.floor(topViewport.max / 2) - topViewport.scrollTop,
-      })
-      const beforeFont = await readGeometry({ middle: true })
-      assert.ok(
-        beforeFont.anchor &&
-          beforeFont.visibleRows > 0 &&
-          beforeFont.scrollTop > beforeFont.viewportHeight &&
-          beforeFont.scrollTop < beforeFont.max - beforeFont.viewportHeight / 4,
-        'Native wheel did not reach the middle of the large Diff'
-      )
-      assert.ok(
-        beforeFont.renderedRows > 0 &&
-          beforeFont.renderedRows < expectedRows &&
-          Math.abs(beforeFont.anchor.height - Math.round(beforeFont.font * 1.8)) <= 1,
-        'The live font fixture did not exercise Diff row virtualization'
-      )
-      const changeFont = async (action, font, expectedHeight) => {
-        assert.equal(
-          JSON.parse(
-            await control.command('activateApplicationMenu', 'body', {
-              value: JSON.stringify({ id: `view.${action}` }),
-            })
-          ),
-          true,
-          'The native font-size action did not activate'
-        )
-        fontIncreased = action === 'increaseFontSize'
-        const geometry = await readGeometry({
-          font,
-          bodyHeight: expectedHeight,
-          anchor: beforeFont.anchor,
-        })
-        assert.ok(
-          geometry.connected &&
-            geometry.font === font &&
-            geometry.anchor?.index === beforeFont.anchor.index &&
-            geometry.anchor.text === beforeFont.anchor.text &&
-            Math.abs(geometry.anchor.height - Math.round(font * 1.8)) <= 1 &&
-            Math.abs(geometry.anchor.offset - beforeFont.anchor.offset) <= 2 &&
-            geometry.visibleRows > 0 &&
-            Math.abs(geometry.bodyHeight - expectedHeight) <= 3,
-          `The existing Diff did not update all virtual row heights and preserve its reader line: ${JSON.stringify({ geometry, expectedHeight })}`
-        )
-        assert.ok(geometry.renderedRows > 0 && geometry.renderedRows < expectedRows)
-      }
-      const largerFont = beforeFont.font + 1
-      const heightDelta =
-        expectedRows * (Math.round(largerFont * 1.8) - Math.round(beforeFont.font * 1.8))
-      await changeFont('increaseFontSize', largerFont, beforeFont.bodyHeight + heightDelta)
-      await changeFont('decreaseFontSize', beforeFont.font, beforeFont.bodyHeight)
-    } finally {
-      try {
-        if (fontIncreased) {
-          await control.command('activateApplicationMenu', 'body', {
-            value: JSON.stringify({ id: 'view.decreaseFontSize' }),
-          })
-        }
-      } finally {
-        try {
-          if (diffContainerId)
-            await renderer('Runtime.releaseObject', { objectId: diffContainerId })
-        } finally {
-          await devtools({ action: 'detach', target: reviewTarget })
-        }
-      }
-    }
-  } finally {
-    await writeFile(readmePath, originalReadme)
-  }
-  const restoredReview = await refreshReview(REVIEW_RESTORE_MARKER)
+    await verifyLiveFontRoundTrip({ control, renderer, detach, reviewLinesSelector, expectedRows })
+  }, [['restore README', () => writeFile(readmePath, originalReadme)]])
+  await clickRefresh()
+  const restoredStats = /\+2\s*-0(?!\d)/
+  await waitForValue(
+    readToolbar,
+    text => restoredStats.test(text),
+    'The restored review did not return the original Diff statistics',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const restoredReview = await waitForReviewLine(REVIEW_RESTORE_MARKER)
+  assert.match(await readToolbar(), restoredStats, 'The restored Diff statistics changed')
   assert.ok(!restoredReview.includes(refreshedReviewMarker))
 }

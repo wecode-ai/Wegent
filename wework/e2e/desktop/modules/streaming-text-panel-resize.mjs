@@ -17,7 +17,11 @@ import {
 } from './streaming-text-fixture.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
-import { DEFAULT_STEP_TIMEOUT_MS as STEP_TIMEOUT } from './shared.mjs'
+import {
+  DEFAULT_STEP_TIMEOUT_MS as STEP_TIMEOUT,
+  DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
+  DESKTOP_CONTROL_RESULT_GRACE_MS,
+} from './shared.mjs'
 import { verifyConversationSwitchPosition } from './streaming-text-switch-stability.mjs'
 
 const PROMPT = 'WEWORK_STREAMING_PANEL_RESIZE'
@@ -59,35 +63,58 @@ async function assertStreamActive(control) {
   )
 }
 
+async function collectFailure(failures, action) {
+  try {
+    await action()
+  } catch (error) {
+    failures.push(error)
+  }
+}
+
+function throwFailures(failures, message) {
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, message, { cause: failures[0] })
+}
+
 async function toggleAndSample(control, { resultDir, name, open, pinned, marker = MARKER }) {
   let sample
-  let expired = false
-  await control.command('startElementMetricsSampling', SCROLLER_SELECTOR, {
-    value: String(2 * STEP_TIMEOUT),
-    target: `[data-e2e-anchor-id="${marker}"], [data-conversation-message-list], [data-markdown-window-placeholder]`,
-  })
+  const failures = []
+  const commandBudget =
+    STEP_TIMEOUT + DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS + DESKTOP_CONTROL_RESULT_GRACE_MS
+  // Start acknowledgement, baseline read, toggle, panel state, anchor
+  // visibility and stop are six commands. Each poll can finish with one
+  // in-flight command.
+  const pollBudget = STEP_TIMEOUT + commandBudget
   try {
+    await control.command('startElementMetricsSampling', SCROLLER_SELECTOR, {
+      value: String(6 * commandBudget + (pinned ? 2 : 1) * pollBudget),
+      target: `[data-e2e-anchor-id="${marker}"], [data-conversation-message-list], [data-markdown-window-placeholder]`,
+    })
     // This captures the pre-toggle frame and the first frame at the new width.
-    const { frames } = JSON.parse(
-      await control.command('getElementMetricsSample', SCROLLER_SELECTOR)
-    )
-    assert.ok(frames[0]?.clientWidth > 0, `${name}: the sampler has no visible baseline frame`)
-    const initialWidth = frames[0].clientWidth
+    const readWidths = async () => {
+      const status = JSON.parse(
+        await control.command('getElementMetricsSample', SCROLLER_SELECTOR, {
+          value: 'recentWidths',
+        })
+      )
+      assert.equal(
+        status.done,
+        false,
+        `${name}: frame sampling expired before the width change finished`
+      )
+      return status
+    }
+    const { initialWidth } = await readWidths()
+    assert.ok(initialWidth > 0, `${name}: the sampler has no visible baseline frame`)
     await control.command('clickWhenEnabled', TOGGLE)
     await control.command('waitFor', `${SHELL}[aria-hidden="${!open}"]`, {
       timeoutMs: STEP_TIMEOUT,
     })
     await waitForValue(
-      async () => JSON.parse(await control.command('getElementMetricsSample', SCROLLER_SELECTOR)),
-      value => {
-        const recent = value.frames.slice(-2)
-        return (
-          recent.length === 2 &&
-          recent.every(frame =>
-            open ? frame.clientWidth < initialWidth - 80 : frame.clientWidth > initialWidth + 80
-          )
-        )
-      },
+      readWidths,
+      ({ recentWidths }) =>
+        recentWidths.length === 2 &&
+        recentWidths.every(width => (open ? width < initialWidth - 80 : width > initialWidth + 80)),
       `${name}: the changed conversation width was not painted`,
       STEP_TIMEOUT
     )
@@ -99,31 +126,46 @@ async function toggleAndSample(control, { resultDir, name, open, pinned, marker 
       stableMs: 250,
       timeoutMs: STEP_TIMEOUT,
     })
+  } catch (error) {
+    failures.push(error)
   } finally {
-    expired = JSON.parse(await control.command('getElementMetricsSample', SCROLLER_SELECTOR)).done
-    sample = JSON.parse(await control.command('stopElementMetricsSampling', SCROLLER_SELECTOR))
-    const diagnostics = JSON.parse(
-      await control.command('getConversationDiagnosticsSnapshot', 'body')
-    )
-    await writeFile(
-      join(resultDir, `conversation-panel-resize-${name}.json`),
-      JSON.stringify({ sample, diagnostics, expired }, null, 2)
-    )
+    await collectFailure(failures, async () => {
+      sample = JSON.parse(await control.command('stopElementMetricsSampling', SCROLLER_SELECTOR))
+    })
+    await collectFailure(failures, async () => {
+      const diagnostics = JSON.parse(
+        await control.command('getConversationDiagnosticsSnapshot', 'body')
+      )
+      await writeFile(
+        join(resultDir, `conversation-panel-resize-${name}.json`),
+        JSON.stringify({ sample, diagnostics, expired: sample?.expired }, null, 2)
+      )
+    })
   }
-  assert.equal(expired, false, `${name}: frame sampling expired before the width change finished`)
+  throwFailures(failures, `${name}: frame sampling and diagnostics failed`)
+  assert.equal(
+    sample.expired,
+    false,
+    `${name}: frame sampling expired before the width change finished`
+  )
   assert.ok(sample.frames.length >= 3, `${name}: not enough sampled animation frames`)
   const initial = sample.frames[0]
   const final = sample.frames.at(-1)
   const firstAnchor = initial.elements.find(element => element.anchorId === marker)
   assert.ok(firstAnchor, `${name}: the anchor must be mounted in the baseline frame`)
   const firstOffset = firstAnchor.top - initial.top
+  let leftInitialWidth = false
   for (const frame of sample.frames) {
+    const atInitialWidth = Math.abs(frame.clientWidth - initial.clientWidth) <= 1
     assert.ok(
-      frame.connected &&
-        (Math.abs(frame.clientWidth - initial.clientWidth) <= 1 ||
-          Math.abs(frame.clientWidth - final.clientWidth) <= 1),
+      frame.connected && (atInitialWidth || Math.abs(frame.clientWidth - final.clientWidth) <= 1),
       `${name}: the conversation had an intermediate width or lost its viewport: ${JSON.stringify(frame)}`
     )
+    assert.ok(
+      !leftInitialWidth || !atInitialWidth,
+      `${name}: the conversation returned to its baseline width: ${JSON.stringify(frame)}`
+    )
+    leftInitialWidth ||= !atInitialWidth
     assert.ok(
       frame.elements.some(element => element.conversationVirtualizerEnabled === 'true'),
       `${name}: virtualized rendering was lost during the resize`
@@ -348,19 +390,25 @@ export function createConversationPanelResizeChecks({ resultDir, uiTimeoutMs }) 
         await verifySwitchAfterPlaceholderResize(control, { resultDir, uiTimeoutMs })
         await control.command('press', SCROLLBAR, { key: 'End' })
         await control.command('waitFor', ANCHORS, { text: DONE, visible: true })
-        if (resizeFailures.length) {
-          throw new AggregateError(resizeFailures, 'Conversation panel resize was unstable')
-        }
+      } catch (error) {
+        resizeFailures.push(error)
       } finally {
         cleanup()
-        await control.command('setConversationFrameProbeEnabled', 'body', { value: 'false' })
-        if (originallyOpen !== undefined) {
-          const open =
-            (await control.command('getAttribute', SHELL, { value: 'aria-hidden' })) === 'false'
-          if (open !== originallyOpen) await control.command('clickWhenEnabled', TOGGLE)
-        }
-        await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
+        await collectFailure(resizeFailures, () =>
+          control.command('setConversationFrameProbeEnabled', 'body', { value: 'false' })
+        )
+        await collectFailure(resizeFailures, async () => {
+          if (originallyOpen !== undefined) {
+            const open =
+              (await control.command('getAttribute', SHELL, { value: 'aria-hidden' })) === 'false'
+            if (open !== originallyOpen) await control.command('clickWhenEnabled', TOGGLE)
+          }
+        })
+        await collectFailure(resizeFailures, () =>
+          control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
+        )
       }
+      throwFailures(resizeFailures, 'Conversation panel resize was unstable')
     },
   }
 }

@@ -4426,6 +4426,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           phase = value
         },
       })
+      phase = 'workspace-resources-restored'
 
       await control.command('click', linkedFileTabSelector)
       await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {

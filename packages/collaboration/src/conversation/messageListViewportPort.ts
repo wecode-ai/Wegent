@@ -230,17 +230,22 @@ export function createMessageListViewportPort() {
           input.virtual !== next.virtual ||
           input.virtualizer !== next.virtualizer)
       )
-      const nextLayout = next.ready && previousLayout?.layoutKey !== next.layoutKey
+      // Initial measurements can arrive before the virtualizer has committed
+      // any rows. The first usable column is initialization, not a resize of
+      // an existing viewport (for example when a restored pane docks a panel).
+      const activeLayout = next.ready && next.virtualizer.options.enabled && next.rows.length > 0
+      if (!activeLayout) previousLayout = null
+      const previousWidth = previousLayout?.layoutWidth
+      const nextLayout = activeLayout && previousLayout?.layoutKey !== next.layoutKey
       const widthOnly =
         nextLayout &&
         !ownerChanged &&
         previousLayout !== null &&
         previousLayout.layoutWidth !== next.layoutWidth &&
-        previousLayout.layoutPropertiesKey === next.layoutPropertiesKey &&
-        next.virtualizer.options.enabled
+        previousLayout.layoutPropertiesKey === next.layoutPropertiesKey
       if (
         ownerChanged ||
-        (nextLayout && measurements && measurements.layout.key !== next.layoutKey)
+        (next.ready && measurements && measurements.layout.key !== next.layoutKey)
       ) {
         persist()
         measurements = null
@@ -249,13 +254,7 @@ export function createMessageListViewportPort() {
         recordedRows.clear()
         uncacheable.clear()
       }
-      if (
-        ownerChanged ||
-        !next.ready ||
-        !next.virtualizer.options.enabled ||
-        (nextLayout && !widthOnly)
-      )
-        pendingResize = null
+      if (ownerChanged || !activeLayout || (nextLayout && !widthOnly)) pendingResize = null
       const resize = widthOnly ? Symbol('message-list-resize') : null
       if (resize !== null) pendingResize = resize
       if (!input || ownerChanged || (next.ready && !input.ready)) restoreMeasurements(next)
@@ -302,6 +301,10 @@ export function createMessageListViewportPort() {
             rangeEnd: next.virtualizer.range?.endIndex,
             renderedCount: next.rows.length,
             totalSize: next.totalSize,
+            width: next.layoutWidth,
+            previousWidth,
+            virtualizerEnabled: next.virtualizer.options.enabled,
+            pendingResize: pendingResize !== null,
             scrollTop: scroller?.scrollTop,
             scrollHeight: scroller?.scrollHeight,
             clientHeight: scroller?.clientHeight,

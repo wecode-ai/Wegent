@@ -325,6 +325,7 @@ it('restores the bottom immediately after width changes even while streaming', (
   expect(state.getSnapshot().mode).toBe('follow')
 
   scrollHeight += 200
+  const previousFrameCount = requestFrame.mock.calls.length
   state.update(
     {
       ...input,
@@ -332,7 +333,8 @@ it('restores the bottom immediately after width changes even while streaming', (
     },
     ports
   )
-  requestFrame.mock.lastCall?.[0](32)
+  expect(requestFrame).toHaveBeenCalledTimes(previousFrameCount + 1)
+  requestFrame.mock.calls[previousFrameCount][0](32)
   expect(scrollTo).toHaveBeenLastCalledWith({ top: 2960, behavior: 'smooth' })
   releaseContent()
   dispose()
