@@ -956,6 +956,14 @@ describe('runtimeConversationCache', () => {
   })
 
   test('keeps goal, plan, and subagent state independently from a mounted pane', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
+    const emptyMetadata = getRuntimeConversationMetadata(address)
+
+    settleRuntimeConversationSubagents(address)
+    expect(getRuntimeConversationMetadata(address)).toBe(emptyMetadata)
+    expect(listener).not.toHaveBeenCalled()
+
     setRuntimeConversationGoal(address, {
       threadId: 'thread-1',
       objective: 'Finish the fix',
@@ -995,9 +1003,17 @@ describe('runtimeConversationCache', () => {
       ],
     })
 
+    listener.mockClear()
     settleRuntimeConversationSubagents(address)
 
-    expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
+    const settledMetadata = getRuntimeConversationMetadata(address)
+    expect(settledMetadata.subagentStatuses[0]?.status).toBe('done')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    settleRuntimeConversationSubagents(address)
+    expect(getRuntimeConversationMetadata(address)).toBe(settledMetadata)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
   })
 
   test('bounds subagent status metadata across a long-running conversation', () => {
