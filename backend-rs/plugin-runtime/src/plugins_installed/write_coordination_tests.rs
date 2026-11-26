@@ -1157,6 +1157,33 @@ async fn batch_never_holds_another_plugin_while_waiting_for_a_busy_one() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn receipt_does_not_restart_scope_lookup_after_its_last_redis_poll() {
+    let redis = LeaseRedis::default();
+    let held = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["plugin-a".into()])
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_millis(75);
+    let mut scope_lookups = 0;
+    let result = super::super::plugin_sync_protocol::retry_plugin_receipt(deadline, || {
+        scope_lookups += 1;
+        PluginWriteLease::acquire_receipt_names_until(
+            Some(&redis),
+            23,
+            vec!["plugin-a".into()],
+            deadline,
+        )
+    })
+    .await;
+    let error = result
+        .err()
+        .expect("The foreground writer still holds the lease");
+    assert_eq!(plugin_write_error_code(&error), Some("plugin_write_busy"));
+    assert_eq!(scope_lookups, 1);
+    assert_eq!(Instant::now(), deadline);
+    held.release().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn slow_batch_acquisition_stops_at_the_shared_deadline_and_releases_owned_keys() {
     let redis = LeaseRedis {
         set_delay: Duration::from_millis(75),

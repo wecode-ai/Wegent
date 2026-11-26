@@ -204,12 +204,14 @@ console.log(JSON.stringify(totals))
 `
 
 export function revenueProgram(root, phase) {
-  const setup = `${prelude}const dir=${JSON.stringify(join(root, 'revenue-fixture'))};${captureNodeOutput}`
+  const setup = `${prelude}const dir=${JSON.stringify(join(root, 'revenue-fixture'))};`
+  // Phase three runs read-only. Forward the analyzer's stderr to the outer
+  // native command so the scenario can check it without creating capture files.
   if (phase === 3)
-    return `${setup}const before=fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8');const result=runNode(['analyze.mjs']);assert.equal(result.status,1,result.stdout+result.stderr);assert.match(result.stderr,/Invalid amount: not-a-number/);assert.equal(fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8'),before);console.log(result.stderr);console.log('DOTS_REVENUE_INVALID_AMOUNT');`
+    return `${setup}const before=fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8');const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,stdio:['ignore','inherit','inherit']});assert.ifError(result.error);assert.equal(result.status,1);assert.equal(fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8'),before);console.log('DOTS_REVENUE_INVALID_AMOUNT');`
   if (phase === 1)
-    return `${setup}fs.writeFileSync(p.join(dir,'analyze.mjs'),${JSON.stringify(analysisScript)});const result=runNode(['analyze.mjs']);assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:30000,refunded:0,pending:5000,total:35000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V1_VERIFIED');`
-  return `${setup}const result=runNode(['analyze.mjs']);assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:10000,refunded:20000,pending:35000,total:65000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V${phase}_VERIFIED');`
+    return `${setup}${captureNodeOutput}fs.writeFileSync(p.join(dir,'analyze.mjs'),${JSON.stringify(analysisScript)});const result=runNode(['analyze.mjs']);assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:30000,refunded:0,pending:5000,total:35000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V1_VERIFIED');`
+  return `${setup}${captureNodeOutput}const result=runNode(['analyze.mjs']);assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:10000,refunded:20000,pending:35000,total:65000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V${phase}_VERIFIED');`
 }
 
 export function followupProgram(root) {

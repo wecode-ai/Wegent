@@ -10,6 +10,45 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class DownloadDialogInput {
+  [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out int pid);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr window);
+  [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr window, ref Point point);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window, uint flags);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  public static void RightClick(int pid, int x, int y) {
+    var window = GetForegroundWindow();
+    int owner;
+    GetWindowThreadProcessId(window, out owner);
+    if (owner != pid) throw new InvalidOperationException("The isolated app is not in the foreground");
+    var scale = GetDpiForWindow(window) / 96.0;
+    var point = new Point { X = (int)Math.Round(x * scale), Y = (int)Math.Round(y * scale) };
+    if (!ClientToScreen(window, ref point) || !SetCursorPos(point.X, point.Y))
+      throw new InvalidOperationException("Could not move the pointer into the isolated app");
+    mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero);
+    mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero);
+  }
+  public static void ClickDialogButton(IntPtr dialog, int x, int y) {
+    var target = WindowFromPoint(new Point { X = x, Y = y });
+    if (GetForegroundWindow() != dialog || GetAncestor(target, 2) != dialog)
+      throw new InvalidOperationException("The button is not exposed in the foreground download dialog");
+    if (!SetCursorPos(x, y)) throw new InvalidOperationException("Could not move the pointer onto the download dialog button");
+    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+  }
+}
+'@
+[void][DownloadDialogInput]::SetThreadDpiAwarenessContext([IntPtr](-4))
+
 function Find-OwnedWindows {
     $condition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId)
@@ -27,6 +66,7 @@ function Find-SaveDialogs {
         # Electron's download delegate uses the final download URL as the
         # dialog title when setSaveDialogOptions supplies only defaultPath.
         $window.ClassName -eq '#32770' -and
+            [DownloadDialogInput]::IsWindowVisible([IntPtr]$window.NativeWindowHandle) -and
             [Uri]::TryCreate($window.Name, [UriKind]::Absolute, [ref]$url) -and
             $url.GetLeftPart([UriPartial]::Authority) -eq $env:WEWORK_E2E_DOWNLOAD_FIXTURE_ORIGIN
     }
@@ -47,34 +87,7 @@ if ($Action -eq 'list') {
 }
 
 if ($Action -eq 'context-menu') {
-    Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class DownloadMenuPointer {
-  [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out int pid);
-  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
-  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
-  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-  [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
-  public static void RightClick(int pid, int x, int y) {
-    SetThreadDpiAwarenessContext(new IntPtr(-4));
-    var window = GetForegroundWindow();
-    int owner;
-    GetWindowThreadProcessId(window, out owner);
-    if (owner != pid) throw new InvalidOperationException("The isolated app is not in the foreground");
-    var scale = GetDpiForWindow(window) / 96.0;
-    var point = new Point { X = (int)Math.Round(x * scale), Y = (int)Math.Round(y * scale) };
-    if (!ClientToScreen(window, ref point) || !SetCursorPos(point.X, point.Y))
-      throw new InvalidOperationException("Could not move the pointer into the isolated app");
-    mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero);
-    mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero);
-  }
-}
-'@
-    [DownloadMenuPointer]::RightClick($AppProcessId, $X, $Y)
+    [DownloadDialogInput]::RightClick($AppProcessId, $X, $Y)
     $kind = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::MenuItem)
@@ -94,34 +107,41 @@ public static class DownloadMenuPointer {
 }
 
 $existing = $env:WEWORK_E2E_DOWNLOAD_EXISTING_DIALOGS | ConvertFrom-Json
-$foundDialog = $false
+$dialogState = $null
 while ([DateTime]::UtcNow -lt $deadline) {
     $dialogs = @(Find-SaveDialogs | Where-Object { [string]$_.Current.NativeWindowHandle -notin $existing })
     if ($dialogs.Count -gt 1) { throw 'More than one new native Save As dialog was found' }
     if ($dialogs.Count -eq 1) {
-        $foundDialog = $true
         $dialog = $dialogs[0]
         $button = Find-ById $dialog $(if ($Action -eq 'save') { '1' } else { '2' })
-        if ($null -ne $button -and $button.Current.IsEnabled) {
+        $handle = [IntPtr]$dialog.Current.NativeWindowHandle
+        $foreground = [DownloadDialogInput]::GetForegroundWindow() -eq $handle
+        $dialogState = "window=$handle foreground=$foreground"
+        if ($null -ne $button) {
+            $dialogState += " control=$($button.Current.ControlType.ProgrammaticName) enabled=$($button.Current.IsEnabled) offscreen=$($button.Current.IsOffscreen)"
+        }
+        if ($null -ne $button -and $button.Current.IsEnabled -and -not $button.Current.IsOffscreen -and
+            $button.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+            $foreground) {
             if ($Action -eq 'save') {
                 $editor = Find-ById $dialog '1001'
                 if ($null -eq $editor) { throw 'Could not find the native Save As filename field' }
                 $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($env:WEWORK_E2E_DOWNLOAD_SAVE_PATH)
             }
             $receipt = @{ windowId = [string]$dialog.Current.NativeWindowHandle; title = $dialog.Current.Name }
-            $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+            $point = $button.GetClickablePoint()
+            [DownloadDialogInput]::ClickDialogButton($handle, [int]$point.X, [int]$point.Y)
             do {
-                $stillOpen = @(Find-SaveDialogs | Where-Object { [string]$_.Current.NativeWindowHandle -eq $receipt.windowId })
-                if ($stillOpen.Count -eq 0) {
+                if (-not [DownloadDialogInput]::IsWindowVisible($handle)) {
                     ConvertTo-Json -Compress -InputObject $receipt
                     exit 0
                 }
                 Start-Sleep -Milliseconds 80
             } while ([DateTime]::UtcNow -lt $deadline)
-            throw 'The native Save As dialog did not close after its button was invoked'
+            throw "The native Save As dialog ${handle} remained visible after clicking its $Action button"
         }
     }
     Start-Sleep -Milliseconds 80
 }
-if ($foundDialog) { throw "The owned native download dialog did not expose an enabled $Action button" }
+if ($dialogState) { throw "The owned native download dialog did not expose a clickable $Action button ($dialogState)" }
 throw 'Could not find the owned native Save As dialog'

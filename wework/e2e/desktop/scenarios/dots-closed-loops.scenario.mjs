@@ -243,6 +243,12 @@ export function createDesktopScenario(options) {
         phase === 3 ? 'DOTS_REVENUE_INVALID_AMOUNT' : `DOTS_REVENUE_V${phase}_VERIFIED`
       )
       if (pending) return pending
+      if (phase === 3) {
+        assert.match(
+          checkedCommand.output(key),
+          /^[^\r\n]*Error[^\r\n]*: Invalid amount: not-a-number\r?$/m
+        )
+      }
       if (phase === 2) {
         pending = question(body, `${key}-question`, REVENUE_QUESTION, REVENUE_ANSWER, [
           'Prioritize Cedar O4 pending 30000 cents',
