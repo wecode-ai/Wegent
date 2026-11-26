@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { cpus } from 'node:os'
 import { processes as readSystemProcesses, type Systeminformation } from 'systeminformation'
 import type { SystemProcessInfo } from '../core/build-snapshot.js'
+import { resolveProcessName } from './process-name.js'
 import {
   describeError,
   type SystemProcessTable,
@@ -8,6 +10,35 @@ import {
 } from './system-process-table.js'
 
 export type SystemInformationProcessesReader = () => Promise<Systeminformation.ProcessesData>
+
+/** Pid to kernel-reported executable name, or null when it could not be read. */
+export type KernelNamesReader = () => Promise<Map<number, string> | null>
+
+/**
+ * `systeminformation` still guesses the executable boundary in a Linux
+ * command line, which turns URL tails such as `Wegent.git` into process names.
+ * One cheap `ps` call supplies the kernel's `comm` to correct that.
+ */
+async function readLinuxKernelNames(): Promise<Map<number, string> | null> {
+  return new Promise(resolve => {
+    execFile(
+      'ps',
+      ['-axo', 'pid=,comm='],
+      { env: { ...process.env, LC_ALL: 'C' }, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout) => resolve(error ? null : parseKernelNames(stdout))
+    )
+  })
+}
+
+/** Parses `ps -axo pid=,comm=` output. */
+export function parseKernelNames(output: string): Map<number, string> {
+  const names = new Map<number, string>()
+  for (const line of output.split('\n')) {
+    const match = /^\s*(\d+)\s+(\S+)\s*$/.exec(line)
+    if (match) names.set(Number(match[1]), match[2])
+  }
+  return names
+}
 
 /**
  * Cross-platform process table backed by `systeminformation`. It owns the
@@ -18,16 +49,20 @@ export class SystemInformationProcessTable implements SystemProcessTable {
   constructor(
     private readonly readProcesses: SystemInformationProcessesReader = readSystemProcesses,
     private readonly platform: NodeJS.Platform = process.platform,
-    private readonly cpuCount: number = cpus().length
+    private readonly cpuCount: number = cpus().length,
+    private readonly readKernelNames: KernelNamesReader = readLinuxKernelNames
   ) {}
 
   async read(): Promise<SystemProcessTableResult> {
     try {
       const data = await this.readProcesses()
+      const kernelNames = this.platform === 'linux' ? await this.readKernelNames() : null
       const processes = data.list
         .filter(row => Number.isInteger(row.pid) && row.pid > 0)
         .filter(row => !isInternalPowerShell(row) && !isInternalProcessCollector(row))
-        .map(row => toSystemProcessInfo(row, this.platform, this.cpuCount))
+        .map(row =>
+          toSystemProcessInfo(row, this.platform, this.cpuCount, kernelNames?.get(row.pid) ?? null)
+        )
       return { processes, degraded: [] }
     } catch (error) {
       return {
@@ -41,13 +76,14 @@ export class SystemInformationProcessTable implements SystemProcessTable {
 export function toSystemProcessInfo(
   row: Systeminformation.ProcessesProcessData,
   platform: NodeJS.Platform = process.platform,
-  cpuCount: number = cpus().length
+  cpuCount: number = cpus().length,
+  kernelName: string | null = null
 ): SystemProcessInfo {
   const command = launchDetail(row, platform)
   return {
     pid: row.pid,
     parentPid: Number.isFinite(row.parentPid) ? row.parentPid : 0,
-    name: displayName(row),
+    name: kernelName ? resolveProcessName(command ?? '', kernelName) : displayName(row),
     command,
     cpuPercent: normalizeCpuPercent(row.cpu, platform, cpuCount),
     // `memRss` is KiB on every platform supported by systeminformation.

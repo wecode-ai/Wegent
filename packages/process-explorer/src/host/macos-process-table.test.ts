@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MacosProcessTable, parsePsLine, resolveProcessName } from './macos-process-table'
+import { MacosProcessTable, parsePsLine } from './macos-process-table'
+import { resolveProcessName } from './process-name'
 
 const STARTED = 'Thu Nov 12 01:34:32 2026'
 

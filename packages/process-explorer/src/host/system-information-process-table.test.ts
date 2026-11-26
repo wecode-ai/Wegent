@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
 import type { Systeminformation } from 'systeminformation'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  parseKernelNames,
   SystemInformationProcessTable,
   isInternalPowerShell,
   parseStartedAt,
@@ -64,6 +66,54 @@ describe('systeminformation process table', () => {
     const result = await table.read()
 
     expect(result.processes[0]?.cpuPercent).toBe(100)
+  })
+
+  it('corrects Linux names the command-line heuristic misread from the kernel name', async () => {
+    const row = processRow({
+      pid: 42,
+      name: 'Wegent.git',
+      command: 'Wegent.git',
+      params: '',
+      path: '/Applications/Xcode.app/Contents/Developer/usr/libexec/git-core/git-remote-https fork https://github.com/sleepdrop/',
+    })
+    const readKernelNames = vi.fn(async () => new Map([[42, 'git-remote-http']]))
+    const table = new SystemInformationProcessTable(
+      async () => processesData([row]),
+      'linux',
+      8,
+      readKernelNames
+    )
+
+    const result = await table.read()
+
+    expect(result.processes[0]?.name).toBe('git-remote-https')
+    expect(readKernelNames).toHaveBeenCalledOnce()
+  })
+
+  it('keeps heuristic names when the kernel names are unavailable', async () => {
+    const table = new SystemInformationProcessTable(
+      async () => processesData([processRow({ pid: 42, name: 'node' })]),
+      'linux',
+      8,
+      async () => null
+    )
+    expect((await table.read()).processes[0]?.name).toBe('node')
+  })
+
+  it('parses kernel names and ignores other lines', () => {
+    expect([...parseKernelNames('   1 systemd\n 742 git-remote-http\n\n bad line\n')]).toEqual([
+      [1, 'systemd'],
+      [742, 'git-remote-http'],
+    ])
+  })
+
+  // The only coverage that runs a real process table; ubuntu CI executes it.
+  it.skipIf(process.platform !== 'linux')('resolves the live Linux table', async () => {
+    const result = await new SystemInformationProcessTable(undefined, 'linux').read()
+    expect(result.degraded).toEqual([])
+    const kernelName = readFileSync('/proc/self/comm', 'utf8').trim()
+    const self = result.processes.find(row => row.pid === process.pid)
+    expect(self?.name === kernelName || self?.name?.startsWith(kernelName)).toBe(true)
   })
 
   it('hides the ps collector used by systeminformation on Unix', async () => {

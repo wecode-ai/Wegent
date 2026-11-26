@@ -5,6 +5,7 @@ import {
   type SystemProcessTable,
   type SystemProcessTableResult,
 } from './system-process-table.js'
+import { resolveProcessName } from './process-name.js'
 
 export interface PsOutput {
   /** Pid of the `ps` process itself, which lists its own row. */
@@ -13,9 +14,6 @@ export interface PsOutput {
 }
 
 export type PsReader = () => Promise<PsOutput>
-
-/** `ucomm` and executable names are limited to 16 characters by the kernel. */
-const MAX_COMM_LENGTH = 16
 
 /**
  * `ucomm` is always 16 characters wide and `args` is last, so `args` can keep
@@ -87,49 +85,6 @@ export function parsePsLine(line: string): SystemProcessInfo | null {
   }
 }
 
-/**
- * Derives the executable name from the command line and the kernel's
- * `ucomm`. The command line is authoritative when it starts with the
- * executable path, because `ucomm` truncates names longer than 16 characters.
- */
-export function resolveProcessName(args: string, ucomm: string): string {
-  const trimmed = args.trim()
-  const zombie = /^\[(.*)\]$/.exec(trimmed)
-  if (zombie) return zombie[1]
-  if (!ucomm) return firstWord(trimmed)
-  if (!trimmed) return ucomm
-
-  // Find the shortest prefix of the command line whose last path segment is
-  // the executable. Paths with spaces resolve at their real boundary because
-  // no earlier segment can match `ucomm`.
-  let boundary = trimmed.indexOf(' ')
-  while (boundary !== -1) {
-    const candidate = basename(trimmed.slice(0, boundary))
-    if (isExecutableName(candidate, ucomm)) return candidate
-    boundary = trimmed.indexOf(' ', boundary + 1)
-  }
-
-  // The command line does not start with the executable path (PATH lookup,
-  // shell scripts). Its first word is argv[0] when it agrees with `ucomm`.
-  const invoked = basename(firstWord(trimmed))
-  if (isExecutableName(invoked, ucomm)) return invoked
-  // argv[0] was rewritten by the caller; the kernel name is all we know.
-  return ucomm
-}
-
-function isExecutableName(name: string, ucomm: string): boolean {
-  return name === ucomm || (ucomm.length === MAX_COMM_LENGTH && name.startsWith(ucomm))
-}
-
-function firstWord(value: string): string {
-  return value.split(/\s+/, 1)[0] ?? ''
-}
-
-function basename(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1)
-}
-
-/** `lstart` is `Thu Nov 12 01:34:32 2026` in local time. */
 function parseLstart(value: string): number | null {
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : null

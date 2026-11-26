@@ -17,6 +17,8 @@ On macOS the host reads `ps` directly with explicit columns, because the
 kernel-reported executable name is the only reliable one. Other platforms are
 delegated to [`systeminformation`](https://www.npmjs.com/package/systeminformation),
 which owns their platform-specific implementations.
+On Linux one extra `ps -o pid=,comm=` call supplies the kernel name, because
+`systeminformation` reads URL tails such as `Wegent.git` as process names there.
 
 ## Host
 

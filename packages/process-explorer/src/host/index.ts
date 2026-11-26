@@ -14,10 +14,10 @@ export { ProcessExplorerService, type ProcessExplorerServiceOptions } from './se
 export {
   MacosProcessTable,
   parsePsLine,
-  resolveProcessName,
   type PsOutput,
   type PsReader,
 } from './macos-process-table.js'
+export { resolveProcessName } from './process-name.js'
 export {
   describeError,
   type SystemProcessTable,
