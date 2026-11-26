@@ -21,9 +21,14 @@ function Find-OwnedWindows {
 }
 
 function Find-SaveDialogs {
-    $titles = $env:WEWORK_E2E_DOWNLOAD_DIALOG_TITLES | ConvertFrom-Json
     Find-OwnedWindows | Where-Object {
-        $_.Current.ClassName -eq '#32770' -and $_.Current.Name -in $titles
+        $window = $_.Current
+        $url = $null
+        # Electron's download delegate uses the final download URL as the
+        # dialog title when setSaveDialogOptions supplies only defaultPath.
+        $window.ClassName -eq '#32770' -and
+            [Uri]::TryCreate($window.Name, [UriKind]::Absolute, [ref]$url) -and
+            $url.GetLeftPart([UriPartial]::Authority) -eq $env:WEWORK_E2E_DOWNLOAD_FIXTURE_ORIGIN
     }
 }
 
@@ -89,10 +94,12 @@ public static class DownloadMenuPointer {
 }
 
 $existing = $env:WEWORK_E2E_DOWNLOAD_EXISTING_DIALOGS | ConvertFrom-Json
+$foundDialog = $false
 while ([DateTime]::UtcNow -lt $deadline) {
     $dialogs = @(Find-SaveDialogs | Where-Object { [string]$_.Current.NativeWindowHandle -notin $existing })
     if ($dialogs.Count -gt 1) { throw 'More than one new native Save As dialog was found' }
     if ($dialogs.Count -eq 1) {
+        $foundDialog = $true
         $dialog = $dialogs[0]
         $button = Find-ById $dialog $(if ($Action -eq 'save') { '1' } else { '2' })
         if ($null -ne $button -and $button.Current.IsEnabled) {
@@ -116,4 +123,5 @@ while ([DateTime]::UtcNow -lt $deadline) {
     }
     Start-Sleep -Milliseconds 80
 }
+if ($foundDialog) { throw "The owned native download dialog did not expose an enabled $Action button" }
 throw 'Could not find the owned native Save As dialog'

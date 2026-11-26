@@ -13,8 +13,12 @@ import {
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  selectedToolCall,
+  selectTool,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
+  shellCommandPollResponse,
   shellCommandResponse,
   shellCommandRequestDiagnostic,
 } from '../modules/shell-command-response.mjs'
@@ -24,6 +28,32 @@ const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
 const FOLLOWUP = 'STAND_IN_CONFIRMATION_FOLLOWUP'
 const ROOT = '[data-testid="stand-in-overview"]'
+const WRITE_CALL = 'stand-in-file-write'
+
+function approvedWriteEvents(body) {
+  let callId = WRITE_CALL
+  for (let sequence = 1; requestContainsToolOutput(body, callId); sequence += 1) {
+    const output = toolOutputText(body, callId)
+    const cellId = output.match(/^Script running with cell ID (\S+)/)?.[1]
+    const sessionId = output.match(/^Process running with session ID (\d+)/m)?.[1]
+    if (!cellId && !sessionId) {
+      assert.match(output, /^(?:Process exited with code 0|Exit code: 0)\r?$/m)
+      assert.ok(JSON.stringify(body.input ?? []).includes(FOLLOWUP))
+      return [assistantMessage('已按你的单次确认完成操作。')]
+    }
+    callId = `${WRITE_CALL}-poll-${sequence}`
+    if (!requestContainsToolOutput(body, callId)) {
+      if (cellId) {
+        return selectedToolCall(
+          callId,
+          selectTool(body, 'wait', { cell_id: cellId, yield_time_ms: 1000 })
+        )
+      }
+      return shellCommandPollResponse(body, callId, Number(sessionId))
+    }
+  }
+  throw new Error('The approved command has no tool result')
+}
 
 export function createDesktopScenario({
   captureScreenshot,
@@ -44,17 +74,13 @@ export function createDesktopScenario({
       if (!JSON.stringify(body.input ?? []).includes(PROMPT)) return false
       const id = `stand-in-approval-${Date.now()}`
       let events
-      if (requestContainsToolOutput(body, 'stand-in-file-write')) {
-        assert.ok(
-          JSON.stringify(body.input ?? []).includes(FOLLOWUP),
-          'The approved turn must receive the follow-up'
-        )
-        events = [assistantMessage('已按你的单次确认完成操作。')]
+      if (requestContainsToolOutput(body, WRITE_CALL)) {
+        events = approvedWriteEvents(body)
       } else {
         try {
           events = shellCommandResponse(
             body,
-            'stand-in-file-write',
+            WRITE_CALL,
             process.platform === 'win32'
               ? `New-Item -ItemType File -Path 'stand-in-approved.txt' -ErrorAction Stop | Out-Null; rm -LiteralPath 'stand-in-firm.tmp'`
               : `touch '${file.replaceAll("'", "'\\''")}' && rm '${cleanupFile.replaceAll("'", "'\\''")}'`,
