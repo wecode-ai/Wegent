@@ -1,5 +1,6 @@
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
+import { hideAnsweredQuestionSummaries } from './answeredQuestionPresentation'
 import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
 import {
   isCancelledAssistantMessage,
@@ -54,7 +55,6 @@ import {
 } from '../markdown/MarkdownWindowingScope'
 
 export interface MessageListProps {
-  assistantMessageStyle?: 'plain' | 'bubble'
   showProcessingStatus?: boolean
   userMessageServices: UserMessageServices
   virtualize?: boolean
@@ -150,7 +150,6 @@ export const MessageList = memo(function MessageList({
   useContentVisibility = false,
   onVirtualMeasurement,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   messages,
   turns = EMPTY_TURNS,
@@ -235,6 +234,10 @@ export const MessageList = memo(function MessageList({
     [turns]
   )
   const visibleMessages = useMemo(() => {
+    const displayMessages =
+      showProcessingStatus === false
+        ? hideAnsweredQuestionSummaries(resolvedMessages)
+        : resolvedMessages
     const userTurns = new Set(
       resolvedMessages
         .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
@@ -246,8 +249,10 @@ export const MessageList = memo(function MessageList({
         .map(message => message.turnId)
         .filter(turnId => turnId && !userTurns.has(turnId))
     )
-    return resolvedMessages.filter(message => {
+    return displayMessages.filter((message, index) => {
       if (isStandInActivityMessage(message)) return false
+      const questionSummaryRemoved = message !== resolvedMessages[index]
+      if (questionSummaryRemoved && !shouldRenderMessage(message, false)) return false
       if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
         const turn = runtimeTurnsById.get(message.turnId)
         if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
@@ -261,9 +266,9 @@ export const MessageList = memo(function MessageList({
           return true
         if (isCompletedStandInActivityTrace(message)) return false
       }
-      return shouldRenderMessage(message)
+      return questionSummaryRemoved || shouldRenderMessage(message)
     })
-  }, [resolvedMessages, runtimeTurnsById])
+  }, [resolvedMessages, runtimeTurnsById, showProcessingStatus])
   // Native crash history may retain an open status; only its latest root turn is live.
   const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
@@ -289,7 +294,9 @@ export const MessageList = memo(function MessageList({
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
-    (waitingIndicatorStyle === 'dots' ||
+    // Outcome views hide the thinking indicator inside streaming assistant messages.
+    (showProcessingStatus === false ||
+      waitingIndicatorStyle === 'dots' ||
       !resolvedMessages.some(
         message => message.role === 'assistant' && message.status === 'streaming'
       ))
@@ -616,6 +623,7 @@ export const MessageList = memo(function MessageList({
               data-message-row={hasViewportRows ? true : undefined}
               style={row.style}
               className="min-w-0"
+              role={waitingIndicatorStyle === 'dots' ? undefined : 'status'}
               data-testid="message-assistant-waiting"
             >
               <AssistantThinkingIndicator variant={waitingIndicatorStyle} />
@@ -654,7 +662,6 @@ export const MessageList = memo(function MessageList({
               isHistoricalTurn={isHistoricalTurn}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
-              assistantMessageStyle={assistantMessageStyle}
               showProcessingStatus={showProcessingStatus}
               conversationKey={conversationKey}
               devices={devices}
@@ -728,9 +735,10 @@ export const MessageList = memo(function MessageList({
   )
 })
 
-function shouldRenderMessage(message: WorkbenchMessage): boolean {
+function shouldRenderMessage(message: WorkbenchMessage, allowEmptyStreaming = true): boolean {
   if (message.role !== 'assistant') return true
-  if (message.status === 'streaming' || message.status === 'failed') return true
+  if ((allowEmptyStreaming && message.status === 'streaming') || message.status === 'failed')
+    return true
   if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
   if (message.references?.length || message.memoryCitations?.length) {

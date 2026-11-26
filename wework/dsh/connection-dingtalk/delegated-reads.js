@@ -341,6 +341,8 @@ async function contextPages(
     const next = nonEmptyString(page.result?.nextCursor)
     if (page.result?.hasMore !== true || !next || seen.has(next))
       throw invalid('Incomplete DingTalk context pagination')
+    if (index + 1 === MAX_CONTEXT_PAGES && !allowIncomplete)
+      throw invalid('The bounded DingTalk context is incomplete')
     cursor = next
     seen.add(cursor)
   }

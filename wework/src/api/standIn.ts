@@ -373,6 +373,8 @@ export interface RemoteStandInRoleBranch {
   taskAddress?: { deviceId: string; taskId: string } | null
   attempt: number
   retryAllowed: boolean
+  statusSource?: 'local_execution'
+  waitingForChildren?: boolean
   status:
     | 'waiting_for_device'
     | 'waiting_for_dependencies'

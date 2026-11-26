@@ -99,8 +99,9 @@ export async function startPerformanceRecording(
     for (const domain of ['Runtime', 'Log', 'Network', 'Performance', 'Profiler']) {
       await command(`${domain}.enable`)
     }
-    // Retain execution contexts before stream traffic fills the event buffer.
-    const metadata = await collectProtocolEvents(client, target, initial.cursor)
+    // Retain execution contexts and other enablement events before recording traffic
+    // fills the event buffer. Script metadata is replayed after measurement.
+    const enabled = await collectProtocolEvents(client, target, initial.cursor)
     const baseline = await command('Performance.getMetrics')
     if (samplingIntervalUs !== undefined) {
       await command('Profiler.setSamplingInterval', { interval: samplingIntervalUs })
@@ -122,11 +123,13 @@ export async function startPerformanceRecording(
     tracing = true
     await writeDiagnosticFile(statePath, {
       target,
-      after: metadata.cursor,
-      metadata: [...initial.events, ...metadata.events].filter(event =>
+      after: enabled.cursor,
+      events: enabled.events,
+      lostEvents: enabled.lost,
+      metadata: [...initial.events, ...enabled.events].filter(event =>
         ['Debugger.scriptParsed', 'Runtime.executionContextCreated'].includes(event.method)
       ),
-      metadataLostEvents: initial.lost + metadata.lost,
+      metadataLostEvents: initial.lost + enabled.lost,
       baseline,
       startedAt: Date.now(),
     })
@@ -372,9 +375,9 @@ export async function stopPerformanceRecording(client, directory, target, output
 }
 
 async function finishPerformanceRecording(client, command, target, state, profile, outputPath) {
-  const events = []
+  const events = [...(state.events ?? [])]
   let cursor = state.after
-  let lost = 0
+  let lost = state.lostEvents ?? 0
   let complete
   const deadline = Date.now() + 30_000
   while (!complete) {

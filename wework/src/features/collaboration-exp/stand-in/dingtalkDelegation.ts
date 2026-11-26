@@ -24,6 +24,7 @@ export function dingTalkInboxScope(delegation?: StandInDingTalkDelegation) {
     delegation.accountId,
     delegation.organizationId,
     delegation.accountInvalidated,
+    delegation.version,
   ])
 }
 

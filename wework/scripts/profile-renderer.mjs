@@ -65,12 +65,10 @@ const concurrentClockTask = '05'
 const measuredReasoningTasks = new Set(['01', '02', '03'])
 const measuredReasoningPieces = 25
 const limits = {
-  // Hosted macOS runners vary by several CPU points between identical builds,
-  // and the first turn update can include one-time module execution.
-  idleCpuPercent: 6,
-  singleTaskCpuPercent: 22,
-  tenTaskCpuPercent: 24,
-  maxTurnUpdateLongTaskMs: 200,
+  idleCpuPercent: 3,
+  singleTaskCpuPercent: 15,
+  tenTaskCpuPercent: 20,
+  maxTurnUpdateLongTaskMs: 100,
   peakObservedJsHeapBytes: 200_000_000,
 }
 

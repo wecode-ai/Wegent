@@ -34,6 +34,8 @@ interface PaginationProps {
   onPageSizeChange?: (pageSize: number) => void
   /** Loading state */
   disabled?: boolean
+  /** Optional override for the total-count label; defaults to the knowledge copy */
+  totalCountLabel?: string
 }
 
 /**
@@ -86,6 +88,7 @@ export function Pagination({
   onGoToPage,
   onPageSizeChange,
   disabled = false,
+  totalCountLabel,
 }: PaginationProps) {
   const { t } = useTranslation('knowledge')
 
@@ -100,7 +103,7 @@ export function Pagination({
     <div className="flex items-center justify-between px-4 py-3 border-t border-border">
       {/* Left: total count */}
       <div className="text-xs text-text-muted">
-        {t('document.pagination.totalCount', { count: totalCount })}
+        {totalCountLabel ?? t('document.pagination.totalCount', { count: totalCount })}
       </div>
 
       {/* Center: page navigation */}

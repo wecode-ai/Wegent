@@ -350,6 +350,13 @@ function readinessFixture() {
         if (input.tool === 'authStatus') {
           const selected = accounts.find(account => account.profile === input.arguments.profile)
           assert.ok(selected)
+          if (state.credentialFailure) {
+            return {
+              authenticated: false,
+              token_valid: false,
+              reason: state.credentialFailure,
+            }
+          }
           return {
             authenticated: true,
             token_valid: true,
@@ -367,7 +374,11 @@ function readinessFixture() {
             throw Object.assign(new Error('Read permission missing'), {
               code: 'dingtalk_permissions_required',
             })
-          if (state.scopedSearch)
+          state.afterMessageRead?.()
+          if (
+            typeof state.scopedSearch === 'function' ||
+            (input.tool === 'searchMessages' && state.scopedSearch)
+          )
             return typeof state.scopedSearch === 'function'
               ? state.scopedSearch(input)
               : state.scopedSearch
@@ -420,6 +431,22 @@ test('reuses the W90 account fingerprint and only selects an unambiguous current
   )
 })
 
+for (const reason of ['dek_missing', 'ciphertext_key_mismatch', 'keychain_unavailable']) {
+  test(`offers reauthorization when DingTalk credentials cannot be read (${reason})`, async () => {
+    const { ctx, provider, calls, authTarget, state } = readinessFixture()
+    state.credentialFailure = reason
+
+    const result = await provider.check(ctx, { readiness: true })
+
+    assert.equal(result.status, 'auth_required')
+    assert.equal(result.code, 'dingtalk_credentials_unavailable')
+    assert.deepEqual(result.authTarget, authTarget)
+    assert.deepEqual(
+      calls.map(call => call.tool),
+      ['componentInfo', 'listProfiles', 'authStatus']
+    )
+  })
+}
 test('keeps component readiness failures distinct and preserves the available host context', async () => {
   for (const code of [
     'connection_cli_unavailable',
@@ -468,6 +495,14 @@ test('probes only selected conversations and reports denied reads and mismatched
   state.denied = false
   state.unexpected = true
   assert.equal((await provider.check(ctx, input)).status, 'error')
+
+  state.unexpected = false
+  state.afterMessageRead = () => {
+    state.tokenOrganization = 'org-a'
+  }
+  calls.length = 0
+  assert.equal((await provider.check(ctx, input)).status, 'identity_required')
+  assert.equal(calls.at(-1).tool, 'authStatus')
 
   state.tokenOrganization = 'org-a'
   calls.length = 0

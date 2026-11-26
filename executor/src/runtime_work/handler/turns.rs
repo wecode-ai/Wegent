@@ -430,14 +430,11 @@ impl RuntimeWorkRpcHandler {
             })
             .collect();
         let queue_path = Arc::clone(&self.turn_queue_path);
-        let mut active_goal_turns = self
+        let active_goal_turns = self
             .active_goal_turns
             .lock()
             .expect("active Goal turn map lock should not be poisoned")
             .clone();
-        // A durable quota wait owns recovery for its task. Goal notifications
-        // can race the parking transaction, so never persist both resumes.
-        quota_recovery::remove_goal_turns_shadowed_by_waits(&turns, &mut active_goal_turns);
         tokio::task::spawn_blocking(move || {
             write_runtime_turn_state(&queue_path, &turns, &active_goal_turns, &commands)
         })

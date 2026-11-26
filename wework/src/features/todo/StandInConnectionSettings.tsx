@@ -352,6 +352,7 @@ export function StandInConnectionSettings({
               projects={projects}
               providers={providers}
               dingTalkDelegation={dingTalk?.saved.delegation}
+              dingTalkUnavailable={Boolean(dingTalk?.primaryStopped || dingTalk?.sourceProblem)}
               loading={loading}
               disabled={disabled}
               scheduling={Boolean(scheduling)}

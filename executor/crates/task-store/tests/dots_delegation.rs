@@ -155,10 +155,14 @@ fn verified_scope_reopens_paused_and_changes_accounts_in_one_delegation() {
     assert!(store
         .propose_stand_in_settings(7, "desktop", None, "Prepare scope", settings.clone())
         .is_err());
+    assert!(store
+        .save_personal_stand_in(7, "desktop", settings.clone())
+        .is_err());
     let original = store
-        .save_personal_stand_in_with_verified_dingtalk_account(
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
             7,
             "desktop",
+            None,
             settings,
             Some(&account),
         )
@@ -200,7 +204,13 @@ fn verified_scope_reopens_paused_and_changes_accounts_in_one_delegation() {
         json!({"action":"prepare", "profile":"other", "accountId":"account-b"});
     let other = json!({"profile":"other", "accountId":"account-b", "organizationId":"org-b"});
     let switched = store
-        .save_personal_stand_in_with_verified_dingtalk_account(7, "desktop", enabled, Some(&other))
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            7,
+            "desktop",
+            None,
+            enabled,
+            Some(&other),
+        )
         .unwrap();
     let replacement = primary(&switched);
     assert_eq!(replacement["delegation"]["version"], 2);
@@ -220,18 +230,20 @@ fn first_enable_can_bind_authoritative_identity_without_a_saved_draft() {
     settings["primary"]["delegation"] = json!({"action":"enable", "organizationId":"forged"});
     let mut verified = json!({"profile":"other", "accountId":"account-a", "organizationId":"org"});
     assert!(store
-        .save_personal_stand_in_with_verified_dingtalk_account(
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
             7,
             "desktop",
+            None,
             settings.clone(),
             Some(&verified),
         )
         .is_err());
     verified["profile"] = json!("current");
     let enabled = store
-        .save_personal_stand_in_with_verified_dingtalk_account(
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
             7,
             "desktop",
+            None,
             settings,
             Some(&verified),
         )

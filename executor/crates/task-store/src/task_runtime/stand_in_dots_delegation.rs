@@ -40,6 +40,7 @@ pub fn active_delegated_source<'a>(identity: &'a Value, source: &Value) -> Optio
         && current["paused"] == false
         && current["profile"] == delegation["profile"]
         && current["accountId"] == delegation["accountId"]
+        && current["organizationId"] == delegation["organizationId"]
         && source["accountId"] == current["accountId"])
         .then_some(current)
 }
@@ -341,6 +342,7 @@ pub(super) fn save_delegation(
         || previous["authorized"] != authorized
         || previous["paused"] != paused
         || previous["templates"] != template_settings
+        || account_metadata.get("organizationId") != previous.get("organizationId")
         || source_scope(primary) != source_scope(previous_primary);
     let delegation_boundary_changed =
         !same_account || previous["authorized"] != authorized || previous["paused"] != paused;

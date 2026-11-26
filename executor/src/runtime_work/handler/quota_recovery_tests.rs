@@ -168,46 +168,6 @@ fn quota_wait_releases_capacity_and_preserves_the_original_request_on_disk() {
 }
 
 #[test]
-fn durable_quota_wait_owns_restart_recovery_over_an_active_goal() {
-    let _lock = crate::test_env::lock();
-    let home = tempfile::tempdir().unwrap();
-    let _homes: Vec<_> = [
-        "WEGENT_EXECUTOR_HOME",
-        "WEGENT_CODEX_HOME",
-        "CODEX_HOME",
-        "WEGENT_WORKBENCH_HOME",
-    ]
-    .into_iter()
-    .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
-    .collect();
-    let waiting = queued_wait("quota-goal", now_ms() + 3_600_000);
-    let mut goal_recovery = waiting.clone();
-    goal_recovery.request.extra.remove(MARKER);
-    goal_recovery.request.prompt = json!("");
-    goal_recovery
-        .request
-        .extra
-        .insert(RESUME_GOAL_ONLY_MARKER.into(), json!(true));
-    let queue_path = super::super::turns::runtime_turn_queue_path();
-    super::super::turns::write_runtime_turn_state(
-        &queue_path,
-        &VecDeque::from([waiting]),
-        &HashMap::from([("quota-goal".to_owned(), goal_recovery)]),
-        &Default::default(),
-    )
-    .unwrap();
-
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-
-    let scheduler = handler.turn_scheduler.lock().unwrap();
-    assert_eq!(scheduler.queued_turns.len(), 1);
-    assert_eq!(scheduler.queued_turns[0].local_task_id, "quota-goal");
-    assert!(wait(&scheduler.queued_turns[0]).is_some());
-    drop(scheduler);
-    assert!(handler.active_goal_turns.lock().unwrap().is_empty());
-}
-
-#[test]
 fn quota_wait_reserves_queue_capacity_only_when_ready_and_obeys_the_limit_on_resume() {
     for (kind, origin) in [
         (RuntimeTaskKind::Personal, Value::Null),

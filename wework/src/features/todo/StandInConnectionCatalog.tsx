@@ -39,6 +39,7 @@ export function StandInConnectionCatalog({
   projectScopeConfigured = true,
   onSelect,
   dingTalkDelegation,
+  dingTalkUnavailable = false,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -49,6 +50,7 @@ export function StandInConnectionCatalog({
   projectScopeConfigured?: boolean
   onSelect(view: string): void
   dingTalkDelegation?: StandInDingTalkDelegation
+  dingTalkUnavailable?: boolean
 }) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
@@ -132,6 +134,7 @@ export function StandInConnectionCatalog({
         dingTalkDelegation?.authorized === true &&
         !dingTalkDelegation.paused &&
         !dingTalkDelegation.accountInvalidated &&
+        !dingTalkUnavailable &&
         (Boolean(dingTalkDelegation.organizationId) ||
           matchesDingTalkAccount(provider?.availability, dingTalkDelegation)) &&
         selected.some(

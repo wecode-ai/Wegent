@@ -124,6 +124,8 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
   }
   const search = async (cursor?: string) => {
     if (!listeners.size || state.busy || !state.query.trim()) return
+    const profile = input.delegatedDingTalk ? input.provider.availability.profile : undefined
+    if (input.delegatedDingTalk && !profile) return
     const sequence = ++searchSequence
     setBusy(true)
     setError(null)
@@ -136,7 +138,6 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
         state.query.trim(),
         cursor,
       ] as const
-      const profile = input.delegatedDingTalk ? input.provider.availability.profile : undefined
       const result = profile
         ? await input.api.searchConnectionResources(...request, undefined, profile)
         : await input.api.searchConnectionResources(...request)

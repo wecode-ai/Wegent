@@ -222,7 +222,7 @@ export function createDesktopScenario(options) {
       }
       async function assertDelivered(samples, timeoutMs = REPLY_LIMIT_MS) {
         const idsToCheck = samples.map(sample => sample.question.id)
-        // A batch can legitimately finish near the per-reply deadline under CI load.
+        // Wait for delivery receipts up to the same deadline that each reply must meet.
         const outcomes = await awaitOutcomes(
           idsToCheck,
           'sent',
