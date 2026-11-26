@@ -13,6 +13,7 @@ Uses unified ExecutionRequest from shared.models.execution.
 """
 
 import os
+import re
 import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -521,6 +522,16 @@ class DockerExecutor(Executor):
                 self._check_container_health(task, executor_name, is_validation_task)
 
         except subprocess.CalledProcessError as e:
+            # Use the selected image and exit code only. Docker's diagnostics
+            # and command arguments can contain runtime credentials.
+            image = base_image or executor_image
+            error_msg = f"Docker run error: exited with status {e.returncode}"
+            if re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}"
+                r"(?:@[A-Za-z0-9_+.-]+:[0-9a-fA-F]{32,128})?",
+                image,
+            ):
+                error_msg += f" (image {image})"
             # For validation tasks, report image pull or container start failure
             if is_validation_task:
                 stderr = (e.stderr or "").lower()
@@ -529,7 +540,6 @@ class DockerExecutor(Executor):
                     if "pull" in stderr or "not found" in stderr
                     else "starting_container"
                 )
-                error_msg = f"Docker exited with status {e.returncode}"
                 self._report_validation_stage(
                     task,
                     stage=stage,
@@ -539,7 +549,7 @@ class DockerExecutor(Executor):
                     error_message=error_msg,
                     valid=False,
                 )
-            raise
+            raise RuntimeError(error_msg) from None
 
     def _publish_callback_binding(
         self, task: Dict[str, Any], executor_name: str, container_id: str

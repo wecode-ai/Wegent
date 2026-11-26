@@ -425,6 +425,9 @@ class TestDockerExecutor:
         assert "has no ports mapped" in result["error_msg"]
 
     @pytest.mark.parametrize("task_type", ["online", "validation"])
+    @pytest.mark.parametrize(
+        "base_image", [None, "127.0.0.1:1/wegent/recovery-missing"]
+    )
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch.object(docker_executor_module, "generate_executor_name")
     def test_submit_executor_docker_error_keeps_credentials_private(
@@ -436,6 +439,7 @@ class TestDockerExecutor:
         mock_subprocess,
         task_type,
         mocker,
+        base_image,
     ):
         """Test submitting executor with Docker error"""
         mock_name.return_value = "new-executor"
@@ -445,6 +449,10 @@ class TestDockerExecutor:
         logger = mocker.patch.object(docker_executor_module, "logger")
         validation = mocker.patch.object(executor, "_report_validation_stage")
         mocker.patch.object(executor, "_should_enable_seccomp", return_value=True)
+        mocker.patch.object(
+            executor, "_get_base_image_from_task", return_value=base_image
+        )
+        mocker.patch.object(executor, "_ensure_executor_binary_updated")
 
         with patch.object(
             docker_executor_module,
@@ -462,7 +470,9 @@ class TestDockerExecutor:
             result = executor.submit_executor(sample_task)
 
         assert result["status"] == "failed"
-        assert result["error_msg"] == "Docker run error: exited with status 1"
+        image = base_image or sample_task["executor_image"]
+        assert f"exited with status 1 (image {image})" in result["error_msg"]
+        assert credential not in result["error_msg"]
         assert credential not in str(logger.mock_calls)
         if task_type == "validation":
             assert validation.call_args.kwargs["stage"] == "pulling_image"
@@ -655,7 +665,7 @@ class TestDockerExecutor:
             command = mock_subprocess.run.call_args.args[0]
             assert "EXECUTOR_CALLBACK_TOKEN=callback-token" in command
             mock_subprocess.run.side_effect = subprocess.CalledProcessError(1, command)
-            with pytest.raises(subprocess.CalledProcessError):
+            with pytest.raises(RuntimeError, match="exited with status 1"):
                 executor._create_new_container(sample_task, task_info, status)
             callback_repository.save_executor_binding.assert_called_once()
 
