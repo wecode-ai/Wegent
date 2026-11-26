@@ -530,6 +530,7 @@ export function createDesktopScenario(options) {
     }
   }
   return {
+    codexConfigToml: process.platform === 'win32' ? '[windows]\nsandbox = "unelevated"\n' : '',
     diagnostics: () => ({
       story,
       phase,

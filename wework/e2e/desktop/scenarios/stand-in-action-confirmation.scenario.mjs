@@ -55,7 +55,9 @@ export function createDesktopScenario({
           events = shellCommandResponse(
             body,
             'stand-in-file-write',
-            `touch '${file.replaceAll("'", "'\\''")}' && rm '${cleanupFile.replaceAll("'", "'\\''")}'`,
+            process.platform === 'win32'
+              ? `New-Item -ItemType File -Path 'stand-in-approved.txt' -ErrorAction Stop | Out-Null; rm -LiteralPath 'stand-in-firm.tmp'`
+              : `touch '${file.replaceAll("'", "'\\''")}' && rm '${cleanupFile.replaceAll("'", "'\\''")}'`,
             workspacePath,
             {
               sandbox_permissions: 'require_escalated',
