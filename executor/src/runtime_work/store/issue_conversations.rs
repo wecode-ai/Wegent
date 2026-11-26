@@ -71,7 +71,7 @@ impl RuntimeWorkStore {
                 Err(io::Error::other("Issue conversation is already bound"))
             };
         }
-        self.change_issue_index(|index| {
+        self.change_index(|index| {
             if let Some(existing) = index.issue_conversations.get(identity) {
                 return if existing == task {
                     Ok(false)
@@ -91,7 +91,7 @@ impl RuntimeWorkStore {
         &self,
         task: &str,
     ) -> io::Result<()> {
-        self.change_issue_index(|index| {
+        self.change_index(|index| {
             if index.tasks.contains_key(task) {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
@@ -107,7 +107,7 @@ impl RuntimeWorkStore {
         })
     }
 
-    pub(super) fn change_issue_index(
+    pub(super) fn change_index(
         &self,
         change: impl FnOnce(&mut RuntimeWorkIndex) -> io::Result<bool>,
     ) -> io::Result<()> {

@@ -900,8 +900,25 @@ impl RuntimeWorkRpcHandler {
             if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
                 return Err(super::stand_in_role_delegation::denied());
             }
-            self.retain_runtime_model_config(&local_task_id, &request.model_config);
-            self.upsert_local_task(link);
+            if link.runtime_handle["origin"]["type"] == "stand_in_task"
+                && link.runtime_handle["origin"]["roleDelegation"].is_object()
+            {
+                let link = self.store.try_upsert_task(link).map_err(|error| {
+                    log_executor_event(
+                        "Specialist task persistence failed",
+                        &[
+                            ("task_id", local_task_id.clone()),
+                            ("error", error.to_string()),
+                        ],
+                    );
+                    AppIpcError::new("runtime_task_save_failed", "Could not save delegated task")
+                })?;
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.project_runtime_link_status(&link);
+            } else {
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.upsert_local_task(link);
+            }
         }
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {

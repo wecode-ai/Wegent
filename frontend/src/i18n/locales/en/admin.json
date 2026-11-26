@@ -535,11 +535,17 @@
     "description": "Manage public AI models available to all users",
     "loading": "Loading models...",
     "no_models": "No public models found",
+    "no_search_results": "No models match \"{{search}}\"",
+    "search_placeholder": "Search by model name",
+    "clear_search": "Clear search",
     "create_model": "Create Model",
     "edit_model": "Edit Model",
     "delete_model": "Delete Model",
     "model_id": "Model ID",
     "namespace_label": "Namespace",
+    "pagination": {
+      "total_count": "{{count}} models"
+    },
     "status": {
       "active": "Active",
       "inactive": "Inactive",

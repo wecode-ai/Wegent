@@ -129,7 +129,10 @@ export function setRuntimeConversationGoal(
   goal: RuntimeGoal | null
 ): RuntimeGoal | null {
   invalidateRuntimeGoalSnapshots(address)
-  const resolvedGoal = reconcileRuntimeGoal(getRuntimeConversationMetadata(address).goal, goal)
+  const metadata = getRuntimeConversationMetadata(address)
+  const resolvedGoal = reconcileRuntimeGoal(metadata.goal, goal)
+  if (metadata !== EMPTY_RUNTIME_CONVERSATION_METADATA && resolvedGoal === metadata.goal)
+    return resolvedGoal
   updateRuntimeConversationMetadata(address, current => ({
     ...current,
     goal: resolvedGoal,

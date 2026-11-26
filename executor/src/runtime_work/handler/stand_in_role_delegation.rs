@@ -1,5 +1,6 @@
 //! Specialist tasks share the existing stand-in task lifecycle.
 use super::stand_in_role_dependencies::with_prerequisite_results;
+use super::stand_in_task_results::completion_generation;
 use super::*;
 use crate::protocol::StandInTaskPermissions;
 use crate::task_runtime::personal_stand_in::{
@@ -9,6 +10,8 @@ use crate::task_runtime::{
     mcp::StandInMcpIdentity, personal_stand_in::stand_in_identities, TaskRuntimeError,
 };
 use sha2::{Digest, Sha256};
+
+mod branches;
 
 const MAX_ROLE_TASKS: usize = 16;
 
@@ -28,11 +31,15 @@ pub(super) fn owned_role_task(link: &RuntimeTaskLink, user: i64, device: &str) -
 }
 
 pub(super) fn remote_role_intent_matches_link(link: &RuntimeTaskLink, intent: &Value) -> bool {
+    role_intent_matches_link(link, intent)
+        && link.runtime_handle["origin"]["sourceDeviceId"] == intent["sourceDevice"]
+}
+
+fn role_intent_matches_link(link: &RuntimeTaskLink, intent: &Value) -> bool {
     let origin = &link.runtime_handle["origin"];
     origin["type"] == "stand_in_task"
         && origin["standInId"] == intent["roleId"]
         && origin["sourceTaskId"] == intent["sourceTaskId"]
-        && origin["sourceDeviceId"] == intent["sourceDevice"]
         && origin["roleDelegation"] == intent["roleDelegation"]
 }
 
@@ -575,27 +582,59 @@ impl RuntimeWorkRpcHandler {
         identity: &StandInMcpIdentity,
         root: &str,
     ) -> Result<Value, AppIpcError> {
-        let mut tasks = self.local_task_links(false).into_iter().filter_map(|link| {
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let mut tasks = Vec::new();
+        let mut local_ids = HashSet::new();
+        for link in self.local_task_links(false) {
             let origin = &link.runtime_handle["origin"];
             if !owned_role_task(&link, identity.user, &self.device_id)
                 || origin["roleDelegation"]["root"] != root
-                || !origin["roleDelegation"]["ancestors"].as_array().is_some_and(|ancestors|
-                    ancestors.iter().any(|id| id == &identity.task_id))
+                || !origin["roleDelegation"]["ancestors"]
+                    .as_array()
+                    .is_some_and(|ancestors| ancestors.iter().any(|id| id == &identity.task_id))
             {
-                return None;
+                continue;
             }
-            Some(json!({"taskId":link.local_task_id,"parentTaskId":origin["sourceTaskId"],
+            let error = if link.status == "failed" {
+                role_failure_error_code(&link)
+            } else {
+                link.runtime_handle["lastErrorCode"].clone()
+            };
+            let mut row = json!({"taskId":link.local_task_id,"parentTaskId":origin["sourceTaskId"],
                 "roleId":origin["standInId"],"title":link.title,"status":link.status,
-                "interaction":link.interaction_status,"errorCode":link.runtime_handle["lastErrorCode"]}))
-        }).collect::<Vec<_>>();
-        let store = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(super::stand_in::settings_error)?;
+                "interaction":link.interaction_status,"errorCode":error});
+            if let Some(request) = store
+                .stand_in_role_request(&link.local_task_id, identity.user)
+                .map_err(super::stand_in::settings_error)?
+                .filter(|request| {
+                    let intent = &request["intent"];
+                    request["root"] == root
+                        && intent["sourceRoute"].is_null()
+                        && intent["sourceDevice"] == self.device_id
+                        && intent["targetDevice"] == self.device_id
+                        && role_intent_matches_link(&link, intent)
+                        && request["attempt"].as_u64().unwrap_or(0) > role_attempt(&link)
+                })
+            {
+                let status = remote_role_status(&request);
+                row["status"] = json!(if status == "dispatched" {
+                    "retrying"
+                } else {
+                    status
+                });
+                row["interaction"] = Value::Null;
+                row["errorCode"] = request["lastError"].clone();
+            }
+            local_ids.insert(link.local_task_id);
+            tasks.push(row);
+        }
         let additional = store
             .remote_stand_in_role_requests(identity.user, &self.device_id, root)
             .map_err(super::stand_in::settings_error)?;
         tasks.extend(additional.into_iter().filter_map(|(id, metadata)| {
             let intent = &metadata["intent"];
-            if !intent["roleDelegation"]["ancestors"]
+            if local_ids.contains(&id) || !intent["roleDelegation"]["ancestors"]
                 .as_array()
                 .is_some_and(|path| path.iter().any(|ancestor| ancestor == &identity.task_id))
             {
@@ -609,43 +648,25 @@ impl RuntimeWorkRpcHandler {
         }));
         Ok(json!({"tasks":tasks}))
     }
-
-    pub(super) fn stand_in_role_branches(&self, payload: &Value) -> Result<Value, AppIpcError> {
-        let user = super::runtime_owner::runtime_user(payload)?;
-        let task = super::stand_in_tasks::required(payload, "taskId")?;
-        let Some(link) = self.local_task_link(task) else {
-            return Ok(json!({"items":[]}));
-        };
-        let origin = &link.runtime_handle["origin"];
-        if !owned_role_task(&link, user, &self.device_id) || !supports_role_delegation(origin) {
-            return Err(denied());
-        }
-        let store = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(super::stand_in::settings_error)?;
-        let requests = store
-            .role_requests_for_conversation(user, &self.device_id, task)
-            .map_err(super::stand_in::settings_error)?;
-        let items = requests.into_iter().map(|(task_id, created_at, metadata)| {
-            let intent = &metadata["intent"];
-            json!({"taskId":task_id,"createdAt":created_at,"root":metadata["root"],
-                "title":intent["title"],"roleName":intent["roleName"],"deviceId":intent["targetDevice"],
-                "parentTaskId":intent["sourceTaskId"],"ancestors":intent["roleDelegation"]["ancestors"],
-                "prerequisiteTaskIds":intent["dependsOn"],
-                "taskAddress":metadata["taskAddress"],"status":remote_role_status(&metadata),
-                "attempt":metadata["attempt"].as_u64().unwrap_or(0),
-                "retryAllowed":metadata["cancelRequested"] != true && (intent["sourceRoute"].is_null()
-                    || metadata["resultStatus"] == "failed" || metadata["terminalError"].is_string()),
-                "cancelGroup":metadata["cancelGroup"] == true,
-                "errorCode":metadata["terminalError"]})
-        }).collect::<Vec<_>>();
-        Ok(json!({"items":items}))
-    }
 }
 
 pub(super) fn role_attempt(link: &RuntimeTaskLink) -> u64 {
     link.runtime_handle["executionRequest"]["standInDelegation"]["attempt"]
         .as_u64()
         .unwrap_or(0)
+}
+
+fn role_failure_error_code(link: &RuntimeTaskLink) -> Value {
+    let recorded = &link.runtime_handle["standInResult"];
+    if recorded.is_null() {
+        return link.runtime_handle["lastErrorCode"].clone();
+    }
+    if recorded["status"] == "failed"
+        && recorded["generation"] == completion_generation(&link.runtime_handle)
+    {
+        return recorded["errorCode"].clone();
+    }
+    Value::Null
 }
 
 fn remote_role_status(metadata: &Value) -> &str {

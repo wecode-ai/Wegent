@@ -13,6 +13,7 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 
 const USER = 9001
 const TASK = `stand-in-chat-${USER}-primary`
@@ -32,6 +33,15 @@ export function createDesktopScenario({
   let followupObserved = false
   let questionCalls = 0
   let resultDelivered = false
+  let heldPhase = 'question'
+  let releaseHeldResponse
+
+  function releaseResponse() {
+    heldPhase = null
+    const release = releaseHeldResponse
+    releaseHeldResponse = undefined
+    release?.()
+  }
 
   async function settled(control, expected = () => true) {
     const deadline = Date.now() + modelResponseTimeoutMs
@@ -67,6 +77,7 @@ export function createDesktopScenario({
       if (isReplyPredictionRequest(body)) return false
       const input = JSON.stringify(body.input ?? [])
       let events
+      let responsePhase = null
       if (input.includes('Wework delegated task result:')) {
         assert.ok(input.includes(SECOND), 'Work results must wake the current execution session')
         assert.ok(!input.includes(FIRST), 'Work results must not reopen the old execution session')
@@ -88,9 +99,11 @@ export function createDesktopScenario({
         const answer = toolOutputText(body, 'session-question')
         if (answer !== null) {
           assert.deepEqual(JSON.parse(answer), { answers: { session: { answers: ['Continue'] } } })
+          responsePhase = 'answer'
           events = [assistantMessage('第一段问题已回答，可以继续。')]
         } else {
           questionCalls += 1
+          if (questionCalls === 1) responsePhase = 'question'
           events = selectedToolCall(
             'session-question',
             selectTool(body, 'request_user_input', {
@@ -110,8 +123,13 @@ export function createDesktopScenario({
         }
       } else return false
       const id = `stand-in-session-${Date.now()}`
-      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+      const sendResponse = () => {
+        if (response.destroyed || response.writableEnded) return
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+      }
+      if (responsePhase && responsePhase === heldPhase) releaseHeldResponse = sendResponse
+      else sendResponse()
       return true
     },
     async verify(control) {
@@ -163,14 +181,39 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-      await control.command(
-        'fill',
-        `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
-        { value: FIRST }
-      )
-      await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+      const editor = `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`
+      await control.command('fill', editor, { value: FIRST })
+      try {
+        await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+        await storyUntil(
+          () => Promise.resolve(Boolean(releaseHeldResponse)),
+          Boolean,
+          modelResponseTimeoutMs,
+          'The first assistant message must reach the model'
+        )
+        await control.command('waitFor', `${CHAT} [data-testid="message-user"]`, {
+          text: FIRST,
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', editor, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', `${CHAT} [data-testid="message-assistant-waiting"]`, {
+          text: '正在思考',
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        releaseResponse()
+      }
       await control.command('waitFor', '[data-testid="request-user-input-card"]', {
         timeoutMs: modelResponseTimeoutMs,
+      })
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant-waiting"]`, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
       })
       const pending = await requestExecutor(
         control,
@@ -189,12 +232,34 @@ export function createDesktopScenario({
           .threadId,
         firstThread
       )
-      await control.command('click', '[data-testid="request-user-input-option-session-1"]')
+      const questionSummary = `${CHAT} [data-testid="request-user-input-summary"]`
+      heldPhase = 'answer'
+      try {
+        await control.command('click', '[data-testid="request-user-input-option-session-1"]')
+        await storyUntil(
+          () => Promise.resolve(Boolean(releaseHeldResponse)),
+          Boolean,
+          modelResponseTimeoutMs,
+          'The answered question must reach the model before its result'
+        )
+        await control.command('waitFor', questionSummary, {
+          text: 'Continue',
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        releaseResponse()
+      }
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: '第一段问题已回答',
         timeoutMs: modelResponseTimeoutMs,
       })
       await settled(control)
+      await control.command('waitFor', questionSummary, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(await control.command('getElementCount', questionSummary), '0')
       assert.equal(questionCalls, 1)
       const initialSearch = await requestExecutor(
         control,

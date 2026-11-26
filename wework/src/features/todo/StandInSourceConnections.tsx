@@ -143,7 +143,11 @@ function StandInSourceConnectionsContent({
   const updateRows = (next: StandInSourceConnection[]) =>
     onChange({
       ...role,
-      connections: [...allRows.filter(row => row.providerId !== provider.id), ...hiddenRows, ...next],
+      connections: [
+        ...allRows.filter(row => row.providerId !== provider.id),
+        ...hiddenRows,
+        ...next,
+      ],
     })
   const authorization = authOpen && provider.authTarget && (
     <LocalConnectorAuthDialog
@@ -183,13 +187,18 @@ function StandInSourceConnectionsContent({
                 checked={row.paused === true}
                 disabled={disabled}
                 onCheckedChange={checked =>
-                  updateRows(rows.map(value => value === row ? { ...value, paused: checked === true } : value))
+                  updateRows(
+                    rows.map(value =>
+                      value === row ? { ...value, paused: checked === true } : value
+                    )
+                  )
                 }
               />
               {t('standIn.dingtalk_delegation.paused')}
             </label>
           )}
-          {!delegatedDingTalk && provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+          {!delegatedDingTalk &&
+            provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
             row.kind === 'group' &&
             row.scope !== 'all' && (
               <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
@@ -247,62 +256,64 @@ function StandInSourceConnectionsContent({
           >
             <X className="h-4 w-4" />
           </ControlButton>
-          {!delegatedDingTalk && provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' && row.scope === 'all' && (
-            <div className="w-full space-y-2">
-              <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
-              {row.excludedResources?.map(resource => (
-                <div key={resource.id} className="flex items-center gap-2 text-sm">
-                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
-                    data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
-                    aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
-                    disabled={disabled}
-                    onClick={() =>
-                      updateRows(
-                        rows.map(value =>
-                          value === row
-                            ? {
-                                ...value,
-                                excludedResources: value.excludedResources?.filter(
-                                  item => item.id !== resource.id
-                                ),
-                              }
-                            : value
+          {!delegatedDingTalk &&
+            provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+            row.scope === 'all' && (
+              <div className="w-full space-y-2">
+                <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
+                {row.excludedResources?.map(resource => (
+                  <div key={resource.id} className="flex items-center gap-2 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
+                      aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
+                      disabled={disabled}
+                      onClick={() =>
+                        updateRows(
+                          rows.map(value =>
+                            value === row
+                              ? {
+                                  ...value,
+                                  excludedResources: value.excludedResources?.filter(
+                                    item => item.id !== resource.id
+                                  ),
+                                }
+                              : value
+                          )
                         )
-                      )
-                    }
-                    className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
-                  >
-                    <X className="h-4 w-4" />
-                  </ControlButton>
-                </div>
-              ))}
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
-                disabled={disabled || busy || authorizationRequired}
-                onClick={() => {
-                  model.invalidateSearch()
-                  setAdding(false)
-                  setExcluding(row)
-                  setKind(row.kind)
-                  setScope('selected')
-                  setSelection([])
-                  setQuery('')
-                  setResults([])
-                  setNextCursor(undefined)
-                  setSearched(false)
-                  setError(null)
-                }}
-                className="min-h-11 text-sm underline md:min-h-8"
-              >
-                {t('standIn.workspace.blacklist_add')}
-              </ControlButton>
-            </div>
-          )}
+                      }
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+                    >
+                      <X className="h-4 w-4" />
+                    </ControlButton>
+                  </div>
+                ))}
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
+                  disabled={disabled || busy || authorizationRequired}
+                  onClick={() => {
+                    model.invalidateSearch()
+                    setAdding(false)
+                    setExcluding(row)
+                    setKind(row.kind)
+                    setScope('selected')
+                    setSelection([])
+                    setQuery('')
+                    setResults([])
+                    setNextCursor(undefined)
+                    setSearched(false)
+                    setError(null)
+                  }}
+                  className="min-h-11 text-sm underline md:min-h-8"
+                >
+                  {t('standIn.workspace.blacklist_add')}
+                </ControlButton>
+              </div>
+            )}
         </div>
       ))}
     </div>
@@ -626,32 +637,34 @@ function StandInSourceConnectionsContent({
           <p className="text-xs text-text-secondary">{t('standIn.workspace.connection_help')}</p>
         </form>
       )}
-      {!delegatedDingTalk && <StandInProcessingSettings
-        disabled={disabled}
-        rows={
-          rows.length
-            ? rows.map(row => ({
-                key: identity(row),
-                name: row.name,
-                policy: row.policy,
-                outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
-                testId: `${prefix}-policy-${row.id}`,
-                onChange: policy =>
-                  updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
-              }))
-            : [
-                {
-                  key: 'new',
-                  name: provider.displayName,
-                  policy: newPolicy,
+      {!delegatedDingTalk && (
+        <StandInProcessingSettings
+          disabled={disabled}
+          rows={
+            rows.length
+              ? rows.map(row => ({
+                  key: identity(row),
+                  name: row.name,
+                  policy: row.policy,
                   outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
-                  testId: `${prefix}-new-policy`,
+                  testId: `${prefix}-policy-${row.id}`,
                   onChange: policy =>
-                    setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),
-                },
-              ]
-        }
-      />}
+                    updateRows(rows.map(value => (value === row ? { ...value, policy } : value))),
+                }))
+              : [
+                  {
+                    key: 'new',
+                    name: provider.displayName,
+                    policy: newPolicy,
+                    outbound: provider.id === '@wegent/dsh-connection-dingtalk/dingtalk',
+                    testId: `${prefix}-new-policy`,
+                    onChange: policy =>
+                      setNewPolicy({ ...policy, immediate: policy.immediate ?? false }),
+                  },
+                ]
+          }
+        />
+      )}
       {authorization}
     </section>
   )
