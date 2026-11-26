@@ -13,6 +13,7 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.connector import (
     ConnectorAppResponse,
+    ConnectorOAuthSessionCreateRequest,
     ConnectorOAuthSessionCreateResponse,
     ConnectorOAuthSessionPollResponse,
 )
@@ -38,6 +39,7 @@ def list_connector_apps(
 )
 async def create_connector_oauth_session(
     slug: str,
+    request: ConnectorOAuthSessionCreateRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ConnectorOAuthSessionCreateResponse:
@@ -52,7 +54,12 @@ async def create_connector_oauth_session(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Connector app does not use OAuth",
         )
-    return await connector_oauth_service.create_session(db, slug=slug, user_id=user.id)
+    return await connector_oauth_service.create_session(
+        db,
+        slug=slug,
+        user_id=user.id,
+        authorization_ticket=request.authorization_ticket if request else None,
+    )
 
 
 @router.get(
