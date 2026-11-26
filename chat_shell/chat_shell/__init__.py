@@ -51,7 +51,7 @@ Package Mode Usage:
 
     # Build configuration
     config = AgentConfig(
-        model_config={"model": "claude-3-5-sonnet-20241022", "api_key": "..."},
+        model_config={"model": "claude-sonnet-4-6", "api_key": "..."},
         system_prompt="You are a helpful assistant.",
     )
 
@@ -65,7 +65,7 @@ Package Mode Usage:
 
 CLI Usage:
     # Interactive chat
-    chat-shell chat --model claude-3-5-sonnet
+    chat-shell chat --model claude-sonnet-4-6
 
     # Single query
     chat-shell query "What is Python?"

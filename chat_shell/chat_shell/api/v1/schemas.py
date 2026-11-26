@@ -54,7 +54,7 @@ class ModelConfig(BaseModel):
     """Model configuration (fully resolved, no placeholders)."""
 
     model_id: str = Field(
-        ..., description="Model identifier (e.g., claude-3-5-sonnet-20241022)"
+        ..., description="Model identifier (e.g., claude-sonnet-4-6)"
     )
     model: str = Field(..., description="Model type: openai, claude, google")
     api_key: str = Field(..., description="API Key (already decrypted)")
