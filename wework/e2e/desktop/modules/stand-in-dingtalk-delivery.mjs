@@ -37,19 +37,25 @@ export async function verifyDingTalkDelivery(
     assert.equal(attempts.length, 1, `${record.id} must submit only once`)
     assert.equal(attempts[0].uuid, record.delegationResult.attemptId)
   }
+  const clickInView = async selector => {
+    await control.command('waitFor', selector)
+    await control.command('scrollIntoView', selector, { visible: true })
+    await control.command('clickWhenEnabled', selector, { visible: true })
+  }
   const openResult = async (record, category) => {
     if ((await control.command('getElementCount', detail)) !== '0') {
       await control.command('clickWhenEnabled', close, { visible: true })
     }
     const selected = `${filter} [data-value="${category}"]`
     if ((await control.command('getElementCount', selected)) === '0') {
-      await control.command('clickWhenEnabled', filter, { visible: true })
+      await clickInView(filter)
       await control.command('clickWhenEnabled', `[role="option"][data-value="${category}"]`, {
         visible: true,
       })
+      await control.command('waitFor', selected)
     }
     const row = byId(`message-center-record-${record.recordId}`)
-    await control.command('clickWhenEnabled', `${center} ${row}`, { visible: true })
+    await clickInView(`${center} ${row}`)
     await control.command('waitFor', detail, { text: record.text })
   }
   const assertNoReceipt = async record => {
@@ -63,7 +69,7 @@ export async function verifyDingTalkDelivery(
   await ensureExperimentalFeaturesEnabled(control)
   await control.command('clickWhenEnabled', byId('personal-stand-in-button'))
   await control.command('clickWhenEnabled', byId('stand-in-message-center-open'))
-  await control.command('waitFor', filter, { visible: true })
+  await control.command('waitFor', filter)
   const language = await control.command('getAttribute', 'html', { value: 'lang' })
   const labels = language?.startsWith('en')
     ? {
@@ -97,7 +103,7 @@ export async function verifyDingTalkDelivery(
 
   await openResult(changed, 'exceptions')
   await control.command('waitFor', `${detail} ${delivery}`, { text: labels.failed })
-  await control.command('clickWhenEnabled', `${detail} ${byId('message-center-detail-process')}`)
+  await clickInView(`${detail} ${byId('message-center-detail-process')}`)
   await control.command('waitFor', detail, { text: changed.delegationResult.reason, visible: true })
   await assertNoReceipt(changed)
 
@@ -119,12 +125,12 @@ export async function verifyDingTalkDelivery(
   await openResult(pending, 'exceptions')
   await control.command('waitFor', `${detail} ${delivery}`, { text: labels.unknown })
   await assertNoReceipt(pending)
-  await control.command('clickWhenEnabled', takeover)
+  await clickInView(takeover)
   await control.command('waitFor', detail, { text: labels.takeover })
   await control.command('waitFor', `${detail} ${delivery}`, { text: labels.unknown })
   await control.command('waitFor', takeover, { visible: false })
 
-  await control.command('clickWhenEnabled', verify)
+  await clickInView(verify)
   await storyUntil(
     () => readChecks(pendingId),
     checks => checks.length === automaticChecks.length + 1,
@@ -137,7 +143,7 @@ export async function verifyDingTalkDelivery(
   await assertSingleSubmission(pending)
 
   await mailbox.releaseMatchingReceipt()
-  await control.command('clickWhenEnabled', verify)
+  await clickInView(verify)
   await control.command('waitFor', receipt, { text: `accepted-${pendingId}` })
   await control.command('waitFor', `${detail} ${delivery}`, { text: labels.sent })
   await control.command('waitFor', detail, { text: labels.takeover })
