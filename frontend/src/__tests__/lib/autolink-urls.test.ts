@@ -29,6 +29,14 @@ function renderMarkdown(source: string) {
 }
 
 describe('rehypeAutolinkUrls', () => {
+  it.each(['  ', '\\'])('preserves a hard line break written with %j', marker => {
+    const url = 'https://example.com/path'
+    const { container } = renderMarkdown(`Before${marker}\n${url}`)
+
+    expect(container.querySelector('br')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+  })
+
   it.each([
     [
       '**https://example.com/shared/task?token=demo_value_**',

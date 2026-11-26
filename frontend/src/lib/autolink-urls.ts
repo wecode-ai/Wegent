@@ -83,8 +83,8 @@ function sourceParts<Child extends RootContent>(
   node: Child,
   source: string
 ): SourcePart<Child | Text>[] {
-  const start = node.position?.start.offset
-  const end = node.position?.end.offset
+  const start = node.position?.start?.offset
+  const end = node.position?.end?.offset
   if (start === undefined || end === undefined || start >= end) return []
   if (node.type === 'text') {
     const raw = source.slice(start, end)
