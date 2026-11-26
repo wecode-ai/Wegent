@@ -44,7 +44,7 @@ export async function verifyDingTalkDelivery(
   }
   const openResult = async (record, category) => {
     if ((await control.command('getElementCount', detail)) !== '0') {
-      await control.command('clickWhenEnabled', close, { visible: true })
+      await clickInView(close)
     }
     const selected = `${filter} [data-value="${category}"]`
     if ((await control.command('getElementCount', selected)) === '0') {
@@ -153,7 +153,7 @@ export async function verifyDingTalkDelivery(
     [DINGTALK_DELEGATION_IDS.profile, false],
     [DINGTALK_DELEGATION_IDS.profile, true],
   ])
-  await control.command('clickWhenEnabled', close, { visible: true })
+  await clickInView(close)
   return {
     automaticallyConfirmed: automaticallyConfirmed.map(record => record.id),
     channelTaskId,
