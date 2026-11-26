@@ -26,6 +26,9 @@ use wegent_executor::{
 };
 use wegent_model_proxy::local_model_proxy::{self, LocalModelProxyUpstream};
 
+#[path = "http_contract/file_upload.rs"]
+mod file_upload;
+
 #[path = "http_contract/skill_sync.rs"]
 mod skill_sync;
 

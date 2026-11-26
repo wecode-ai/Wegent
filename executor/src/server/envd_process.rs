@@ -356,8 +356,10 @@ mod tests {
     use std::{future::Future, task::Poll};
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    #[tokio::test]
-    async fn cancelling_envd_process_stops_foreground_descendants() {
+    fn spawn_process_with_descendant() -> (
+        tokio::process::Child,
+        tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    ) {
         let mut child = Command::new("/bin/bash")
             .args(["-c", "sleep 30 & printf 'ready\\n'; wait"])
             .stdout(Stdio::piped())
@@ -365,7 +367,13 @@ mod tests {
             .process_group(0)
             .spawn()
             .unwrap();
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        (child, lines)
+    }
+
+    #[tokio::test]
+    async fn cancelling_envd_process_stops_foreground_descendants() {
+        let (child, mut lines) = spawn_process_with_descendant();
         let step_timeout = Duration::from_secs(5);
 
         {
@@ -387,6 +395,31 @@ mod tests {
             timeout(step_timeout, lines.next_line())
                 .await
                 .expect("descendant kept stdout open after cancellation")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn envd_deadline_stops_foreground_descendants() {
+        let (child, mut lines) = spawn_process_with_descendant();
+        let step_timeout = Duration::from_secs(5);
+        let ready = timeout(step_timeout, lines.next_line())
+            .await
+            .expect("shell did not confirm that its descendant had started")
+            .unwrap();
+        assert_eq!(ready.as_deref(), Some("ready"));
+
+        let deadline = Duration::from_millis(100);
+        assert!(matches!(
+            wait_for_envd_process(child, Some(deadline)).await,
+            Err(elapsed) if elapsed == deadline
+        ));
+        // The descendant inherited stdout and keeps it open until it exits.
+        assert_eq!(
+            timeout(step_timeout, lines.next_line())
+                .await
+                .expect("descendant kept stdout open after the deadline")
                 .unwrap(),
             None
         );
