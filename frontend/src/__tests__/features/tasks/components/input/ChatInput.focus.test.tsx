@@ -188,6 +188,7 @@ test.each([
   { pendingCatalog: false, method: 'type', action: 'click' },
   { pendingCatalog: true, method: 'type', action: 'click' },
   { pendingCatalog: false, method: 'paste query', action: 'click' },
+  { pendingCatalog: false, method: 'paste within command', action: 'click' },
   { pendingCatalog: false, method: 'paste command', action: 'click' },
   { pendingCatalog: true, method: 'paste command', action: 'click' },
   { pendingCatalog: false, method: 'paste command', action: 'send unmatched path' },
@@ -220,11 +221,12 @@ test.each([
       }
       const suffix = ' and keep this path /tmp'
       const command = action === 'send unmatched path' ? '/tmp/notes.txt' : '/docs/pdf'
-      const draft = 'Check ' + command + suffix
+      const editingCommand = method === 'paste within command'
+      const draft = 'Check ' + command + (editingCommand ? 'pdf' : '') + suffix
       const { rerender } = render(
         <ChatInput
           {...props}
-          message={'Check ' + suffix}
+          message={'Check ' + (editingCommand ? '/pdf' : '') + suffix}
           availableSkills={pendingCatalog ? [] : [skill]}
         />
       )
@@ -238,6 +240,9 @@ test.each([
       if (method === 'paste command') {
         window.getSelection()?.collapse(input.firstChild, 'Check '.length)
         await user.paste(command)
+      } else if (editingCommand) {
+        window.getSelection()?.collapse(input.firstChild, 'Check /'.length)
+        await user.paste('docs/pdf')
       } else {
         typeCommand('/')
         if (method === 'paste query') await user.paste('docs/pdf')

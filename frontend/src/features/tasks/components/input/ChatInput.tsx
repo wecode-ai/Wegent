@@ -480,8 +480,9 @@ export default function ChatInput({
         return
       }
 
-      const end = prefix.length
-      const start = end - match[1].length - 1
+      const queryEnd = prefix.length
+      const start = queryEnd - match[1].length - 1
+      const end = queryEnd + (text.slice(queryEnd).match(/^\S+/)?.[0].length ?? 0)
       const currentCommand = skillCommand?.start === start ? skillCommand : undefined
       let position = currentCommand?.position
       if (!position) {
