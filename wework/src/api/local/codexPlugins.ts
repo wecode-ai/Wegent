@@ -70,6 +70,7 @@ import {
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId,
+  getKnownLocalExecutorRuntimeInstanceId,
   requestLocalExecutor,
   withBundledPluginUpdatesPaused,
   resumeBundledPluginUpdates,
@@ -462,7 +463,8 @@ const installedCatalog = createVersionedInstalledCatalog<{
 }>(installedCatalogRevision)
 const authStatusRequests = createRequestCache(() => installedReadRevision)
 const diskInventoryRequests = createRequestCache(() => installedReadRevision)
-let inflightWegentStoreList: Promise<InstalledPlugin[]> | null = null
+const inflightLocalDiskInventory = new Map<string, Promise<LocalPluginInventoryRead>>()
+let inflightWegentStoreList: { key: string; pending: Promise<InstalledPlugin[]> } | null = null
 let didHydrateReadStateSession = false
 let warmupReadStatePromise: Promise<LocalCodexPluginsState> | null = null
 const appCatalog = createSharedCodexAppCatalog(codexAppServerRequest)
@@ -492,6 +494,7 @@ function invalidateReadState(deviceId: string | null = null): void {
   activeInventoryMutationVersion = getPluginInventoryMutationVersion()
   installedCatalog.invalidate()
   diskInventoryRequests.invalidate()
+  inflightLocalDiskInventory.clear()
   activeInstalledIdentity = undefined
   lastVerifiedInstalledScope = undefined
   cachedState = null
@@ -1758,8 +1761,15 @@ export async function listWegentStorePluginsFromDisk(
   requireComplete = false
 ): Promise<InstalledPlugin[]> {
   if (!isElectronRuntime()) return []
+  const key = JSON.stringify([
+    getKnownLocalExecutorDeviceId(),
+    getKnownLocalExecutorRuntimeInstanceId(),
+    installedCatalogRevision(),
+  ])
   const pending =
-    (requireComplete ? null : inflightWegentStoreList) ??
+    (!requireComplete && inflightWegentStoreList?.key === key
+      ? inflightWegentStoreList.pending
+      : null) ??
     requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
       .then(listed => {
         if (!listed || !Array.isArray(listed.plugins))
@@ -1780,9 +1790,9 @@ export async function listWegentStorePluginsFromDisk(
         )
       })
       .finally(() => {
-        if (inflightWegentStoreList === pending) inflightWegentStoreList = null
+        if (inflightWegentStoreList?.pending === pending) inflightWegentStoreList = null
       })
-  inflightWegentStoreList = pending
+  inflightWegentStoreList = { key, pending }
   return pending
 }
 
@@ -1806,13 +1816,40 @@ export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlug
 export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPluginInventoryRead> {
   if (!isElectronRuntime()) return { items: [] }
   const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  const runtimeInstanceId = getKnownLocalExecutorRuntimeInstanceId()
   resetInMemoryReadStateForDevice(deviceId)
+  const revision = installedCatalogRevision()
+  const readDisk = () => readAndPublishDiskInstalledInventory(deviceId, runtimeInstanceId, revision)
+  if (!deviceId || !runtimeInstanceId) return readDisk()
+  const key = JSON.stringify([
+    deviceId,
+    runtimeInstanceId,
+    revision,
+    getInitializedBundledPluginMarketplace()?.path,
+  ])
+  const existing = inflightLocalDiskInventory.get(key)
+  if (existing) return existing
+  // Start with the current Runtime before a device or account switch can intervene.
+  const pending = readDisk().finally(() => {
+    if (inflightLocalDiskInventory.get(key) === pending) inflightLocalDiskInventory.delete(key)
+  })
+  inflightLocalDiskInventory.set(key, pending)
+  return pending
+}
+
+async function readAndPublishDiskInstalledInventory(
+  deviceId: string,
+  runtimeInstanceId: string | null,
+  revision: string
+): Promise<LocalPluginInventoryRead> {
   const generation = nextReadStateGeneration++
   const { installedSources: diskSources, ...read } = await readDiskInstalledInventory(deviceId)
   const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
   if (
     deviceId &&
     deviceId === getKnownLocalExecutorDeviceId() &&
+    runtimeInstanceId === getKnownLocalExecutorRuntimeInstanceId() &&
+    revision === installedCatalogRevision() &&
     generation >= cachedStateGeneration
   ) {
     const installedSources = { ...previous?.installedSources, ...diskSources }

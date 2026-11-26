@@ -1,3 +1,4 @@
+import { localizeStandardStatusName } from '../i18n'
 import type { CollaborationProject } from '../types'
 import type { WorkspaceMyWorkItem, WorkspaceTaskBinding } from '../ports/SharedWorkspaceApi'
 import { composerMarkdownText } from '../composer'
@@ -121,7 +122,8 @@ export function PersonalIssueList({
         items: (itemsByProject.get(String(project.id)) ?? []).filter(
           item =>
             String(item.cloud_project_id) === String(project.id) &&
-            (!assignedOnly ||
+            (item.id === recentIssue?.id ||
+              !assignedOnly ||
               (item.assignee_user_id != null &&
                 (project.project_store === 'local'
                   ? (localUserIds ?? [userId])
@@ -146,11 +148,6 @@ export function PersonalIssueList({
     groups.unshift({ project: null, items: unassignedItems })
   return (
     <>
-      {state.loading && (
-        <p role="status" className="py-4 text-sm text-text-secondary">
-          {t('personalHome.loading')}
-        </p>
-      )}
       {!hideEmpty &&
         !state.loading &&
         !state.error &&
@@ -200,10 +197,14 @@ export function PersonalIssueList({
               showIssueKey={Boolean(project)}
               selectable={false}
               showControls={false}
-              statusName={status =>
-                project?.board_config?.statuses.find(candidate => candidate.id === status)?.name ??
-                t(`todo.status_${status}`, { defaultValue: status })
-              }
+              statusName={status => {
+                const name = project?.board_config?.statuses.find(item => item.id === status)?.name
+                return name
+                  ? localizeStandardStatusName(status, name, (key, fallback) =>
+                      t(key, { defaultValue: fallback ?? status })
+                    )
+                  : t(`todo.status_${status}`, { defaultValue: status })
+              }}
               onOpen={onOpenIssue}
               getRowOptions={item => {
                 const viewerIds =

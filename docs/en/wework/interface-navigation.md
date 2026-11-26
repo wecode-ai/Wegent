@@ -103,6 +103,8 @@ For clone authentication failures, execution-environment device errors or Git au
 
 For red errors above the task composer, see [Dismiss notice in Individual composer controls](./tasks.md#task-controls).
 
+Select **Continue in a new conversation** on a task's conversation history error card to open a draft with a reference to the original conversation. See [Recover a conversation](./tasks.md#recover-conversation-history).
+
 Prepare a voice input model: **bottom-left account menu → Settings → Personal → General → Voice input**. This section appears when the official voice plugin has loaded; prepare a model, then record from the task composer. See [Voice input model](./settings.md#voice-input-model).
 
 To report a problem or export runtime logs, select **Report a problem** in the upper-right corner of any Wework desktop page. Plugins, My assistants, Scheduled and Settings use the same entry; task pages can also include task context. See [Getting help](./troubleshooting.md#getting-help).
@@ -216,13 +218,13 @@ Composer controls, project menus and account menus still require manual code-rev
 
 For recovery-center and local-service notices during launch, see [Startup recovery](./getting-started.md#startup-recovery). **Check Codex configuration → Retry** appears while configuration reading is pending or has failed, and reads the status again.
 
-Independent and project Issues are available from **Collaboration → My issues → Needs my action / Created by me / Participating**. Start an independent Issue from **Collaboration → My issues → New Issue**. Existing catalogs are under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. See [Independent Issues and My issues](./projects.md#independent-issues). The collaboration Home retains its existing composer, Issue list and assistant workspace.
+Independent and project Issues are available from **Collaboration → My issues → Needs my action / Created by me / Participating**. Start an independent Issue from **Collaboration → My issues → New Issue**. Open **More settings** at the bottom left to set status, priority and due date. Existing catalogs are under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. See [Independent Issues and My issues](./projects.md#independent-issues). The collaboration Home retains its existing composer, Issue list and assistant workspace.
 
 Use **Personal group → … → Group settings** to manage the actual personal space owned by the current account. The Projects heading and project rows no longer show plus buttons. See [Project navigation](./projects.md#workspace-resource-controls).
 
 Images, Markdown and file links in Issue activity open attachment previews with retry and original-file download. See [Attachment and document previews](./projects.md#issue-resource-preview).
 
-Default execution devices and device grants from new Issues are described in [Collaboration device settings](./devices.md#collaboration-device-defaults): **Collaboration → Collaboration management → Execution devices → Personal default environment**. **Collaboration → New Issue → Runtime (optional) → Personal default environment → Save personal default device** explicitly saves personal preferences. For a selected project, **Project device access (applies immediately) → Choose or add a device** manages project grants. See [Independent Issues](./projects.md#independent-issues) for participant selection, the persistent action bar and unsaved-change protection.
+Default execution devices and device grants from new Issues are described in [Collaboration device settings](./devices.md#collaboration-device-defaults): **Collaboration → Collaboration management → Execution devices → Personal default environment**. **Collaboration → New Issue → More settings → Runtime (optional) → Personal default environment → Save personal default device** explicitly saves personal preferences. For a selected project, **Project device access (applies immediately) → Choose or add a device** manages project grants. See [Independent Issues](./projects.md#independent-issues) for participant selection, the persistent action bar and unsaved-change protection.
 
 Issue **Participants → +** supports search and multiple selections. The assignee picker also searches outside the project; confirmation grants management of that Issue only. See [Issue collaboration](./projects.md#project-controls).
 
@@ -230,4 +232,4 @@ Link an existing task: **Collaboration → Issue details → Linked tasks → Li
 
 Create a child from a comment: **Collaboration → Issue details → top-level comment action row → Create child Issue beside Reply**. Thread replies retain their own action. See [Create child Issues from comments](./projects.md#comment-child-issues) for availability and steps.
 
-Select text in a task conversation → **Share with others**. See [conversation sharing](./tasks.md).
+Choose **Share as issue** above the task composer, or select text in the conversation and choose **Share with others**. Use **Add attachment** or **+** at the left of the attachment row to upload files, use the arrows to browse attachments, or open **More settings** on the left side of the dialog footer. See [conversation sharing](./tasks.md#share-conversation-as-issue).

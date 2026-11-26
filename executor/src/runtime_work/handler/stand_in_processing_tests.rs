@@ -470,82 +470,87 @@ async fn waiting_work_never_accepts_an_automatic_reply_and_foreign_tasks_are_rej
 }
 
 #[test]
-fn configuration_starts_observation_before_fast_work_completes() {
+fn routine_work_does_not_wake_coordination_even_when_it_completes_before_observation() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, _) = fixture(root.path());
     let mut state = store.stand_in_processing_state(7).unwrap();
     let since = state["observedSince"]
         .as_i64()
         .expect("configuration establishes the observation boundary");
-    for (id, created_at) in [("historical", since - 10), ("new-fast-work", since + 1)] {
+    for (id, status, turn_status) in [
+        ("fast-completion", "done", Some("completed")),
+        ("status-only-completion", "done", None),
+        ("routine-progress", "running", Some("inProgress")),
+    ] {
         handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: id.into(), status: "done".into(), turn_status: Some("completed".into()),
-            created_at, completed_at: Some(since + 2),
+            local_task_id: id.into(), status: status.into(), turn_status: turn_status.map(str::to_owned),
+            created_at: since + 1, updated_at: since + 2,
+            completed_at: (status == "done").then_some(since + 2),
             runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
             ..Default::default()
         });
     }
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    let events = store.stand_in_events(7).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["taskId"], "new-fast-work");
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "unstarted".into(), status: "active".into(), created_at: since + 1,
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
-        ..Default::default()
-    });
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "status-only-completion".into(),
-        status: "done".into(), created_at: since + 1,
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
-        ..Default::default()
-    });
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    let events = store.stand_in_events(7).unwrap();
-    assert_eq!(events.len(), 2);
-    assert!(events
-        .iter()
-        .any(|event| event["taskId"] == "status-only-completion"));
-}
-
-#[test]
-fn work_changes_are_observed_once_without_waking_for_historical_completion() {
-    let root = tempfile::tempdir().unwrap();
-    let (handler, store, _) = fixture(root.path());
-    let mut link = RuntimeTaskLink {
-        local_task_id: "work".into(),
-        status: "active".into(),
-        turn_status: Some("completed".into()),
-        completed_at: Some(10),
-        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
-        ..Default::default()
-    };
-    handler.upsert_local_task(link.clone());
-    let mut state = json!({});
+    assert!(!handler.has_stand_in_work_change(7, &state));
     handler
         .observe_stand_in_work(&store, 7, &mut state)
         .unwrap();
     assert!(store.stand_in_events(7).unwrap().is_empty());
-    link.completed_at = Some(20);
+}
+
+#[test]
+fn only_new_failures_and_followup_states_wake_coordination_once() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut state = store.stand_in_processing_state(7).unwrap();
+    let since = state["observedSince"].as_i64().unwrap();
+    for (id, status, turn_status, interaction, updated_at) in [
+        ("historical", "failed", None, None, since - 1),
+        ("task-failed", "failed", None, None, since + 1),
+        ("turn-failed", "active", Some("failed"), None, since + 1),
+        ("cancelled", "cancelled", None, None, since + 1),
+        (
+            "waiting",
+            "done",
+            Some("completed"),
+            Some("waitingForUserInput"),
+            since + 1,
+        ),
+    ] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.into(), status: status.into(), turn_status: turn_status.map(str::to_owned),
+            interaction_status: interaction.map(str::to_owned), created_at: since - 2, updated_at,
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+            ..Default::default()
+        });
+    }
+    assert!(handler.has_stand_in_work_change(7, &state));
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    assert!(!handler.has_stand_in_work_change(7, &state));
+    handler
+        .observe_stand_in_work(&store, 7, &mut state)
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    let mut task_ids: Vec<_> = events
+        .iter()
+        .map(|event| event["taskId"].as_str().unwrap())
+        .collect();
+    task_ids.sort_unstable();
+    assert_eq!(
+        task_ids,
+        ["cancelled", "task-failed", "turn-failed", "waiting"]
+    );
+
+    let mut link = handler.local_task_link("waiting").unwrap();
+    link.interaction_status = None;
+    link.updated_at = since + 2;
     handler.upsert_local_task(link);
+    assert!(!handler.has_stand_in_work_change(7, &state));
     handler
         .observe_stand_in_work(&store, 7, &mut state)
         .unwrap();
-    handler
-        .observe_stand_in_work(&store, 7, &mut state)
-        .unwrap();
-    assert_eq!(store.stand_in_events(7).unwrap().len(), 1);
+    assert_eq!(store.stand_in_events(7).unwrap().len(), events.len());
 }
 
 #[tokio::test]

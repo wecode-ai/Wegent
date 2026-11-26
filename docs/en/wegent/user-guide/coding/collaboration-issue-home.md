@@ -18,6 +18,10 @@ The Executor stores local ownership; the backend stores cloud ownership. A colla
 
 When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
 
+## Web collaboration home
+
+Open **Collaboration → Home** on the web to see **My work**. In **Record issue**, pick the collaboration project and record the Issue. Switching to **Create task** keeps the text and attachments and lets you select an available device workspace and model. Recording opens the Issue details beside the list. In a narrow window, select **Back to issues** to return to the same list. The list defaults to **Needs my action**. You can switch to **Participating** or change its sort and completion filter.
+
 ## Create a collaboration project
 
 New local and cloud collaboration projects include only the current user by default. Agents are added only when you select them through the collaborator picker. You can also create the project first and add Agents from its settings. Importing a local code project does not automatically add the current-device Agent.

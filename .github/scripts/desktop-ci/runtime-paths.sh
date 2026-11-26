@@ -508,11 +508,32 @@ classify_path() {
       backend/tests/api/test_deliveries_api.py)
       select_target "core:collaboration-issue-comment-attachments"
       ;;
+    wework/e2e/desktop/modules/shared.mjs)
+      select_target "core:native-lifecycle"
+      select_target "core:device-artifact-declaration"
+      select_target "core:embedded-browser"
+      select_target "cloud:plugin-runtime-route-refresh"
+      ;;
     shared/rust/* | backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
       wework/e2e/desktop/modules/task-flow-main.mjs | \
       wework/e2e/desktop/support/mysql-helper.py)
       select_all_desktop_suites
+      ;;
+    .github/runtime-images/backend-rs-builder.Dockerfile | \
+      .github/scripts/resolve-backend-rs-e2e-dependencies.sh | \
+      .github/ci/wework-linux-checkpoint-durations.json | \
+      .github/scripts/order-wework-linux-e2e.* | .github/scripts/core-runner-slots.* | \
+      .github/scripts/classify-ci-changes.sh | .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/desktop-ci/* | .github/scripts/ci-classification-tests/* | \
+      .github/scripts/test-classify-ci-changes.sh | .github/workflows/wework-e2e.yml | \
+      wework/scripts/desktop-checkpoint-catalog.test.mjs)
+      select_target "core:release-package-startup"
+      select_target "core:native-lifecycle"
+      select_target "cloud:plugin-runtime-route-refresh"
+      if [[ "$path" == .github/workflows/wework-e2e.yml ]]; then
+        macos_inspector_e2e=true
+      fi
       ;;
     .github/ci/rust-toolchain | \
       .github/runtime-images/* | .github/scripts/ci-prebuilt-images.mjs | \
@@ -525,13 +546,9 @@ classify_path() {
       .github/actions/setup-wework-native-test-dependencies/* | \
       .github/actions/build-wework-windows-e2e/* | \
       .github/actions/build-wework-macos-e2e/* | \
-      .github/workflows/wework-e2e.yml | \
       .github/actions/build-wework-core-e2e/* | \
       .github/actions/build-minio-e2e/* | \
       .github/actions/setup-minio-e2e/* | \
-      .github/ci/wework-linux-checkpoint-durations.json | \
-      .github/scripts/order-wework-linux-e2e.* | \
-      .github/scripts/core-runner-slots.* | \
       docker/wework-e2e/* | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/restore-actions-runtime.sh | \
@@ -544,12 +561,7 @@ classify_path() {
       .github/scripts/restore-macos-e2e-runtime-oci.sh | .github/scripts/publish-macos-e2e-runtime-oci.sh | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/wework-core-e2e-transport.* | \
-      .github/scripts/classify-ci-changes.sh | \
-      .github/scripts/classify-wework-desktop-e2e.sh | \
-      .github/scripts/desktop-ci/* | \
-      .github/scripts/ci-classification-tests/* | \
-      .github/scripts/restore-wework-core-e2e-build.sh | \
-      .github/scripts/test-classify-ci-changes.sh)
+      .github/scripts/restore-wework-core-e2e-build.sh)
       select_all_desktop_suites
       ;;
     wework/scripts/ci-test-sequencer.*)

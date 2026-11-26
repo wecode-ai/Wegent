@@ -286,17 +286,16 @@ async fn proxy_llm_responses(
         ));
     }
 
-    if let Value::Object(object) = &mut body_json {
-        object.insert(
-            "model".to_string(),
-            Value::String(strip_long_context_suffix(&provider_model_id)),
-        );
-    }
-    // The source re-serializes through `json.dumps(body_json)`, whose default
-    // separators are `", "` / `": "` and whose `ensure_ascii=True` escapes every
-    // non-ASCII character as `\uXXXX`; serde_json's compact literal rendering
-    // would change both the byte length and the escaped content.
-    let body_bytes = crate::json_compat::python_json_value(&body_json).into_bytes();
+    // Resolve the authorized CRD to its provider model before handing bytes to transport.
+    let target_model = strip_long_context_suffix(&provider_model_id);
+    let body_bytes = if headers.first("x-wegent-request-mode").as_deref() == Some("passthrough") {
+        wegent_protocol::map_request_model(body, &target_model).map_err(|_| {
+            FastApiError::detail(StatusCode::BAD_REQUEST, "Invalid model routing field")
+        })?
+    } else {
+        body_json["model"] = Value::String(target_model);
+        crate::json_compat::python_json_value(&body_json).into_bytes()
+    };
 
     // The source validates the endpoint before invoking the deployment
     // credential service (`resolve_llm_proxy_protocol` precedes

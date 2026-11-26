@@ -10,7 +10,7 @@ fn schedule_asks_before_act(automation: &Automation, role: &Value) -> bool {
     matches!(
         automation.task_request["standInCalendar"]["template"].as_str(),
         Some(MEMORY_REVIEW_TEMPLATE | WEEKLY_REVIEW_TEMPLATE)
-    ) || role["calendar"]["policy"]["askBeforeAct"] != false
+    ) || role["calendar"]["policy"]["askBeforeAct"] == true
 }
 
 impl RuntimeWorkRpcHandler {
@@ -892,7 +892,7 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                let expected = saved_policy.unwrap_or(true);
+                let expected = saved_policy.unwrap_or(false);
                 assert_eq!(ask_before_act, expected);
                 if matches!(entry.conversation_mode, ConversationMode::Independent) {
                     assert_eq!(payload["origin"]["askBeforeAct"], expected);

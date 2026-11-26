@@ -8,6 +8,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   createSingleRootLocalProject,
   selectE2EModel,
+  waitForLogPattern,
 } from '../modules/shared.mjs'
 import {
   configureCatalogReasoning,
@@ -43,23 +44,22 @@ function catalogRestartCompleted(log) {
     const finished = pending.slice(finishedAt).split('\n', 1)[0]
     if (!finished.endsWith(' ok=true')) continue
     const interval = pending.slice(0, finishedAt)
-    const processStart = interval.indexOf('codex shared app-server process starting ')
-    const prepared = interval.indexOf('codex router model catalog prepared ')
-    const processId = /codex shared app-server process starting process_id=(\d+)/.exec(
-      interval
-    )?.[1]
-    const fileLoaded =
-      prepared >= 0 &&
-      prepared < processStart &&
-      processId &&
-      new RegExp(
-        `codex shared app-server process initialized process_id=${processId}(?:\\s|$)`
+    for (const process of interval.matchAll(
+      /codex shared app-server process starting process_id=(\d+)/g
+    )) {
+      const processStart = process.index
+      const initialized = new RegExp(
+        `codex shared app-server process initialized process_id=${process[1]}(?:\\s|$)`
       ).test(interval.slice(processStart))
-    if (
-      processStart >= 0 &&
-      (fileLoaded || interval.indexOf('codex router model catalog served ', processStart) >= 0)
-    ) {
-      return true
+      // Discovery may start a process before the restart handler replaces it with
+      // the initialized process that loaded the written catalog.
+      const prepared = interval.lastIndexOf('codex router model catalog prepared ', processStart)
+      if (
+        (prepared >= 0 && initialized) ||
+        interval.includes('codex router model catalog served ', processStart)
+      ) {
+        return true
+      }
     }
   }
   return false
@@ -244,6 +244,8 @@ export function createCatalogContextVerification({
     },
     async verifyActiveRestartProtection(control) {
       active = true
+      const logPath = join(resultDir, 'executor.log')
+      let releaseLogOffset
       let release
       heldResponse = {
         promise: new Promise(resolve => {
@@ -261,7 +263,6 @@ export function createCatalogContextVerification({
           snapshot => requests === expected && snapshot.pane?.status?.isBusy === true,
           'The active Catalog confirmation fixture never entered a real model turn'
         )
-        const logPath = join(resultDir, 'executor.log')
         const before =
           (await readFile(logPath, 'utf8')).match(/codex shared app-server process starting /g)
             ?.length ?? 0
@@ -288,6 +289,7 @@ export function createCatalogContextVerification({
           )
         )
         await control.command('waitFor', '[data-testid="pause-response-button"]')
+        releaseLogOffset = (await readFile(logPath, 'utf8')).length
       } finally {
         release()
         heldResponse = null
@@ -300,6 +302,12 @@ export function createCatalogContextVerification({
         control,
         snapshot => snapshot.pane?.status?.isBusy === false,
         'The active Catalog task did not finish after declining an idle restart'
+      )
+      // The settled conversation starts a reply prediction on the same app-server.
+      await waitForLogPattern(
+        logPath,
+        /app IPC request finished .* method=runtime\.text\.predict_reply .* ok=true/,
+        { fromOffset: releaseLogOffset, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
       )
       active = false
     },

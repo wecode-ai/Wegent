@@ -36,6 +36,9 @@ xvfb_cookie=$(mcookie)
 # Xvfb loads the cookie before selecting a display; clients need the selected number.
 xauth -f "$XAUTHORITY" add :0 . "$xvfb_cookie" >>"$xvfb_log" 2>&1
 start_display() {
+  if [ "${WEWORK_E2E_XVFB_DISABLE_GLX:-0}" = 1 ]; then
+    set -- "$@" -extension GLX
+  fi
   exec Xvfb "$@" -displayfd 3 -noreset -nolisten tcp -screen 0 "$xvfb_screen" \
     -auth "$XAUTHORITY" 3>"$xvfb_root/display" >>"$xvfb_log" 2>&1
 }

@@ -143,6 +143,8 @@ test("delivery inputs select the real image without selecting unrelated UI chang
     "docker/backend/Dockerfile",
     "backend/app/main.py",
     "backend-rs/config/routes.toml",
+    "backend-rs/scripts/start-hybrid-backend.sh",
+    "backend-rs/execution-completion/Cargo.toml",
     "shared/setup.py",
     "chat_shell/pyproject.toml",
     "knowledge_engine/pyproject.toml",
@@ -152,10 +154,14 @@ test("delivery inputs select the real image without selecting unrelated UI chang
   ]) {
     assert.equal(deliveryImageRequired([file]), true, file);
   }
-  assert.equal(
-    deliveryImageRequired(["frontend/src/app/page.tsx", "docs/zh/index.md"]),
-    false,
-  );
+  for (const file of [
+    "frontend/src/app/page.tsx",
+    "docs/zh/index.md",
+    "backend/tests/services/execution/test_stalled_tasks.py",
+    "backend-rs/execution-completion/src/persist.rs",
+  ]) {
+    assert.equal(deliveryImageRequired([file]), false, file);
+  }
   assert.equal(deliveryImageRequired([]), false);
 });
 

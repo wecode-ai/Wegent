@@ -12,7 +12,10 @@ pub(super) struct RuntimeTemplate {
 }
 
 impl RuntimeTemplate {
-    pub(super) fn read(source: &Path) -> Result<Self, CapabilitySyncError> {
+    pub(super) fn read(
+        source: &Path,
+        store: &GlobalCapabilityStore,
+    ) -> Result<Self, CapabilitySyncError> {
         let mut modes = file_inventory(source)?;
         #[cfg(unix)]
         for (relative, mode) in &mut modes {
@@ -20,7 +23,7 @@ impl RuntimeTemplate {
                 *mode |= 0o111;
             }
         }
-        // Only the small converted manifests differ from the published source.
+        // Stage only the converted manifests, then compute any MCP projection in memory.
         let stage = tempfile::tempdir()?;
         for relative in PLUGIN_MANIFEST_PATHS {
             let path = source.join(relative);
@@ -39,6 +42,7 @@ impl RuntimeTemplate {
             );
             modes.insert(relative, mode);
         }
+        manifests.extend(store.managed_python_configs(source, stage.path())?);
         Ok(Self {
             source: source.to_owned(),
             modes,

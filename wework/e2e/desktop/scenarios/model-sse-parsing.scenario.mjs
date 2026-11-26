@@ -15,6 +15,7 @@ import {
   handleEmptyReplyPrediction,
   handleModelMaintenanceRequest,
   isReplyPredictionRequest,
+  latestModelInputText,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -40,6 +41,37 @@ const SUBAGENT_PROMPT = 'Use a subagent for the Anthropic Messages regression.'
 const SUBAGENT_TASK = 'ANTHROPIC_SUBAGENT_TASK'
 const SUBAGENT_RESULT = 'ANTHROPIC_SUBAGENT_RESULT'
 const SUBAGENT_DONE = 'ANTHROPIC_SUBAGENT_DONE'
+const HISTORY_ERROR_PROMPT = 'WEWORK_E2E_HISTORY_ERROR'
+const HISTORY_CONTINUE_PROMPT = 'WEWORK_E2E_HISTORY_CONTINUE'
+const HISTORY_CONTINUED = 'WEWORK_E2E_HISTORY_CONTINUED'
+const HISTORY_RECOVERY_BUTTON = '[data-testid="assistant-error-continue-in-new-conversation"]'
+
+async function verifyHistoryRecovery(control, timeoutMs) {
+  const send = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+  await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')
+  await selectE2EModel(control, 'local-model:sse-responses-bridge', 'sse-responses-bridge')
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: HISTORY_ERROR_PROMPT })
+  await control.command('clickWhenEnabled', send)
+  await control.command('waitFor', HISTORY_RECOVERY_BUTTON, { visible: true, timeoutMs })
+  await control.command('clickWhenEnabled', HISTORY_RECOVERY_BUTTON)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_COMPOSER_SELECTOR} [data-testid^="conversation-chip-"]`,
+    { text: HISTORY_ERROR_PROMPT, visible: true, timeoutMs }
+  )
+  await control.command('pasteText', ACTIVE_COMPOSER_SELECTOR, {
+    value: HISTORY_CONTINUE_PROMPT,
+  })
+  await control.command('clickWhenEnabled', send)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: HISTORY_CONTINUED,
+      timeoutMs,
+    }
+  )
+}
 
 function writeAnthropicSubagentTool(control, response, body, callId, name, input) {
   const tools = wireDeclarations(body, 'anthropic')
@@ -77,6 +109,7 @@ export function createDesktopScenario({
   electronUserDataDirectory,
   workspacePath,
   resultDir,
+  uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
   let modelControl
@@ -140,6 +173,41 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       if (handleModelMaintenanceRequest(body, response)) return true
       assert.ok(modelControl, 'Only user-submitted regression turns may reach this oracle')
+      if (model.id === 'responses-bridge') {
+        const latestInput = latestModelInputText(body)
+        if (latestInput.includes(HISTORY_CONTINUE_PROMPT)) {
+          const inputs = JSON.stringify(body.input)
+          assert.ok(inputs.includes('The user explicitly referenced these Wework conversations'))
+          assert.ok(
+            !(body.input ?? [])
+              .slice(0, -1)
+              .some(
+                item =>
+                  item.role === 'user' &&
+                  JSON.stringify(item.content).includes(HISTORY_ERROR_PROMPT)
+              ),
+            'A new conversation must not replay the failed conversation'
+          )
+          modelControl.writeSse(response, [
+            responseCreated('history-recovered'),
+            assistantMessage(HISTORY_CONTINUED),
+            responseCompleted('history-recovered'),
+          ])
+          return true
+        }
+        if (latestInput.includes(HISTORY_ERROR_PROMPT)) {
+          response.writeHead(400, { 'Content-Type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              error: {
+                type: 'invalid_request_error',
+                message: 'No tool output found for tool call call_history_e2e.',
+              },
+            })
+          )
+          return true
+        }
+      }
       if (subagents.active && model.protocol === 'anthropic') {
         if (isCollaborationSubagentRequest(request.headers)) {
           assert.ok(
@@ -307,6 +375,7 @@ export function createDesktopScenario({
         }
       )
       assert.ok(subagents.done)
+      await verifyHistoryRecovery(control, uiTimeoutMs)
     },
     diagnostics() {
       return { observed, completed: [...completed], subagents }

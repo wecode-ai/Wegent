@@ -15,6 +15,7 @@ import React, {
   ReactNode,
 } from 'react'
 import type { Task } from '@/types/api'
+import { useUser } from '@/features/common/UserContext'
 import { TaskStateMachine } from '@wegent/chat-core'
 import type {
   SyncOptions,
@@ -24,6 +25,11 @@ import type {
   UnifiedMessage,
 } from '@wegent/chat-core'
 import { MessageSyncer, useMessageSyncer } from './messageSyncer'
+import {
+  createMessageSendQueue,
+  type MessageSendQueue,
+  type PreparedChatSend,
+} from './messageSendQueue'
 import { useRuntimeSignalBridge } from './runtimeSignalBridge'
 import { TaskPuller, useTaskPuller } from './taskPuller'
 
@@ -43,6 +49,7 @@ export type TaskSession = Omit<
 > &
   MessageSession & {
     currentTaskId: number | null
+    messageSendQueue: MessageSendQueue<PreparedChatSend>
     taskState: TaskStateSnapshot | null
     messages: Map<string, UnifiedMessage>
     isStreaming: boolean
@@ -64,6 +71,8 @@ const TaskSessionContext = createContext<TaskSession | null>(null)
 export { TaskSessionContext }
 
 export function TaskSessionProvider({ children }: { children: ReactNode }) {
+  const userId = useUser().user?.id
+  const messageSendQueue = useMemo(() => createMessageSendQueue<PreparedChatSend>(), [userId])
   const taskPuller = useTaskPuller()
   const {
     pullTaskDetail,
@@ -264,6 +273,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     return {
       ...publicTaskPuller,
       currentTaskId,
+      messageSendQueue,
       selectTask,
       sendMessage: messageSyncer.sendMessage,
       stopStream,
@@ -279,6 +289,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     }
   }, [
     currentTaskId,
+    messageSendQueue,
     messageSyncer,
     recoverCurrentTask,
     selectTask,
