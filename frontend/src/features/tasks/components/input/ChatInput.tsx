@@ -427,6 +427,48 @@ export default function ChatInput({
     }
   }
 
+  const updateSkillCommand = useCallback(
+    (input: HTMLDivElement, text: string) => {
+      if (!onSkillSelect) return
+
+      const selection = window.getSelection()
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+      if (!range?.collapsed || !input.contains(range.startContainer)) {
+        closeSkillMenu()
+        return
+      }
+
+      if (
+        !skillCommand &&
+        range.startContainer.nodeType === Node.TEXT_NODE &&
+        range.startContainer.textContent?.[range.startOffset - 1] !== '/'
+      ) {
+        return
+      }
+
+      const prefixRange = range.cloneRange()
+      prefixRange.selectNodeContents(input)
+      prefixRange.setEnd(range.startContainer, range.startOffset)
+      const prefix = getTextWithNewlines(prefixRange.cloneContents())
+      const match = /(?:^|\s)\/(\S*)$/.exec(prefix)
+      if (!match || (match[1] && !skillCommand)) {
+        closeSkillMenu()
+        return
+      }
+
+      const end = prefix.length
+      const start = end - match[1].length - 1
+      let position = skillCommand?.start === start ? skillCommand.position : undefined
+      if (!position) {
+        const rect = range.getBoundingClientRect()
+        const containerRect = input.getBoundingClientRect()
+        position = { top: rect.top - containerRect.top - 8, left: rect.left - containerRect.left }
+      }
+      setSkillCommand({ draft: text, start, end, query: match[1], position })
+    },
+    [onSkillSelect, skillCommand, closeSkillMenu, getTextWithNewlines]
+  )
+
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLDivElement>) => {
       if (isInputDisabled) return
@@ -480,42 +522,7 @@ export default function ChatInput({
         }
       }
 
-      if (!onSkillSelect) return
-
-      const selection = window.getSelection()
-      const range = selection?.rangeCount ? selection.getRangeAt(0) : null
-      if (!range?.collapsed || !e.currentTarget.contains(range.startContainer)) {
-        closeSkillMenu()
-        return
-      }
-
-      if (
-        !skillCommand &&
-        range.startContainer.nodeType === Node.TEXT_NODE &&
-        range.startContainer.textContent?.[range.startOffset - 1] !== '/'
-      ) {
-        return
-      }
-
-      const prefixRange = range.cloneRange()
-      prefixRange.selectNodeContents(e.currentTarget)
-      prefixRange.setEnd(range.startContainer, range.startOffset)
-      const prefix = getTextWithNewlines(prefixRange.cloneContents())
-      const match = /(?:^|\s)\/(\S*)$/.exec(prefix)
-      if (!match || (match[1] && !skillCommand)) {
-        closeSkillMenu()
-        return
-      }
-
-      const end = prefix.length
-      const start = end - match[1].length - 1
-      let position = skillCommand?.start === start ? skillCommand.position : undefined
-      if (!position) {
-        const rect = range.getBoundingClientRect()
-        const containerRect = e.currentTarget.getBoundingClientRect()
-        position = { top: rect.top - containerRect.top - 8, left: rect.left - containerRect.left }
-      }
-      setSkillCommand({ draft: text, start, end, query: match[1], position })
+      updateSkillCommand(e.currentTarget, text)
     },
     [
       isInputDisabled,
@@ -525,9 +532,7 @@ export default function ChatInput({
       team,
       enableTaskMentions,
       showMentionMenu,
-      onSkillSelect,
-      skillCommand,
-      closeSkillMenu,
+      updateSkillCommand,
     ]
   )
 
@@ -718,9 +723,17 @@ export default function ChatInput({
         const newText = getTextWithNewlines(editableRef.current)
         setMessage(newText)
         setShowPlaceholder(!newText)
+        updateSkillCommand(editableRef.current, newText)
       }
     },
-    [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile, collapseRangeAtContentEnd]
+    [
+      isInputDisabled,
+      setMessage,
+      getTextWithNewlines,
+      onPasteFile,
+      collapseRangeAtContentEnd,
+      updateSkillCommand,
+    ]
   )
 
   const focusEditableAtEnd = useCallback(() => {

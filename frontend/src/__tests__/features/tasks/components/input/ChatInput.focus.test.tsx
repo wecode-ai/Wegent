@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Profiler, type ReactNode } from 'react'
+import userEvent from '@testing-library/user-event'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
 
@@ -183,9 +184,14 @@ describe('ChatInput external focus', () => {
   })
 })
 
-test.each([false, true])(
-  'consumes only the slash query with a pending catalog: %s',
-  async pendingCatalog => {
+test.each([
+  { pendingCatalog: false, pasteQuery: false },
+  { pendingCatalog: true, pasteQuery: false },
+  { pendingCatalog: false, pasteQuery: true },
+])(
+  'preserves the draft when selecting a skill (pending catalog: $pendingCatalog, paste: $pasteQuery)',
+  async ({ pendingCatalog, pasteQuery }) => {
+    const user = userEvent.setup()
     const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
       configurable: true,
@@ -207,7 +213,7 @@ test.each([false, true])(
         onSkillSelect: jest.fn(),
         isLoading: false,
       }
-      const suffix = pendingCatalog ? ' and keep this path /tmp' : ''
+      const suffix = pendingCatalog || pasteQuery ? ' and keep this path /tmp' : ''
       const draft = 'Check /docs/pdf' + suffix
       const { rerender } = render(
         <ChatInput
@@ -224,10 +230,14 @@ test.each([false, true])(
         fireEvent.input(input)
       }
       typeCommand('/')
-      typeCommand('/docs/pdf')
+      if (pasteQuery) {
+        await user.paste('docs/pdf')
+      } else {
+        typeCommand('/docs/pdf')
+      }
       rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
 
-      fireEvent.click(await screen.findByTestId('slash-skill-option'))
+      await user.click(await screen.findByTestId('slash-skill-option'))
       expect(props.onSkillSelect).toHaveBeenCalledWith(skill)
       expect(props.setMessage).toHaveBeenLastCalledWith('Check ' + suffix)
       expect(window.getSelection()?.anchorOffset).toBe('Check '.length)
