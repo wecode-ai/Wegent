@@ -473,11 +473,12 @@ export function createDesktopScenario({
         text: '后续消息仍在第二段',
         timeoutMs: modelResponseTimeoutMs,
       })
-      // The history boundary disappears once automatic pagination finishes.
-      // The current session's first request remains a stable user-scroll anchor.
-      await control.command('scrollIntoViewAsUser', `${CHAT} [data-testid="message-user"]`, {
-        text: SECOND,
-      })
+      // Older messages may be virtualized out of the viewport after restart.
+      await control.command(
+        'scrollToRatioAsUser',
+        `${activeChat} [data-testid="right-workspace-chat-scroll-area"]`,
+        { value: '0' }
+      )
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: '第一段问题已回答',
       })
