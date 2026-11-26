@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.endpoints.admin.public_models import (
     create_public_model,
+    list_public_models,
     update_public_model,
 )
 from app.core.exceptions import ValidationException
@@ -15,11 +16,14 @@ from app.models.user import User
 from app.schemas.admin import PublicModelCreate, PublicModelUpdate
 
 
-def _model_json(name: str) -> dict:
+def _model_json(name: str, display_name: str | None = None) -> dict:
+    metadata = {"name": name, "namespace": "default"}
+    if display_name:
+        metadata["displayName"] = display_name
     return {
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Model",
-        "metadata": {"name": name, "namespace": "default"},
+        "metadata": metadata,
         "spec": {
             "modelConfig": {
                 "env": {
@@ -222,3 +226,65 @@ async def test_public_model_json_visibility_is_authoritative(
 
     assert response.is_visible is False
     assert response.model_json["spec"]["isVisible"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_public_models_filters_by_name_and_display_name(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    for name, display_name in (
+        ("qwen-resource-name", "Unrelated Display"),
+        ("resource-alias", "Qwen Display Match"),
+        ("deepseek-v4", "DeepSeek-V4"),
+    ):
+        await create_public_model(
+            model_data=PublicModelCreate(
+                name=name,
+                json=_model_json(name, display_name),
+            ),
+            db=test_db,
+            current_user=test_admin_user,
+        )
+
+    response = await list_public_models(
+        page=1,
+        limit=50,
+        search=" QWEN ",
+        db=test_db,
+        current_user=test_admin_user,
+    )
+
+    assert response.total == 2
+    assert [item.name for item in response.items] == [
+        "resource-alias",
+        "qwen-resource-name",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_public_models_paginates_filtered_results(
+    test_db: Session,
+    test_admin_user: User,
+) -> None:
+    for index in range(3):
+        name = f"qwen-page-model-{index}"
+        await create_public_model(
+            model_data=PublicModelCreate(
+                name=name,
+                json=_model_json(name, f"Qwen Page {index}"),
+            ),
+            db=test_db,
+            current_user=test_admin_user,
+        )
+
+    response = await list_public_models(
+        page=2,
+        limit=1,
+        search="qwen",
+        db=test_db,
+        current_user=test_admin_user,
+    )
+
+    assert response.total == 3
+    assert [item.name for item in response.items] == ["qwen-page-model-1"]
