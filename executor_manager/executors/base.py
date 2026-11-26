@@ -154,7 +154,7 @@ class Executor(abc.ABC):
         was not found by name. It searches for executors with the matching
         task_id label and deletes them.
 
-        Default implementation returns not_found. Subclasses should override.
+        Subclasses must implement the lookup to report runtime absence.
 
         Args:
             task_id: Task ID to search for
@@ -164,7 +164,7 @@ class Executor(abc.ABC):
             Dict with status and error_msg if failed
         """
         return {
-            "status": "not_found",
+            "status": "failed",
             "error_msg": "delete_executor_by_task_id not implemented",
         }
 

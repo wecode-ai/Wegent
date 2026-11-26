@@ -2524,7 +2524,10 @@ class TestSandboxManager:
         await manager._collect_expired_sandboxes()
 
         assert revoke.call_count == 2
-        mock_redis_client.zrem.assert_called_with("wegent-sandbox:active", "12345")
+        mock_redis_client.zrem.assert_any_call(
+            manager._repository.active_sandboxes_zset, "12345"
+        )
+        mock_redis_client.zrem.assert_any_call("wegent-sandbox:active", "12345")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2561,28 +2564,42 @@ class TestSandboxManager:
         mock_redis_client.zrem.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("supports_label_lookup", [False, True])
     async def test_collect_expired_sandboxes_keeps_orphan_when_delete_fails(
-        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        mocker,
+        supports_label_lookup,
     ):
         """A failed orphan delete keeps the entry so the next GC retries."""
+        from executor_manager.executors.base import Executor
+
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.zrangebyscore.return_value = ["12345"]
         mock_redis_client.hget.return_value = None
         mock_executor = MagicMock()
-        mock_executor.delete_executor_by_task_id.return_value = {
-            "status": "failed",
-            "error_msg": "api unavailable",
-        }
+        if supports_label_lookup:
+            mock_executor.delete_executor_by_task_id.return_value = {
+                "status": "failed",
+                "error_msg": "api unavailable",
+            }
+        else:
+            mock_executor.delete_executor_by_task_id.side_effect = (
+                Executor.delete_executor_by_task_id.__get__(mock_executor)
+            )
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
         )
+        revoke = mocker.spy(manager._repository, "delete_executor_binding")
 
         await manager._collect_expired_sandboxes()
 
         mock_executor.delete_executor_by_task_id.assert_called_once_with(
             "12345", sandbox_only=True
         )
+        revoke.assert_not_called()
         mock_redis_client.zrem.assert_not_called()
 
     @pytest.mark.asyncio
