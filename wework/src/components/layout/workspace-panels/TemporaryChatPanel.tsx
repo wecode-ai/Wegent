@@ -124,7 +124,6 @@ export function TemporaryChatPanel({
   showModelSelector = true,
   hideProcessing = false,
   showActivityDots = false,
-  assistantMessageStyle,
   markReadWhenActive = false,
   nativeConversation = false,
   allowMessagesDuringApproval = false,
@@ -914,8 +913,8 @@ export function TemporaryChatPanel({
     pendingRequest &&
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   const messageGaps = renderMessageGaps?.(presentation.messages)
-  const showWaitingDots =
-    showActivityDots &&
+  const showReplyWaitingIndicator =
+    (hideProcessing || showActivityDots) &&
     !readOnly &&
     !pendingRequest &&
     !taskLifecycle?.interactionStatus &&
@@ -928,9 +927,16 @@ export function TemporaryChatPanel({
         message.role === 'user' ||
         (message.role === 'assistant' && getAssistantContentPresentation(message).content.trim())
     )?.role !== 'assistant'
+  const showWaitingDots = showActivityDots && showReplyWaitingIndicator
+  const isWaitingForAssistant =
+    hideProcessing || showActivityDots
+      ? showReplyWaitingIndicator
+      : nativeConversation
+        ? sending
+        : busy
   const layout = (
     <TemporaryConversationLayout
-      messageCount={presentation.messages.length + Number(showWaitingDots)}
+      messageCount={presentation.messages.length + Number(showReplyWaitingIndicator)}
       loading={historyLoading}
       loadError={historyError}
       onRetry={retryHistory}
@@ -1114,7 +1120,6 @@ export function TemporaryChatPanel({
       }
     >
       <ScrollableMessageArea
-        assistantMessageStyle={assistantMessageStyle}
         showProcessingStatus={!hideProcessing}
         onFillSelectionToAnswer={onFillSelectionToAnswer}
         messageTarget={messageTarget}
@@ -1127,9 +1132,7 @@ export function TemporaryChatPanel({
         onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
-        isWaitingForAssistant={
-          showActivityDots ? showWaitingDots : busy && (!nativeConversation || sending)
-        }
+        isWaitingForAssistant={isWaitingForAssistant}
         waitingIndicatorStyle={showActivityDots ? 'dots' : undefined}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}

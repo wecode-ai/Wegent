@@ -29,14 +29,18 @@ export function DingTalkDelegationControls({
   const paused = saved.delegation?.paused === true
   const templateField = (
     <fieldset className="space-y-2" disabled={disabled}>
-      <legend className="mb-2 text-sm font-medium">{t('standIn.dingtalk_delegation.templates')}</legend>
+      <legend className="mb-2 text-sm font-medium">
+        {t('standIn.dingtalk_delegation.templates')}
+      </legend>
       {delegationTemplates.map(template => (
         <label
           key={template}
           className="flex min-h-11 items-center justify-between gap-3 py-1 text-sm md:min-h-9"
         >
           <span className="min-w-0">
-            <span className="block font-medium">{t(`standIn.dingtalk_delegation.${template}`)}</span>
+            <span className="block font-medium">
+              {t(`standIn.dingtalk_delegation.${template}`)}
+            </span>
             <span className="block text-xs text-text-secondary">
               {t(`standIn.dingtalk_delegation.${template}_description`)}
             </span>
@@ -62,7 +66,9 @@ export function DingTalkDelegationControls({
         </h3>
         <p className="mt-1 break-words text-sm text-text-secondary">
           {account.accountId
-            ? t('standIn.dingtalk_delegation.account', { name: account.accountName ?? account.profile })
+            ? t('standIn.dingtalk_delegation.account', {
+                name: account.accountName ?? account.profile,
+              })
             : t(
                 account.status === 'ready'
                   ? 'standIn.dingtalk_delegation.account_unverified'
@@ -70,14 +76,22 @@ export function DingTalkDelegationControls({
               )}
           {account.organizationName && ` · ${account.organizationName}`}
         </p>
-        <p className="mt-1 text-xs text-text-secondary">{t('standIn.dingtalk_delegation.scope_help')}</p>
+        <p className="mt-1 text-xs text-text-secondary">
+          {t('standIn.dingtalk_delegation.scope_help')}
+        </p>
       </div>
       {model.reconfirm && (
-        <p role="status" className="text-sm">{t('standIn.dingtalk_delegation.source_reconfirm')}</p>
+        <p role="status" className="text-sm">
+          {t('standIn.dingtalk_delegation.source_reconfirm')}
+        </p>
       )}
       {!model.selected.length && (
         <p className="text-sm text-text-secondary" data-testid="stand-in-delegation-no-sources">
-          {t(model.authorized ? 'standIn.dingtalk_delegation.remove_all' : 'standIn.dingtalk_delegation.choose_sources')}
+          {t(
+            model.authorized
+              ? 'standIn.dingtalk_delegation.remove_all'
+              : 'standIn.dingtalk_delegation.choose_sources'
+          )}
         </p>
       )}
       {draft.model?.runtime === 'claude_code' && (
@@ -87,7 +101,9 @@ export function DingTalkDelegationControls({
       )}
       {templateField}
       {model.authorized && paused && (
-        <p role="status" className="text-sm">{t('standIn.dingtalk_delegation.saving_paused')}</p>
+        <p role="status" className="text-sm">
+          {t('standIn.dingtalk_delegation.saving_paused')}
+        </p>
       )}
       {model.narrows && <p className="text-sm">{t('standIn.dingtalk_delegation.narrows')}</p>}
       {model.widens && <p className="text-sm">{t('standIn.dingtalk_delegation.widens')}</p>}

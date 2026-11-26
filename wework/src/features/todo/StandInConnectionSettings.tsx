@@ -283,8 +283,7 @@ export function StandInConnectionSettings({
                     onChange={onChange}
                   />
                 )}
-              {provider.id === STAND_IN_DINGTALK_PROVIDER &&
-                renderDingTalkDelegation?.(provider)}
+              {provider.id === STAND_IN_DINGTALK_PROVIDER && renderDingTalkDelegation?.(provider)}
             </>
           ) : (
             <div className="space-y-3">

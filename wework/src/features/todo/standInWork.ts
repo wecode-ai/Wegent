@@ -18,7 +18,9 @@ export function mergeStandInWorkItems(
       origin?.standInId === '@primary' &&
       (origin.type === 'dingtalk_work' ||
         (origin.type === 'connection_work' && origin.sourceProvider === STAND_IN_DINGTALK_PROVIDER))
-    return !primaryDingTalk || (item.address.deviceId === deviceId && inboxTaskIds.has(item.task.taskId))
+    return (
+      !primaryDingTalk || (item.address.deviceId === deviceId && inboxTaskIds.has(item.task.taskId))
+    )
   })
   const merged = new Map(
     visible.map(item => {

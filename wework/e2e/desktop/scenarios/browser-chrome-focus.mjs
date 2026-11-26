@@ -165,7 +165,60 @@ async function verifySearchOverlay(
       const rect = button.getBoundingClientRect()
       return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
     })()`)
-  await click(trigger)
+  if (linuxWindow) {
+    // A native move can reach the host while Chromium still routes the next press to the guest.
+    // Observe real motion on the search button before sending the only click.
+    try {
+      await read(`(() => {
+        const abort = new AbortController()
+        const observation = { abort, event: null }
+        window.__weworkSearchTriggerMotion = observation
+        document.addEventListener('pointermove', event => {
+          observation.event = {
+            sequence: (observation.event?.sequence ?? 0) + 1,
+            x: event.clientX, y: event.clientY, trusted: event.isTrusted,
+            onTrigger: event.target instanceof Element && Boolean(event.target.closest('[data-testid="runtime-search-button"]'))
+          }
+        }, { capture: true, signal: abort.signal })
+        return true
+      })()`)
+      let offset = 1
+      let point = null
+      let after = 0
+      const reachedTrigger = ({ point, after, event }) =>
+        point &&
+        event?.sequence > after &&
+        event.trusted &&
+        event.onTrigger &&
+        event.x === point.x &&
+        event.y === point.y
+      const ready = await waitForValue(
+        async () => {
+          // The previous move may complete after the first read; check it before probing again.
+          const event = await read('window.__weworkSearchTriggerMotion.event')
+          if (reachedTrigger({ point, after, event })) return { point, after, event }
+          after = event?.sequence ?? 0
+          point = { x: Math.round(trigger.x) + offset, y: Math.round(trigger.y) }
+          offset = -offset
+          await movePointer(point)
+          return { point, after, event: await read('window.__weworkSearchTriggerMotion.event') }
+        },
+        reachedTrigger,
+        'Native pointer movement must reach the search trigger',
+        5_000
+      )
+      console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
+      await pressAndRelease(ready.point)
+    } finally {
+      await read(`(() => {
+        window.__weworkSearchTriggerMotion?.abort.abort()
+        delete window.__weworkSearchTriggerMotion
+        return true
+      })()`)
+    }
+  } else {
+    await click(trigger)
+  }
   await waitForValue(
     () => read(`document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`),
     focused => focused,

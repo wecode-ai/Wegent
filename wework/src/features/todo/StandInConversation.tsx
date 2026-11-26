@@ -3,6 +3,8 @@ import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskRemin
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Button } from '@/components/ui/button'
+import { applyRuntimeConversationAction } from '@/features/workbench/runtimeConversationCache'
+import { useRuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -89,6 +91,7 @@ export function StandInConversation({
   }
   const resource = owner.resource
   const workbench = useContext(WorkbenchContext)
+  const lifecycleStore = useRuntimeTaskLifecycleStore()
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
@@ -275,7 +278,6 @@ export function StandInConversation({
         }
         hideProcessing
         showActivityDots
-        assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
         allowMessagesDuringApproval
@@ -305,6 +307,11 @@ export function StandInConversation({
         onOpenRuntimeTask={onOpenTask}
         createTask={async (message, options) => {
           const target = { deviceId, taskId }
+          applyRuntimeConversationAction(target, {
+            type: 'user_added',
+            message: options.optimisticUserMessage,
+          })
+          lifecycleStore.sendRequested(target)
           options.onRuntimeTaskOptimisticOpen(target)
           try {
             const result = await api.conversation(userId, deviceId, message, roleId, {
@@ -313,9 +320,11 @@ export function StandInConversation({
               attachments: localRuntimeAttachments(options.attachments),
               clientUserMessageId: options.optimisticUserMessage.id,
             })
+            lifecycleStore.sendAccepted(target)
             setAddress(result)
             return result
           } catch (cause) {
+            lifecycleStore.sendRejected(target)
             options.onError(getStandInErrorMessage(cause))
             return false
           }
