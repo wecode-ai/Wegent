@@ -24,6 +24,7 @@ interface SkillCommand {
   start: number
   end: number
   query: string
+  showEmptyResults: boolean
   position: { top: number; left: number }
 }
 
@@ -481,13 +482,21 @@ export default function ChatInput({
 
       const end = prefix.length
       const start = end - match[1].length - 1
-      let position = skillCommand?.start === start ? skillCommand.position : undefined
+      const currentCommand = skillCommand?.start === start ? skillCommand : undefined
+      let position = currentCommand?.position
       if (!position) {
         const rect = range.getBoundingClientRect()
         const containerRect = input.getBoundingClientRect()
         position = { top: rect.top - containerRect.top - 8, left: rect.left - containerRect.left }
       }
-      setSkillCommand({ draft: text, start, end, query: match[1], position })
+      setSkillCommand({
+        draft: text,
+        start,
+        end,
+        query: match[1],
+        showEmptyResults: currentCommand?.showEmptyResults ?? (!allowInitialQuery || !match[1]),
+        position,
+      })
     },
     [onSkillSelect, skillCommand, closeSkillMenu, getTextBeforeCaret]
   )
@@ -879,6 +888,7 @@ export default function ChatInput({
           teamSkillNames={teamSkillNames}
           preloadedSkillNames={preloadedSkillNames}
           query={skillCommand.query}
+          showEmptyResults={skillCommand.showEmptyResults}
           editorRef={editableRef}
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}

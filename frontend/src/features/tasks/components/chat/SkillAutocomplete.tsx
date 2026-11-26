@@ -26,6 +26,8 @@ interface SkillAutocompleteProps {
   preloadedSkillNames: string[]
   /** Filter query after / */
   query: string
+  /** Whether an unmatched query displays the empty menu */
+  showEmptyResults?: boolean
   /** Editor that opened the slash menu */
   editorRef?: React.RefObject<HTMLElement | null>
   /** Already selected skill IDs */
@@ -64,6 +66,7 @@ export default function SkillAutocomplete({
   teamSkillNames,
   preloadedSkillNames,
   query = '',
+  showEmptyResults = true,
   editorRef,
   selectedSkillIds = [],
   onSelect,
@@ -120,7 +123,7 @@ export default function SkillAutocomplete({
   // Close on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      if (!menuRef.current?.contains(event.target as Node)) {
         onClose()
       }
     }
@@ -177,9 +180,11 @@ export default function SkillAutocomplete({
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229 || !(event.target instanceof Node)) return
+      const menu = menuRef.current
+      if (!menu || event.isComposing || event.keyCode === 229 || !(event.target instanceof Node))
+        return
 
-      const focusInMenu = menuRef.current?.contains(event.target)
+      const focusInMenu = menu.contains(event.target)
       if (!focusInMenu && !editorRef?.current?.contains(event.target)) return
 
       const getOption = (index: number) =>
@@ -246,6 +251,7 @@ export default function SkillAutocomplete({
   }
 
   if (filteredSkills.length === 0) {
+    if (!showEmptyResults) return null
     return (
       <div
         ref={menuRef}

@@ -189,6 +189,8 @@ test.each([
   { pendingCatalog: true, method: 'type', action: 'click' },
   { pendingCatalog: false, method: 'paste query', action: 'click' },
   { pendingCatalog: false, method: 'paste command', action: 'click' },
+  { pendingCatalog: true, method: 'paste command', action: 'click' },
+  { pendingCatalog: false, method: 'paste command', action: 'send unmatched path' },
   { pendingCatalog: false, method: 'type', action: 'move caret' },
   { pendingCatalog: false, method: 'type', action: 'keyboard' },
 ])(
@@ -217,7 +219,8 @@ test.each([
         isLoading: false,
       }
       const suffix = ' and keep this path /tmp'
-      const draft = 'Check /docs/pdf' + suffix
+      const command = action === 'send unmatched path' ? '/tmp/notes.txt' : '/docs/pdf'
+      const draft = 'Check ' + command + suffix
       const { rerender } = render(
         <ChatInput
           {...props}
@@ -234,13 +237,24 @@ test.each([
       }
       if (method === 'paste command') {
         window.getSelection()?.collapse(input.firstChild, 'Check '.length)
-        await user.paste('/docs/pdf')
+        await user.paste(command)
       } else {
         typeCommand('/')
         if (method === 'paste query') await user.paste('docs/pdf')
         else typeCommand('/docs/pdf')
       }
       rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
+
+      if (action === 'send unmatched path') {
+        await user.keyboard('{Enter}')
+        expect(props.handleSendMessage).toHaveBeenCalledTimes(1)
+        expect(props.setMessage).toHaveBeenLastCalledWith(draft)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        expect(
+          screen.queryByText('common:skillSelector.no_available_skills')
+        ).not.toBeInTheDocument()
+        return
+      }
 
       const option = await screen.findByTestId('slash-skill-option')
       if (action === 'move caret') {
