@@ -78,6 +78,34 @@ describe('downloadWithRetry', () => {
     }
   })
 
+  test('destroys the body when rejecting too many redirects', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
+    temporaryDirectories.push(directory)
+    const destination = join(directory, 'codex.tgz')
+    const server = createServer((request, response) => {
+      const redirectNumber = Number(new URL(request.url, 'http://localhost').searchParams.get('n'))
+      response.writeHead(302, { Location: '/?n=' + (redirectNumber + 1) })
+      response.end(Buffer.alloc(128 * 1024))
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+
+    try {
+      await expect(
+        downloadWithRetry('http://127.0.0.1:' + server.address().port + '/?n=1', destination, {
+          attempts: 1,
+          timeouts: {
+            connectTimeoutMs: 1_000,
+            headersTimeoutMs: 1_000,
+            bodyTimeoutMs: 1_000,
+          },
+        })
+      ).rejects.toThrow('Too many download redirects')
+    } finally {
+      server.closeAllConnections?.()
+      await new Promise(resolve => server.close(resolve))
+    }
+  })
+
   test('rejects a truncated archive and removes its partial file', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
     temporaryDirectories.push(directory)

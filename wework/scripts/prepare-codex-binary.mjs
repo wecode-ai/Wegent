@@ -141,7 +141,10 @@ async function downloadFile(url, destination, timeouts = DOWNLOAD_TIMEOUTS) {
         bodyTimeout: timeouts.bodyTimeoutMs,
       })
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        if (redirects >= 5) throw new Error('Too many download redirects')
+        if (redirects >= 5) {
+          response.body.destroy()
+          throw new Error('Too many download redirects')
+        }
         await response.body.dump()
         address = new URL(response.headers.location, address)
         continue
