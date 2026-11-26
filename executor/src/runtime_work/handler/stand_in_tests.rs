@@ -630,16 +630,31 @@ fn tag_rules_include_every_eligible_role_without_suppressing_untagged_roles() {
 #[test]
 fn selected_agent_uses_existing_runner_compiler_and_keeps_capabilities() {
     let model = json!({"runtime":"codex","provider":"native","model_id":"model"});
-    let agent = json!({"id":"reviewer","name":"Reviewer","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"fixed","model":model},"system_prompt":"Review carefully","additional_skills":["review"],"plugins":[{"id":"plugin"}],"mcp_servers":{"tools":{}}});
+    let agent = json!({"id":"review-team","bot":[{"id":"reviewer","shell_type":"Codex"},{"id":"editor","shell_type":"Codex"}],"collaboration_model":"pipeline","name":"Reviewer","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"fixed","model":model},"system_prompt":"Review carefully","additional_skills":["review"],"plugins":[{"id":"plugin"}],"mcp_servers":{"tools":{}}});
     let catalog = json!({"runtimes":["codex"],"models":[{"runtime":"codex","provider":"native","model_id":"model","local_model_id":"model","is_default":true}]});
     let mut payload =
         json!({"taskId":"task","message":"Handle this task","origin":{"initiatedBy":"stand_in"}});
     apply_stand_in_agent(&mut payload, &agent, &catalog, "mac", None).unwrap();
+    let mut broken = agent.clone();
+    broken.as_object_mut().unwrap().remove("bot");
+    let mut rejected = json!({});
+    assert_eq!(
+        apply_stand_in_agent(&mut rejected, &broken, &catalog, "mac", None)
+            .unwrap_err()
+            .code,
+        "stand_in_team_missing"
+    );
+    assert!(rejected.get("executionRequest").is_none());
     assert_eq!(
         payload["executionRequest"]["system_prompt"],
         "Review carefully"
     );
-    assert_eq!(payload["executionRequest"]["bot"][0]["id"], "reviewer");
+    assert_eq!(payload["executionRequest"]["bot"], agent["bot"]);
+    assert_eq!(payload["executionRequest"]["team_ref"], "review-team");
+    assert_eq!(
+        payload["executionRequest"]["collaboration_model"],
+        "pipeline"
+    );
     assert_eq!(
         payload["executionRequest"]["preload_skills"],
         json!(["review"])
@@ -1044,9 +1059,12 @@ async fn default_personal_task_needs_no_project_environment() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.materialize_implicit_primary(7, "mac").unwrap();
+    let team_ref = store.personal_stand_in(7, "mac").unwrap()["primary"]["teamRef"].clone();
     let payload = handler
         .prepare_stand_in_task(
-            &json!({"id":"default","projectStore":"local","projectId":"not-configured","userId":7}),
+            &json!({"id":"default","projectStore":"local","projectId":"not-configured","userId":7,"teamRef":team_ref}),
             &json!({"id":"issue","title":"Task"}),
             &json!({"humanAssignmentId":"human"}),
         )
@@ -1084,10 +1102,10 @@ async fn project_work_does_not_copy_private_preferences_into_the_source_prompt()
         let mut personal = store.personal_stand_in(7, "mac").unwrap();
         personal["primary"] =
             json!({"enabled":true,"prompt":"Coordinate","preferences":preference});
-        store.save_personal_stand_in(7, "mac", personal).unwrap();
+        let saved = store.save_personal_stand_in(7, "mac", personal).unwrap();
         let payload = handler
             .prepare_stand_in_task(
-                &json!({"id":"default","projectStore":"local","projectId":"project","userId":7,"sharedPreferences":"Stale preference"}),
+                &json!({"id":"default","projectStore":"local","projectId":"project","userId":7,"sharedPreferences":"Stale preference","teamRef":saved["primary"]["teamRef"]}),
                 &json!({"id":"issue","title":"Task"}),
                 &json!({"humanAssignmentId":"human"}),
             )
@@ -1122,12 +1140,22 @@ fn cloud_assignments_created_in_the_enable_second_are_not_lost() {
 
 #[tokio::test]
 async fn independent_stand_in_does_not_resolve_old_agents_or_require_a_backend() {
-    let handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     for reference in [
         json!({"agentResourceId":11}),
         json!({"agentId":"deleted","agentProject":{"id":"old","store":"cloud"}}),
     ] {
-        let mut config = reference;
+        let mut old = store.personal_stand_in(7, "mac").unwrap();
+        old["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+        old["primary"]
+            .as_object_mut()
+            .unwrap()
+            .extend(reference.as_object().unwrap().clone());
+        let saved = store.save_personal_stand_in(7, "mac", old).unwrap();
+        let mut config = saved["primary"].clone();
         config["userId"] = json!(7);
         let prepared = handler
             .prepare_stand_in_execution(
@@ -1136,7 +1164,7 @@ async fn independent_stand_in_does_not_resolve_old_agents_or_require_a_backend()
             )
             .await
             .unwrap();
-        assert_eq!(prepared["executionRequest"]["team_id"], 0);
+        assert_eq!(prepared["executionRequest"]["team_ref"], config["teamRef"]);
         assert_eq!(prepared["executionRequest"]["user_id"], 7);
         assert_eq!(
             prepared["executionRequest"]["bot"][0]["shell_type"],

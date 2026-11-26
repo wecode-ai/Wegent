@@ -125,6 +125,7 @@ async fn prepare_dispatch(
     let mut execution = request::build_execution_request(
         state,
         &request::BuildExecutionRequestInput {
+            strategy: advance.strategy.as_ref(),
             user_id: advance.user_id,
             user_name: &advance.user_name,
             // The pipeline callback carries no `users.git_info` row; its

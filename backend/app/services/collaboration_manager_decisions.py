@@ -128,6 +128,8 @@ def apply_collaboration_manager_decision(
     comment: str = "",
     manager_runtime_task_id: str | None = None,
     request: Request | None = None,
+    task_id: int | None = None,
+    subtask_id: int | None = None,
 ) -> CollaborationManagerDecision:
     """Atomically persist the manager-owned status transition and comment."""
 
@@ -152,6 +154,7 @@ def apply_collaboration_manager_decision(
         require_open_round,
     )
 
+    turn_scope = None
     manager = dispatch = None
     if manager_agent_id:
         manager, dispatch = _require_manager_dispatch(
@@ -163,10 +166,16 @@ def apply_collaboration_manager_decision(
         )
         if request is not None:
             task_id = getattr(request.state, "execution_task_id", None)
+            subtask_id = getattr(request.state, "execution_subtask_id", None)
             if task_id is not None or dispatch.execution_environment == "wegent":
                 from app.services.issue_coordination import require_machine_task_scope
 
                 require_machine_task_scope(task_id, dispatch)
+        if dispatch.execution_environment == "wegent":
+            from app.services.issue_coordination import managed_turn_scope
+
+            turn_scope = managed_turn_scope(db, dispatch, task_id, subtask_id)
+            manager_runtime_task_id = str(subtask_id)
         root = coordination_activity(
             db,
             item,
@@ -212,6 +221,10 @@ def apply_collaboration_manager_decision(
         ).encode()
     ).hexdigest()
     final = root.metadata_json.get("final_decision")
+    if turn_scope is not None:
+        from app.services.issue_coordination import require_manager_turn
+
+        require_manager_turn(turn_scope[0], subtask_id, final)
     if final:
         if final["digest"] != digest:
             raise HTTPException(409, "Collaboration dispatch already finished")
@@ -228,6 +241,8 @@ def apply_collaboration_manager_decision(
         and dispatch.runtime_origin_context.get("dispatch_protocol_version") == 2
     ):
         if (
+            turn_scope and root.metadata_json.get("last_manager_turn") == turn_scope[1]
+        ) or (
             manager_runtime_task_id
             and manager_runtime_task_id == root.metadata_json.get("last_manager_run")
         ):
@@ -267,7 +282,12 @@ def apply_collaboration_manager_decision(
                 else None
             ),
         )
-    if dispatch and dispatch.status not in {"completed", "failed", "cancelled"}:
+    # The managed Task completes after the model receives the tool result.
+    if (
+        dispatch
+        and dispatch.execution_environment != "wegent"
+        and dispatch.status not in {"completed", "failed", "cancelled"}
+    ):
         completed = loop_item_execution_service.complete(
             db,
             execution_id=dispatch.id,
@@ -339,6 +359,7 @@ def apply_collaboration_manager_decision(
         **root.metadata_json,
         "final_decision": {
             "digest": digest,
+            **({"manager_runtime_task_id": str(subtask_id)} if turn_scope else {}),
             "comment_id": message.id if message else None,
             "response": response,
         },

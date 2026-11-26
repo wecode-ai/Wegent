@@ -407,6 +407,9 @@ def enqueue_execution_batch(
         signed_in=request is not None
         and getattr(request.state, "user_session_id", None) == current_user.id,
         task_id=getattr(request.state, "execution_task_id", None) if request else None,
+        subtask_id=(
+            getattr(request.state, "execution_subtask_id", None) if request else None
+        ),
     )
 
 
@@ -418,6 +421,7 @@ def admit_collaboration_batch(
     *,
     signed_in: bool,
     task_id: int | None,
+    subtask_id: int | None = None,
 ) -> dict[str, object]:
     if not values.manager_agent_id and not signed_in:
         raise HTTPException(
@@ -451,6 +455,7 @@ def admit_collaboration_batch(
     if project is None:
         raise HTTPException(404, "Project not found")
     root = None
+    turn_scope = None
     manager = manager_execution = None
     if values.manager_agent_id:
         manager = _require_project_agent(
@@ -470,6 +475,11 @@ def admit_collaboration_batch(
             from app.services.issue_coordination import require_machine_task_scope
 
             require_machine_task_scope(task_id, manager_execution)
+        if manager_execution.execution_environment == "wegent":
+            from app.services.issue_coordination import managed_turn_scope
+
+            turn_scope = managed_turn_scope(db, manager_execution, task_id, subtask_id)
+            values.manager_runtime_task_id = str(subtask_id)
         sender_id, sender_name = manager.id, manager.title or manager.name
         server_dispatch = (
             manager_execution.runtime_origin_context.get("dispatch_protocol_version")
@@ -504,6 +514,12 @@ def admit_collaboration_batch(
     previous = (
         db.query(ProjectChatMessage).filter_by(message_id=message_id).one_or_none()
     )
+    if turn_scope is not None:
+        from app.services.issue_coordination import require_manager_turn
+
+        require_manager_turn(
+            turn_scope[0], subtask_id, previous.metadata_json if previous else None
+        )
     if previous is not None:
         metadata = previous.metadata_json
         if metadata["request_digest"] != request_digest:
@@ -519,6 +535,10 @@ def admit_collaboration_batch(
             raise HTTPException(422, "Manager run identity is required")
         if (
             root.status != "active"
+            or (
+                turn_scope
+                and root.metadata_json.get("last_manager_turn") == turn_scope[1]
+            )
             or root.metadata_json.get("last_manager_run")
             == values.manager_runtime_task_id
         ):
@@ -761,6 +781,15 @@ def admit_collaboration_batch(
         runtime_task_id=values.manager_runtime_task_id or "",
         status="completed",
     )
+    if manager_execution and manager_execution.optional_backend_task_id:
+        from app.core.config import settings
+
+        backend_task_id = manager_execution.optional_backend_task_id
+        assignment_message.metadata_json = {
+            **assignment_message.metadata_json,
+            "backend_task_id": backend_task_id,
+            "execution_url": f"{settings.FRONTEND_URL.rstrip('/')}/chat?taskId={backend_task_id}",
+        }
     db.add(assignment_message)
     db.flush()
     from app.services.project_chat.runtime_binding import (
@@ -777,6 +806,7 @@ def admit_collaboration_batch(
             "round": root.metadata_json["round"] + 1,
             "last_batch": message_id,
             "last_manager_run": values.manager_runtime_task_id,
+            **({"last_manager_turn": turn_scope[1]} if turn_scope else {}),
         }
     db.commit()
     db.refresh(assignment_message)

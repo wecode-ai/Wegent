@@ -368,6 +368,24 @@ fn bot_refs_skip_malformed_members() {
     assert!(bot_refs(&serde_json::json!({})).is_empty());
 }
 
+#[test]
+fn stage_selection_preserves_the_team_and_reports_missing_stages() {
+    let mut team = serde_json::json!({"spec":{"collaborationModel":"pipeline","members":[
+        {"botRef":{"name":"review"}}, {"botRef":{"name":"publish"}}
+    ]}});
+    let names = |team: &Value| {
+        bot_refs(team)
+            .into_iter()
+            .map(|bot| bot.name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&turn_team(&team, 0).unwrap()), ["review"]);
+    assert_eq!(names(&turn_team(&team, 1).unwrap()), ["publish"]);
+    assert!(turn_team(&team, 2).is_none());
+    team["spec"]["collaborationModel"] = serde_json::json!("coordinate");
+    assert_eq!(names(&turn_team(&team, 0).unwrap()), ["review", "publish"]);
+}
+
 #[tokio::test]
 async fn resolve_team_bots_reads_one_cached_bot_per_member() {
     let mysql = crate::sql_test_support::KindQueryCapture::writing();

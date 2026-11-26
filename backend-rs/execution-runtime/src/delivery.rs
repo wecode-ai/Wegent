@@ -30,6 +30,19 @@ pub async fn publish_once<R: Redis>(
     Ok(published == 1)
 }
 
+pub fn attempt_notification_key(
+    task_id: i64,
+    subtask_id: i64,
+    step: &str,
+    attempt: Option<&str>,
+) -> String {
+    let key = notification_key(task_id, subtask_id, step);
+    match attempt {
+        Some(id) if id != subtask_id.to_string() => format!("{key}:attempt:{id}"),
+        _ => key,
+    }
+}
+
 pub fn notification_key(task_id: i64, subtask_id: i64, step: &str) -> String {
     format!("wegent:terminal-delivery:{task_id}:{subtask_id}:{step}")
 }

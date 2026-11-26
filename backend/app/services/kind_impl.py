@@ -372,7 +372,7 @@ class TaskKindService(TaskResourceBaseService):
 
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
-    ) -> None:
+    ) -> Kind:
         """Validate Team and Workspace references"""
         task_crd = Task.model_validate(resource)
 
@@ -432,6 +432,8 @@ class TaskKindService(TaskResourceBaseService):
                     f"Task '{resource['metadata']['name']}' in namespace '{resource['metadata']['namespace']}' cannot be modified when status is '{existing_task_crd.status.status}'. Only COMPLETED tasks can be updated."
                 )
 
+        return team
+
     def _perform_side_effects(
         self,
         db: Session,
@@ -439,90 +441,11 @@ class TaskKindService(TaskResourceBaseService):
         db_resource: TaskResource,
         resource: Dict[str, Any],
     ) -> None:
-        """Create subtasks for the new task"""
-        try:
-            task_crd = Task.model_validate(resource)
+        from app.services.execution import schedule_dispatch
 
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Team",
-                    Kind.name == task_crd.spec.teamRef.name,
-                    Kind.namespace == task_crd.spec.teamRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+        schedule_dispatch(db_resource.id)
 
-            if not team:
-                logger.error(f"Team not found: {task_crd.spec.teamRef.name}")
-                return
-
-            # Call _create_subtasks method to create subtasks
-            task_kinds_service._create_subtasks(
-                db=db,
-                task=db_resource,
-                team=team,
-                user_id=user_id,
-                user_prompt=task_crd.spec.prompt,
-            )
-            db.commit()
-
-            # Push mode: dispatch task to executor_manager
-            from app.services.execution import schedule_dispatch
-
-            schedule_dispatch(db_resource.id)
-
-        except Exception as e:
-            # Log error but don't interrupt the process
-            logger.error(f"Error creating subtasks: {str(e)}")
-
-    def _update_side_effects(
-        self,
-        db: Session,
-        user_id: int,
-        db_resource: TaskResource,
-        resource: Dict[str, Any],
-    ) -> None:
-        """Update subtasks for the existing task"""
-        try:
-            task_crd = Task.model_validate(resource)
-
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Team",
-                    Kind.name == task_crd.spec.teamRef.name,
-                    Kind.namespace == task_crd.spec.teamRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if not team:
-                logger.error(f"Team not found: {task_crd.spec.teamRef.name}")
-                return
-
-            # Call _create_subtasks method to update subtasks (append mode)
-            task_kinds_service._create_subtasks(
-                db=db,
-                task=db_resource,
-                team=team,
-                user_id=user_id,
-                user_prompt=task_crd.spec.prompt,
-            )
-            db.commit()
-
-            # Push mode: dispatch task to executor_manager
-            from app.services.execution import schedule_dispatch
-
-            schedule_dispatch(db_resource.id)
-
-        except Exception as e:
-            # Log error but don't interrupt the process
-            logger.error(f"Error updating subtasks: {str(e)}")
+    _update_side_effects = _perform_side_effects
 
     def _format_resource(self, resource: TaskResource) -> Dict[str, Any]:
         """Format Task resource for API response with enhanced status information"""

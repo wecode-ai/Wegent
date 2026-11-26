@@ -192,8 +192,14 @@ pub async fn publish_callback_event<R: Redis>(
 pub async fn publish_terminal_callback<R: Redis>(
     redis: &R,
     event: &ExecutionEvent,
+    attempt: Option<&str>,
 ) -> RedisResult<bool> {
-    let key = super::delivery::notification_key(event.task_id, event.subtask_id, "callback");
+    let key = super::delivery::attempt_notification_key(
+        event.task_id,
+        event.subtask_id,
+        "callback",
+        attempt,
+    );
     let channel = callback_channel(event.subtask_id);
     super::delivery::publish_once(redis, &key, &channel, &python_dumps(&event.to_value())).await
 }

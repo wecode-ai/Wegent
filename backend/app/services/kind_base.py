@@ -298,8 +298,8 @@ class KindBaseService(ABC):
     @abstractmethod
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
-    ) -> None:
-        """Validate resource references"""
+    ) -> Optional[Kind]:
+        """Validate resource references and return the resolved Team for Tasks."""
         pass
 
     def _perform_side_effects(
@@ -343,6 +343,15 @@ class TaskResourceBaseService(KindBaseService):
     This class overrides the database operations from KindBaseService to use
     the TaskResource model (tasks table) instead of the Kind model (kinds table).
     """
+
+    @staticmethod
+    def _prepare_task_turn(db: Session, task: TaskResource, team: Kind) -> None:
+        from app.services.adapters.task_kinds.helpers import create_subtasks
+
+        db.flush()
+        create_subtasks(
+            db, task, team, task.user_id, task.json["spec"].get("prompt") or ""
+        )
 
     def _build_filters(
         self, user_id: int, namespace: str, name: Optional[str] = None
@@ -419,7 +428,7 @@ class TaskResourceBaseService(KindBaseService):
             resource_data = self._extract_resource_data(resource)
 
             # Validate references
-            self._validate_references(db, user_id, resource)
+            team = self._validate_references(db, user_id, resource)
 
             db_resource = task_store.create_kind_resource(
                 db,
@@ -429,6 +438,13 @@ class TaskResourceBaseService(KindBaseService):
                 namespace=resource["metadata"]["namespace"],
                 payload=resource_data,
             )
+            if team is not None:
+                from app.services.adapters.pipeline_snapshot import (
+                    save_pipeline_snapshot,
+                )
+
+                save_pipeline_snapshot(db, db_resource, team)
+                self._prepare_task_turn(db, db_resource, team)
             db.commit()
             db.refresh(db_resource)
 
@@ -469,7 +485,7 @@ class TaskResourceBaseService(KindBaseService):
                 raise NotFoundException(f"{self.kind} '{name}' not found")
 
             # Validate references
-            self._validate_references(db, user_id, resource)
+            team = self._validate_references(db, user_id, resource)
 
             # Extract resource data
             resource_data = self._extract_resource_data(resource)
@@ -477,6 +493,12 @@ class TaskResourceBaseService(KindBaseService):
             # Update resource
             task_store.update_json(db, task=db_resource, payload=resource_data)
 
+            if team is not None:
+                from app.services.adapters.pipeline_snapshot import accepted_team
+
+                self._prepare_task_turn(
+                    db, db_resource, accepted_team(db, db_resource.id, team)
+                )
             db.commit()
             db.refresh(db_resource)
 

@@ -81,9 +81,11 @@ def test_coordinate_request_preserves_member_capabilities_after_late_preload(
     )
 
     find_skill.assert_called_once_with("review", skill_id=42)
-    assert result.skill_names == ["review"]
-    assert result.bot[0]["skills"] == ["review"]
-    assert result.bot[0]["mcp_servers"] == [
+    assert result.skill_names == []
+    assert result.bot[0]["skills"] == []
+    assert result.bot[1]["skills"] == ["review"]
+    assert result.bot[0]["mcp_servers"] == []
+    assert result.bot[1]["mcp_servers"] == [
         member_mcp,
         {"name": "review", "command": "review-mcp", "type": "stdio"},
     ]
@@ -93,8 +95,8 @@ def test_coordinate_request_preserves_member_capabilities_after_late_preload(
         "is_public": False,
         "content_hash": "sha256:member-content-hash",
     }
-    assert result.skill_refs["review"] == expected_ref
-    assert result.bot[0]["skill_refs"]["review"] == expected_ref
+    assert "review" not in result.skill_refs
+    assert "review" not in result.bot[0]["skill_refs"]
     assert result.bot[1]["skill_refs"]["review"] == expected_ref
 
     # Context processing adds a preload after the initial coordinate request.
@@ -109,9 +111,11 @@ def test_coordinate_request_preserves_member_capabilities_after_late_preload(
         request=result, bot=bot, team=team, user=user
     )
 
-    assert result.skill_names == ["knowledge", "review"]
-    assert result.skill_refs["review"] == expected_ref
-    assert result.bot[0]["mcp_servers"] == [
+    assert result.skill_names == ["knowledge"]
+    assert result.bot[1]["skill_refs"]["review"] == expected_ref
+    assert "review" not in result.skill_refs
+    assert result.bot[0]["mcp_servers"] == []
+    assert result.bot[1]["mcp_servers"] == [
         member_mcp,
         {"name": "review", "command": "review-mcp", "type": "stdio"},
     ]

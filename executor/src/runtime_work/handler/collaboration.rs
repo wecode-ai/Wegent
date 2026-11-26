@@ -154,28 +154,12 @@ impl RuntimeWorkRpcHandler {
         );
         // A manager evaluates verified terminal outcomes. Missing human status
         // is not delivery, so keep the persisted round until its barrier closes.
-        let unstarted_outcomes = match self
-            .launch_cloud_collaboration_assignments_with_retry(&command)
-            .await
-        {
-            Ok(()) => Vec::new(),
-            Err(error) => {
-                log_executor_event(
-                    "cloud collaboration round launch failed",
-                    &[
-                        ("dispatch_id", command.dispatch_id.clone()),
-                        ("round_id", command.round_id.clone()),
-                        ("error", error.clone()),
-                    ],
-                );
-                self.fail_unstarted_collaboration_assignments(&command, &error)
-                    .await
-            }
+        let outcomes = if command.server_dispatched {
+            self.wait_for_server_round(&command).await
+        } else {
+            self.run_legacy_round(&command).await
         };
-        match self
-            .wait_for_cloud_collaboration_round(&command, &unstarted_outcomes)
-            .await
-        {
+        match outcomes {
             Ok(outcomes) => {
                 log_executor_event(
                     "cloud collaboration round outcomes ready",
@@ -210,6 +194,61 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .expect("collaboration round registry lock should not be poisoned")
             .remove(&key);
+    }
+
+    async fn wait_for_server_round(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+    ) -> Result<Vec<Value>, String> {
+        let query = json!({
+            "loop_item_id": command.item_id,
+            "human_assignment_ids": command.human_assignment_ids,
+            "dispatch_id": command.dispatch_id,
+            "round_id": command.round_id,
+            "execution_ids": command.assignments.iter().filter_map(|a| a["execution_id"].as_i64()).collect::<Vec<_>>(),
+        });
+        loop {
+            match self
+                .backend_assignment_outcomes(&command.project_id, &query)
+                .await
+            {
+                Ok(outcomes) if cloud_collaboration_round_is_complete(command, &outcomes) => {
+                    return Ok(outcomes);
+                }
+                Ok(_) => {}
+                Err(error) => log_executor_event(
+                    "cloud collaboration status unavailable",
+                    &[("error", error)],
+                ),
+            }
+            sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
+        }
+    }
+
+    async fn run_legacy_round(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+    ) -> Result<Vec<Value>, String> {
+        let unstarted_outcomes = match self
+            .launch_cloud_collaboration_assignments_with_retry(command)
+            .await
+        {
+            Ok(()) => Vec::new(),
+            Err(error) => {
+                log_executor_event(
+                    "cloud collaboration round launch failed",
+                    &[
+                        ("dispatch_id", command.dispatch_id.clone()),
+                        ("round_id", command.round_id.clone()),
+                        ("error", error.clone()),
+                    ],
+                );
+                self.fail_unstarted_collaboration_assignments(command, &error)
+                    .await
+            }
+        };
+        self.wait_for_cloud_collaboration_round(command, &unstarted_outcomes)
+            .await
     }
 
     /// Retry the member launch so a transient Backend or Runtime failure does
@@ -459,22 +498,28 @@ impl RuntimeWorkRpcHandler {
                     }
                 }
             }
-            let human_outcomes = match self.human_collaboration_outcomes(command).await {
-                Ok(outcomes) => outcomes,
-                Err(error) => {
-                    log_executor_event(
-                        "cloud collaboration human status unavailable",
-                        &[
-                            ("dispatch_id", command.dispatch_id.clone()),
-                            ("round_id", command.round_id.clone()),
-                            ("error", error),
-                        ],
-                    );
-                    sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
-                    continue;
-                }
-            };
-            outcomes.extend(human_outcomes);
+            if !command.human_assignment_ids.is_empty() {
+                let query = json!({"loop_item_id":command.item_id, "human_assignment_ids":command.human_assignment_ids});
+                let human_outcomes = match self
+                    .backend_assignment_outcomes(&command.project_id, &query)
+                    .await
+                {
+                    Ok(outcomes) => outcomes,
+                    Err(error) => {
+                        log_executor_event(
+                            "cloud collaboration human status unavailable",
+                            &[
+                                ("dispatch_id", command.dispatch_id.clone()),
+                                ("round_id", command.round_id.clone()),
+                                ("error", error),
+                            ],
+                        );
+                        sleep(CLOUD_COLLABORATION_POLL_INTERVAL).await;
+                        continue;
+                    }
+                };
+                outcomes.extend(human_outcomes);
+            }
             if all_reported && cloud_collaboration_round_is_complete(command, &outcomes) {
                 return Ok(outcomes);
             }
@@ -628,13 +673,11 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| "Collaboration dispatch Runtime identity is unavailable".to_owned())
     }
 
-    async fn human_collaboration_outcomes(
+    async fn backend_assignment_outcomes(
         &self,
-        command: &CloudCollaborationRoundCommand,
+        project_id: &str,
+        query: &Value,
     ) -> Result<Vec<Value>, String> {
-        if command.human_assignment_ids.is_empty() {
-            return Ok(Vec::new());
-        }
         let connection = self
             .backend_connection_snapshot()
             .map_err(|error| error.message)?
@@ -646,13 +689,10 @@ impl RuntimeWorkRpcHandler {
             .post(format!(
                 "{}/api/v1/cloud-projects/{}/executions/statuses",
                 connection.backend_url.trim_end_matches('/'),
-                command.project_id
+                project_id
             ))
             .bearer_auth(&connection.auth_token)
-            .json(&json!({
-                "loop_item_id": command.item_id,
-                "human_assignment_ids": command.human_assignment_ids,
-            }))
+            .json(query)
             .send()
             .await
             .map_err(|error| error.to_string())?;
@@ -693,6 +733,7 @@ fn cloud_collaboration_round_is_complete(
                 outcomes.iter().any(|outcome| {
                     outcome.get("assignee_type").and_then(Value::as_str) == Some("agent")
                         && outcome.get("assignment_id").and_then(Value::as_str) == Some(id)
+                        && outcome.get("execution_id") == assignment.get("execution_id")
                 })
             })
         })

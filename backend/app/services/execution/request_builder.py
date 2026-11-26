@@ -283,6 +283,12 @@ class TaskRequestBuilder:
         include_wework_space_mcp = (
             include_wework_space_mcp or self._is_board_wegent_task(task)
         )
+        from app.models.task import TaskTeamStrategy
+        from app.services.adapters.pipeline_snapshot import overlay_team
+
+        snapshot = self.db.get(TaskTeamStrategy, task.id)
+        if snapshot is not None:
+            team = overlay_team(team, snapshot.strategy)
         # Parse team CRD
         team_crd = Team.model_validate(team.json)
 
@@ -292,6 +298,27 @@ class TaskRequestBuilder:
         bot = self._get_bot_for_subtask(subtask, team, team_crd)
         if not bot:
             raise ValueError(f"No bot found for team {team.name}")
+
+        accepted = {}
+        accepted_prompt = None
+        if snapshot is not None:
+            accepted = snapshot.strategy["bots"].get(str(bot.id))
+            if accepted is None:
+                raise ValueError("Bot identity changed since assignment")
+            stage = task.json["spec"].get("currentStage") or 0
+            members = team_crd.spec.members
+            if not 0 <= stage < len(members) or not self._team_member_matches_bot(
+                members[stage], bot
+            ):
+                raise ValueError("Pipeline stage Bot identity changed")
+            parts = [accepted["ghost_prompt"].strip(), members[stage].prompt]
+            prompt = "\n\n".join(part for part in parts if part)
+            accepted_prompt = (
+                f"<base_prompt>\n{prompt}\n</base_prompt>" if prompt else ""
+            )
+        frozen_model = (
+            accepted if not force_override and not runtime_model_config else {}
+        )
 
         # Build workspace configuration first to get git_domain for user info matching
         workspace = self._build_workspace(task)
@@ -336,14 +363,19 @@ class TaskRequestBuilder:
             runtime_model_config=runtime_model_config,
             use_secondary_model_for_chat=use_secondary_model_for_generation_chat,
             resolution_meta=model_resolution,
+            **({"accepted_model": frozen_model} if frozen_model else {}),
         )
 
         # Get base system prompt from Ghost
-        system_prompt = self._get_base_system_prompt(
-            bot=bot,
-            team=team,
-            team_crd=team_crd,
-            team_member_prompt=team_member_prompt,
+        system_prompt = (
+            accepted_prompt
+            if accepted_prompt is not None
+            else self._get_base_system_prompt(
+                bot=bot,
+                team=team,
+                team_crd=team_crd,
+                team_member_prompt=team_member_prompt,
+            )
         )
         if include_wework_space_mcp:
             system_prompt = f"{system_prompt.rstrip()}\n\n{BOARD_MCP_GUIDANCE}"
@@ -434,25 +466,32 @@ class TaskRequestBuilder:
                 if model_resolution.get("used_secondary_model")
                 else runtime_model_config
             ),
+            **({"accepted_model": frozen_model} if frozen_model else {}),
         )
+
+        if accepted_prompt is not None:
+            bot_config[0]["system_prompt"] = accepted_prompt
+            if frozen_model.get("model_id"):
+                config = bot_config[0]["agent_config"]
+                bot_config[0]["agent_config"] = {
+                    **config,
+                    "env": {
+                        **config.get("env", {}),
+                        "model_id": frozen_model["model_id"],
+                        **frozen_model.get("inline_env", {}),
+                    },
+                }
 
         # Get collaboration model
         collaboration_model = team_crd.spec.collaborationModel or "solo"
 
-        if (
+        native_coordinate = (
             collaboration_model == "coordinate"
             and bot_config
             and bot_config[0].get("shell_type") in {"ClaudeCode", "Codex"}
-        ):
-            self._extend_resolved_skills_from_bot_configs(
-                bot_configs=bot_config,
-                resolved_skills=resolved_skills,
-                skill_refs=skill_refs,
-                team=team,
-                user=user,
-            )
+        )
         self._merge_runtime_skills(
-            bot_configs=bot_config,
+            bot_configs=bot_config[:1] if native_coordinate else bot_config,
             resolved_skills=resolved_skills,
             skill_refs=skill_refs,
             team=team,
@@ -521,13 +560,24 @@ class TaskRequestBuilder:
                     if server.get("name") not in managed_names
                 ] + managed_bot_servers
 
-        # Coding executors share resolved Skills and coordinate member capabilities.
+        # Bind each coding Bot to its own resolved MCP definitions.
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
             if shell_type in {"ClaudeCode", "Codex"}:
-                if collaboration_model == "coordinate":
-                    self._merge_coordinate_capabilities_into_leader(bot_config)
-                    self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
+                if native_coordinate:
+                    bot_config[0]["native_capability_scope"] = "bot"
+                    for member in bot_config[1:]:
+                        member_skills: list[dict] = []
+                        member_refs: dict[str, dict] = {}
+                        self._extend_resolved_skills_from_bot_configs(
+                            bot_configs=[member],
+                            resolved_skills=member_skills,
+                            skill_refs=member_refs,
+                            team=team,
+                            user=user,
+                        )
+                        self._sync_skill_refs_to_bot_configs([member], member_refs)
+                        self._prepare_mcp_for_coding_executor(member, member_skills)
                 self._prepare_mcp_for_coding_executor(bot_config[0], resolved_skills)
                 if not has_local_device:
                     self._attach_connector_mcp_for_coding_shell(
@@ -1014,21 +1064,14 @@ class TaskRequestBuilder:
             user_preload_skills=user_preload_skills,
         )
 
-        if (
-            request.bot
-            and request.bot[0].get("shell_type") in {"ClaudeCode", "Codex"}
-            and request.collaboration_model == "coordinate"
-        ):
-            self._extend_resolved_skills_from_bot_configs(
-                bot_configs=request.bot,
-                resolved_skills=resolved_skills,
-                skill_refs=skill_refs,
-                team=team,
-                user=user,
-            )
-
         self._merge_runtime_skills(
-            bot_configs=request.bot,
+            bot_configs=(
+                request.bot[:1]
+                if request.bot
+                and request.collaboration_model == "coordinate"
+                and request.bot[0].get("shell_type") in {"ClaudeCode", "Codex"}
+                else request.bot
+            ),
             resolved_skills=resolved_skills,
             skill_refs=skill_refs,
             team=team,
@@ -1060,7 +1103,7 @@ class TaskRequestBuilder:
             if skill_name not in existing_bot_skills:
                 bot_config.setdefault("skills", []).append(skill_name)
                 existing_bot_skills.add(skill_name)
-        self._sync_skill_refs_to_bot_configs(request.bot, skill_refs)
+        self._sync_skill_refs_to_bot_configs([bot_config], skill_refs)
 
         if bot_config.get("shell_type") in {"ClaudeCode", "Codex"}:
             new_skill_configs = [
@@ -1336,6 +1379,7 @@ class TaskRequestBuilder:
         runtime_model_config: dict[str, Any] | None = None,
         use_secondary_model_for_chat: bool = False,
         resolution_meta: dict[str, bool] | None = None,
+        accepted_model: dict | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
 
@@ -1395,7 +1439,10 @@ class TaskRequestBuilder:
             user_id,
             override_model_name=override_model_name,
             force_override=force_override,
+            **({"accepted_model": accepted_model} if accepted_model else {}),
         )
+        if accepted_model and accepted_model.get("model_id"):
+            model_config["model_id"] = accepted_model["model_id"]
 
         # Build agent_config and task_data for placeholder replacement
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
@@ -2334,6 +2381,7 @@ class TaskRequestBuilder:
         runtime_model_config: dict[str, Any] | None = None,
         user_name: str = "",
         task_id: int | None = None,
+        accepted_model: dict | None = None,
     ) -> list[dict]:
         """Build bot configuration list.
 
@@ -2430,6 +2478,7 @@ class TaskRequestBuilder:
                     user_id,
                     override_model_name=override_model_name,
                     force_override=force_override,
+                    **({"accepted_model": accepted_model} if accepted_model else {}),
                 )
                 if (
                     codex_coordinate
@@ -3267,39 +3316,6 @@ class TaskRequestBuilder:
         bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
         if not bot_config["mcp_servers"]:
             logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
-
-    @staticmethod
-    def _merge_coordinate_capabilities_into_leader(bot_configs: list[dict]) -> None:
-        """Merge member Bot capabilities into the coding executor's leader config."""
-        if len(bot_configs) <= 1:
-            return
-
-        leader = bot_configs[0]
-
-        leader_mcp_servers = leader.setdefault("mcp_servers", [])
-        seen_mcp_names = {
-            server.get("name")
-            for server in leader_mcp_servers
-            if isinstance(server, dict) and server.get("name")
-        }
-        for bot_config in bot_configs[1:]:
-            for server in bot_config.get("mcp_servers", []) or []:
-                if not isinstance(server, dict):
-                    continue
-                server_name = server.get("name")
-                if not server_name or server_name in seen_mcp_names:
-                    continue
-                leader_mcp_servers.append(server.copy())
-                seen_mcp_names.add(server_name)
-
-        leader_skills = leader.setdefault("skills", [])
-        seen_skill_names = {name for name in leader_skills if isinstance(name, str)}
-        for bot_config in bot_configs[1:]:
-            for skill_name in bot_config.get("skills", []) or []:
-                if not isinstance(skill_name, str) or skill_name in seen_skill_names:
-                    continue
-                leader_skills.append(skill_name)
-                seen_skill_names.add(skill_name)
 
     def _extend_resolved_skills_from_bot_configs(
         self,

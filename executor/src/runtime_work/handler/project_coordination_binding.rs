@@ -2,6 +2,33 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn local_issue_coordination(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let actor = super::runtime_owner::runtime_user(&payload)?;
+        if self.backend_connection_snapshot()?.is_some() {
+            self.verify_runtime_user(&payload).await?;
+        } else if actor != 0 {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "An authenticated account is required",
+            ));
+        }
+        let project = super::stand_in_tasks::required(&payload, "projectId")?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        store
+            .human_issue_coordination(
+                method.trim_start_matches("runtime.issue_coordination."),
+                actor,
+                project,
+                &payload["input"],
+            )
+            .map_err(super::stand_in::settings_error)
+    }
+
     pub(super) async fn project_coordination_binding(
         &self,
         method: &str,

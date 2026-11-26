@@ -105,7 +105,7 @@ pub(crate) async fn enqueue_on(
     };
     let execution = enqueue_intent_on(tx, issue, Some(&run.id), &scope, input).await?;
     if !input.waiting_runtime
-        && input.team_id == 0
+        && input.environment != "wegent"
         && !input.device_id.is_empty()
         && input.runtime_selection["executor_kind"] != "collaboration_group_dispatch"
     {

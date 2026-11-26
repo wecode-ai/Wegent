@@ -530,7 +530,9 @@ pub fn configure_request_mcps(
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
 ) -> Result<bool, String> {
-    if let Some(home) = super::instance_home::request_home(request) {
+    let team = wegent_execution_contracts::is_coordinate_team(request)
+        && request.bot.as_array().is_some_and(|bots| bots.len() > 1);
+    if let Some(home) = super::instance_home::request_home(request).filter(|_| !team) {
         return codex_mcp::prepare(&home, request, thread_config);
     }
     let mut mcp_servers = collect_request_mcp_servers(request);
@@ -1739,6 +1741,8 @@ pub(super) struct NativeRole<'a> {
     pub description: String,
     pub prompt: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<&'a str>,
 }
 
@@ -1746,6 +1750,7 @@ pub(super) fn coordinate_roles<'a>(
     request: &'a ExecutionRequest,
     shell: &str,
 ) -> Result<BTreeMap<String, NativeRole<'a>>, String> {
+    validate_coordinate_grant_source(request)?;
     let mut roles = BTreeMap::new();
     if !wegent_execution_contracts::is_coordinate_team(request) {
         return Ok(roles);
@@ -1759,11 +1764,7 @@ pub(super) fn coordinate_roles<'a>(
     for bot in members {
         // Both native engines inherit the parent process's MCP credentials.
         // Compare the whole transport, including headers and approval modes.
-        for key in ["mcp_servers", "mcpServers", "plugins", "skills", "skill_refs", "capability_mode"] {
-            if leader.get(key) != bot.get(key) {
-                return Err(format!("{shell} native subagents cannot isolate distinct Bot grants ({key})"));
-            }
-        }
+        let tools = native_role_tools(leader, bot, shell)?;
         if bot
             .get("shell_type")
             .and_then(Value::as_str)
@@ -1773,6 +1774,7 @@ pub(super) fn coordinate_roles<'a>(
         }
         let name = native_role_name(bot);
         let role = NativeRole {
+            tools,
             description: ["description", "name"]
                 .iter()
                 .filter_map(|field| bot.get(*field).and_then(Value::as_str))
@@ -1794,6 +1796,74 @@ pub(super) fn coordinate_roles<'a>(
         }
     }
     Ok(roles)
+}
+
+const BOT_GRANT_FIELDS: &[&str] = &[
+    "mcp_servers",
+    "mcpServers",
+    "plugins",
+    "skills",
+    "preload_skills",
+    "skill_refs",
+];
+
+fn nonempty_grant(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| match value {
+        Value::Array(entries) => !entries.is_empty(),
+        Value::Object(entries) => !entries.is_empty(),
+        Value::Null => false,
+        _ => true,
+    })
+}
+
+/// Old dispatches placed the union in the leader, sometimes also clearing
+/// members. The original owner cannot be reconstructed from that payload.
+pub(super) fn validate_coordinate_grant_source(request: &ExecutionRequest) -> Result<(), String> {
+    let Some(leader) = request
+        .bot
+        .as_array()
+        .filter(|bots| bots.len() > 1)
+        .map(|bots| &bots[0])
+    else {
+        return Ok(());
+    };
+    if wegent_execution_contracts::is_coordinate_team(request)
+        && leader["native_capability_scope"] != "bot"
+        && BOT_GRANT_FIELDS
+            .iter()
+            .any(|key| nonempty_grant(leader.get(key)))
+    {
+        return Err("Recompile this Team request to obtain current per-Bot tool grants".into());
+    }
+    Ok(())
+}
+
+/// A Claude role with no Bot-specific capabilities can run without exposing
+/// any tool from the privileged parent. Codex has no corresponding boundary.
+fn native_role_tools(
+    leader: &Value,
+    bot: &Value,
+    shell: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let differs = BOT_GRANT_FIELDS.iter().any(|key| {
+        let parent = leader.get(key);
+        let member = bot.get(key);
+        (nonempty_grant(parent) || nonempty_grant(member)) && parent != member
+    });
+    if !differs && leader["capability_mode"] == bot["capability_mode"] {
+        return Ok(None);
+    }
+    if shell == "ClaudeCode"
+        && bot["capability_mode"] != "follow_device"
+        && BOT_GRANT_FIELDS
+            .iter()
+            .all(|key| !nonempty_grant(bot.get(key)))
+    {
+        return Ok(Some(Vec::new()));
+    }
+    Err(format!(
+        "{shell} native subagents cannot isolate distinct Bot tool grants"
+    ))
 }
 
 fn prepare_project_custom_instructions(project_path: &Path) {
@@ -2430,6 +2500,35 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn native_roles_reject_different_credentials_and_issue_manager_authority() {
+        let mut request = ExecutionRequest {
+            bot: json!([
+                {"mcp_servers": [{"name":"shared","headers":{"X-Grant":"a"}}]},
+                {"name":"child","mcp_servers": [{"name":"shared","headers":{"X-Grant":"b"}}]}
+            ]),
+            ..Default::default()
+        };
+        request.extra.insert("mode".into(), json!("coordinate"));
+        assert!(validate_coordinate_grant_source(&request).is_err());
+        request.bot[0]["native_capability_scope"] = json!("bot");
+        for shell in ["Codex", "ClaudeCode"] {
+            assert!(coordinate_roles(&request, shell).is_err());
+        }
+        request.bot[1]["mcp_servers"] = json!([]);
+        let roles = coordinate_roles(&request, "ClaudeCode").unwrap();
+        assert_eq!(roles.values().next().unwrap().tools, Some(Vec::new()));
+        assert!(coordinate_roles(&request, "Codex").is_err());
+        request.bot[1]["mcp_servers"] = request.bot[0]["mcp_servers"].clone();
+        assert!(coordinate_roles(&request, "Codex").is_ok());
+        request.extra.insert("origin".into(), json!({
+            "type":"issue_dispatch", "dispatchRole":"manager", "cloudProjectId":"p", "loopItemId":"i"
+        }));
+        for shell in ["Codex", "ClaudeCode"] {
+            assert!(coordinate_roles(&request, shell).is_err());
+        }
+    }
 
     #[test]
     fn interleaved_claude_teams_keep_command_scoped_roles_and_unmanaged_files() {

@@ -196,4 +196,20 @@ pub(crate) fn project_native_execution(link: &mut RuntimeTaskLink, state: &Nativ
     );
     link.updated_at = link.updated_at.max(state.updated_at);
     link.completed_at = (state.phase == NativeExecutionPhase::Idle).then_some(state.updated_at);
+    let pipeline = &link.runtime_handle["personalPipeline"];
+    if link.status == "done"
+        && pipeline["stage"].as_u64().is_some_and(|stage| {
+            pipeline["members"].get(stage as usize + 1).is_some()
+                || pipeline["count"]
+                    .as_u64()
+                    .is_some_and(|count| stage + 1 < count)
+        })
+        && matches!(
+            pipeline["phase"].as_str(),
+            Some("active" | "dispatching" | "ready" | "confirmation")
+        )
+    {
+        link.status = "running".into();
+        link.completed_at = None;
+    }
 }

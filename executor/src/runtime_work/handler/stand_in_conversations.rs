@@ -376,6 +376,11 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "message is required"))?;
         let role_id = payload["roleId"].as_str();
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        if role_id.is_none() {
+            store
+                .materialize_implicit_primary(user, &self.device_id)
+                .map_err(settings_error)?;
+        }
         let personal = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
@@ -386,6 +391,7 @@ impl RuntimeWorkRpcHandler {
                 .and_then(|roles| roles.iter().find(|role| role["id"] == id))
         });
         let cloud_role;
+        let mut account_team_ref = None;
         if let Some(id) = role_id.filter(|_| role.is_none()) {
             let missing = || AppIpcError::new("not_found", "Stand-in role no longer exists");
             if shared_prompt.is_none() {
@@ -395,17 +401,24 @@ impl RuntimeWorkRpcHandler {
             cloud_role = self
                 .runtime_http(reqwest::Method::GET, "/v1/personal-assistant", None)
                 .await?;
-            shared_prompt = cloud_role["assistant"]["definitions"]
+            let definition = cloud_role["assistant"]["definitions"]
                 .as_array()
                 .and_then(|definitions| {
                     definitions
                         .iter()
                         .find(|definition| definition["roleId"] == id)
                 })
-                .and_then(|definition| definition["ghost"]["spec"]["systemPrompt"].as_str());
-            if shared_prompt.is_none() {
-                return Err(missing());
-            }
+                .ok_or_else(missing)?;
+            shared_prompt = Some(
+                definition["ghost"]["spec"]["systemPrompt"]
+                    .as_str()
+                    .ok_or_else(missing)?,
+            );
+            account_team_ref = Some(
+                store
+                    .import_account_execution_team(user, definition)
+                    .map_err(settings_error)?,
+            );
         }
         let scope = &payload["options"]["conversationScope"];
         let team = team_scope_id(scope)
@@ -452,6 +465,9 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or_else(|| json!({}));
         config["userId"] = json!(user);
+        if let Some(reference) = account_team_ref {
+            config["teamRef"] = json!(reference);
+        }
         if let Some(prompt) = shared_prompt {
             config["prompt"] = json!(prompt);
         }

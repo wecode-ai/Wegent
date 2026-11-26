@@ -436,6 +436,7 @@ impl LoopItemResponse {
                 .approval
                 .and_then(|view| serde_json::to_value(view).ok()),
             human_task_binding: None,
+            coordination: None,
             queued_at: self.queued_at,
             execution_note: self.execution_note,
             execution_error: self.execution_error,

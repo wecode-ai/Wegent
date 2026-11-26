@@ -49,7 +49,8 @@ function encoded(value: string): string {
 
 export async function createIssueDispatchMockModel(
   request: APIRequestContext,
-  suffix: string
+  suffix: string,
+  protocol?: 'openai-responses'
 ): Promise<IssueDispatchMockModel> {
   const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password)
   const token = login.data?.access_token || ''
@@ -64,6 +65,7 @@ export async function createIssueDispatchMockModel(
         kind: 'Model',
         metadata: { name: modelName, namespace: 'default' },
         spec: {
+          ...(protocol ? { protocol } : {}),
           modelConfig: {
             env: {
               model: 'openai',

@@ -78,6 +78,7 @@ fn accept_activity(handler: &RuntimeWorkRpcHandler, command_id: &str) {
     let mut request = ExecutionRequest::default();
     request.extra.insert("user_id".into(), json!(7));
     let command = RuntimeCommand {
+        pending_terminal: None,
         id: command_id.into(),
         fingerprint: "previously-accepted".into(),
         state: CommandState::Settled,
@@ -86,18 +87,11 @@ fn accept_activity(handler: &RuntimeWorkRpcHandler, command_id: &str) {
         resource_event_keys: Vec::new(),
         native: None,
         guidance_turn_id: None,
-        turn: SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: super::super::stand_in_conversations::conversation_task_id(7, None),
-            runtime: "codex".into(),
+        turn: SpawnTurnRequest::new(
+            super::super::stand_in_conversations::conversation_task_id(7, None),
+            "codex".into(),
             request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        },
+        ),
     };
     handler
         .command_journal

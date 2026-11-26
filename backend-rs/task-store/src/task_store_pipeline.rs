@@ -25,6 +25,90 @@ use wegent_resource_store::kind_rows::{KIND_COLUMNS, KindRow};
 pub(crate) const USER_FOR_PIPELINE: &str =
     "SELECT users.user_name, users.preferences FROM users WHERE users.id = ?";
 
+/// Save only on Task creation, on the same transaction as its first turn.
+pub async fn save_strategy(
+    tx: &mut impl MysqlTransaction,
+    task_id: i64,
+    strategy: &Value,
+    task: &mut Value,
+) -> MysqlResult<()> {
+    let mut definition = strategy.clone();
+    if let Some(reference) = task.pointer("/spec/teamRef") {
+        definition["team_ref"] = reference.clone();
+    }
+    tx.execute(
+        "INSERT INTO task_team_strategies (task_id,strategy) VALUES (?,?)",
+        (task_id, Json(definition)),
+    )
+    .await?;
+    task["spec"]["currentStage"] = json!(0);
+    Ok(())
+}
+
+/// Overlay the accepted Team definition on the current, authorized Team row.
+pub async fn apply_managed_strategy(
+    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
+    task: Option<&serde_json::Map<String, Value>>,
+    task_id: i64,
+    team: &mut Value,
+) -> MysqlResult<Option<Value>> {
+    let snapshot = managed_strategy(query, task, task_id).await?;
+    if let Some(snapshot) = snapshot.as_ref() {
+        overlay_strategy(team, snapshot);
+    }
+    Ok(snapshot)
+}
+
+pub fn overlay_strategy(team: &mut Value, snapshot: &Value) {
+    team["spec"]["members"] = snapshot["members"].clone();
+    team["spec"]["collaborationModel"] = snapshot["collaborationModel"].clone();
+}
+
+pub async fn managed_strategy(
+    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
+    task: Option<&serde_json::Map<String, Value>>,
+    task_id: i64,
+) -> MysqlResult<Option<Value>> {
+    if let Some(snapshot) = saved_task_strategy(query, task_id).await? {
+        if let Some(reference) = snapshot.get("team_ref")
+            && let Some(task) = task
+            && task.get("spec").and_then(|spec| spec.get("teamRef")) != Some(reference)
+        {
+            return Err(brz_mysql::MysqlError::InvalidQuery {
+                reason: "Pipeline Team binding changed".to_owned(),
+            });
+        }
+        return Ok(Some(snapshot));
+    }
+    let Some(task) = task else { return Ok(None) };
+    let labels = &task.get("metadata").unwrap_or(&Value::Null)["labels"];
+    let Some(execution_id) = labels["projectRobotExecutionId"]
+        .as_str()
+        .and_then(|id| id.parse::<i64>().ok())
+    else {
+        return Ok(None);
+    };
+    let row: Option<(Option<Json<Value>>,)> = query.fetch_optional(
+        "SELECT JSON_EXTRACT(execution_payload,'$.team_strategy') FROM loop_item_executions WHERE id=? AND backend_task_id=?",
+        (execution_id, task_id)
+    ).await?;
+    Ok(row.and_then(|(snapshot,)| snapshot.map(|json| json.0)))
+}
+
+/// Retrieve only the definition accepted with the Task's first turn.
+pub async fn saved_task_strategy(
+    query: &mut impl wegent_backend_persistence::mysql_query::MysqlQuery,
+    task_id: i64,
+) -> MysqlResult<Option<Value>> {
+    let row: Option<(Json<Value>,)> = query
+        .fetch_optional(
+            "SELECT strategy FROM task_team_strategies WHERE task_id=?",
+            (task_id,),
+        )
+        .await?;
+    Ok(row.map(|(snapshot,)| snapshot.0))
+}
+
 /// Committed next turn; executor dispatch happens after the transaction closes.
 pub struct PipelineStageAdvance {
     pub task_id: i64,
@@ -40,6 +124,7 @@ pub struct PipelineStageAdvance {
     pub project_id: i64,
     pub pair: SubtaskPairInsert,
     pub previous_bot_id: i64,
+    pub strategy: Option<Value>,
     pub team: KindRow,
     pub bot: KindRow,
     pub member: Value,
@@ -151,9 +236,16 @@ async fn advance_on<T: MysqlTransaction>(
     else {
         return Ok(None);
     };
-    let Some(team) = load_team(transaction, &task_json).await? else {
+    let Some(mut team) = load_team(transaction, &task_json).await? else {
         return Ok(None);
     };
+    let strategy = apply_managed_strategy(
+        &mut &mut *transaction,
+        task_json.as_object(),
+        task_id,
+        &mut team.json.0,
+    )
+    .await?;
     let stage = if replay.is_some() {
         task_json
             .pointer("/spec/currentStage")
@@ -224,6 +316,7 @@ async fn advance_on<T: MysqlTransaction>(
         project_id: task_column::<i64>(&task, "project_id").unwrap_or_default(),
         pair,
         previous_bot_id,
+        strategy,
         team,
         bot,
         member,
@@ -408,6 +501,12 @@ async fn insert_handoff<T: MysqlTransaction>(
             .flatten()
     });
     let completed_id = subtask_column::<i64>(completed, "id").unwrap_or_default();
+    if task_json["metadata"]["labels"]["projectAutomationManagerSubtaskId"]
+        == completed_id.to_string()
+    {
+        task_json["metadata"]["labels"]["projectAutomationManagerSubtaskId"] =
+            json!(assistant_subtask_id.to_string());
+    }
     task_json["metadata"]["labels"][PIPELINE_HANDOFF] = json!(format!(
         "{completed_id}:{user_subtask_id}:{assistant_subtask_id}"
     ));
@@ -512,17 +611,7 @@ fn automatic_next_stage(
 
 /// Compose the selected pipeline handoff from the original request and stage output.
 pub fn handoff_message(mode: &str, original: &str, result: &Value) -> String {
-    let mut parts = Vec::new();
-    if matches!(mode, "original_user" | "original_and_previous") && !original.trim().is_empty() {
-        parts.push(format!("Original user request:\n{}", original.trim()));
-    }
-    if matches!(mode, "previous_bot" | "original_and_previous") {
-        let previous = previous_output(result);
-        if !previous.is_empty() {
-            parts.push(format!("Previous stage output:\n{previous}"));
-        }
-    }
-    parts.join("\n\n")
+    wegent_protocol::pipeline::handoff_text(mode, original, &previous_output(result))
 }
 
 fn previous_output(result: &Value) -> String {

@@ -107,6 +107,7 @@ fn admit(handler: &RuntimeWorkRpcHandler, request: &ExecutionRequest) {
 
 fn turn(request: ExecutionRequest) -> SpawnTurnRequest {
     SpawnTurnRequest {
+        platform_command: None,
         task_kind: None,
         local_task_id: TASK.into(),
         runtime: "codex".into(),

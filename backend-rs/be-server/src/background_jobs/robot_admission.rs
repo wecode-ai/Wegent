@@ -181,7 +181,10 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
     {
         plan.device_id = identity.runtime_device_id;
     }
-    if continuation.is_some() && plan.context["dispatch_role"] == "manager" {
+    if continuation.is_some()
+        && plan.context["dispatch_role"] == "manager"
+        && plan.context["dispatch_protocol_version"] != 2
+    {
         plan.runtime_selection["group_runner_requirements"] =
             super::super::project::groups::runner_requirements(
                 app,
@@ -307,7 +310,9 @@ async fn continuation(
         context["runner_selection"]["model"] =
             source["runtime_selection"]["runner_routing"]["model"].clone();
     }
-    if context["dispatch_kind"] == "collaboration_group" {
+    if context["dispatch_kind"] == "collaboration_group"
+        && context["dispatch_protocol_version"] != 2
+    {
         let id = grants::integer(&context["collaboration_dispatch_execution_id"])
             .context("The collaboration dispatch is unavailable")?;
         let dispatch: Execution = app

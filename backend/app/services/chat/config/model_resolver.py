@@ -495,6 +495,8 @@ def build_agent_config_for_bot(
     user_id: int,
     override_model_name: Optional[str] = None,
     force_override: bool = False,
+    *,
+    accepted_model: dict | None = None,
 ) -> Dict[str, Any]:
     """
     Build agent_config for a bot based on its model binding.
@@ -511,7 +513,12 @@ def build_agent_config_for_bot(
             return raw_agent_config
 
     model_kind, model_spec, model_name, raw_agent_config = _resolve_model_for_bot(
-        db, bot, user_id, override_model_name, force_override
+        db,
+        bot,
+        user_id,
+        override_model_name,
+        force_override,
+        **({"accepted_model": accepted_model} if accepted_model else {}),
     )
 
     if not model_spec:
@@ -546,6 +553,7 @@ def get_model_config_for_bot(
     force_override: bool = False,
     *,
     lookup: ExecutionCapabilityLookup | None = None,
+    accepted_model: dict | None = None,
 ) -> Dict[str, Any]:
     """
     Get model configuration for a Bot (flat format for Chat Shell).
@@ -570,6 +578,7 @@ def get_model_config_for_bot(
         user_id,
         override_model_name,
         force_override,
+        **({"accepted_model": accepted_model} if accepted_model else {}),
         **({"lookup": lookup} if lookup is not None else {}),
     )
 

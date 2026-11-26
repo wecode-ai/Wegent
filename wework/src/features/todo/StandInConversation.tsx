@@ -1,3 +1,4 @@
+import { PersonalPipelineConfirmation } from '@/components/chat/PersonalPipelineConfirmation'
 import { standInConversationTaskId, type StandInConversationScope } from '@/api/personalStandIn'
 import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import type { PersonalAssistantDefinition } from '@/api/personalAssistantAccount'
@@ -117,14 +118,13 @@ export function StandInConversation({
         }
       : modelControls
   const aliases = getUnambiguousWorkbenchDeviceAliases(workbench?.state.devices ?? [])
-  const persistedTaskExists = Boolean(
-    taskReminderItems.some(
-      item =>
-        item.address.taskId === taskId &&
-        (aliases.get(item.address.deviceId) ?? item.address.deviceId) ===
-          (aliases.get(deviceId) ?? deviceId)
-    )
+  const pipelineTask = taskReminderItems.find(
+    item =>
+      item.address.taskId === taskId &&
+      (aliases.get(item.address.deviceId) ?? item.address.deviceId) ===
+        (aliases.get(deviceId) ?? deviceId)
   )
+  const persistedTaskExists = Boolean(pipelineTask)
   const subscribe = useCallback(
     (listener: () => void) => {
       const release = resource.subscribe(listener, persistedTaskExists)
@@ -245,7 +245,18 @@ export function StandInConversation({
         instanceId={`stand-in:${deviceId}:${taskId}`}
         testId="stand-in-conversation"
         draftRequest={draftRequest}
-        contentFooter={contentFooter}
+        contentFooter={
+          <>
+            {address && (
+              <PersonalPipelineConfirmation
+                handle={pipelineTask?.task.runtimeHandle}
+                address={address}
+                services={services ?? workbench?.services}
+              />
+            )}
+            {contentFooter}
+          </>
+        }
         renderMessageGaps={
           groups.length
             ? messages =>

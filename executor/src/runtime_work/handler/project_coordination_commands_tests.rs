@@ -142,18 +142,7 @@ async fn revocation_of_native_accepted_unstarted_work_releases_queue_scope() {
         "Queued work".into(),
     ));
     handler
-        .queue_turn(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: task.clone(),
-            runtime: "codex".into(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        })
+        .queue_turn(SpawnTurnRequest::new(task.clone(), "codex".into(), request))
         .await
         .unwrap();
     assert!(handler.is_queued_local_task(&task));
@@ -271,6 +260,11 @@ async fn private_project_turns_reject_changed_project_or_group_configuration() {
     let (_directory, handler, store, payload, _) = fixture();
     let project = payload["projectId"].as_str().unwrap();
     let context = store.project_coordinator_context(project, "group").unwrap();
+    assert_eq!(
+        context["agent"]["bot"][0]["id"],
+        context["group"]["leader"]["id"]
+    );
+    assert_eq!(context["agent"]["collaboration_model"], "single");
     let again = store.project_coordinator_context(project, "group").unwrap();
     assert_eq!(context["group"]["version"], again["group"]["version"]);
     assert!(context["group"]["version"].is_string());

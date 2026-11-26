@@ -497,7 +497,10 @@ async fn require_personal_binding(
         .map_err(internal)?;
     if bindings.iter().any(|binding| {
         binding.task_user_id == user.id
-            && identities.contains(&binding.device_id)
+            && binding
+                .device_id
+                .as_ref()
+                .is_some_and(|device| identities.contains(device))
             && Some(binding.task_id.as_str()) == payload.task_id.as_deref()
             && binding
                 .metadata

@@ -233,7 +233,7 @@ pub async fn persist_terminal_transition<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     device_attempt: Option<&DeviceAttempt<'_>>,
-    delivery: Option<(Delivery, Option<&Value>)>,
+    delivery: Option<(Delivery<'_>, Option<&Value>)>,
 ) -> MysqlResult<Option<Transition>> {
     let normalized_status = status.to_uppercase();
     let (task_table, subtask_table) =
@@ -255,6 +255,18 @@ pub async fn persist_terminal_transition<M: Mysql, R: Redis>(
         if subtask_column::<i64>(&row, "task_id") != Some(task_id)
             || device_attempt.is_some_and(|attempt| {
                 task_column::<i64>(&task, "user_id") != Some(attempt.owner_id)
+            })
+        {
+            return Ok(None);
+        }
+        if let Some((Delivery::Device(stream), _)) = delivery
+            && !task_column::<Json<Value>>(&task, "json").is_some_and(|json| {
+                stream.matches(
+                    &json.0,
+                    subtask_id,
+                    subtask_column::<String>(&row, "executor_namespace").as_deref(),
+                    subtask_column::<String>(&row, "executor_name").as_deref(),
+                )
             })
         {
             return Ok(None);
@@ -392,7 +404,7 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
     ctx: &CompletionStore<'_, M, R>,
     task_id: i64,
     subtask_id: i64,
-    delivery: Delivery,
+    delivery: Delivery<'_>,
 ) -> MysqlResult<()> {
     let (task_table, _) = super::resolve_tables(ctx.task_store, ctx.tables, task_id).await?;
     let mysql = ctx
@@ -408,6 +420,11 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
             let Some(Json(mut task)) = task_column::<Json<Value>>(&task, "json") else {
                 return Ok(());
             };
+            if let Delivery::Device(stream) = delivery
+                && stream.attempt != delivery::device_attempt_id(&task, subtask_id)
+            {
+                return Ok(());
+            }
             if let Some(labels) = delivery::labels(&mut task).as_object_mut()
                 && labels.shift_remove(&delivery.label(subtask_id)).is_some()
             {
@@ -780,7 +797,16 @@ async fn collaboration_status<T: MysqlTransaction>(
         .await?
         .is_some();
 
-    let team = strategy_team(mysql, regular_task_found, payload).await?;
+    let mut team = strategy_team(mysql, regular_task_found, payload).await?;
+    if let Some(team) = &mut team {
+        wegent_task_store::task_store_pipeline::apply_managed_strategy(
+            &mut &mut *mysql,
+            Some(payload),
+            task_id,
+            team,
+        )
+        .await?;
+    }
 
     // `PipelineCollaborationStrategy`: a stage that requires confirmation holds
     // the task at `PENDING_CONFIRMATION` instead of completing it. Only this
@@ -908,8 +934,16 @@ fn stage_decision(
     }
     // A completion whose bot belongs to an older stage is stale: the source
     // skips both the confirmation check and the auto-advance for it.
-    let matched = member_stage(members, bot_name, bot_namespace);
-    if matched.is_some_and(|stage| stage != current_stage) {
+    let matches_bot = |member: &Value| {
+        member.pointer("/botRef/name").and_then(Value::as_str) == Some(bot_name)
+            && member
+                .pointer("/botRef/namespace")
+                .and_then(Value::as_str)
+                .unwrap_or("default")
+                == bot_namespace
+    };
+    let current_matches = matches_bot(&members[current_stage]);
+    if !current_matches && members.iter().any(matches_bot) {
         return none;
     }
     let current_requires = members[current_stage]
@@ -920,7 +954,7 @@ fn stage_decision(
     StageDecision {
         // `should_set_pending_confirmation_on_complete` needs the completed
         // bot to resolve to the current stage.
-        requires_confirmation: matched == Some(current_stage) && current_requires && has_next,
+        requires_confirmation: current_matches && current_requires && has_next,
         // `get_auto_advance_info` then only re-checks the current member.
         auto_advance: !current_requires && has_next,
     }
@@ -935,18 +969,6 @@ fn current_stage(payload: &Map<String, Value>) -> Option<usize> {
         None | Some(Value::Null) => Some(0),
         Some(value) => value.as_u64().and_then(|stage| usize::try_from(stage).ok()),
     }
-}
-
-/// The member whose `botRef` names the bot that completed the stage.
-fn member_stage(members: &[Value], bot_name: &str, bot_namespace: &str) -> Option<usize> {
-    members.iter().position(|member| {
-        member.pointer("/botRef/name").and_then(Value::as_str) == Some(bot_name)
-            && member
-                .pointer("/botRef/namespace")
-                .and_then(Value::as_str)
-                .unwrap_or("default")
-                == bot_namespace
-    })
 }
 
 /// `datetime.now()` in the `DATETIME(6)` form the source binds to its columns.
@@ -999,6 +1021,15 @@ mod tests {
         assert!(!requires(&task(json!(0)), "missing", "default"));
         assert!(!requires(&task(json!(0)), "first", "other"));
         assert!(requires(&task(Value::Null), "first", "default"));
+        let mut repeated = team.clone();
+        repeated["spec"]["members"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"botRef":{"name":"third"}}));
+        repeated["spec"]["members"][1]["botRef"]["name"] = json!("first");
+        assert!(
+            stage_decision(&task(json!(1)), &repeated, "first", "default").requires_confirmation
+        );
         let mut automatic = team.clone();
         automatic["spec"]["members"][0]["requireConfirmation"] = json!(false);
         assert!(

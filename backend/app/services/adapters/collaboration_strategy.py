@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.services.adapters.pipeline_context import normalize_context_passing
+from app.services.adapters.pipeline_snapshot import accepted_team
+from app.services.adapters.pipeline_stage import latest_stage_completion
 
 logger = logging.getLogger(__name__)
 
@@ -227,9 +229,7 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
             from app.schemas.kind import Task, Team
             from app.services.readers.kinds import KindType, kindReader
 
-            subtask = task_stores.subtask_store.get_basic_by_id(
-                db, subtask_id=subtask_id
-            )
+            subtask = latest_stage_completion(db, task_id, subtask_id)
             if not subtask:
                 logger.info(
                     "[PipelineStrategy] Auto-advance skipped: subtask not found "
@@ -261,7 +261,7 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                 )
                 return None
 
-            team_crd = Team.model_validate(team.json)
+            team_crd = Team.model_validate(accepted_team(db, task_id, team).json)
             members = team_crd.spec.members
             if not members:
                 logger.info(
@@ -285,33 +285,25 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                 )
                 return None
 
-            subtask_stage_index = None
-            if subtask.bot_ids:
-                bot = kindReader.get_by_id(db, KindType.BOT, subtask.bot_ids[0])
-                if bot:
-                    for i, member in enumerate(members):
-                        if (
-                            member.botRef.name == bot.name
-                            and member.botRef.namespace == bot.namespace
-                        ):
-                            subtask_stage_index = i
-                            break
-
+            current_member = members[current_stage_index]
+            bot = (
+                kindReader.get_by_id(db, KindType.BOT, subtask.bot_ids[0])
+                if subtask.bot_ids
+                else None
+            )
+            # Legacy Tasks can retain a Bot that is no longer in the Team.
             if (
-                subtask_stage_index is not None
-                and subtask_stage_index != current_stage_index
-            ):
-                logger.info(
-                    "[PipelineStrategy] Skip stale auto-advance for task %s: "
-                    "subtask_stage=%s, currentStage=%s",
-                    task_id,
-                    subtask_stage_index,
-                    current_stage_index,
+                bot
+                and (bot.name, bot.namespace)
+                != (current_member.botRef.name, current_member.botRef.namespace)
+                and any(
+                    (member.botRef.name, member.botRef.namespace)
+                    == (bot.name, bot.namespace)
+                    for member in members
                 )
+            ):
                 return None
 
-            # Check requireConfirmation on current stage
-            current_member = members[current_stage_index]
             if current_member.requireConfirmation:
                 logger.info(
                     "[PipelineStrategy] Auto-advance skipped: confirmation required "
@@ -429,7 +421,7 @@ class CollaborationStrategyFactory:
             if not team:
                 return DefaultCollaborationStrategy()
 
-            team_crd = Team.model_validate(team.json)
+            team_crd = Team.model_validate(accepted_team(db, task_id, team).json)
             collaboration_model = team_crd.spec.collaborationModel
 
             logger.debug(

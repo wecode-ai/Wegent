@@ -100,7 +100,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     task: MysqlRow,
     task_id: i64,
     changed_subtask_id: i64,
-    pending_delivery: Option<(Delivery, Option<&Value>)>,
+    pending_delivery: Option<(Delivery<'_>, Option<&Value>)>,
     terminal: bool,
     required_status: Option<&str>,
     terminal_result: Option<&Value>,

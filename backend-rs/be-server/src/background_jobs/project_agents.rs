@@ -67,7 +67,8 @@ pub(crate) async fn readiness(
     state: &AppState,
     team: &resolution::KindRow,
     execution_user: i64,
-) -> Result<()> {
+    override_model: Option<&str>,
+) -> Result<Value> {
     let resolvers = state.entity_resolvers.for_execution();
     let directory = state
         .entity_resolvers
@@ -88,23 +89,17 @@ pub(crate) async fn readiness(
     // through `kindReader.get_by_name_and_namespace` (cached version/value
     // reads), never the whole Ghost chain, then resolves the Shell and, when
     // the Bot declares no execution policy, its Model.
-    let mut checked: Vec<(String, String)> = Vec::new();
+    let mut definitions = serde_json::Map::new();
+    let mut checked = std::collections::BTreeSet::new();
     for member in members {
         let reference = &member["botRef"];
-        let namespace = reference["namespace"]
-            .as_str()
-            .unwrap_or("default")
-            .to_owned();
-        let name = reference["name"].as_str().unwrap_or("").to_owned();
-        if checked
-            .iter()
-            .any(|ref_| ref_.0 == namespace && ref_.1 == name)
-        {
+        let namespace = reference["namespace"].as_str().unwrap_or("default");
+        let name = reference["name"].as_str().unwrap_or("");
+        if !checked.insert((namespace, name)) {
             continue;
         }
-        checked.push((namespace.clone(), name.clone()));
         let bot = cache
-            .get_by_name_and_namespace_row(team.user_id, "Bot", &namespace, &name)
+            .get_by_name_and_namespace_row(team.user_id, "Bot", namespace, name)
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?
             .with_context(|| format!("Team member Bot '{namespace}/{name}' is unavailable"))?;
@@ -115,7 +110,7 @@ pub(crate) async fn readiness(
             .unwrap_or("default")
             .to_owned();
         let ghost_name = spec["ghostRef"]["name"].as_str().unwrap_or("").to_owned();
-        cache
+        let ghost = cache
             .get_by_name_and_namespace_row(team.user_id, "Ghost", &ghost_namespace, &ghost_name)
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?
@@ -134,7 +129,9 @@ pub(crate) async fn readiness(
         )
         .await?
         .context("Wegent Team member Shell is unavailable")?;
-        if !spec["execution_policy"].is_object() {
+        let ghost_document = serde_json::to_value(&ghost.kinds_json.0)?;
+        let mut definition = json!({"ghost_prompt":ghost_document["spec"]["systemPrompt"].as_str().unwrap_or_default()});
+        if !spec["execution_policy"].is_object() && override_model.is_none() {
             let name = resolution::resolve_model_name(spec, false, None).unwrap_or_default();
             let model = resolution::resolve_model_for_bot(
                 &state.mysql,
@@ -145,11 +142,75 @@ pub(crate) async fn readiness(
             )
             .await?
             .context("Wegent Team member Model is unavailable")?;
-            crate::responses::create::model_config::extract_model_config(&model.json.0["spec"])
-                .context("Wegent Team member Model configuration is unavailable")?;
+            let config =
+                crate::responses::create::model_config::extract_model_config(&model.json.0["spec"])
+                    .context("Wegent Team member Model configuration is unavailable")?;
+            definition["model_name"] = json!(name);
+            definition["model_resource_id"] = json!(model.id);
+            definition["model_id"] = json!(config.get("model_id"));
+            if crate::responses::create::model_config::inline_agent_config_ready(
+                &spec["agent_config"],
+                false,
+                None,
+            ) {
+                for key in ["model", "model_id"] {
+                    if let Some(value) = spec["agent_config"]["env"][key].as_str() {
+                        definition["inline_env"][key] = json!(value);
+                    }
+                }
+            }
         }
+        definitions.insert(bot.kinds_id.to_string(), definition);
     }
-    Ok(())
+    Ok(
+        json!({"members":members,"collaborationModel":team.json.0["spec"]["collaborationModel"],"bots":definitions}),
+    )
+}
+
+/// Resolve the Agent-private definition under the project Agent grant.
+async fn private_team_config(state: &AppState, agent: &Node, mut config: Value) -> Result<Value> {
+    let namespace = format!("projects/{}", agent.cloud_project_id);
+    let name = format!("agent-{}", agent.id);
+    let reference = json!({"name":name, "namespace":namespace});
+    let rows: Vec<resolution::KindRow> = state.mysql.fetch_all(
+        format!("SELECT {} FROM kinds WHERE user_id=? AND namespace=? AND name=? AND is_active=1 AND kind IN ('Team','Bot','Ghost','Shell')",wegent_resource_store::kind_rows::KIND_COLUMNS),
+        (agent.created_by_user_id, namespace, name)
+    ).await?;
+    let mut specs = std::collections::BTreeMap::new();
+    let team_id = authority::integer(&agent.metadata.0["teamRef"])
+        .context("Project Agent has no persisted Team binding")?;
+    for row in &rows {
+        if row.json.0["metadata"]["migrationSource"] != agent.id
+            || (row.kind == "Team" && row.id != team_id)
+        {
+            bail!("Project Agent Team identity changed");
+        }
+        specs.insert(row.kind.as_str(), &row.json.0["spec"]);
+    }
+    let (Some(team), Some(bot), Some(ghost), Some(shell)) = (
+        specs.get("Team"),
+        specs.get("Bot"),
+        specs.get("Ghost"),
+        specs.get("Shell"),
+    ) else {
+        bail!("Project Agent Team definition unavailable");
+    };
+    if team["members"] != json!([{"botRef":reference}])
+        || bot["ghostRef"] != reference
+        || bot["shellRef"] != reference
+    {
+        bail!("Project Agent Team dependency mismatch");
+    }
+    config["teamRef"] = json!(team_id);
+    config["runtime"] = match shell["shellType"].as_str() {
+        Some("Codex") => json!("codex"),
+        Some("ClaudeCode") => json!("claude_code"),
+        _ => bail!("Project Agent Team Shell unavailable"),
+    };
+    config["system_prompt"] = ghost["systemPrompt"].clone();
+    config["mcp_servers"] = ghost["mcpServers"].clone();
+    config["plugins"] = ghost["plugins"].clone();
+    Ok(config)
 }
 
 pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64) -> Result<Value> {
@@ -183,12 +244,12 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     }
     config["execution_device_id"] = json!(agent.device_id);
     if runtime != "wegent" {
-        return Ok(config);
+        return private_team_config(state, agent, config).await;
     }
     let team_id = authority::integer(&config["wegent_team_id"])
         .context("Project Agent has an invalid Team binding")?;
     let team = authority::team(&state.mysql, &agent.cloud_project_id, team_id).await?;
-    readiness(state, &team, execution_user).await?;
+    let strategy = readiness(state, &team, execution_user, None).await?;
     let members = team.json.0["spec"]["members"]
         .as_array()
         .context("Team has no members")?;
@@ -202,6 +263,7 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
         resolvers: Some(&resolvers),
     };
     if team.json.0["spec"]["collaborationModel"] != "solo" || members.len() != 1 {
+        config["team_strategy"] = strategy;
         return Ok(config);
     }
     let member = &members[0];

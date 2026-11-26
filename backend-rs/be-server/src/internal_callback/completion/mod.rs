@@ -223,7 +223,7 @@ pub(crate) async fn complete_with_delivery<M: Mysql, R: Redis>(
     status: &str,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-    delivery: Delivery,
+    delivery: Delivery<'_>,
     source: Option<&Value>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
     let (task_table, _) = resolve_tables(ctx.app, ctx.tables, event.task_id).await?;
@@ -363,7 +363,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     device_attempt: Option<&DeviceAttempt<'_>>,
-    delivery: Option<(Delivery, Option<&Value>)>,
+    delivery: Option<(Delivery<'_>, Option<&Value>)>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
     let final_result = collect::collect_completed_result(
         &ctx.storage(),

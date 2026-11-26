@@ -47,6 +47,7 @@ pub(super) async fn create(
         user_id: runner,
         owner_user_id: runner.try_into()?,
         continuation: None,
+        pipeline_strategy: None,
         history_window: None,
         team_id: team.id,
         bot_ids: &bots.bot_ids,
@@ -123,6 +124,7 @@ pub(super) async fn create(
     let mut request = create::request::build_background_execution_request(
         app,
         &BuildExecutionRequestInput {
+            strategy: None,
             user_id: runner,
             user_name: username,
             // This native job path enriches the Git identity from

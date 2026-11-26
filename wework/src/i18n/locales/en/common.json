@@ -5776,6 +5776,8 @@
     "connect": "Connect to the cloud to view notifications"
   },
   "standIn": {
+    "pipeline_confirmation_failed": "Could not confirm the current stage.",
+    "confirm_pipeline_stage": "Confirm and start the next stage",
     "dingtalk_delegation": {
       "account_identity": "DingTalk account and organization",
       "provider": "DingTalk",

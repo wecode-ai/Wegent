@@ -93,7 +93,7 @@ fn emphasis_prompt_prioritizes_selected_knowledge_skill() {
 }
 
 #[test]
-fn coordinate_mode_collects_member_bot_skills_for_deployment() {
+fn coordinate_parent_deploys_its_own_and_request_skills() {
     let request = ExecutionRequest {
         bot: json!([
             {"name": "leader", "skills": ["leader-skill"]},
@@ -111,12 +111,7 @@ fn coordinate_mode_collects_member_bot_skills_for_deployment() {
 
     assert_eq!(
         skills,
-        vec![
-            "leader-skill",
-            "dubhe-skill",
-            "request-skill",
-            "preload-skill"
-        ]
+        vec!["leader-skill", "request-skill", "preload-skill"]
     );
 }
 

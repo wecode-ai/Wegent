@@ -18,17 +18,33 @@ from sqlalchemy.orm.attributes import flag_modified
 
 import app.stores.tasks as task_stores
 from app.models.kind import Kind
-from app.models.subtask import SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
 from app.services.adapters.pipeline_context import (
     build_pipeline_context_prompt,
     normalize_context_passing,
 )
+from app.services.adapters.pipeline_snapshot import accepted_team
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
+
+
+def latest_stage_completion(
+    db: Session, task_id: int, subtask_id: int
+) -> Optional[Subtask]:
+    subtask = task_stores.subtask_store.get_latest_assistant_by_statuses(
+        db, task_id=task_id, statuses=list(SubtaskStatus)
+    )
+    if (
+        subtask
+        and subtask.id == subtask_id
+        and subtask.status == SubtaskStatus.COMPLETED
+    ):
+        return subtask
+    return None
 
 
 class PipelineStageService:
@@ -257,9 +273,10 @@ class PipelineStageService:
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
 
-        return kindReader.get_by_name_and_namespace(
+        team = kindReader.get_by_name_and_namespace(
             db, task.user_id, KindType.TEAM, team_namespace, team_name
         )
+        return accepted_team(db, task.id, team) if team else None
 
     def pipeline_confirm(
         self,
@@ -610,52 +627,22 @@ class PipelineStageService:
             if team_crd.spec.collaborationModel != "pipeline":
                 return False
 
-            # Get the subtask that just completed
-            subtask = task_stores.subtask_store.get_basic_by_id(
-                db, subtask_id=subtask_id
-            )
-            if not subtask or subtask.status != SubtaskStatus.COMPLETED:
+            subtask = latest_stage_completion(db, task_id, subtask_id)
+            if subtask is None or not subtask.bot_ids:
                 return False
-
-            # Find which stage this subtask belongs to by matching bot_id
-            if not subtask.bot_ids:
-                return False
-
-            bot_id = subtask.bot_ids[0]
-            bot = self._get_bot_by_id(db, bot_id)
+            bot = self._get_bot_by_id(db, subtask.bot_ids[0])
             if not bot:
                 return False
 
-            # Find the stage index for this bot
-            current_stage_index = None
-            for i, member in enumerate(team_crd.spec.members):
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
-                    current_stage_index = i
-                    break
-
-            if current_stage_index is None:
+            current_stage_index = task_crd.spec.currentStage or 0
+            if not 0 <= current_stage_index < len(team_crd.spec.members):
                 return False
-
-            active_stage_index = (
-                task_crd.spec.currentStage
-                if task_crd.spec.currentStage is not None
-                else 0
-            )
-            if current_stage_index != active_stage_index:
-                logger.info(
-                    "Pipeline: skip stale confirmation check for task %s: "
-                    "subtask_stage=%s, currentStage=%s",
-                    task_id,
-                    current_stage_index,
-                    active_stage_index,
-                )
-                return False
-
-            # Check if this stage has requireConfirmation
             current_member = team_crd.spec.members[current_stage_index]
+            if (current_member.botRef.name, current_member.botRef.namespace) != (
+                bot.name,
+                bot.namespace,
+            ):
+                return False
             if not current_member.requireConfirmation:
                 return False
 
@@ -701,6 +688,8 @@ class PipelineStageService:
         Returns:
             Dict with pipeline info including bot_ids, or None if not a pipeline team
         """
+        if task_id is not None:
+            team = accepted_team(db, task_id, team)
         team_crd = Team.model_validate(team.json)
 
         # Only handle pipeline mode teams

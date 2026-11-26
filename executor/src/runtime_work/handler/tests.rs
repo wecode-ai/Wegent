@@ -97,28 +97,7 @@ mod transcript_turn_status_tests;
 #[path = "async_question_delivery_tests.rs"]
 mod async_question_delivery_tests;
 
-/// Restores one environment variable when a test finishes.
-pub(in crate::runtime_work) struct ScalarEnv {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl ScalarEnv {
-    pub(in crate::runtime_work) fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-}
-
-impl Drop for ScalarEnv {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
+pub(in crate::runtime_work) use crate::test_env::ScalarEnv;
 #[path = "task_project_move_tests.rs"]
 mod task_project_move_tests;
 
@@ -227,18 +206,7 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             ("active-1".to_owned(), RuntimeTaskKind::Personal),
             ("active-2".to_owned(), RuntimeTaskKind::Personal),
         ]);
-        scheduler.queued_turns = VecDeque::from([SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: "queued-1".to_owned(),
-            runtime: "codex".to_owned(),
-            request: ExecutionRequest::default(),
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        }]);
+        scheduler.queued_turns = VecDeque::from([SpawnTurnRequest::new("queued-1".to_owned(), "codex".to_owned(), ExecutionRequest::default())]);
     }
 
     let capacity = handler
@@ -317,18 +285,7 @@ async fn create_task_persists_collaboration_member_runtime_profiles() {
 #[test]
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut turn = SpawnTurnRequest {
-        task_kind: None,
-        local_task_id: "task-1".to_owned(),
-        runtime: "codex".to_owned(),
-        request: ExecutionRequest::default(),
-        send_payload: None,
-        direct_thread_id: None,
-        fork_thread_id: None,
-        fork_thread_path: None,
-        resume_thread_id: None,
-        initial_thread_goal: None,
-    };
+    let mut turn = SpawnTurnRequest::new("task-1".to_owned(), "codex".to_owned(), ExecutionRequest::default());
     turn.request.extra.insert(
         "deferred_worktree_source_path".to_owned(),
         Value::String("/tmp/source".to_owned()),
@@ -353,18 +310,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
 #[tokio::test]
 async fn archive_stop_waits_for_worktree_preparation_ack() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    let mut turn = SpawnTurnRequest {
-        task_kind: None,
-        local_task_id: "task-1".to_owned(),
-        runtime: "codex".to_owned(),
-        request: ExecutionRequest::default(),
-        send_payload: None,
-        direct_thread_id: None,
-        fork_thread_id: None,
-        fork_thread_path: None,
-        resume_thread_id: None,
-        initial_thread_goal: None,
-    };
+    let mut turn = SpawnTurnRequest::new("task-1".to_owned(), "codex".to_owned(), ExecutionRequest::default());
     turn.request.extra.insert(
         "deferred_worktree_source_path".to_owned(),
         Value::String("/tmp/source".to_owned()),
@@ -421,18 +367,7 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         "deferred_worktree_path".to_owned(),
         Value::String(plan.path.display().to_string()),
     );
-    let turn = SpawnTurnRequest {
-        task_kind: None,
-        local_task_id: "task-1".to_owned(),
-        runtime: "codex".to_owned(),
-        request,
-        send_payload: None,
-        direct_thread_id: None,
-        fork_thread_id: None,
-        fork_thread_path: None,
-        resume_thread_id: None,
-        initial_thread_goal: None,
-    };
+    let turn = SpawnTurnRequest::new("task-1".to_owned(), "codex".to_owned(), request);
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         plan.path.display().to_string(),
@@ -1099,18 +1034,7 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         "deferred_worktree_path".to_owned(),
         Value::String(plan.path.display().to_string()),
     );
-    let interrupted = VecDeque::from([SpawnTurnRequest {
-        task_kind: None,
-        local_task_id: "task-queued".to_owned(),
-        runtime: "codex".to_owned(),
-        request,
-        send_payload: None,
-        direct_thread_id: None,
-        fork_thread_id: None,
-        fork_thread_path: None,
-        resume_thread_id: None,
-        initial_thread_goal: None,
-    }]);
+    let interrupted = VecDeque::from([SpawnTurnRequest::new("task-queued".to_owned(), "codex".to_owned(), request)]);
     write_runtime_turn_queue(&queue_path, &interrupted).unwrap();
     handler.store = RuntimeWorkStore::new(index_path);
     assert!(handler.reconcile_worktrees_once().await);

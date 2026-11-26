@@ -73,6 +73,35 @@ pub(super) fn apply_stand_in_agent(
     device: &str,
     selected_model: Option<&Value>,
 ) -> Result<(), AppIpcError> {
+    copy_stand_in_team(payload, agent)?;
+    resolve_stand_in_routing(payload, agent, catalog, device, selected_model)
+}
+
+pub(super) fn copy_stand_in_team(payload: &mut Value, agent: &Value) -> Result<(), AppIpcError> {
+    if !agent["id"].as_str().is_some_and(|id| !id.is_empty())
+        || !agent["bot"].as_array().is_some_and(|bots| !bots.is_empty())
+    {
+        return Err(AppIpcError::new(
+            "stand_in_team_missing",
+            "Bound Team has no executable Bots",
+        ));
+    }
+    payload["projectInstructions"] = agent["system_prompt"].clone();
+    payload["additionalSkills"] = agent["additional_skills"].clone();
+    payload["projectPlugins"] = agent["plugins"].clone();
+    payload["teamRef"] = agent["id"].clone();
+    payload["collaboration_model"] = agent["collaboration_model"].clone();
+    payload["bot"] = agent["bot"].clone();
+    Ok(())
+}
+
+pub(super) fn resolve_stand_in_routing(
+    payload: &mut Value,
+    agent: &Value,
+    catalog: &Value,
+    device: &str,
+    selected_model: Option<&Value>,
+) -> Result<(), AppIpcError> {
     if let Some(model) = selected_model {
         let fixed = &agent["model_policy"];
         if fixed["mode"] == "fixed"
@@ -91,10 +120,6 @@ pub(super) fn apply_stand_in_agent(
     payload["runtime"] = json!(runtime);
     payload["runnerPolicy"] = json!({"runtime":runtime,"execution_policy":agent["execution_policy"],"model_policy":agent["model_policy"]});
     payload["runnerSelection"] = json!({"execution_policy":{"mode":"fixed","environment_id":device},"model":selected_model.unwrap_or(default_model)});
-    payload["projectInstructions"] = agent["system_prompt"].clone();
-    payload["additionalSkills"] = agent["additional_skills"].clone();
-    payload["projectPlugins"] = agent["plugins"].clone();
-    payload["bot"] = json!([{"id":agent["id"],"name":agent["name"],"shell_type":if runtime == "claude_code" {"ClaudeCode"} else {"Codex"},"mcp_servers":agent["mcp_servers"]}]);
     crate::task_runtime::runner_routing::resolve_pending(payload, Some(catalog), device)
         .map_err(settings_error)
 }
@@ -127,13 +152,22 @@ pub(super) fn background_stand_in_model(
         })
 }
 
-pub(super) fn cloud_agent_profile(row: &Value) -> Value {
-    json!({
+pub(super) fn cloud_agent_profile(row: &Value) -> Result<Value, AppIpcError> {
+    let team = row["wegentTeamId"]
+        .as_u64()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "stand_in_team_missing",
+                "Project leader has no saved Team binding",
+            )
+        })?;
+    Ok(json!({
         "version":row["version"],
-        "id":row["id"],"name":row["name"],"runtime":row["runtime"],"status":row["status"],"can_use":row["canUse"],
+        "id":team.to_string(),"wegentTeamId":team,"name":row["name"],"runtime":row["runtime"],"status":row["status"],"can_use":row["canUse"],
         "execution_policy":row["executionPolicy"],"model_policy":row["modelPolicy"],"system_prompt":row["systemPrompt"],
         "additional_skills":row["additionalSkills"],"plugins":row["plugins"],"mcp_servers":row["mcpServers"]
-    })
+    }))
 }
 
 #[cfg(test)]

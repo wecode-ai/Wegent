@@ -33,6 +33,10 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.adapters.pipeline_snapshot import (
+    accepted_team,
+    save_pipeline_snapshot,
+)
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.execution_permission_scope import execution_resource_scope
 from app.services.readers.kinds import KindType, kindReader
@@ -229,7 +233,7 @@ class TaskOperationsMixin:
             payload=mark_task_pending_payload(existing_task.json),
         )
 
-        return existing_task, team
+        return existing_task, accepted_team(db, existing_task.id, team)
 
     def _create_new_task(
         self,
@@ -278,7 +282,7 @@ class TaskOperationsMixin:
                 title += "..."
 
         if task_id is None:
-            return self._create_new_task_with_allocated_pair(
+            task, team = self._create_new_task_with_allocated_pair(
                 db=db,
                 obj_in=obj_in,
                 user=user,
@@ -287,15 +291,18 @@ class TaskOperationsMixin:
                 namespace=namespace,
             )
 
-        return self._create_new_task_with_preallocated_id(
-            db=db,
-            obj_in=obj_in,
-            user=user,
-            team=team,
-            task_id=task_id,
-            title=title,
-            namespace=namespace,
-        )
+        else:
+            task, team = self._create_new_task_with_preallocated_id(
+                db=db,
+                obj_in=obj_in,
+                user=user,
+                team=team,
+                task_id=task_id,
+                title=title,
+                namespace=namespace,
+            )
+        save_pipeline_snapshot(db, task, team)
+        return task, team
 
     def _create_new_task_with_allocated_pair(
         self,

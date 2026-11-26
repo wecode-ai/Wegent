@@ -251,6 +251,52 @@ def prepare_execution_session(
             api_key_name=api_key_name,
         )
 
+    task = None
+    subtask_user_id = user.id
+
+    if task_id:
+        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
+        from app.models.task import TaskTeamStrategy
+        from app.services.adapters.pipeline_snapshot import overlay_team
+
+        saved = db.get(TaskTeamStrategy, task.id)
+        if saved is not None:
+            ref = task.json["spec"]["teamRef"]
+            if (ref["name"], ref.get("namespace", "default"), ref.get("user_id")) != (
+                team.name,
+                team.namespace,
+                team.user_id,
+            ):
+                raise HTTPException(
+                    status_code=403, detail="Pipeline Team binding changed"
+                )
+            team = overlay_team(team, saved.strategy)
+            stage = task.json["spec"].get("currentStage") or 0
+            members = saved.strategy["members"]
+            if not 0 <= stage < len(members):
+                raise ValueError("Pipeline stage is out of range")
+            bot_ref = members[stage]["botRef"]
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                bot_ref.get("namespace", "default"),
+                bot_ref["name"],
+            )
+            if not bot or str(bot.id) not in saved.strategy["bots"]:
+                raise ValueError("Pipeline stage Bot identity changed")
+            bot_ids_override = [bot.id]
+
     team_crd = _load_team_crd(team)
     if team_crd is not None and not team_crd.spec.members:
         raise HTTPException(
@@ -284,21 +330,7 @@ def prepare_execution_session(
             detail="No valid bots found in team",
         )
 
-    task = None
-    subtask_user_id = user.id
-
-    if task_id:
-        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
-        if task.client_origin != resolved_task_params.client_origin:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
+    if task is not None:
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if ensure_task_device_id(task, device_id=resolved_task_params.device_id):

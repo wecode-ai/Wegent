@@ -500,7 +500,7 @@ pub async fn resolve_request_preload_skills<
     let bot_capability_mode = late_capability_mode(&bot);
 
     let references = user_preload_skill_refs(request, &requested);
-    let mut skills = super::get_bot_skills(
+    let skills = super::get_bot_skills(
         mysql,
         &merged,
         bot_capability_mode,
@@ -517,26 +517,6 @@ pub async fn resolve_request_preload_skills<
         &[],
     )
     .await?;
-
-    // `request_builder.py:900-916`: a coding coordinate build also resolves the
-    // skills that only the member bot configs carry, before the request fields
-    // are replaced.
-    if coding_coordinate(request) {
-        extend_resolved_skills_from_bot_configs(
-            reads.cache,
-            request
-                .bot
-                .as_array()
-                .map(Vec::as_slice)
-                .unwrap_or_default(),
-            &mut skills,
-            user_preferences,
-            tokens,
-            reads.owner_user_id,
-            team_namespace,
-        )
-        .await?;
-    }
 
     request.skill_configs = skills.skills.clone();
     request.skill_names = skills
@@ -580,12 +560,7 @@ pub async fn resolve_request_preload_skills<
     }
     leader["skills"] = Value::Array(names);
 
-    // `request_builder.py:940` -> `_sync_skill_refs_to_bot_configs`
-    // (`:2312-2333`): every bot config syncs its own string skill names from
-    // the resolved map.
-    for bot in bots.iter_mut() {
-        sync_bot_skill_refs(bot, &skills.skill_refs);
-    }
+    sync_bot_skill_refs(leader, &skills.skill_refs);
 
     // The execution builder compiles the complete final Skill set after
     // connector availability has replaced any superseded personal servers.
@@ -655,19 +630,6 @@ fn namespace_value(reference: &Value) -> Option<Value> {
         ),
         _ => Some(Value::String("default".to_string())),
     }
-}
-
-/// `request.bot[0]` is a coding shell and the team uses coordinate mode
-/// (`request_builder.py:904-908`).
-fn coding_coordinate(request: &wegent_protocol::dispatch::ExecutionRequest) -> bool {
-    request.collaboration_model == "coordinate"
-        && request
-            .bot
-            .as_array()
-            .and_then(|bots| bots.first())
-            .and_then(|bot| bot.get("shell_type"))
-            .and_then(Value::as_str)
-            .is_some_and(is_coding_shell)
 }
 
 /// `_extend_resolved_skills_from_bot_configs` (`request_builder.py:2746-2787`):

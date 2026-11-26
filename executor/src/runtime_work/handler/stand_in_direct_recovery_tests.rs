@@ -17,6 +17,7 @@ fn session_recovery_uses_native_receipts_and_never_restarts_unresolved_commands(
     let mut request = ExecutionRequest::default();
     request.extra.insert("user_id".into(), json!(7));
     let mut command = RuntimeCommand {
+        pending_terminal: None,
         id: "previous".into(),
         fingerprint: "identity".into(),
         state: CommandState::Settled,
@@ -25,18 +26,7 @@ fn session_recovery_uses_native_receipts_and_never_restarts_unresolved_commands(
         resource_event_keys: Vec::new(),
         native: None,
         guidance_turn_id: None,
-        turn: SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: task_id(7),
-            runtime: "codex".into(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        },
+        turn: SpawnTurnRequest::new(task_id(7), "codex".into(), request),
     };
     assert_eq!(
         handler

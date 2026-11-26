@@ -541,7 +541,7 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    fn publish_native_execution(
+    pub(super) fn publish_native_execution(
         &self,
         task_id: &str,
         request: &ExecutionRequest,

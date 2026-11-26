@@ -82,6 +82,7 @@ pub fn web_search_enabled() -> bool {
 
 /// The create flow's post-resolution dispatch inputs.
 pub struct DispatchInput<'a> {
+    pub strategy: Option<&'a Value>,
     /// `openapi_responses.py:755` / `:1122-1123`'s `created_at`, captured
     /// after the session setup and reused by every response branch.
     pub created_at: i64,
@@ -181,6 +182,7 @@ pub async fn dispatch_create(
     let mut request = match build_execution_request(
         state,
         &BuildExecutionRequestInput {
+            strategy: input.strategy,
             user_id: input.user_id,
             user_name: input.user_name,
             user_git_info: input.user_git_info,

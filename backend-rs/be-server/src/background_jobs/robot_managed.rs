@@ -15,6 +15,8 @@ use crate::{
     task_creation::{TaskCrdInput, WorkspaceRepository},
 };
 
+#[path = "robot_managed_round.rs"]
+mod rounds;
 #[path = "robot_managed_session.rs"]
 mod sessions;
 
@@ -51,8 +53,6 @@ struct TaskState {
     user_id: i64,
     status: String,
     json: Json<Value>,
-    result: Option<Json<Value>>,
-    error_message: Option<String>,
 }
 
 async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
@@ -66,6 +66,9 @@ async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
     else {
         return Ok(());
     };
+    if row.status == "queued" {
+        return Ok(());
+    }
     let Some(task_id) = row.runtime_task_id.parse::<i64>().ok() else {
         return Ok(());
     };
@@ -74,14 +77,15 @@ async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
     let Some(task): Option<TaskState> = routed.fetch_optional(format!(
-        "SELECT t.id AS task_id,t.user_id,s.status,t.json,s.result,s.error_message FROM {} t JOIN {} s ON s.task_id=t.id AND s.user_id=t.user_id AND s.id=? AND s.role='ASSISTANT' WHERE t.id=? AND t.user_id=? AND t.kind='Task'",
+        "SELECT t.id AS task_id,t.user_id,s.status,t.json FROM {} t JOIN {} s ON s.task_id=t.id AND s.user_id=t.user_id AND s.id=? AND s.role='ASSISTANT' WHERE t.id=? AND t.user_id=? AND t.kind='Task'",
         tables.tasks, tables.subtasks
     ), (row.intent()["managed_task"]["assistant_subtask_id"].as_i64().unwrap_or(0),task_id,row.executor_owner_user_id)).await? else { return Ok(()) };
     if !owns(&row, &task) {
         bail!("Managed execution Task identity changed");
     }
+    let team_status = task.json.0["status"]["status"].as_str().unwrap_or("");
     if row.status == "cancel_requested"
-        && !matches!(task.status.as_str(), "COMPLETED" | "FAILED" | "CANCELLED")
+        && !matches!(team_status, "COMPLETED" | "FAILED" | "CANCELLED")
     {
         cancel_task(app, &row, task_id, &task.status).await?;
         return Ok(());
@@ -93,13 +97,24 @@ async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
             app.background_jobs
                 .submit(
                     JOB,
-                    serde_json::to_value(input)?,
+                    serde_json::to_value(&input)?,
                     None,
-                    Some(format!("managed-project-execution:{}", row.id)),
+                    Some(format!(
+                        "managed-project-execution:{}:{}",
+                        row.id, input.assistant_subtask_id
+                    )),
                 )
                 .await?;
         }
-        "COMPLETED" | "FAILED" | "CANCELLED" => settle(app, &row, &task).await?,
+        _ if matches!(team_status, "COMPLETED" | "FAILED" | "CANCELLED") => {
+            if team_status == "COMPLETED"
+                && row.status != "cancel_requested"
+                && rounds::await_round(app, &row, &task).await?
+            {
+                return Ok(());
+            }
+            settle(app, &row, &task, team_status).await?;
+        }
         _ => {}
     }
     Ok(())
@@ -217,24 +232,16 @@ pub(crate) async fn complete(
     else {
         return Ok(false);
     };
-    let row: Option<Execution> = app.mysql.fetch_optional(format!(
-        "SELECT {COLUMNS} FROM loop_item_executions WHERE id=? AND backend_task_id=? AND executor_owner_user_id=? \
-         AND execution_environment='wegent' AND status IN ('claimed','running','cancel_requested') \
-         AND JSON_EXTRACT(execution_payload,'$.managed_task.assistant_subtask_id')=?"
-    ),(id,event.task_id,event.user_id,event.subtask_id)).await?;
-    let Some(row) = row else { return Ok(false) };
-    let task = TaskState {
-        task_id: event.task_id,
-        user_id: event.user_id,
-        status: event.status.into(),
-        json: document,
-        result: event.result.cloned().map(Json),
-        error_message: event.error.map(str::to_owned),
-    };
-    if !owns(&row, &task) {
-        bail!("Managed completion source changed")
+    // The callback and recovery scan both observe the committed Team decision.
+    // A later stage can finish this execution after the initial assistant has exited.
+    let linked: Option<(i64,)> = app.mysql.fetch_optional(
+        "SELECT id FROM loop_item_executions WHERE id=? AND backend_task_id=? AND executor_owner_user_id=? AND execution_environment='wegent' AND status IN ('claimed','running','cancel_requested')",
+        (id, event.task_id, event.user_id),
+    ).await?;
+    if linked.is_none() {
+        return Ok(false);
     }
-    settle(app, &row, &task).await?;
+    reconcile(app, id).await?;
     Ok(true)
 }
 
@@ -263,25 +270,28 @@ pub(crate) async fn authorize_task(app: &AppState, task_id: i64, owner: i64) -> 
     authority::authorized(app, &row).await
 }
 
-async fn settle(app: &AppState, row: &Execution, task: &TaskState) -> Result<()> {
-    let status = match task.status.as_str() {
+async fn settle(
+    app: &AppState,
+    row: &Execution,
+    task: &TaskState,
+    team_status: &str,
+) -> Result<()> {
+    let status = match team_status {
         "COMPLETED" => "completed",
         "CANCELLED" => "cancelled",
         _ => "failed",
     };
-    let result = task
-        .result
-        .as_ref()
-        .and_then(|result| super::super::project::completion::final_text(Some(&result.0)));
+    let parent = &task.json.0["status"];
+    let result = super::super::project::completion::final_text(parent.get("result"));
     let detail = if status == "failed" {
-        task.error_message.as_deref().unwrap_or_default()
+        parent["errorMessage"].as_str().unwrap_or_default()
     } else {
         result.as_deref().unwrap_or_default()
     };
     let effects = app.mysql.with_transaction(async |tx| {
         let Some(issue) = store::locked(tx,"task",&row.loop_item_id).await? else { return Ok(projection::Effects::default()) };
         let current: Option<Execution> = tx.fetch_optional(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE id=? FOR UPDATE"),(row.id,)).await?;
-        let Some(current) = current.filter(|current| current.runtime_task_id == row.runtime_task_id && matches!(current.status.as_str(),"claimed"|"running"|"cancel_requested")) else { return Ok(projection::Effects::default()) };
+        let Some(current) = current.filter(|current| current.version == row.version && current.runtime_task_id == row.runtime_task_id && matches!(current.status.as_str(),"claimed"|"running"|"cancel_requested")) else { return Ok(projection::Effects::default()) };
         let authorized = authority::authorized_on(app,&mut &mut *tx,&current,Some(&issue)).await
             .map_err(|error|brz_mysql::MysqlError::InvalidQuery{reason:error.to_string()})?;
         let (status, detail) = if authorized { (status, detail) } else { ("cancelled", "Execution authorization revoked") };
@@ -447,8 +457,6 @@ mod tests {
             user_id: 7,
             status: "COMPLETED".into(),
             json: Json(json!({"metadata":{"labels":{"projectRobotExecutionId":"1"}}})),
-            result: None,
-            error_message: None,
         };
         assert!(owns(&row, &task));
         task.user_id = 8;

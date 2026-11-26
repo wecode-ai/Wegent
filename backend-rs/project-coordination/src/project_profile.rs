@@ -367,7 +367,10 @@ pub async fn build(
     }
     let prompt = if authority::truthy(&origin_context["comment_trigger_message_id"]) {
         origin_context["comment_prompt"].as_str().unwrap_or("")
-    } else if input.agent_id.is_empty() {
+    } else if input.agent_id.is_empty()
+        || (origin_context["dispatch_protocol_version"] == 2
+            && origin_context["dispatch_role"] == "member")
+    {
         origin_context["execution_prompt"].as_str().unwrap_or("")
     } else {
         ""

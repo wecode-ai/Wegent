@@ -41,6 +41,7 @@ const CONVERSATION_CONTEXT: &str = "conversation";
 /// transaction (`prepare_execution_session`'s result).
 #[derive(Debug, Clone)]
 pub(crate) struct ChatTurn {
+    pub strategy: Option<Value>,
     pub task_id: i64,
     pub is_subscription: bool,
     pub user_subtask_id: i64,
@@ -380,7 +381,22 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         );
         return Err(FastApiError::internal());
     };
-    let team: resolution::KindRow = team.into();
+    let mut team: resolution::KindRow = team.into();
+    let restored;
+    let strategy = if let Some(snapshot) = &turn.strategy {
+        wegent_task_store::task_store_pipeline::overlay_strategy(&mut team.json.0, snapshot);
+        Some(snapshot)
+    } else {
+        restored = wegent_task_store::task_store_pipeline::apply_managed_strategy(
+            &mut &state.mysql,
+            turn.task_json.as_object(),
+            turn.task_id,
+            &mut team.json.0,
+        )
+        .await
+        .map_err(dependency)?;
+        restored.as_ref()
+    };
     // `_trigger_ai`'s `db.refresh(user)` (`chat_namespace.py:1237-1240`); the
     // Task and assistant subtask refreshes already ran in the handler. The
     // recording renders this refresh with the bare entity projection
@@ -409,7 +425,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         }
     };
     let (bot_role, team_member_prompt) =
-        team_member_context(&team.json.0, &bot.name, &bot.namespace);
+        team_member_context(&team.json.0, &turn.task_json, &bot.name, &bot.namespace);
     let request_id = request_id();
     let persisted_options = turn
         .task_json
@@ -424,6 +440,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
     let mut request = build_chat_execution_request(
         state,
         &BuildExecutionRequestInput {
+            strategy,
             user_id,
             user_name: &user.user_name,
             user_git_info: &user.git_info,
@@ -466,6 +483,10 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         turn.created_git_repository.as_ref(),
     )
     .await?;
+    request.device_execution_attempt_id = Some(device_attempt_id(
+        &turn.task_json,
+        turn.assistant_subtask_id,
+    ));
     request.enable_clarification = turn.options.enable_clarification;
     if let Some(options) = model_options.and_then(Value::as_object) {
         use crate::responses::create::wework::reasoning_from_model_options;
@@ -543,6 +564,8 @@ fn created_task(
         project_id: turn.project_id,
     })
 }
+
+pub(super) use wegent_execution_completion::delivery::device_attempt_id;
 
 /// `get_request_id()`'s 8-character request context (`uuid4().hex[:8]`).
 fn request_id() -> String {
@@ -662,6 +685,7 @@ mod tests {
     #[test]
     fn task_created_requires_the_source_gate() {
         let turn = ChatTurn {
+            strategy: None,
             is_subscription: false,
             task_id: 1,
             user_subtask_id: 2,

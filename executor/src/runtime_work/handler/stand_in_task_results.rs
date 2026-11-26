@@ -605,6 +605,7 @@ mod tests {
         apply_runtime_payload_metadata(&mut accepted_request, &normalized_delivery);
         let command = super::super::command_journal::RuntimeCommand::from_turn(
             &SpawnTurnRequest {
+                platform_command: None,
                 task_kind: None,
                 local_task_id: parent.into(),
                 runtime: "codex".into(),
@@ -1122,6 +1123,7 @@ mod tests {
         let mut accepted_request = ExecutionRequest::default();
         accepted_request.extra.insert("user_id".into(), json!(7));
         let command = super::super::command_journal::RuntimeCommand {
+            pending_terminal: None,
             id: payload["commandId"].as_str().unwrap().into(),
             fingerprint: "accepted-before-parent-model-change".into(),
             state: super::super::command_journal::CommandState::Settled,
@@ -1130,18 +1132,7 @@ mod tests {
             resource_event_keys: Vec::new(),
             native: None,
             guidance_turn_id: None,
-            turn: SpawnTurnRequest {
-                task_kind: None,
-                local_task_id: source.clone(),
-                runtime: "codex".into(),
-                request: accepted_request,
-                send_payload: None,
-                direct_thread_id: None,
-                fork_thread_id: None,
-                fork_thread_path: None,
-                resume_thread_id: None,
-                initial_thread_goal: None,
-            },
+            turn: SpawnTurnRequest::new(source.clone(), "codex".into(), accepted_request),
         };
         handler
             .command_journal

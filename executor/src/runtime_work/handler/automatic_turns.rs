@@ -322,6 +322,7 @@ mod tests {
         request.extra.insert("user_id".into(), json!(7));
         apply_runtime_payload_metadata(&mut request, &payload);
         SpawnTurnRequest {
+            platform_command: None,
             task_kind: None,
             local_task_id: "waiting-work".into(),
             runtime: "codex".into(),
@@ -371,7 +372,7 @@ mod tests {
         let (cancel, _cancelled) = oneshot::channel();
         let (_stopped, stopped) = oneshot::channel();
         let execution = handler.start_local_task_execution("waiting-work".into(), cancel, stopped);
-        let mut completion = ScheduledTurnGuard::new(
+        let completion = ScheduledTurnGuard::new(
             handler.clone(),
             "waiting-work".into(),
             execution,
@@ -405,7 +406,7 @@ mod tests {
             next_request,
             true,
         );
-        completion.transferred = true;
+        completion.transfer();
         drop(completion);
         tokio::task::yield_now().await;
         {
@@ -481,7 +482,7 @@ mod tests {
         let (cancel, _cancelled) = oneshot::channel();
         let (_stopped, stopped) = oneshot::channel();
         let execution = handler.start_local_task_execution("waiting-work".into(), cancel, stopped);
-        let mut completion = ScheduledTurnGuard::new(
+        let completion = ScheduledTurnGuard::new(
             handler.clone(),
             "waiting-work".into(),
             execution,
@@ -499,7 +500,7 @@ mod tests {
             .defer_automatic_input("waiting-work", &turn.request, execution)
             .await
             .unwrap());
-        completion.transferred = true;
+        completion.transfer();
         drop(completion);
         tokio::task::yield_now().await;
         let receipt = handler

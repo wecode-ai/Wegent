@@ -2492,6 +2492,13 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (data.action === 'pipeline:confirm') {
+        return request(
+          'runtime.tasks.send',
+          { taskId: data.address.taskId, action: data.action, expectedStage: data.expectedStage },
+          localDeviceId
+        )
+      }
       const inputResponse = data.requestUserInputResponse ?? data.request_user_input_response
       if (inputResponse) {
         // A reply resolves an existing turn and uses that turn's execution context.

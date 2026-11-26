@@ -11,7 +11,7 @@ use super::{
     store::Node,
 };
 use crate::state::AppState;
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use brz_mysql::MysqlTransaction;
 use serde_json::{Value, json};
 use wegent_project_coordination::project_group_access as group_access;
@@ -146,30 +146,7 @@ pub(crate) async fn prepare_assignment(
     let mut admission = None;
     if group["leader"]["kind"] == "agent" {
         let leader = resolve_agent(&state.mysql, &project.id, &member_id(&group["leader"])).await?;
-        let config = agents::compile(
-            state,
-            &leader,
-            if leader.created_by_user_id == 0 {
-                actor
-            } else {
-                leader.created_by_user_id
-            },
-        )
-        .await?;
-        if !matches!(config["runtime"].as_str(), Some("codex" | "claude_code")) {
-            bail!("Collaboration group AI must use an Executor runtime")
-        }
-        let requirements = runner_requirements(
-            state,
-            &project.id,
-            &issue,
-            &group,
-            actor,
-            &context["runner_selection"],
-            true,
-            None,
-        )
-        .await?;
+        context["dispatch_protocol_version"] = json!(2);
         context["dispatch_kind"] = json!("collaboration_group");
         context["dispatch_id"] = json!(format!("collaboration-group:{id}:{key}"));
         context["dispatch_task_id"] = json!(issue.id);
@@ -179,47 +156,24 @@ pub(crate) async fn prepare_assignment(
         context["assignment_key"] = json!(key);
         context["manager_display_name"] = group["name"].clone();
         context["collaboration_group"] = group.clone();
-        context["execution_prompt"] = json!(manager_message(project, &issue, &group)?);
         context["system_prompt"] = json!(MANAGER_INSTRUCTIONS);
-        let routed = requirements.as_object().is_some_and(|map| !map.is_empty());
-        if routed {
-            let route = requirements
-                .get(&leader.id)
-                .context("Configure the group leader's environment and model policies")?
-                .clone();
-            context["group_runner_requirements"] = json!(requirements);
-            context["runner_routing"] = route;
-        }
-        let mut plan = Admission {
-            owner: if routed || leader.created_by_user_id == 0 {
-                actor
-            } else {
-                leader.created_by_user_id
-            },
-            assigner: actor,
-            agent_id: String::new(),
-            team_id: 0,
-            environment: config["execution_environment"]
-                .as_str()
-                .unwrap_or("local")
-                .into(),
-            device_id: if routed {
-                String::new()
-            } else {
-                config["execution_device_id"].as_str().unwrap_or("").into()
-            },
-            runtime_selection: json!({"executor_kind":"collaboration_group_dispatch"}),
+        context["runtime_subject_user_id"] = json!(if leader.created_by_user_id == 0 {
+            actor
+        } else {
+            leader.created_by_user_id
+        });
+        let instruction = manager_message(project, &issue, &group)?;
+        let mut plan = assignments::agent_admission(
+            state,
+            &issue,
+            &leader,
+            actor,
             context,
-            config,
-            requires_approval: false,
-            waiting_runtime: false,
-        };
-        if routed {
-            plan.runtime_selection["runner_routing"] = plan.context["runner_routing"].clone();
-            plan.runtime_selection["group_runner_requirements"] =
-                plan.context["group_runner_requirements"].clone();
-        }
-        queue::prepare(state, &issue, &mut plan).await?;
+            &instruction,
+            None,
+        )
+        .await?;
+        plan.runtime_selection["executor_kind"] = json!("collaboration_group_dispatch");
         admission = Some(plan);
     }
     Ok(GroupAssignment {
@@ -244,7 +198,20 @@ pub(crate) async fn apply_assignment_on(
         assignment.actor,
         &assignment.automation,
     )
-    .await
+    .await?;
+    let issue = &assignment.issue;
+    let dispatch = group_access::current_dispatch_id(&issue.metadata.0)
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    let id =
+        group_access::coordination_key("issue_coordination", &[&project.id, &issue.id, &dispatch]);
+    let activity_key = format!(
+        "{:x}",
+        <sha2::Sha256 as sha2::Digest>::digest(format!("message\0{id}"))
+    );
+    tx.execute("INSERT INTO project_chat_messages(message_id,runtime_activity_key,message_type,status,content,metadata) VALUES(?,?,'coordination','active','',?) ON DUPLICATE KEY UPDATE id=id",
+        (id,activity_key,brz_mysql::Json(json!({"group":assignment.group,"round":1,"protocol":2,"issue_id":issue.id,"project_id":project.id,"assignment_key":issue.metadata.0["collaboration_group_assignment_key"]})))
+    ).await?;
+    Ok(())
 }
 
 pub(super) async fn assign(

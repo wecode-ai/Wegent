@@ -315,12 +315,20 @@ async fn deliver_terminal_callback(
     };
     // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
     // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
-    emitter::emit_terminal_frames_once(redis, event, user_id, &result, &task, contexts.as_ref())
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "callback terminal frames failed");
-            FastApiError::internal()
-        })?;
+    emitter::emit_terminal_frames_once(
+        redis,
+        event,
+        user_id,
+        &result,
+        &task,
+        contexts.as_ref(),
+        None,
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "callback terminal frames failed");
+        FastApiError::internal()
+    })?;
     let has_pending_execution = advance.is_some();
     if let Some(advance) = advance {
         if defer_advance {
@@ -330,7 +338,7 @@ async fn deliver_terminal_callback(
         Box::pin(pipeline::dispatch_next(state, advance)).await?;
     }
 
-    let published = session::publish_terminal_callback(redis, event)
+    let published = session::publish_terminal_callback(redis, event, None)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "terminal callback channel publish failed");

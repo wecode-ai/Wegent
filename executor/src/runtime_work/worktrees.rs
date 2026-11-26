@@ -3232,6 +3232,7 @@ mod tests {
             completed_at: None,
             execution_state: None,
             gateway_binding: None,
+            execution_backend: None,
             runtime_handle: Value::Null,
             parent: None,
             ephemeral: false,

@@ -23,7 +23,9 @@ from app.services.adapters.pipeline_stage import PipelineStageService
 
 
 def _make_db():
-    return MagicMock()
+    db = MagicMock()
+    db.get.return_value = None
+    return db
 
 
 def _make_member(
@@ -42,6 +44,8 @@ def _make_member(
 
 def _make_subtask(bot_id: int = 1):
     subtask = MagicMock()
+    subtask.id = 1
+    subtask.status = SubtaskStatus.COMPLETED
     subtask.bot_ids = [bot_id]
     return subtask
 
@@ -244,7 +248,8 @@ class TestPipelineAutoAdvance:
         with (
             patch.object(strategy, "_should_require_confirmation", return_value=False),
             patch(
-                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+                "app.stores.tasks.subtask_store.get_latest_assistant_by_statuses",
+                return_value=subtask,
             ),
         ):
             with patch("app.schemas.kind.Task") as mock_task_schema:
@@ -291,7 +296,8 @@ class TestPipelineAutoAdvance:
             patch("app.schemas.kind.Task") as mock_task_schema,
             patch("app.schemas.kind.Team") as mock_team_schema,
             patch(
-                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+                "app.stores.tasks.subtask_store.get_latest_assistant_by_statuses",
+                return_value=subtask,
             ),
             patch(
                 "app.stores.tasks.task_store.get_regular_active_task",
@@ -338,7 +344,8 @@ class TestPipelineAutoAdvance:
             patch("app.schemas.kind.Task") as mock_task_schema,
             patch("app.schemas.kind.Team") as mock_team_schema,
             patch(
-                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+                "app.stores.tasks.subtask_store.get_latest_assistant_by_statuses",
+                return_value=subtask,
             ),
             patch(
                 "app.stores.tasks.task_store.get_regular_active_task",
@@ -384,7 +391,8 @@ class TestPipelineAutoAdvance:
             patch("app.schemas.kind.Task") as mock_task_schema,
             patch("app.schemas.kind.Team") as mock_team_schema,
             patch(
-                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+                "app.stores.tasks.subtask_store.get_latest_assistant_by_statuses",
+                return_value=subtask,
             ),
             patch(
                 "app.stores.tasks.task_store.get_regular_active_task",

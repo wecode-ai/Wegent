@@ -88,6 +88,13 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.project_coordinator_conversation(payload).await },
                 )
             }
+            "runtime.issue_coordination.get"
+            | "runtime.issue_coordination.submit"
+            | "runtime.issue_coordination.decide" => {
+                boxed_rpc(
+                    move || async move { self.local_issue_coordination(method, payload).await },
+                )
+            }
             "runtime.project_coordinator.binding.get"
             | "runtime.project_coordinator.binding.save" => boxed_rpc(move || async move {
                 self.project_coordination_binding(method, payload).await

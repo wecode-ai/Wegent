@@ -20,6 +20,7 @@ pub mod connector;
 pub mod dispatch;
 mod execution;
 mod openai;
+pub mod pipeline;
 mod status;
 pub mod workday_calendar;
 

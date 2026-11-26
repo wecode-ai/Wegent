@@ -841,3 +841,62 @@ def test_human_leader_submits_and_finishes_round_from_issue(
     )
     test_db.refresh(issue)
     assert issue.status == "completed"
+
+
+def test_managed_turn_uses_assistant_task_binding_and_receipt_owner(
+    test_db: Session, test_user: User, collaboration_dispatch: SimpleNamespace
+) -> None:
+    from app.models.subtask import Subtask, SubtaskRole
+    from app.models.task import TaskResource
+    from app.services.issue_coordination import managed_turn_scope, require_manager_turn
+
+    dispatch = collaboration_dispatch.execution
+    tasks = [
+        TaskResource(
+            user_id=test_user.id, kind="Task", name=name, namespace="default", json={}
+        )
+        for name in ["manager", "unrelated"]
+    ]
+    test_db.add_all(tasks)
+    test_db.flush()
+    assistants = [
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1,
+            title="Review",
+            bot_ids=[],
+            role=SubtaskRole.ASSISTANT,
+        )
+        for task in [tasks[0], tasks[0], tasks[1]]
+    ]
+    test_db.add_all(assistants)
+    test_db.flush()
+    old, active, unrelated = assistants
+    dispatch.backend_task_id = tasks[0].id
+    dispatch.status = "running"
+    tasks[0].json = {
+        "metadata": {
+            "labels": {
+                "projectRobotExecutionId": str(dispatch.id),
+                "projectAutomationSubtaskId": str(old.id),
+                "projectAutomationManagerSubtaskId": str(active.id),
+            }
+        }
+    }
+    test_db.flush()
+
+    def check(assistant, receipt=None):
+        current, _ = managed_turn_scope(test_db, dispatch, tasks[0].id, assistant.id)
+        require_manager_turn(current, assistant.id, receipt)
+
+    check(active)
+    check(old, {"manager_runtime_task_id": str(old.id)})
+    for assistant, receipt in [
+        (old, None),
+        (old, {"manager_runtime_task_id": str(active.id)}),
+        (unrelated, {"manager_runtime_task_id": str(unrelated.id)}),
+    ]:
+        with pytest.raises(HTTPException) as denied:
+            check(assistant, receipt)
+        assert denied.value.status_code == 403

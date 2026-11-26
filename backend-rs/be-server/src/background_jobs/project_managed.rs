@@ -245,9 +245,16 @@ pub(crate) async fn request_for_task(
         )
         .await?;
     let assistant:Assistant=mysql.fetch_one(format!("SELECT id,task_id,user_id,role,status,message_id,executor_name,executor_namespace FROM {} WHERE id=? AND task_id=? AND user_id=? AND role='ASSISTANT'",tables.subtasks),(input.assistant_subtask_id,input.task_id,input.user_id)).await?;
-    let team = resolution::team_by_id(&state.mysql, input.team_id)
+    let mut team = resolution::team_by_id(&state.mysql, input.team_id)
         .await?
         .context("Managed project automation Team is unavailable")?;
+    let strategy = wegent_task_store::task_store_pipeline::apply_managed_strategy(
+        &mut &state.mysql,
+        task.json.0.as_object(),
+        input.task_id,
+        &mut team.json.0,
+    )
+    .await?;
     let user = load_user(&state.mysql, input.user_id).await?;
     let resolvers = state.entity_resolvers.for_execution();
     let directory = state
@@ -259,7 +266,10 @@ pub(crate) async fn request_for_task(
         erp: Some(directory),
         resolvers: Some(&resolvers),
     };
-    let bots = resolution::resolve_team_bots(&cache, team.user_id, &team.json.0).await?;
+    let stage = task.json.0["spec"]["currentStage"].as_u64().unwrap_or(0) as usize;
+    let turn_team =
+        resolution::turn_team(&team.json.0, stage).context("Managed Team stage unavailable")?;
+    let bots = resolution::resolve_team_bots(&cache, team.user_id, turn_team.as_ref()).await?;
     let bot = resolution::resolve_bot(
         &state.mysql,
         team.user_id,
@@ -271,12 +281,13 @@ pub(crate) async fn request_for_task(
     if bots.bot_ids.is_empty() {
         bail!("No valid bots found in managed project automation Team")
     }
-    let member = &team.json.0["spec"]["members"][0];
+    let member = &turn_team["spec"]["members"][0];
     // Reuse the automatic-pipeline queue's task/turn idempotency contract.
     let request_id = format!("pipeline-{}-{}", input.task_id, input.assistant_subtask_id);
     let mut request = create::request::build_background_execution_request(
         state,
         &BuildExecutionRequestInput {
+            strategy: strategy.as_ref(),
             user_id: input.user_id,
             user_name: &user.user_name,
             // This native job path enriches the Git identity from

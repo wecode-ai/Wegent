@@ -16,6 +16,7 @@ pub(super) fn coordinate_role_overrides(
     request: &ExecutionRequest,
     home: &Path,
 ) -> Result<Vec<String>, String> {
+    crate::agents::runtime_capabilities::validate_coordinate_grant_source(request)?;
     let mut overrides = Vec::new();
     if !coordinate_team(request) {
         return Ok(overrides);

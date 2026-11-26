@@ -5766,6 +5766,8 @@
     "connect": "连接云端后查看通知"
   },
   "standIn": {
+    "pipeline_confirmation_failed": "未能确认当前阶段。",
+    "confirm_pipeline_stage": "确认并开始下一阶段",
     "dingtalk_delegation": {
       "account_identity": "钉钉账号和组织",
       "provider": "钉钉",

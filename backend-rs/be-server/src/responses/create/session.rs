@@ -75,6 +75,7 @@ pub struct SetupChatSessionInput<'a> {
     /// team and model resolution. `None` creates a new Task.
     pub continuation: Option<continuation::Continuation>,
     /// Subscription-only DB window. None preserves ordinary chat preparation.
+    pub pipeline_strategy: Option<&'a serde_json::Value>,
     pub history_window: Option<i64>,
     pub team_id: i64,
     pub bot_ids: &'a [i64],
@@ -236,11 +237,20 @@ pub async fn setup_chat_session(
         task_id,
         ..input.crd
     };
-    let task_crd = build_task_crd(&crd_input);
-    let mut task_json = serde_json::to_value(&task_crd).unwrap_or(serde_json::Value::Null);
+    let mut task_json = build_task_crd(&crd_input);
+    if let Some(strategy) = input.pipeline_strategy {
+        wegent_task_store::task_store_pipeline::save_strategy(
+            transaction,
+            task_id,
+            strategy,
+            &mut task_json,
+        )
+        .await
+        .map_err(internal)?;
+    }
     let has_model_options = apply_model_option_labels(&mut task_json, input);
     let payload = if input.additional_skills.is_empty() && !has_model_options {
-        python_json_value(&task_crd)
+        python_json_value(&task_json)
     } else {
         let labels = &mut task_json["metadata"]["labels"];
         if !input.additional_skills.is_empty() {

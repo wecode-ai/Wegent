@@ -173,6 +173,8 @@ export interface RuntimeWorkListResponse {
 }
 
 export interface RuntimeSendRequest {
+  action?: 'pipeline:confirm'
+  expectedStage?: [string, number]
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string

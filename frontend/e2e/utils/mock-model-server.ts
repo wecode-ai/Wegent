@@ -724,11 +724,11 @@ const server = http.createServer((req, res) => {
     // Handle different endpoints
     if (req.url?.includes('/responses')) {
       if (toolScenario && scenarioStep) {
-        if (scenarioStep.toolCalls?.length) {
+        if (scenarioStep.toolCalls?.length || scenarioStep.preamble) {
           writeResponsesToolCalls(
             res,
             parsedBody,
-            resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls),
+            resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls ?? []),
             parsedBody?.model || 'mock-codex',
             scenarioStep.preamble,
             streamRule?.holdDone ? responseGate : undefined

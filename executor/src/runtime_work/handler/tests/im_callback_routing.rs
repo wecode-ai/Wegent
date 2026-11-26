@@ -16,6 +16,7 @@ fn queued_im_turn(task: &str, callback: &str) -> SpawnTurnRequest {
         json!({"source":"im","channel_type":"telegram","callback_id":callback}),
     );
     SpawnTurnRequest {
+        platform_command: None,
         task_kind: None,
         local_task_id: task.into(),
         runtime: "codex".into(),

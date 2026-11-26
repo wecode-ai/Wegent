@@ -2819,12 +2819,22 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let project_id = required_task_string(&params, "project_id")?;
             serialize_task_value(
                 runtime
-                    .list_chat_agents(project_id)
+                    .list_chat_agents_with_archived(
+                        project_id,
+                        params["include_archived"].as_bool().unwrap_or(false),
+                    )
                     .map_err(task_runtime_error)?,
             )
         }
         "chat_agents.create" => {
             let project_id = required_task_string(&params, "project_id")?;
+            if let Some(team_ref) = params.pointer("/agent/team_ref").and_then(Value::as_str) {
+                return serialize_task_value(
+                    runtime
+                        .bind_chat_agent(project_id, team_ref)
+                        .map_err(task_runtime_error)?,
+                );
+            }
             let input = task_input::<ChatAgentCreate>(&params, "agent")?;
             serialize_task_value(
                 runtime

@@ -386,7 +386,9 @@ def test_unresolved_required_skill_is_not_silently_dropped(selection_builder):
 
 
 @pytest.mark.parametrize("required", [False, True])
-def test_coordinate_member_skills_reach_the_leader(selection_builder, required):
+def test_coordinate_member_skill_and_mcp_stay_with_the_member(
+    selection_builder, required
+):
     member = {
         "name": "chat-reviewer",
         "shell_type": "Chat",
@@ -396,14 +398,16 @@ def test_coordinate_member_skills_reach_the_leader(selection_builder, required):
     }
     result = selection_builder.build(collaboration="coordinate", members=[member])
 
-    assert result.skill_names == ["browser", "document", "sandbox"]
-    assert result.skill_configs[2]["prompt"] == "Sandbox tools"
-    assert all("sandbox" in config["skills"] for config in result.bot)
-    assert all(
-        config["skill_refs"]["sandbox"]["skill_id"] == 1540 for config in result.bot
-    )
-    assert result.bot[1]["preload_skills"] == (["sandbox"] if required else [])
-    assert any(server["name"] == "sandbox" for server in result.bot[0]["mcp_servers"])
+    leader, reviewer = result.bot
+    assert result.skill_names == ["browser", "document"]
+    assert all(skill["name"] != "sandbox" for skill in result.skill_configs)
+    assert "sandbox" not in leader["skills"]
+    assert "sandbox" not in leader["skill_refs"]
+    assert all(server["name"] != "sandbox" for server in leader["mcp_servers"])
+    assert reviewer["skills"] == ["sandbox"]
+    assert reviewer["skill_refs"]["sandbox"]["skill_id"] == 1540
+    assert reviewer["preload_skills"] == (["sandbox"] if required else [])
+    assert any(server["name"] == "sandbox" for server in reviewer["mcp_servers"])
 
 
 @pytest.mark.parametrize("shell", ["Chat", "ClaudeCode", "Codex"])

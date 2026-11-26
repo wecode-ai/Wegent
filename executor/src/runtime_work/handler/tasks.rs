@@ -64,17 +64,16 @@ impl RuntimeWorkRpcHandler {
         let coordinator_identity = execution_request(&manager_request)
             .as_ref()
             .and_then(super::project_coordination_execution::capture_identity);
-        let member_profiles = payload
-            .get("memberRuntimeProfiles")
-            .and_then(Value::as_array)
-            .filter(|profiles| !profiles.is_empty())
-            .cloned()
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "bad_request",
-                    "collaboration member Runtime profiles are required",
-                )
-            })?;
+        let server_dispatched = payload["dispatchProtocolVersion"] == 2;
+        let member_profiles = payload["memberRuntimeProfiles"]
+            .as_array()
+            .filter(|p| !p.is_empty());
+        if !server_dispatched && member_profiles.is_none() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "collaboration member Runtime profiles are required",
+            ));
+        }
         detach_collaboration_manager_from_backend_execution(&mut manager_request, &manager_task_id);
         let manager_context = string_field(&manager_request, "message")
             .or_else(|| string_field(&manager_request, "content"))
@@ -113,13 +112,12 @@ impl RuntimeWorkRpcHandler {
                     "collaborationDispatchTaskId".to_owned(),
                     Value::String(dispatch_task_id),
                 );
-            runtime_handle
-                .as_object_mut()
-                .expect("collaboration Runtime handle was normalized")
-                .insert(
-                    "collaborationMemberRuntimeProfiles".to_owned(),
-                    Value::Array(member_profiles),
-                );
+            if let Some(profiles) = member_profiles {
+                runtime_handle["collaborationMemberRuntimeProfiles"] = json!(profiles);
+            }
+            if server_dispatched {
+                runtime_handle["dispatchProtocolVersion"] = json!(2);
+            }
         }
         self.create_task(manager_request).await
     }
@@ -872,6 +870,11 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        if let Some(previous) = failed_start.as_ref() {
+            link.execution_backend = previous.execution_backend.clone();
+        } else {
+            self.record_execution_backend(&mut link, &request);
+        }
         self.preserve_failed_start_context(&mut link);
         if is_codex_runtime(&runtime) {
             if let Some(supervisor) = payload
@@ -921,49 +924,36 @@ impl RuntimeWorkRpcHandler {
             }
         }
         self.schedule_worktree_prune();
-        if is_claude_runtime(&runtime) {
-            self.prepare_claude_goal(&local_task_id, &mut request, &payload);
-            if let Err(error) = self
-                .spawn_claude_turn(local_task_id.clone(), request, force_start)
-                .await
-            {
-                self.retain_failed_runtime_task(&local_task_id, &error);
-                return Err(error);
-            }
+        let claude = is_claude_runtime(&runtime);
+        let mut turn = SpawnTurnRequest::new(local_task_id.clone(), runtime.clone(), request);
+        if claude {
+            self.prepare_claude_goal(&local_task_id, &mut turn.request, &payload);
         } else {
-            let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-            if let Some(source) = &mut side_source {
-                self.prepare_side_source(source).await?;
+            turn.initial_thread_goal = initial_thread_goal_from_payload(&payload);
+            if let Some(mut source) = side_source.take() {
+                self.prepare_side_source(&mut source).await?;
+                turn.fork_thread_id = Some(source.thread_id);
+                turn.fork_thread_path = source.thread_path;
             }
-            let turn = SpawnTurnRequest {
-                task_kind: None,
-                local_task_id: local_task_id.clone(),
-                runtime: "codex".to_owned(),
-                request,
-                send_payload: None,
-                direct_thread_id: None,
-                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-                fork_thread_path: side_source.and_then(|source| source.thread_path),
-                resume_thread_id: None,
-                initial_thread_goal,
-            };
-            let admission = if force_start {
-                TurnAdmission::Forced
-            } else {
-                TurnAdmission::Normal
-            };
-            let spawn_result = self
-                .schedule_turn(turn, admission, initial_permissions.is_some())
-                .await;
-            if let Err(error) = spawn_result {
-                self.retain_failed_runtime_task(&local_task_id, &error);
+        }
+        let admission = if force_start {
+            TurnAdmission::Forced
+        } else {
+            TurnAdmission::Normal
+        };
+        if let Err(error) = self
+            .schedule_turn(turn, admission, !claude && initial_permissions.is_some())
+            .await
+        {
+            self.retain_failed_runtime_task(&local_task_id, &error);
+            if !claude {
                 self.forget_runtime_model_config(&local_task_id);
                 self.supervisor_model_configs
                     .lock()
                     .expect("supervisor model config map lock should not be poisoned")
                     .remove(&local_task_id);
-                return Err(error);
             }
+            return Err(error);
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -1171,6 +1161,13 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         owner_input: bool,
     ) -> Result<Value, AppIpcError> {
+        if owner_input && payload["action"] == "pipeline:confirm" {
+            let task = runtime_task_id(&payload)
+                .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+            return self
+                .advance_personal_pipeline(&task, Some(&payload["expectedStage"]))
+                .await;
+        }
         self.send_message_with_task_gate(payload, owner_input, false)
             .await
     }
@@ -1694,13 +1691,13 @@ impl RuntimeWorkRpcHandler {
             }
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
-            if was_busy {
-                self.queue_claude_turn(local_task_id.clone(), request)
-                    .await?;
+            let turn = SpawnTurnRequest::new(local_task_id.clone(), "claude_code".into(), request);
+            let admission = if was_busy {
+                TurnAdmission::Queue
             } else {
-                self.spawn_claude_turn(local_task_id.clone(), request, false)
-                    .await?;
-            }
+                TurnAdmission::Normal
+            };
+            self.schedule_turn(turn, admission, false).await?;
             let queue_position = self
                 .queued_local_task_position(&local_task_id)
                 .map(|position| position + 1);
@@ -1810,6 +1807,7 @@ impl RuntimeWorkRpcHandler {
         let turn = SpawnTurnRequest {
             // A verified retry already restored its origin and advanced only the attempt.
             // Rebinding at admission would replace it with the preceding attempt.
+            platform_command: None,
             task_kind: role_retry_attempt.map(|_| RuntimeTaskKind::StandIn),
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
@@ -2163,6 +2161,7 @@ impl RuntimeWorkRpcHandler {
         };
         self.schedule_turn(
             SpawnTurnRequest {
+                platform_command: None,
                 task_kind: None,
                 local_task_id: local_task_id.clone(),
                 runtime: "codex".to_owned(),
@@ -2381,18 +2380,7 @@ impl RuntimeWorkRpcHandler {
             guidance["conversationContext"] = context.clone();
         }
         let command = RuntimeCommand::from_turn(
-            &SpawnTurnRequest {
-                task_kind: None,
-                local_task_id: task.clone(),
-                runtime: "codex".into(),
-                request: request.clone(),
-                send_payload: None,
-                direct_thread_id: None,
-                fork_thread_id: None,
-                fork_thread_path: None,
-                resume_thread_id: None,
-                initial_thread_goal: None,
-            },
+            &SpawnTurnRequest::new(task.clone(), "codex".into(), request.clone()),
             CommandState::RecoveryRequired,
         )?;
         if let Some(command) = &command {
@@ -3198,7 +3186,10 @@ impl RuntimeWorkRpcHandler {
             let previous = scheduler.clone();
             scheduler.refresh_automatic_waits(&self.store, None);
             let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
-                AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
+                AppIpcError::new(
+                    "runtime_queue_failed",
+                    "queued turn is waiting for its session",
+                )
             })?;
             (previous, turn, scheduler.queued_turns.clone())
         };
@@ -3222,25 +3213,7 @@ impl RuntimeWorkRpcHandler {
             "runtime work queued turn force started",
             &[("local_task_id", local_task_id.clone())],
         );
-        if queued_turn
-            .request
-            .extra
-            .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
-            || queued_turn
-                .request
-                .extra
-                .contains_key(quota_recovery::MARKER)
-        {
-            self.start_queued_turn(queued_turn);
-        } else if queued_turn
-            .request
-            .extra
-            .contains_key("deferred_worktree_source_path")
-        {
-            self.prepare_and_start_reserved_turn(queued_turn).await?;
-        } else {
-            self.start_turn(queued_turn);
-        }
+        self.launch_reserved_turn(queued_turn).await?;
         Ok(json!({
             "success": true,
             "accepted": true,

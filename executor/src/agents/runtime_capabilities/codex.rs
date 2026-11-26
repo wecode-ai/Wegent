@@ -13,6 +13,7 @@ pub async fn prepare_codex_runtime(request: &ExecutionRequest) -> Result<(), Str
 }
 
 pub(crate) async fn prepare_codex_runtime_locked(request: &ExecutionRequest) -> Result<(), String> {
+    super::validate_coordinate_grant_source(request)?;
     // Native plugin Skills stay under Codex ownership. Selected backend Skills
     // still need deployment when a Wework profile has no named Agent Home.
     if primary_bot(request).is_none() {

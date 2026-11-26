@@ -155,3 +155,78 @@ def test_pipeline_bot_config_uses_current_stage_member_prompt(test_db, mocker):
     assert "STAGE_TWO_GHOST_PROMPT" in bot_configs[0]["system_prompt"]
     assert "STAGE_TWO_MEMBER_PROMPT" in bot_configs[0]["system_prompt"]
     assert "STAGE_ONE_MEMBER_PROMPT" not in bot_configs[0]["system_prompt"]
+
+
+def test_pending_task_uses_accepted_team_after_session_restart(test_db, test_user):
+    from copy import deepcopy
+
+    from sqlalchemy.orm import Session
+
+    from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+    from app.models.task import TaskResource, TaskTeamStrategy
+    from app.schemas.task import TaskCreate
+    from app.services.adapters.pipeline_stage import pipeline_stage_service
+    from app.services.adapters.task_kinds import task_kinds_service
+
+    owner = test_user.id
+    model = Kind(
+        user_id=owner,
+        kind="Model",
+        name="pipeline-test-model",
+        namespace="default",
+        json={
+            "spec": {
+                "modelConfig": {"env": {"model_id": "accepted", "api_key": "unused"}}
+            }
+        },
+    )
+    test_db.add(model)
+    bots = []
+    for name in ("author", "reviewer"):
+        ghost = _create_ghost(test_db, user_id=owner, name=name, system_prompt=name)
+        bot = _create_bot(test_db, user_id=owner, name=name, ghost_name=ghost.name)
+        bot.json = {
+            **bot.json,
+            "spec": {**bot.json["spec"], "modelRef": {"name": model.name}},
+        }
+        bots.append(bot)
+    team = _create_pipeline_team(
+        test_db, user_id=owner, first_bot=bots[0], second_bot=bots[1]
+    )
+    request = TaskCreate(team_id=team.id, prompt="Review", task_type="task")
+    old = task_kinds_service.create_task_or_append(
+        test_db, obj_in=request, user=test_user
+    )
+    task = test_db.get(TaskResource, old["id"])
+    assistant = (
+        test_db.query(Subtask)
+        .filter_by(task_id=task.id, role=SubtaskRole.ASSISTANT)
+        .one()
+    )
+    assistant.status = SubtaskStatus.COMPLETED
+    test_db.flush()
+    assert pipeline_stage_service.should_set_pending_confirmation_on_complete(
+        test_db, task.id, assistant.id
+    )
+    waiting = deepcopy(task.json)
+    waiting["status"]["status"] = "PENDING_CONFIRMATION"
+    del waiting["spec"]["currentStage"]
+    task.json = waiting
+    edited = deepcopy(team.json)
+    edited["spec"]["members"][1]["botRef"] = edited["spec"]["members"][0]["botRef"]
+    team.json = edited
+    test_db.commit()
+    with Session(bind=test_db.get_bind()) as restarted:
+        newer = task_kinds_service.create_task_or_append(
+            restarted, obj_in=request, user=test_user
+        )
+        restored = pipeline_stage_service.pipeline_confirm(restarted, old["id"], owner)
+        assert restored["success"] and restored["next_stage_name"] == "reviewer"
+        new_strategy = restarted.get(TaskTeamStrategy, newer["id"]).strategy
+        assert new_strategy["members"][1]["botRef"]["name"] == "author"
+        assert new_strategy["bots"][str(bots[0].id)] == {
+            "ghost_prompt": "author",
+            "model_name": model.name,
+            "model_id": "accepted",
+            "model_resource_id": model.id,
+        }

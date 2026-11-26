@@ -1,3 +1,4 @@
+import { verifyStandInTeamBinding } from '../modules/verify-stand-in-team-binding.mjs'
 import { createDesktopScenario as createReview } from './stand-in-profile-with-review.scenario.mjs'
 import { createDesktopScenario as createSharedSettings } from './stand-in-shared-settings.scenario.mjs'
 import { withScheduleUpdate } from '../modules/stand-in-schedule-update.mjs'
@@ -18,6 +19,7 @@ export function createDesktopScenario(options) {
     async verify(control) {
       await scheduledContext.verify(control)
       await sharedSettings.verify(control)
+      await verifyStandInTeamBinding(control, options)
     },
   }
 }

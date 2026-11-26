@@ -81,6 +81,17 @@ pub fn bot_refs(team_json: &serde_json::Value) -> Vec<BotRef> {
         .collect()
 }
 
+/// Resolve only the active pipeline member; coordinate Teams run with their full roster.
+pub fn turn_team(team: &Value, stage: usize) -> Option<std::borrow::Cow<'_, Value>> {
+    if team["spec"]["collaborationModel"] != "pipeline" {
+        return Some(std::borrow::Cow::Borrowed(team));
+    }
+    let member = team["spec"]["members"].get(stage)?;
+    let mut selected = team.clone();
+    selected["spec"]["members"] = serde_json::json!([member]);
+    Some(std::borrow::Cow::Owned(selected))
+}
+
 /// The resolved team bots: their `kinds.id`s in member order plus the first
 /// resolved bot's name/namespace (`prepare_execution_session`'s chosen bot).
 #[derive(Debug, Default)]

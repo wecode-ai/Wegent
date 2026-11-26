@@ -151,6 +151,7 @@ fn portable(value: &Value) -> Result<Value, TaskRuntimeError> {
         .as_array()
         .filter(|b| !b.is_empty())
         .ok_or_else(invalid)?;
+    let mode = value["collaboration_model"].as_str().unwrap_or("single");
     let mut seen = HashSet::new();
     let mut members = Vec::new();
     for bot in bots {
@@ -162,7 +163,7 @@ fn portable(value: &Value) -> Result<Value, TaskRuntimeError> {
                     || v.as_object().is_some_and(|o| o.is_empty())))
         });
         if !(bot["id"].as_str().is_some_and(|s| !s.is_empty()) || bot["id"].is_i64())
-            || !seen.insert(bot["id"].to_string())
+            || (mode != "pipeline" && !seen.insert(bot["id"].to_string()))
             || !matches!(bot["shell_type"].as_str(), Some("ClaudeCode" | "Codex"))
             || !fields.iter().all(|(key, value)| match key.as_str() {
                 "id" => true,
@@ -180,16 +181,22 @@ fn portable(value: &Value) -> Result<Value, TaskRuntimeError> {
         }
         members.push(Value::Object(fields));
     }
-    let mode = value["collaboration_model"].as_str().unwrap_or("single");
     if !matches!(
         mode,
         "single" | "solo" | "coordinate" | "pipeline" | "collaborate" | "route"
     ) {
         return Err(invalid());
     }
-    Ok(
-        json!({"name":value["name"],"collaboration_model":mode,"bot":members,"system_prompt":value["system_prompt"].as_str().unwrap_or_default()}),
-    )
+    let mut definition = json!({"name":value["name"],"collaboration_model":mode,"bot":members,"system_prompt":value["system_prompt"].as_str().unwrap_or_default()});
+    if let Some(policy) = value.get("model_policy").filter(|policy| !policy.is_null()) {
+        // Fixed native models are bound to the destination role's device on import.
+        crate::task_runtime::runner_routing::validate_policies(
+            Some(&json!({"mode":"fixed","environment_id":"destination"})),
+            Some(policy),
+        )?;
+        definition["model_policy"] = policy.clone();
+    }
+    Ok(definition)
 }
 
 pub(super) fn import_transfer(
@@ -224,6 +231,10 @@ pub(super) fn import_transfer(
     } else {
         "codex"
     });
+    if metadata["model_policy"].is_object() {
+        metadata["execution_policy"] =
+            json!({"mode":"fixed","environment_id":role["executionDeviceId"]});
+    }
     metadata["imported"] = json!(true);
     write_definition(connection, user, &reference, &metadata)
 }
@@ -294,6 +305,8 @@ impl LocalTaskStore {
             &json!({"name":team["metadata"]["displayName"],"bot":bots,"collaboration_model":team["spec"]["collaborationModel"]}),
         )?;
         metadata["id"] = json!(reference);
+        metadata["accountRoleId"] = json!(role);
+        metadata["accountTeam"] = team["metadata"].clone();
         metadata["runtime"] = json!(if metadata["bot"][0]["shell_type"] == "ClaudeCode" {
             "claude_code"
         } else {
@@ -351,6 +364,40 @@ mod tests {
     }
 
     #[test]
+    fn account_team_refresh_keeps_identity_and_order_across_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let member = |name: &str, confirm: bool| {
+            json!({
+                "member":{"role":"worker","requireConfirmation":confirm,"contextPassing":"previous_bot"},
+                "bot":{"metadata":{"name":name,"displayName":name},"spec":{"shellRef":{"name":"Codex"}}},
+                "ghost":{"spec":{"systemPrompt":format!("Work as {name}")}}
+            })
+        };
+        let mut source = json!({"roleId":"review","team":{"metadata":{"name":"review","namespace":"personal-assistant","displayName":"Review"},"spec":{"collaborationModel":"pipeline"}},
+            "bot":{"spec":{"execution_policy":{"mode":"user_select"},"model_policy":{"mode":"user_select"}}},
+            "members":[member("research",true),member("review",false)]});
+        let reference = store.import_account_execution_team(7, &source).unwrap();
+        drop(store);
+        let reopened = LocalTaskStore::open(&path).unwrap();
+        let saved = reopened.personal_execution_team(7, &reference).unwrap();
+        assert_eq!(saved["bot"][0]["requireConfirmation"], true);
+        assert_eq!(saved["bot"][1]["system_prompt"], "Work as review");
+        assert_eq!(saved["collaboration_model"], "pipeline");
+        assert!(reopened.personal_execution_team(8, &reference).is_err());
+        source["members"].as_array_mut().unwrap().reverse();
+        assert_eq!(
+            reopened.import_account_execution_team(7, &source).unwrap(),
+            reference
+        );
+        assert_eq!(
+            reopened.personal_execution_team(7, &reference).unwrap()["bot"][0]["id"],
+            "review"
+        );
+    }
+
+    #[test]
     fn imported_definition_preserves_bot_order_across_save_and_reopen() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
@@ -359,7 +406,7 @@ mod tests {
         let mut role = empty_role("copy", "target");
         role["migrationSource"] = json!("[\"source\",7,\"original\"]");
         settings["roles"] = json!([role]);
-        let definition = json!({"name":"Review","collaboration_model":"coordinate","bot":[
+        let definition = json!({"name":"Review","collaboration_model":"coordinate","model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"native","model_id":"review-model"}},"bot":[
             {"id":"lead","name":"Lead","shell_type":"Codex"},
             {"id":"reader","name":"Reader","shell_type":"Codex","system_prompt":"Check the evidence"}
         ]});
@@ -378,6 +425,7 @@ mod tests {
             .portable_personal_team(7, "target", "copy")
             .unwrap();
         assert_eq!(exported["bot"], definition["bot"]);
+        assert_eq!(exported["model_policy"], definition["model_policy"]);
         assert_eq!(exported["collaboration_model"], "coordinate");
     }
 }

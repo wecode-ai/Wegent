@@ -183,7 +183,7 @@ pub(super) fn apply_fresh_cloud_manager_profiles(
     struct RuntimeProfiles {
         manager_model_config: serde_json::Map<String, Value>,
         manager_model_selection: Option<serde_json::Map<String, Value>>,
-        member_runtime_profiles: Vec<Value>,
+        member_runtime_profiles: Option<Vec<Value>>,
     }
     let profiles: RuntimeProfiles = serde_json::from_value(profiles)
         .map_err(|_| "Backend did not return collaboration Runtime profiles".to_owned())?;
@@ -191,8 +191,9 @@ pub(super) fn apply_fresh_cloud_manager_profiles(
     if let Some(selection) = profiles.manager_model_selection {
         payload["modelSelection"] = Value::Object(selection);
     }
-    payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"] =
-        Value::Array(profiles.member_runtime_profiles);
+    if let Some(members) = profiles.member_runtime_profiles {
+        payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"] = Value::Array(members);
+    }
     Ok(())
 }
 

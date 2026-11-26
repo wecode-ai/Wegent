@@ -115,14 +115,6 @@ pub fn collect_skill_names_for_deployment(
     let mut names = Vec::new();
     add_skill_names(&mut names, bot_config.get("skills"));
 
-    if wegent_execution_contracts::is_coordinate_team(request) {
-        if let Some(bots) = request.bot.as_array() {
-            for bot in bots {
-                add_skill_names(&mut names, bot.get("skills"));
-            }
-        }
-    }
-
     add_skill_names(&mut names, request.extra.get("skill_names"));
     add_skill_names(&mut names, request.extra.get("preload_skills"));
     add_configured_skill_names(&mut names, request.extra.get("additional_skills"));

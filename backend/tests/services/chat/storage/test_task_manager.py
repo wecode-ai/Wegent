@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -367,6 +368,7 @@ def test_create_new_task_uses_auto_delete_executor_label(
 ):
     """New task labels should honor auto_delete_executor from API headers."""
     team = SimpleNamespace(
+        json={"spec": {"collaborationModel": "solo"}},
         id=1256,
         user_id=test_user.id,
         name="quickstart",
@@ -392,6 +394,7 @@ def test_create_new_task_labels_omit_mcp_binary_output(
 ):
     """Responses API binary-output choice should be persisted on the task."""
     team = SimpleNamespace(
+        json={"spec": {"collaborationModel": "solo"}},
         id=1256,
         user_id=test_user.id,
         name="quickstart",
@@ -422,6 +425,7 @@ def test_create_new_task_writes_execution_workspace(
 ):
     """New worktree tasks should persist their execution workspace in Task spec."""
     team = SimpleNamespace(
+        json={"spec": {"collaborationModel": "solo"}},
         id=1256,
         user_id=test_user.id,
         name="quickstart",
@@ -562,6 +566,7 @@ def test_create_new_task_uses_real_task_row_without_placeholder(
 ):
     """New chat tasks should not reserve a Placeholder row for their ID."""
     team = SimpleNamespace(
+        json={"spec": {"collaborationModel": "solo"}},
         id=1256,
         user_id=test_user.id,
         name="quickstart",
@@ -616,7 +621,23 @@ async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
+    bot = Kind(
+        user_id=test_user.id,
+        kind="Bot",
+        name="worktree-bot",
+        namespace="default",
+        json={},
+    )
+    test_db.add(bot)
+    test_db.flush()
     team = SimpleNamespace(
+        json={
+            "metadata": {"name": "quickstart"},
+            "spec": {
+                "collaborationModel": "solo",
+                "members": [{"botRef": {"name": bot.name}}],
+            },
+        },
         id=1256,
         user_id=test_user.id,
         name="quickstart",
@@ -635,7 +656,7 @@ async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
     with (
         patch(
             "app.services.chat.storage.task_manager.get_bot_ids_from_team",
-            return_value=[1255],
+            return_value=[bot.id],
         ),
         patch(
             "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
@@ -795,6 +816,7 @@ def test_prepare_execution_session_uses_fork_history_next_message_id(monkeypatch
 
     calls = {}
     db = MagicMock()
+    db.get.return_value = None
     user = SimpleNamespace(id=7)
     team = SimpleNamespace(
         id=1256,
@@ -1000,7 +1022,7 @@ async def test_create_task_and_subtasks_resets_existing_task_status_to_pending(
 
     with (
         patch(
-            "app.services.chat.storage.task_manager.get_bot_ids_from_team",
+            "app.services.chat.trigger.lifecycle.get_bot_ids_from_team",
             return_value=[1255],
         ),
         patch(
@@ -1056,7 +1078,7 @@ async def test_create_task_and_subtasks_allows_pipeline_confirm_to_skip_status_c
 
     with (
         patch(
-            "app.services.chat.storage.task_manager.get_bot_ids_from_team",
+            "app.services.chat.trigger.lifecycle.get_bot_ids_from_team",
             return_value=[1255],
         ),
         patch(

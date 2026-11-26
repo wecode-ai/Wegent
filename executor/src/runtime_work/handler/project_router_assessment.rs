@@ -20,7 +20,13 @@ pub(super) fn assessment_model(
         ));
     }
     let mut payload = json!({});
-    super::super::stand_in_agent::apply_stand_in_agent(&mut payload, agent, catalog, device, None)?;
+    super::super::stand_in_agent::resolve_stand_in_routing(
+        &mut payload,
+        agent,
+        catalog,
+        device,
+        None,
+    )?;
     // Reuse the leader's routing policy without exposing private prompts,
     // skills, plugins or memory to the shared, no-tools assessment.
     Ok(payload["runnerRouting"]["model"].clone())

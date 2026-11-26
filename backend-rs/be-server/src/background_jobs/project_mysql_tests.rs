@@ -37,10 +37,63 @@ async fn real_mysql_completion_is_atomic_idempotent_and_fenced() -> Result<()> {
     Ok(())
 }
 
+async fn verify_pipeline_strategy_recovery(mysql: &MysqlService) -> Result<()> {
+    use wegent_task_store::task_store_pipeline::{apply_managed_strategy, save_strategy};
+    ddl(
+        mysql,
+        "CREATE TABLE task_team_strategies (task_id BIGINT PRIMARY KEY, strategy JSON NOT NULL)",
+    )
+    .await?;
+    let mut waiting = json!({"spec":{"teamRef":{"name":"original","namespace":"default","user_id":1}},"status":{"status":"PENDING_CONFIRMATION"}});
+    let mut new_task = json!({"metadata":{"labels":{"projectRobotExecutionId":"444"}}});
+    let first = json!({"collaborationModel":"pipeline","members":[
+        {"botRef":{"name":"author"},"requireConfirmation":true,"contextPassing":"original_and_previous"},
+        {"botRef":{"name":"reviewer"},"prompt":"original review"}
+    ]});
+    let edited = json!({"collaborationModel":"pipeline","members":[
+        {"botRef":{"name":"author"},"requireConfirmation":false},{"botRef":{"name":"replacement"}}
+    ]});
+    mysql
+        .with_transaction(async |tx| {
+            save_strategy(tx, 901, &first, &mut waiting).await?;
+            tx.execute(
+                "INSERT INTO tasks (id,user_id,kind,json) VALUES (901,1,'Task',?)",
+                (Json(waiting.clone()),),
+            )
+            .await?;
+            save_strategy(tx, 902, &edited, &mut new_task).await
+        })
+        .await?;
+    let (Json(mut restored),): (Json<Value>,) = mysql
+        .fetch_one("SELECT json FROM tasks WHERE id=901", ())
+        .await?;
+    assert_eq!(restored["status"]["status"], "PENDING_CONFIRMATION");
+    restored["spec"]
+        .as_object_mut()
+        .unwrap()
+        .remove("currentStage");
+    let mut current = json!({"spec":edited});
+    apply_managed_strategy(&mut &*mysql, restored.as_object(), 901, &mut current).await?;
+    assert_eq!(current["spec"], first);
+    restored["spec"]["teamRef"]["user_id"] = json!(2);
+    assert!(
+        apply_managed_strategy(&mut &*mysql, restored.as_object(), 901, &mut current)
+            .await
+            .is_err()
+    );
+    apply_managed_strategy(&mut &*mysql, new_task.as_object(), 902, &mut current).await?;
+    assert_eq!(current["spec"], edited);
+    let legacy = json!({"spec":{"currentStage":1}});
+    apply_managed_strategy(&mut &*mysql, legacy.as_object(), 903, &mut current).await?;
+    assert_eq!(current["spec"], edited);
+    Ok(())
+}
+
 async fn verify(mysql: &MysqlService, redis: &brz_redis::RedisService) -> Result<()> {
     for statement in DDL {
         ddl(mysql, statement).await?;
     }
+    verify_pipeline_strategy_recovery(mysql).await?;
     verify_managed_recovery(mysql, redis).await?;
     super::super::robot::verify_managed_activity(mysql).await?;
     let tables = crate::task_store::TableTemplates {

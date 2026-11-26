@@ -3,6 +3,29 @@ use super::*;
 use serde_json::{Map, json};
 
 #[test]
+fn managed_member_keeps_model_identity_when_credentials_rotate() {
+    let frozen = json!({"72":{"model_name":"release","model_resource_id":5,"model_id":"upstream-release","inline_env":{"api_key":"stale"}}});
+    let member = accepted_bot(Some(&frozen), 72).unwrap();
+    let live = json!({"modelRef":{"name":"draft"}});
+    assert_eq!(
+        model_name_for_turn(member, &live, false, None).as_deref(),
+        Some("release")
+    );
+    assert!(check_accepted_model(member, 7).is_err());
+    assert!(accepted_bot(Some(&frozen), 73).is_err());
+    let mut config = json!({"env":{"model_id":"draft","api_key":"rotated"}});
+    apply_agent_model(&mut config, member);
+    assert_eq!(
+        config,
+        json!({"env":{"model_id":"upstream-release","api_key":"rotated"}})
+    );
+    assert_eq!(
+        model_name_for_turn(accepted_bot(None, 72).unwrap(), &live, false, None).as_deref(),
+        Some("draft")
+    );
+}
+
+#[test]
 fn deployment_default_headers_resolve_to_the_recorded_values() {
     // Recorded `model_config.default_headers`: the frozen
     // `EXECUTOR_ENV.DEFAULT_HEADERS` template with `task_data.*` paths
@@ -67,7 +90,7 @@ fn the_bot_model_config_is_resolved_before_the_knowledge_acl() {
         .find("let mut skills = get_bot_skills(")
         .expect("skills resolution");
     let bot_config = source
-        .find("let built_agent_config =")
+        .find("built_agent_config =")
         .expect("bot config entry");
     let knowledge = source
         .find("let knowledge = resolve_knowledge(")

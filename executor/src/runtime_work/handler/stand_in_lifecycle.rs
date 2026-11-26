@@ -278,18 +278,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .queued_turns
-                .push_back(SpawnTurnRequest {
-                    task_kind: None,
-                    local_task_id: "worker".into(),
-                    runtime: "claudecode".into(),
-                    request,
-                    send_payload: None,
-                    direct_thread_id: None,
-                    fork_thread_id: None,
-                    fork_thread_path: None,
-                    resume_thread_id: None,
-                    initial_thread_goal: None,
-                });
+                .push_back(SpawnTurnRequest::new("worker".into(), "claudecode".into(), request));
         }
         let (cancel, cancelled) = oneshot::channel();
         let (stopped, stop) = oneshot::channel();

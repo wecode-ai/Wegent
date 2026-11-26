@@ -8,7 +8,9 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.subtask import SubtaskRole, SubtaskStatus
 from app.services.collaboration_permissions import collaboration_permission_service
 
 
@@ -22,6 +24,54 @@ def current_dispatch_id(item: LoopItem) -> str | None:
 def require_machine_task_scope(task_id: int | None, dispatch) -> None:
     if task_id is None or task_id != dispatch.optional_backend_task_id:
         raise HTTPException(403, "Task does not own this collaboration manager turn")
+
+
+def managed_turn_scope(
+    db: Session,
+    dispatch: LoopItemExecution,
+    task_id: int | None,
+    subtask_id: int | None,
+) -> tuple[bool, str]:
+    """Read the exact manager assistant while the Issue and dispatch are locked."""
+    from app.stores.tasks import subtask_store, task_store
+
+    require_machine_task_scope(task_id, dispatch)
+    owner = dispatch.executor_owner_user_id
+    task = task_store.get_by_id_for_update(db, task_id=task_id, owner_user_id=owner)
+    assistant = (
+        subtask_store.get_by_id_and_role(
+            db, subtask_id=subtask_id, role=SubtaskRole.ASSISTANT, owner_user_id=owner
+        )
+        if subtask_id is not None
+        else None
+    )
+    labels = (
+        ((task.json or {}).get("metadata") or {}).get("labels") or {} if task else {}
+    )
+    if (
+        assistant is None
+        or assistant.task_id != task_id
+        or str(labels.get("projectRobotExecutionId")) != str(dispatch.id)
+    ):
+        raise HTTPException(403, "Assistant does not belong to this manager Task")
+    first = str(labels.get("projectAutomationSubtaskId") or "")
+    current = str(labels.get("projectAutomationManagerSubtaskId") or first)
+    return (
+        current == str(subtask_id)
+        and assistant.status in {SubtaskStatus.PENDING, SubtaskStatus.RUNNING}
+        and dispatch.status in {"claimed", "running"},
+        first,
+    )
+
+
+def require_manager_turn(
+    current: bool, subtask_id: int | None, receipt: dict | None = None
+) -> None:
+    """A closed assistant can only read its own existing receipt."""
+    if not current and (
+        not receipt or receipt.get("manager_runtime_task_id") != str(subtask_id)
+    ):
+        raise HTTPException(403, "Assistant does not own the current manager turn")
 
 
 def coordination_activity(

@@ -69,6 +69,8 @@ static ACTIVE_SPACE_CONTEXT_GRANT: OnceLock<Option<SpaceContextGrant>> = OnceLoc
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct CloudCollaborationRoundCommand {
+    #[serde(default)]
+    pub(crate) server_dispatched: bool,
     pub(crate) manager_runtime_task_id: String,
     pub(crate) project_id: String,
     pub(crate) item_id: String,
@@ -280,6 +282,13 @@ impl SpaceMcpRequestContext {
     ) {
         self.event_sender = sender;
     }
+}
+
+pub(crate) fn has_manager_grant(request: &ExecutionRequest) -> Result<bool, String> {
+    let grant = space_context_grant(request)?;
+    Ok(is_manager_context(grant.as_ref())
+        || stand_in_identity(request)
+            .is_some_and(|id| id.coordinator_batch.is_some() || id.project.is_some()))
 }
 
 pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool, String> {
@@ -1069,11 +1078,9 @@ async fn call_individual_tool(
             });
             match (manager_task_id, plan) {
                 (Ok(manager_task_id), Ok(plan)) => {
-                    let receipt = runtime.submit_collaboration_round(manager_task_id, plan);
-                    if let Ok(receipt) = &receipt {
-                        emit_local_assignment_notifications(runtime, context, receipt);
-                    }
-                    receipt
+                    runtime.submit_collaboration_round(manager_task_id, plan, |receipt| {
+                        emit_local_assignment_notifications(runtime, context, receipt)
+                    })
                 }
                 (Err(error), _) => Err(super::TaskRuntimeError::Invalid(error)),
                 (_, Err(error)) => Err(error),
@@ -2085,6 +2092,14 @@ async fn call_backend_tool(
                 .map_err(|error| error.to_string())?,
         )
         .await?;
+        let agent_receipts = response
+            .get("agent_assignments")
+            .map(|value| {
+                value.as_array().ok_or_else(|| {
+                    "Backend returned an invalid agent assignment receipt list".to_owned()
+                })
+            })
+            .transpose()?;
         let human_receipts = response
             .get("human_assignments")
             .and_then(Value::as_array)
@@ -2128,6 +2143,19 @@ async fn call_backend_tool(
             });
             if assignee_type == "agent" {
                 assignment["agent_id"] = Value::String(assignee_id.to_owned());
+                if let Some(receipts) = agent_receipts {
+                    let mut matching = receipts
+                        .iter()
+                        .filter(|receipt| receipt["assignment_id"] == assignment_id);
+                    let execution_id = matching
+                        .next()
+                        .and_then(|receipt| receipt["execution_id"].as_i64())
+                        .filter(|id| *id > 0 && matching.next().is_none())
+                        .ok_or_else(|| {
+                            format!("Backend did not return one execution for {assignment_id}")
+                        })?;
+                    assignment["execution_id"] = json!(execution_id);
+                }
             } else if assignee_type == "human" {
                 let receipt = human_receipts
                     .iter()
@@ -2178,6 +2206,7 @@ async fn call_backend_tool(
         collaboration_dispatcher
             .ok_or_else(|| "Executor collaboration coordinator is unavailable".to_owned())?
             .dispatch(CloudCollaborationRoundCommand {
+                server_dispatched: agent_receipts.is_some(),
                 manager_runtime_task_id: grant.task_id.clone(),
                 project_id: project_id.to_owned(),
                 item_id: item_id.to_owned(),

@@ -366,6 +366,7 @@ def submit_workflow_plan(
             _user(db, token_info.user_id),
             signed_in=False,
             task_id=token_info.task_id,
+            subtask_id=token_info.subtask_id,
         )
 
 
@@ -389,6 +390,8 @@ def update_issue_status(
             user_id=token_info.user_id,
             dispatch_id=context["dispatch_id"],
             manager_agent_id=context["manager_agent_id"],
+            task_id=token_info.task_id,
+            subtask_id=token_info.subtask_id,
             idempotency_key=idempotency_key,
             target_status=target_status,
             reason=reason,

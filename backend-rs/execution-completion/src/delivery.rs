@@ -12,16 +12,47 @@ use serde_json::Value;
 use super::{CompletionStore, LeaseReceipt, lease_receipt::accepted_owner, persist};
 
 #[derive(Clone, Copy)]
-pub enum Delivery {
-    Callback,
-    Device,
+pub struct DeviceStream<'a> {
+    pub owner: i64,
+    pub devices: [Option<&'a str>; 3],
+    pub attempt: &'a str,
 }
 
-impl Delivery {
+pub fn device_attempt_id(task: &Value, subtask_id: i64) -> String {
+    let initial = subtask_id.to_string();
+    task["status"]["executionAttempts"]
+        .get(&initial)
+        .and_then(Value::as_str)
+        .map_or(initial, str::to_owned)
+}
+
+impl DeviceStream<'_> {
+    pub fn matches(
+        self,
+        task: &Value,
+        subtask_id: i64,
+        namespace: Option<&str>,
+        executor: Option<&str>,
+    ) -> bool {
+        namespace == Some(format!("user-{}", self.owner).as_str())
+            && executor
+                .and_then(|name| name.strip_prefix("device-"))
+                .is_some_and(|id| !id.is_empty() && self.devices.contains(&Some(id)))
+            && self.attempt == device_attempt_id(task, subtask_id)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Delivery<'a> {
+    Callback,
+    Device(DeviceStream<'a>),
+}
+
+impl Delivery<'_> {
     fn name(self) -> &'static str {
         match self {
             Self::Callback => "callback",
-            Self::Device => "device",
+            Self::Device(_) => "device",
         }
     }
 
@@ -40,7 +71,7 @@ pub async fn acknowledge_delivery<M: Mysql, R: brz_redis::Redis>(
     ctx: &CompletionStore<'_, M, R>,
     task_id: i64,
     subtask_id: i64,
-    delivery: Delivery,
+    delivery: Delivery<'_>,
 ) -> MysqlResult<()> {
     persist::acknowledge_delivery(ctx, task_id, subtask_id, delivery).await
 }
@@ -50,7 +81,7 @@ pub async fn acknowledge_delivery<M: Mysql, R: brz_redis::Redis>(
 pub async fn with_delivery_lock<T, E, F>(
     redis: &RedisService,
     subtask_id: i64,
-    delivery: Delivery,
+    delivery: Delivery<'_>,
     dependency: impl Fn() -> E,
     work: F,
 ) -> Result<T, E>
@@ -67,8 +98,15 @@ where
     .await
 }
 
-pub fn delivery_lock_key(subtask_id: i64, delivery: Delivery) -> String {
-    format!("wegent:lock:{}", delivery.label(subtask_id))
+pub fn delivery_lock_key(subtask_id: i64, delivery: Delivery<'_>) -> String {
+    match delivery {
+        Delivery::Device(_) => device_delivery_lock_key(subtask_id),
+        Delivery::Callback => format!("wegent:lock:{}", delivery.label(subtask_id)),
+    }
+}
+
+pub fn device_delivery_lock_key(subtask_id: i64) -> String {
+    format!("wegent:lock:terminal-delivery-device-{subtask_id}")
 }
 
 pub async fn with_owned_lease<R, T, E, W, F>(

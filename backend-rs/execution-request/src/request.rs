@@ -52,7 +52,7 @@ use super::skills::{
 use super::tokens::{create_skill_identity_token, create_task_token};
 
 #[path = "request_coordinate.rs"]
-mod coordinate;
+pub(super) mod coordinate;
 
 /// The inputs the create flow has after the session setup and team resolution.
 pub struct BuildExecutionRequestInput<'a> {
@@ -71,6 +71,7 @@ pub struct BuildExecutionRequestInput<'a> {
     pub task_id: i64,
     pub assistant_subtask_id: i64,
     pub user_subtask_id: i64,
+    pub strategy: Option<&'a Value>,
     pub team: &'a KindRow,
     /// The first team-member bot (the recorded create cases have one member).
     pub bot: &'a KindRow,
@@ -312,6 +313,58 @@ async fn web_runtime_device_type(
     }
 }
 
+fn accepted_bot(bots: Option<&Value>, bot_id: i64) -> Result<&Value, FastApiError> {
+    match bots {
+        Some(bots) => bots
+            .get(bot_id.to_string())
+            .ok_or_else(|| FastApiError::forbidden("Bot identity changed since assignment")),
+        None => Ok(&Value::Null),
+    }
+}
+
+fn accepted_model(accepted: &Value, force_override: bool) -> &Value {
+    if force_override {
+        &Value::Null
+    } else {
+        accepted
+    }
+}
+
+fn model_name_for_turn(
+    accepted: &Value,
+    spec: &Value,
+    force: bool,
+    override_name: Option<&str>,
+) -> Option<String> {
+    accepted["model_name"]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| resolve_model_name(spec, force, override_name))
+}
+
+fn check_accepted_model(accepted: &Value, id: i64) -> Result<(), FastApiError> {
+    if accepted["model_resource_id"]
+        .as_i64()
+        .is_some_and(|expected| expected != id)
+    {
+        return Err(FastApiError::forbidden(
+            "Assigned model is no longer accessible",
+        ));
+    }
+    Ok(())
+}
+
+fn apply_agent_model(config: &mut Value, accepted: &Value) {
+    if let Some(model_id) = accepted["model_id"].as_str() {
+        config["env"]["model_id"] = serde_json::json!(model_id);
+    }
+    for key in ["model", "model_id"] {
+        if let Some(value) = accepted["inline_env"][key].as_str() {
+            config["env"][key] = Value::String(value.to_owned());
+        }
+    }
+}
+
 /// `_get_base_system_prompt`: the bot's own Ghost prompt (last in the chain),
 /// with the team-member prompt appended and wrapped in `<base_prompt>`.
 fn base_system_prompt(chain: &[GhostNode], team_member_prompt: Option<&str>) -> String {
@@ -392,7 +445,7 @@ pub async fn build_execution_request(
     preload_skills: &[String],
 ) -> Result<ExecutionRequest, FastApiError> {
     let requested: Vec<Value> = preload_skills.iter().cloned().map(Value::String).collect();
-    build_request(state, input, false, &requested, true, None).await
+    build_request(state, input, false, &requested, None).await
 }
 
 /// Socket.IO chat passes user-selected skills through the standard compiler,
@@ -411,7 +464,6 @@ pub async fn build_chat_execution_request(
         input,
         is_subscription,
         preload_skills,
-        true,
         generation,
         ExecutionOverrides {
             runtime_model,
@@ -445,7 +497,6 @@ pub(super) async fn build_request(
     input: &BuildExecutionRequestInput<'_>,
     is_subscription: bool,
     preload_skills: &[Value],
-    compile_coding_mcp: bool,
     generation: Option<&Value>,
 ) -> Result<ExecutionRequest, FastApiError> {
     build_request_with_runtime(
@@ -453,7 +504,6 @@ pub(super) async fn build_request(
         input,
         is_subscription,
         preload_skills,
-        compile_coding_mcp,
         generation,
         ExecutionOverrides::default(),
     )
@@ -472,7 +522,6 @@ async fn build_request_with_runtime(
     input: &BuildExecutionRequestInput<'_>,
     is_subscription: bool,
     preload_skills: &[Value],
-    compile_coding_mcp: bool,
     generation: Option<&Value>,
     overrides: ExecutionOverrides<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
@@ -609,16 +658,21 @@ async fn build_request_with_runtime(
     // `ValueError`s below abort the request before any Shell query.
     // `_find_model_with_namespace` reads the caller's groups only after the
     // private and referenced Model reads miss, so the resolver owns that read.
+    let bots = input.strategy.and_then(|strategy| strategy.get("bots"));
+    let accepted = accepted_bot(bots, input.bot.id)?;
+    let frozen_model = accepted_model(accepted, force_override);
     let agent_config = bot_spec.get("agent_config").cloned().unwrap_or(Value::Null);
     let (mut model_config, model_name) = if let Some(config) = runtime_model.as_ref() {
         (config.clone(), None)
     } else {
-        let model_name = match resolve_model_name(&bot_spec, force_override, override_model_name) {
-            Some(name) => name,
-            // `get_model_config_for_bot`: `ValueError(f"Bot {bot.name} has no model
-            // configured")`.
-            None => return Err(flat_model_config_error(None, &input.bot.name)),
-        };
+        let model_name =
+            match model_name_for_turn(frozen_model, &bot_spec, force_override, override_model_name)
+            {
+                Some(name) => name,
+                // `get_model_config_for_bot`: `ValueError(f"Bot {bot.name} has no model
+                // configured")`.
+                None => return Err(flat_model_config_error(None, &input.bot.name)),
+            };
         // `get_model_config_for_bot` owns the flat Chat Shell config: one
         // `_resolve_model_for_bot` call.
         let config = match resolve_model_for_bot_with_override(
@@ -635,6 +689,7 @@ async fn build_request_with_runtime(
         .map_err(model_resolution_error)?
         {
             Some(model) => {
+                check_accepted_model(frozen_model, model.id)?;
                 let spec = model.json.0.get("spec").cloned().unwrap_or(Value::Null);
                 let mut config = extract_model_config(&spec).map_err(|error| {
                     tracing::error!(%error, "failed to extract the model config");
@@ -652,6 +707,11 @@ async fn build_request_with_runtime(
         };
         (config, Some(model_name))
     };
+    if runtime_model.is_none()
+        && let Some(model) = frozen_model["model_id"].as_str()
+    {
+        model_config.insert("model_id".into(), Value::String(model.to_owned()));
+    }
     process_model_config_placeholders(
         &mut model_config,
         input.user_id,
@@ -719,7 +779,12 @@ async fn build_request_with_runtime(
         .get("capability_mode")
         .and_then(Value::as_str)
         .unwrap_or("manual");
-    let system_prompt = base_system_prompt(&chain, input.team_member_prompt);
+    let accepted_prompt = accepted["ghost_prompt"]
+        .as_str()
+        .map(|prompt| super::model_config::wrap_base_prompt(prompt, input.team_member_prompt));
+    let system_prompt = accepted_prompt
+        .clone()
+        .unwrap_or_else(|| base_system_prompt(&chain, input.team_member_prompt));
 
     // Skills (`_get_bot_skills`). `_build_skill_binding_context`: a group-owned
     // Team also reads its group `SkillBinding` rows; every automatic binding is
@@ -832,7 +897,7 @@ async fn build_request_with_runtime(
     } else {
         None
     };
-    let built_agent_config = if let Some(runtime_model) = runtime_model.as_ref() {
+    let mut built_agent_config = if let Some(runtime_model) = runtime_model.as_ref() {
         serde_json::json!({"protocol": runtime_model["protocol"], "apiFormat": runtime_model["api_format"], "env": runtime_model})
     } else {
         build_agent_config(
@@ -842,47 +907,64 @@ async fn build_request_with_runtime(
             bot_model_spec.as_ref(),
         )
     };
+    if runtime_model.is_none() {
+        apply_agent_model(&mut built_agent_config, frozen_model);
+    }
     // `_build_runtime_system_prompt` (`request_builder.py:2312`):
     // `get_bot_system_prompt` re-reads the bot's own Ghost by
     // (owner, kind = 'Ghost', name, namespace) instead of reusing the chain the
     // skills resolved, then appends the team member prompt.
-    let bot_system_prompt = super::ghost::bot_system_prompt(
-        state.mysql,
-        input.team.user_id,
-        ghost_ref
-            .and_then(|reference| reference.get("namespace"))
-            .and_then(Value::as_str)
-            .unwrap_or("default"),
-        ghost_ref
-            .and_then(|reference| reference.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or(""),
-        input.team_member_prompt,
-    )
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "failed to read the bot system prompt");
-        FastApiError::internal()
-    })?;
+    let bot_system_prompt = if let Some(prompt) = accepted_prompt {
+        prompt
+    } else {
+        super::ghost::bot_system_prompt(
+            state.mysql,
+            input.team.user_id,
+            ghost_ref
+                .and_then(|reference| reference.get("namespace"))
+                .and_then(Value::as_str)
+                .unwrap_or("default"),
+            ghost_ref
+                .and_then(|reference| reference.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            input.team_member_prompt,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to read the bot system prompt");
+            FastApiError::internal()
+        })?
+    };
 
     let collaboration = collaboration_model(team_json);
     let coordinate_team = include_coordinate_members && collaboration == "coordinate";
     let mut member_configs = if coordinate_team {
-        coordinate::members(state, input, runtime_model.as_ref(), &shell_type).await?
+        coordinate::members(state, input, runtime_model.as_ref(), &shell_type, bots).await?
     } else {
         Vec::new()
     };
-    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
-        super::skills::extend_resolved_skills_from_bot_configs(
-            &kinds_cache,
-            &member_configs,
-            &mut skills,
-            input.user_preferences,
-            &tokens,
-            input.team.user_id,
-            &input.team.namespace,
-        )
-        .await?;
+    if super::skills::is_coding_shell(&shell_type) {
+        for member in &mut member_configs {
+            let mut member_skills = super::skills::BotSkills::default();
+            super::skills::extend_resolved_skills_from_bot_configs(
+                &kinds_cache,
+                std::slice::from_ref(member),
+                &mut member_skills,
+                input.user_preferences,
+                &tokens,
+                input.team.user_id,
+                &input.team.namespace,
+            )
+            .await?;
+            super::skills::sync_bot_skill_refs(member, &member_skills.skill_refs);
+            let mut servers = member["mcp_servers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            super::skills::append_coding_mcp(&mut servers, &member_skills, &shell_type);
+            member["mcp_servers"] = Value::Array(servers);
+        }
     }
 
     // `build_execution_request` (`unified.py:277-306`): persist the request's
@@ -959,13 +1041,6 @@ async fn build_request_with_runtime(
 
     let mut bot_configs = vec![leader];
     bot_configs.append(&mut member_configs);
-    if super::skills::is_coding_shell(&shell_type) && coordinate_team {
-        super::background::merge_leader_capabilities(&mut bot_configs);
-        for bot in &mut bot_configs {
-            super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
-        }
-    }
-
     // Tokens.
     let auth_token = create_task_token(
         state.auth,
@@ -1162,7 +1237,7 @@ async fn build_request_with_runtime(
     // Compile only after late Skill resolution and connector authorization
     // have established the final tool surface. Otherwise stale personal MCP
     // servers can survive in the Bot even after a connector supersedes them.
-    if super::skills::is_coding_shell(&shell_type) && compile_coding_mcp {
+    if super::skills::is_coding_shell(&shell_type) {
         let mut servers = request.bot[0]["mcp_servers"]
             .as_array()
             .cloned()
@@ -1178,7 +1253,7 @@ async fn build_request_with_runtime(
         request.bot[0]["mcp_servers"] = Value::Array(servers);
     }
     if coordinate_team && super::skills::is_coding_shell(&shell_type) {
-        coordinate::keep_compiled_mcp_servers(&mut request);
+        coordinate::finalize_bot_grants(&mut request);
     }
     if !resolved_api_key.is_empty() {
         // The key belongs to the primary model unless an explicit runtime

@@ -58,18 +58,7 @@ async fn im_followup_queues_while_the_initial_identity_session_is_not_ready() {
     let mut request = execution_request(&initial).unwrap();
     apply_runtime_payload_metadata(&mut request, &initial);
     handler
-        .queue_turn(SpawnTurnRequest {
-            task_kind: None,
-            local_task_id: identity.task_id.clone(),
-            runtime: "codex".into(),
-            request,
-            send_payload: None,
-            direct_thread_id: None,
-            fork_thread_id: None,
-            fork_thread_path: None,
-            resume_thread_id: None,
-            initial_thread_goal: None,
-        })
+        .queue_turn(SpawnTurnRequest::new(identity.task_id.clone(), "codex".into(), request))
         .await
         .unwrap();
 

@@ -274,7 +274,7 @@ async fn prepare_retry(
         .map(|result| result.0.to_value())
         .unwrap_or_else(|| json!({}));
     let retry_session = normalize_executor_session(retry_result.get("executor_session"));
-    reset_subtask_for_retry(
+    let reset = reset_subtask_for_retry(
         state,
         &tables,
         payload,
@@ -282,8 +282,20 @@ async fn prepare_retry(
         task_owner,
         &mut task_json,
         retry_session.as_ref(),
-    )
-    .await?;
+    );
+    if let Some(redis) = &state.redis {
+        use wegent_execution_completion::delivery::{device_delivery_lock_key, with_owned_lease};
+        with_owned_lease(
+            redis,
+            &device_delivery_lock_key(payload.subtask_id),
+            || RetryFailure::Internal,
+            None,
+            |_| reset,
+        )
+        .await?;
+    } else {
+        reset.await?;
+    }
     let message = extract_display_prompt(user_subtask.prompt.as_deref()).unwrap_or_default();
     // Follow-ups reuse the device bound to the Task (`extract_task_device_id`).
     let device_id = task_json

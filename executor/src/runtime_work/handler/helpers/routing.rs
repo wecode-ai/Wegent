@@ -419,6 +419,20 @@ fn runtime_task_uses_ephemeral_codex_thread(link: &RuntimeTaskLink) -> bool {
 /// Fill omitted native Home identity from the conversation's persisted request.
 fn restore_request_home_identity(request: &mut ExecutionRequest, link: &RuntimeTaskLink) {
     let saved = runtime_event_request_from_link(link);
+    if let (Some(reference), Some(members)) = (
+        saved.extra.get("team_ref"),
+        link.runtime_handle["personalPipeline"]["members"].as_array(),
+    ) {
+        request.extra.insert("team_ref".into(), reference.clone());
+        request
+            .extra
+            .insert("collaboration_model".into(), json!("pipeline"));
+        request.bot = json!(members);
+        if let Some(instructions) = link.runtime_handle["personalPipeline"]["instructions"].as_str()
+        {
+            request.system_prompt = instructions.to_owned();
+        }
+    }
     if crate::agents::instance_home::request_home(&saved).is_none() {
         return;
     }
@@ -547,6 +561,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "issue_comment_trigger_id"
                 | "collaborationMode"
                 | "collaboration_mode"
+                | "team_ref"
                 | "collaboration_model"
                 | "conversationContext"
                 | "modelSelection"

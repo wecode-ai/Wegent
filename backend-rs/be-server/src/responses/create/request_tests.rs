@@ -166,6 +166,7 @@ fn chat_agent() -> (KindRow, KindRow) {
 
 fn chat_input<'a>(team: &'a KindRow, bot: &'a KindRow) -> BuildExecutionRequestInput<'a> {
     BuildExecutionRequestInput {
+        strategy: None,
         user_id: 7,
         user_name: "user",
         user_git_info: &Value::Null,

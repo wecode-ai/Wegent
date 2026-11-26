@@ -1,5 +1,5 @@
 {
-  "revision": "ac7e491bf026",
+  "revision": "de91ac6752b0",
   "tables": [
     {
       "table": "background_executions",
@@ -465,6 +465,12 @@
         "CREATE INDEX ix_wiki_contents_generation_id ON wiki_contents (generation_id)",
         "CREATE INDEX ix_wiki_contents_id ON wiki_contents (id)",
         "CREATE INDEX ix_wiki_contents_type ON wiki_contents (type)"
+      ]
+    },
+    {
+      "table": "task_team_strategies",
+      "statements": [
+        "CREATE TABLE task_team_strategies (task_id BIGINT NOT NULL PRIMARY KEY, strategy JSON NOT NULL) ENGINE=InnoDB"
       ]
     }
   ]

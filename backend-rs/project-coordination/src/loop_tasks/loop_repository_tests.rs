@@ -169,7 +169,7 @@ fn workflow_node_id_reads_metadata() {
         cloud_project_id: Some("2".to_string()),
         loop_item_id: Some("3".to_string()),
         task_user_id: 1,
-        device_id: "d".to_string(),
+        device_id: Some("d".to_string()),
         task_id: "t".to_string(),
         task_title: None,
         backend_task_id: Some(0),

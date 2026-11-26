@@ -552,6 +552,11 @@ impl RuntimeWorkRpcHandler {
             .as_i64()
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let workspace_owner = self
+            .backend_connection_snapshot()?
+            .as_ref()
+            .and_then(|c| c.authenticated_user_id)
+            == Some(user);
         if save {
             if let Some(route) = payload.get("delegationRoute") {
                 if payload.get("transferRoleId").is_some() {
@@ -572,6 +577,10 @@ impl RuntimeWorkRpcHandler {
                 .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
             let mut settings = payload["settings"].clone();
+            if let Some(fields) = settings.as_object_mut() {
+                fields.remove("transferredTeamDefinition");
+                fields.remove("portableTeam");
+            }
             if let Some(transfer) = payload.get("transferRoleId") {
                 let invalid =
                     || AppIpcError::new("bad_request", "Invalid transferred stand-in role");
@@ -591,9 +600,20 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_object_mut)
                     .ok_or_else(invalid)?;
                 role.remove("taskPermissions");
+                if let Some(definition) = payload.get("portableTeam") {
+                    self.verify_local_stand_in_owner(user)?;
+                    role.remove("teamRef");
+                    settings["transferredTeamDefinition"] =
+                        json!({"roleId":id,"definition":definition});
+                }
             }
             let normalized = store
-                .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
+                .validate_personal_settings_for_device_owner(
+                    user,
+                    &self.device_id,
+                    settings.clone(),
+                    workspace_owner,
+                )
                 .map_err(settings_error)?;
             let verified_account = self
                 .preflight_dingtalk_delegation(user, &mut settings, &normalized, &previous)
@@ -603,19 +623,34 @@ impl RuntimeWorkRpcHandler {
                 .await?;
             let connection = self.backend_connection_snapshot()?;
             let saved = store
-                .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+                .save_verified_personal_settings(
                     user,
                     &self.device_id,
                     connection.as_ref().map(|entry| entry.backend_url.as_str()),
                     settings,
                     verified_account.as_ref(),
+                    workspace_owner,
                 )
                 .map_err(settings_error)?;
             Ok(saved)
         } else {
-            store
+            let mut settings = store
                 .read_personal_stand_in(user, &self.device_id)
-                .map_err(settings_error)
+                .map_err(settings_error)?;
+            settings["teamImportVersion"] = json!(1);
+            if let Some(role_id) = payload["exportTeamRoleId"].as_str() {
+                self.verify_local_stand_in_owner(user)?;
+                settings["portableTeam"] = store
+                    .portable_personal_team(user, &self.device_id, role_id)
+                    .map_err(settings_error)?;
+            }
+            if payload["includeTeams"] == true {
+                self.verify_local_stand_in_owner(user)?;
+                settings["bindableTeams"] = json!(store
+                    .bindable_personal_teams(user, workspace_owner)
+                    .map_err(settings_error)?);
+            }
+            Ok(settings)
         }
     }
 

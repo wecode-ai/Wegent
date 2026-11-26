@@ -37,6 +37,7 @@ pub(crate) async fn emit_terminal_frames_once<R: Redis>(
     result: &Value,
     task: &CollaborationStatus,
     contexts: Option<&Value>,
+    attempt: Option<&str>,
 ) -> RedisResult<()> {
     emitter::emit_terminal_frames_once(
         redis,
@@ -45,6 +46,7 @@ pub(crate) async fn emit_terminal_frames_once<R: Redis>(
         result,
         (&task.status, task.progress),
         contexts,
+        attempt,
     )
     .await
 }

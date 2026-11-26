@@ -16,7 +16,7 @@ use super::super::{
     model_config::{
         build_agent_config, inline_agent_config_ready, process_model_config_placeholders,
     },
-    resolution::{resolve_bot, resolve_model_for_bot_with_override, resolve_model_name},
+    resolution::{resolve_bot, resolve_model_for_bot_with_override},
 };
 use super::{BuildExecutionRequestInput, dependency, model_resolution_error, resolve_shell_type};
 use crate::RequestServices;
@@ -26,14 +26,11 @@ use wegent_llm_proxy::CredentialRequest;
 
 /// Publish each compiled server once. Executor merges duplicate definitions by
 /// name and can otherwise carry headers across different endpoints.
-pub(super) fn keep_compiled_mcp_servers(request: &mut ExecutionRequest) {
-    let Some((leader, members)) = request
-        .bot
-        .as_array_mut()
-        .and_then(|bots| bots.split_first_mut())
-    else {
+pub(crate) fn finalize_bot_grants(request: &mut ExecutionRequest) {
+    let Some(leader) = request.bot.as_array_mut().and_then(|bots| bots.first_mut()) else {
         return;
     };
+    leader["native_capability_scope"] = Value::String("bot".into());
     let Some(servers) = leader["mcp_servers"].as_array_mut() else {
         return;
     };
@@ -46,9 +43,6 @@ pub(super) fn keep_compiled_mcp_servers(request: &mut ExecutionRequest) {
             .is_none_or(|name| names.insert(name.to_owned()))
     });
     servers.reverse();
-    for member in members {
-        member["mcp_servers"] = Value::Array(Vec::new());
-    }
     request.mcp_servers.retain(|server| {
         server["name"]
             .as_str()
@@ -61,6 +55,7 @@ pub(super) async fn members(
     input: &BuildExecutionRequestInput<'_>,
     runtime_model: Option<&Map<String, Value>>,
     leader_shell: &str,
+    accepted_bots: Option<&Value>,
 ) -> Result<Vec<Value>, FastApiError> {
     let mut configs = Vec::new();
     let cache = KindCacheStore {
@@ -107,6 +102,7 @@ pub(super) async fn members(
                 &cache,
                 runtime_model,
                 leader_shell == "Codex",
+                super::accepted_bot(accepted_bots, bot.id)?,
             )
             .await?,
         );
@@ -120,6 +116,7 @@ async fn build_member(
     cache: &KindCacheStore<'_, impl brz_mysql::Mysql, impl brz_redis::Redis>,
     runtime_model: Option<&Map<String, Value>>,
     codex_leader: bool,
+    accepted: &Value,
 ) -> Result<Value, FastApiError> {
     let spec = &input.bot.json.0["spec"];
     let capability_mode = spec["capability_mode"].as_str().unwrap_or("manual");
@@ -138,19 +135,24 @@ async fn build_member(
     } else {
         MergedGhostCapabilities::default()
     };
-    let system_prompt = bot_system_prompt(
-        state.mysql,
-        input.team.user_id,
-        ghost_namespace,
-        ghost_name,
-        input.team_member_prompt,
-    )
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, bot_id = input.bot.id, "failed to read team member prompt");
-        FastApiError::internal()
-    })?;
-    let agent_config = member_model(state, input, spec, runtime_model, codex_leader).await?;
+    let system_prompt = if let Some(prompt) = accepted["ghost_prompt"].as_str() {
+        super::super::model_config::wrap_base_prompt(prompt, input.team_member_prompt)
+    } else {
+        bot_system_prompt(
+            state.mysql,
+            input.team.user_id,
+            ghost_namespace,
+            ghost_name,
+            input.team_member_prompt,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, bot_id = input.bot.id, "failed to read team member prompt");
+            FastApiError::internal()
+        })?
+    };
+    let agent_config =
+        member_model(state, input, spec, runtime_model, codex_leader, accepted).await?;
     Ok(build_bot_config(&BotConfigInput {
         id: input.bot.id,
         name: &input.bot.name,
@@ -178,6 +180,7 @@ async fn member_model(
     spec: &Value,
     runtime_model: Option<&Map<String, Value>>,
     codex_leader: bool,
+    accepted: &Value,
 ) -> Result<Value, FastApiError> {
     if let Some(model) = runtime_model {
         return Ok(serde_json::json!({
@@ -189,7 +192,8 @@ async fn member_model(
     let override_name = labels["modelId"].as_str();
     let empty_config = Value::Object(Map::new());
     let raw = spec.get("agent_config").unwrap_or(&empty_config);
-    let resolved = match resolve_model_name(spec, force_override, override_name)
+    let accepted = super::accepted_model(accepted, force_override);
+    let resolved = match super::model_name_for_turn(accepted, spec, force_override, override_name)
         .filter(|_| !inline_agent_config_ready(raw, force_override, override_name))
     {
         Some(name) => resolve_model_for_bot_with_override(
@@ -206,8 +210,12 @@ async fn member_model(
         .map_err(model_resolution_error)?,
         None => None,
     };
+    if let Some(model) = &resolved {
+        super::check_accepted_model(accepted, model.id)?;
+    }
     let model_spec = resolved.as_ref().map(|model| &model.json.0["spec"]);
     let mut config = build_agent_config(raw, force_override, override_name, model_spec);
+    super::apply_agent_model(&mut config, accepted);
     if codex_leader && let Some(env) = config.get_mut("env").and_then(Value::as_object_mut) {
         process_model_config_placeholders(
             env,
