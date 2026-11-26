@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { get as httpGet } from 'node:http'
-import { get as httpsGet } from 'node:https'
 import { chmod, cp, mkdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
+import { EnvHttpProxyAgent, request as undiciRequest } from 'undici'
 import { extract } from 'tar'
 import { acquireProcessLock } from './lib/process-lock.mjs'
 
@@ -18,6 +17,11 @@ const outputRoot = join(weworkDir, 'resources', 'binaries', 'codex')
 const legacyCacheRoot = join(weworkDir, 'node_modules', '.cache', 'wework-codex')
 const DOWNLOAD_ATTEMPTS = 3
 const DOWNLOAD_RETRY_DELAY_MS = 1_000
+const DOWNLOAD_TIMEOUTS = {
+  connectTimeoutMs: 15_000,
+  headersTimeoutMs: 30_000,
+  bodyTimeoutMs: 30_000,
+}
 const skipDownloads = process.env.WEWORK_SKIP_CODEX_DOWNLOADS === '1'
 
 const hostTargetByPlatform = {
@@ -120,45 +124,39 @@ async function integrityFile(path) {
   return `sha512-${hash.digest('base64')}`
 }
 
-async function download(url, destination, fetchImpl) {
-  const response = await fetchImpl(url)
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to download ${url}: ${response.status} ${response.statusText}`)
-  }
-  await mkdir(dirname(destination), { recursive: true })
-  await pipeline(response.body, createWriteStream(destination))
-}
-
-function openDownload(url, redirects = 0) {
-  return new Promise((resolveResponse, reject) => {
-    const address = new URL(url)
-    const get = address.protocol === 'https:' ? httpsGet : httpGet
-    if (!['http:', 'https:'].includes(address.protocol)) {
-      reject(new Error(`Unsupported download protocol: ${address.protocol}`))
+async function downloadFile(url, destination, timeouts = DOWNLOAD_TIMEOUTS) {
+  const dispatcher = new EnvHttpProxyAgent({
+    connect: { timeout: timeouts.connectTimeoutMs },
+    headersTimeout: timeouts.headersTimeoutMs,
+    bodyTimeout: timeouts.bodyTimeoutMs,
+    proxyTunnel: false,
+  })
+  try {
+    let address = new URL(url)
+    for (let redirects = 0; ; redirects += 1) {
+      const response = await undiciRequest(address, {
+        method: 'GET',
+        dispatcher,
+        headersTimeout: timeouts.headersTimeoutMs,
+        bodyTimeout: timeouts.bodyTimeoutMs,
+      })
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        if (redirects >= 5) throw new Error('Too many download redirects')
+        await response.body.dump()
+        address = new URL(response.headers.location, address)
+        continue
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await response.body.dump()
+        throw new Error(`Failed to download ${url}: ${response.statusCode} ${response.statusText}`)
+      }
+      await mkdir(dirname(destination), { recursive: true })
+      await pipeline(response.body, createWriteStream(destination))
       return
     }
-    const request = get(address, response => {
-      const status = response.statusCode ?? 0
-      response.on('error', reject)
-      if (status >= 300 && status < 400 && response.headers.location) {
-        response.resume()
-        if (redirects >= 5) {
-          reject(new Error('Too many download redirects'))
-          return
-        }
-        resolveResponse(openDownload(new URL(response.headers.location, address), redirects + 1))
-        return
-      }
-      if (status < 200 || status >= 300) response.resume()
-      resolveResponse({
-        ok: status >= 200 && status < 300,
-        status,
-        statusText: response.statusMessage ?? '',
-        body: response,
-      })
-    })
-    request.on('error', reject)
-  })
+  } finally {
+    await dispatcher.close()
+  }
 }
 
 function sleep(delayMs) {
@@ -171,8 +169,9 @@ export async function downloadWithRetry(
   {
     attempts = DOWNLOAD_ATTEMPTS,
     retryDelayMs = DOWNLOAD_RETRY_DELAY_MS,
-    fetchImpl = openDownload,
+    downloadImpl = downloadFile,
     sleepImpl = sleep,
+    timeouts = DOWNLOAD_TIMEOUTS,
   } = {}
 ) {
   if (!Number.isInteger(attempts) || attempts < 1) {
@@ -183,7 +182,7 @@ export async function downloadWithRetry(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     await rm(destination, { force: true })
     try {
-      await download(url, destination, fetchImpl)
+      await downloadImpl(url, destination, timeouts)
       return
     } catch (error) {
       lastError = error
