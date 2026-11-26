@@ -1,3 +1,4 @@
+import { isRuntimeChatStreamDebugEnabled } from '@/stream/runtimeStreamDiagnostics'
 export {
   getConversationScrollSnapshot,
   hasConversationScrollSnapshot,
@@ -14,7 +15,7 @@ import type {
   RuntimeSubagentActivityPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
-import { summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
+import { logRuntimeTaskCreateStage, summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -438,6 +439,19 @@ export function applyRuntimeConversationAction(
   const nextTurns = superseded?.size
     ? reduced.filter(turn => !turn.id || !superseded.has(turn.id))
     : reduced
+  if (action.type === 'assistant_done' && action.content && isRuntimeChatStreamDebugEnabled()) {
+    const turn = nextTurns.findLast(candidate => candidate.id === action.subtaskId)
+    logRuntimeTaskCreateStage('runtime-terminal-projected', {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      turnId: action.subtaskId,
+      applied: reduced !== currentTurns,
+      status: turn?.status ?? null,
+      hasAssistantText:
+        turn?.items.some(item => item.type === 'assistant_text' && item.content.length > 0) ??
+        false,
+    })
+  }
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action, nextTurns)
 }
