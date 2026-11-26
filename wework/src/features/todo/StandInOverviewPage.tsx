@@ -133,6 +133,7 @@ export function StandInOverviewPage({
   )
   const setDetailsAnchor = (anchor: null) => setDetailsTarget(anchor)
   const detailsTrigger = useRef<HTMLButtonElement>(null)
+  const messageCenterSettingsTrigger = useRef<HTMLButtonElement>(null)
   const profileTrigger = useRef<HTMLElement | null>(null)
   const rememberProfileTrigger = useCallback(
     (trigger?: HTMLElement) => {
@@ -280,7 +281,9 @@ export function StandInOverviewPage({
   const focusTarget = useMemo(
     () => ({
       get current() {
-        return profileTrigger.current?.isConnected ? profileTrigger.current : detailsTrigger.current
+        return profileTrigger.current?.isConnected
+          ? profileTrigger.current
+          : (messageCenterSettingsTrigger.current ?? detailsTrigger.current)
       },
     }),
     []
@@ -681,6 +684,7 @@ export function StandInOverviewPage({
                 : null
             }
             onOpenSettings={(source, trigger) => openMessageCenterSettings(source, trigger)}
+            settingsTriggerRef={messageCenterSettingsTrigger}
             onOpenComponents={() => navigateTo('/settings/connections')}
           />
         ) : state.loading && !state.saved ? (
@@ -1042,6 +1046,7 @@ export function StandInOverviewPage({
       }}
       guideOpen={guideOpen}
       onGuideClose={() => setGuideOpen(false)}
+      onOpenConversation={() => onWorkspaceViewChange('conversation')}
       onExampleSelect={text =>
         leavePanel(() => {
           onWorkspaceViewChange('conversation')

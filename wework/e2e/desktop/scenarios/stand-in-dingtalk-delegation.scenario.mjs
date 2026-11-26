@@ -447,10 +447,11 @@ export function createDesktopScenario(options) {
         await publishCases([changed])
         const [changedResult] = await awaitOutcomes(
           [changed.question.id],
-          'complete',
+          'failed',
           'Evidence changed between decision and submission'
         )
         assert.equal(changedResult.action, 'needs_user')
+        assert.equal(changedResult.reasonCode, 'conversation_changed_before_send')
         assert.match(changedResult.reason, /conversation changed/)
         await assertSilent([changed])
 
@@ -551,8 +552,8 @@ export function createDesktopScenario(options) {
         ])
         const delivery = await verifyDingTalkDelivery(control, {
           mailbox,
-          work,
           automaticallyConfirmed: automatic.map(question => records().get(question.id)),
+          changed: records().get(changed.question.id),
           pending: records().get(pending.question.id),
           rejected: records().get(rejected.question.id),
           timeout: options.uiTimeoutMs,
@@ -719,6 +720,8 @@ export function createDesktopScenario(options) {
                 {
                   id: changed.question.id,
                   action: changedResult.action,
+                  status: changedResult.status,
+                  reasonCode: changedResult.reasonCode,
                   reason: changedResult.reason,
                 },
                 ...excluded.map(item => ({ id: item.id, action: 'uncollected' })),

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import type { Ref } from 'react'
 import {
   SelectContent,
   SelectItem,
@@ -49,6 +50,7 @@ type Props = {
   onRefresh(): void
   onCommand(command: MessageCenterCommand): Promise<boolean>
   onOpenSettings(source: MessageCenterSource | undefined, trigger: HTMLElement): void
+  settingsTriggerRef?: Ref<HTMLButtonElement>
   onOpenComponents?(): void
 }
 
@@ -65,6 +67,7 @@ function MessageCenterContent({
   onRefresh,
   onCommand,
   onOpenSettings,
+  settingsTriggerRef,
   onOpenComponents,
 }: Props) {
   const { t, i18n } = useTranslation('standInMessageCenter')
@@ -158,6 +161,7 @@ function MessageCenterContent({
                 </Button>
               )}
               <Button
+                ref={settingsTriggerRef}
                 type="button"
                 variant="ghost"
                 size="sm"

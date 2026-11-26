@@ -13,6 +13,7 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { openStoryPrimary, STORY_CHAT as CHAT } from '../modules/stand-in-source-story-evidence.mjs'
 
 const USER = 9001
 const TASK = `stand-in-chat-${USER}-primary`
@@ -20,7 +21,6 @@ const FIRST = 'STAND_IN_SESSION_FIRST_QUESTION'
 const SECOND = 'STAND_IN_SESSION_SECOND_CLEAN_CONTEXT'
 const FOLLOWUP = 'STAND_IN_SESSION_FOLLOWUP'
 const CHILD = 'STAND_IN_SESSION_CHILD_RESULT'
-const CHAT = '[data-testid="stand-in-conversation"]'
 
 export function createDesktopScenario({
   workspacePath,
@@ -118,8 +118,7 @@ export function createDesktopScenario({
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('waitFor', CHAT)
+      await openStoryPrimary(control)
       const settings = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -320,7 +319,7 @@ export function createDesktopScenario({
       assert.equal(resultDelivered, true)
       assert.equal((await settled(control)).threadId, current.threadId)
       await restartDesktopApp()
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await openStoryPrimary(control)
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: '后续消息仍在第二段',
         timeoutMs: modelResponseTimeoutMs,

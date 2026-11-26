@@ -50,7 +50,7 @@ export function StandInOnboardingSetup({
 }: {
   configuration: StandInOnboardingConfiguration
   api: StandInExecutorApi
-  onComplete(): Promise<boolean>
+  onComplete(openConversation: boolean): Promise<boolean>
   onBusyChange(busy: boolean): void
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
 }) {
@@ -147,7 +147,7 @@ export function StandInOnboardingSetup({
         setRole(savedRole)
         setInitialRole(savedRole)
       }
-      await onComplete()
+      await onComplete(!saveConnections)
     } catch (cause) {
       setError(getStandInErrorMessage(cause))
     } finally {

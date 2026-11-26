@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react'
+import type { Ref } from 'react'
 import type {
   MessageCenterScope,
   MessageCenterSource,
@@ -14,6 +15,7 @@ import {
 type Props = {
   api?: StandInMessageCenterApi
   scope: MessageCenterScope | null
+  settingsTriggerRef?: Ref<HTMLButtonElement>
   onOpenSettings: (source: MessageCenterSource | undefined, trigger: HTMLElement) => void
   onOpenComponents?: () => void
 }

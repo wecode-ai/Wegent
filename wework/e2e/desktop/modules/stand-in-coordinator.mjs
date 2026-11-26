@@ -203,6 +203,7 @@ export function createStandInCoordinatorVerification({
       await verifyStandInScheduleActivity(control, rpc, schedule, captureScreenshot)
 
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       const preferences = await control.command('getValue', '[data-testid="stand-in-preferences"]')
       await control.command('fill', '[data-testid="stand-in-preferences"]', {

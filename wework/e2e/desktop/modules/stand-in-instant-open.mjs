@@ -5,7 +5,10 @@ export async function verifyStandInInstantReturn(control) {
   const workspace = '[data-testid="personal-stand-in-workspace"]'
   const primary = `${workspace} [data-testid="stand-in-primary-open"]`
   const composer = `${workspace} [data-testid="stand-in-conversation"] [data-testid="chat-message-input"]`
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-message-center-open"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="stand-in-message-center-open"][aria-current="page"]'
+  )
   await control.command('waitFor', '[data-testid="stand-in-message-center"]')
   await control.command('clickWhenEnabled', '[data-testid="message-center-open-settings"]')
   await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')
