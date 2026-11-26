@@ -1406,13 +1406,15 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("lookup_status", ["failed", "not_found"])
-    async def test_terminate_sandbox_retries_without_clearing_live_credentials(
+    @pytest.mark.parametrize("admin_cleanup", [False, True])
+    async def test_sandbox_removal_retries_without_clearing_live_credentials(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
         mocker,
         lookup_status,
+        admin_cleanup,
     ):
         from executor_manager.services.sandbox import SandboxTerminationError
 
@@ -1430,15 +1432,29 @@ class TestSandboxManager:
         }
         revoke = mocker.spy(manager._repository, "delete_executor_binding")
 
-        with pytest.raises(SandboxTerminationError, match="delete_failed"):
-            await manager.terminate_sandbox("12345")
+        if admin_cleanup:
+            result = await manager.cleanup_sandbox_by_task_id(
+                task_id=12345, archive_before_delete=False
+            )
+            assert result["reason"] == "delete_failed"
+            assert result["redis_cleared"] is False
+        else:
+            with pytest.raises(SandboxTerminationError, match="delete_failed"):
+                await manager.terminate_sandbox("12345")
 
         revoke.assert_not_called()
         mock_redis_client.delete.assert_not_called()
         assert manager._repository.load_sandbox("12345").status.value == "running"
 
-        success, _ = await manager.terminate_sandbox("12345")
-        assert success is True
+        if admin_cleanup:
+            result = await manager.cleanup_sandbox_by_task_id(
+                task_id=12345, archive_before_delete=False
+            )
+            assert result["deleted"] is True
+            assert result["redis_cleared"] is True
+        else:
+            success, _ = await manager.terminate_sandbox("12345")
+            assert success is True
         revoke.assert_called_once_with(
             12345, expected_executor_name="wegent-task-testuser-12345", sandbox=True
         )

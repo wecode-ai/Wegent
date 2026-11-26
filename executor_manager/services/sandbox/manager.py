@@ -948,10 +948,7 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 return {**result, "skipped": True, "reason": "archive_failed"}
 
-        # This admin path reports metadata cleanup separately for direct cluster GC.
-        return await self._cleanup_selected_sandbox(
-            sandbox_id, sandbox, result=result, allow_metadata_cleanup_on_failure=True
-        )
+        return await self._cleanup_selected_sandbox(sandbox_id, sandbox, result=result)
 
     async def _cleanup_selected_sandbox(
         self,
@@ -960,7 +957,6 @@ class SandboxManager(metaclass=SingletonMeta):
         *,
         result: Optional[Dict[str, Any]] = None,
         idle_before: Optional[float] = None,
-        allow_metadata_cleanup_on_failure: bool = False,
         held_lease: Optional[_TaskLifecycleLease] = None,
     ) -> Dict[str, Any]:
         """Revalidate the archived runtime under the task lifecycle lease."""
@@ -1007,13 +1003,7 @@ class SandboxManager(metaclass=SingletonMeta):
             ):
                 return {**result, "skipped": True, "reason": "not_stale"}
             cleanup = asyncio.create_task(
-                self._delete_sandbox_runtime(
-                    sandbox_id,
-                    current,
-                    result,
-                    lease,
-                    allow_metadata_cleanup_on_failure=allow_metadata_cleanup_on_failure,
-                )
+                self._delete_sandbox_runtime(sandbox_id, current, result, lease)
             )
             try:
                 return await asyncio.shield(cleanup)
@@ -1033,8 +1023,6 @@ class SandboxManager(metaclass=SingletonMeta):
         sandbox: Optional[Sandbox],
         result: Dict[str, Any],
         lease: _TaskLifecycleLease,
-        *,
-        allow_metadata_cleanup_on_failure: bool,
     ) -> Dict[str, Any]:
         """Remove the selected runtime while holding its task lifecycle lease."""
         try:
@@ -1088,10 +1076,7 @@ class SandboxManager(metaclass=SingletonMeta):
             }
 
         runtime_status = (result.get("delete_result") or {}).get("status")
-        if (
-            runtime_status not in {"success", "not_found"}
-            and not allow_metadata_cleanup_on_failure
-        ):
+        if runtime_status not in {"success", "not_found"}:
             return {**result, "skipped": False, "reason": "delete_failed"}
 
         result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
