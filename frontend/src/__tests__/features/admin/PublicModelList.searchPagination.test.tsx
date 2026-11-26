@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
 
 import { adminApis, type AdminPublicModel, type AdminPublicModelListResponse } from '@/apis/admin'
 import PublicModelList from '@/features/admin/components/PublicModelList'
@@ -13,6 +14,16 @@ const mockSearchParamsRef = { current: new URLSearchParams() }
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ replace: mockReplace }),
   useSearchParams: () => mockSearchParamsRef.current,
+}))
+
+jest.mock('@/components/ui/dialog', () => ({
+  Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <div>{children}</div> : null,
+  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 
 jest.mock('@/hooks/useTranslation', () => {
@@ -215,5 +226,89 @@ describe('PublicModelList search and pagination URL state', () => {
     await waitFor(() => expect(screen.getByTestId('public-model-load-retry')).toBeInTheDocument())
     expect(screen.queryByText('First Page Model')).not.toBeInTheDocument()
     expect(screen.getByTestId('pagination-page-1')).toBeInTheDocument()
+  })
+
+  test('refreshes with the active search after a mutation completes', async () => {
+    const oldModel: AdminPublicModel = {
+      ...model,
+      id: 5,
+      name: 'old-model',
+      display_name: 'Old Model',
+    }
+    const newModel: AdminPublicModel = {
+      ...model,
+      id: 6,
+      name: 'new-model',
+      display_name: 'New Model',
+    }
+    let resolveCreate: ((value: AdminPublicModel) => void) | undefined
+    mockedAdminApis.getPublicModels.mockImplementation(async (_page, _limit, searchTerm) => ({
+      items: searchTerm === 'new' ? [newModel] : [oldModel],
+      total: 1,
+    }))
+    mockedAdminApis.createPublicModel.mockImplementation(
+      () =>
+        new Promise<AdminPublicModel>(resolve => {
+          resolveCreate = resolve
+        })
+    )
+    mockSearchParamsRef.current = new URLSearchParams('tab=public-models&search=old')
+
+    render(<PublicModelList />)
+
+    await waitFor(() => expect(screen.getByText('Old Model')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'admin:public_models.create_model' }))
+    fireEvent.change(screen.getByLabelText('admin:public_models.form.name *'), {
+      target: { value: 'new-model' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+    await waitFor(() => expect(mockedAdminApis.createPublicModel).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByTestId('public-model-search-input'), {
+      target: { value: 'new' },
+    })
+    await waitFor(
+      () => expect(mockedAdminApis.getPublicModels).toHaveBeenCalledWith(1, 50, 'new'),
+      { timeout: 1500 }
+    )
+
+    const callsBeforeMutationCompletes = mockedAdminApis.getPublicModels.mock.calls.length
+    if (!resolveCreate) throw new Error('Create request was not started')
+    resolveCreate(newModel)
+
+    await waitFor(() =>
+      expect(mockedAdminApis.getPublicModels.mock.calls.length).toBeGreaterThan(
+        callsBeforeMutationCompletes
+      )
+    )
+    expect(mockedAdminApis.getPublicModels).toHaveBeenLastCalledWith(1, 50, 'new')
+  })
+
+  test('keeps same-scope results visible while a refresh is pending', async () => {
+    const existingModel: AdminPublicModel = {
+      ...model,
+      id: 7,
+      name: 'existing-model',
+      display_name: 'Existing Model',
+    }
+    mockedAdminApis.getPublicModels
+      .mockResolvedValueOnce({ items: [existingModel], total: 1 })
+      .mockImplementationOnce(() => new Promise(() => {}))
+    mockedAdminApis.createPublicModel.mockResolvedValue(model)
+
+    render(<PublicModelList />)
+
+    await waitFor(() => expect(screen.getByText('Existing Model')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'admin:public_models.create_model' }))
+    fireEvent.change(screen.getByLabelText('admin:public_models.form.name *'), {
+      target: { value: 'new-model' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+
+    await waitFor(() => expect(mockedAdminApis.getPublicModels).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Existing Model')).toBeInTheDocument()
+    expect(screen.getByTestId('public-model-refreshing')).toBeInTheDocument()
   })
 })

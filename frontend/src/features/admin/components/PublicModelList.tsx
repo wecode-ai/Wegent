@@ -114,11 +114,27 @@ const PublicModelList: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [resultsScope, setResultsScope] = useState<{ search: string; page: number } | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshToken, setRefreshToken] = useState(0)
+  const activeScopeRef = useRef({ search, page })
+  const resultsScopeRef = useRef<{ search: string; page: number } | null>(null)
   const requestIdRef = useRef(0)
+
+  useEffect(() => {
+    activeScopeRef.current = { search, page }
+  }, [page, search])
 
   const fetchModels = useCallback(async () => {
     const requestId = ++requestIdRef.current
-    setLoading(true)
+    const requestScope = { search, page }
+    const isActiveScope = () => {
+      const active = activeScopeRef.current
+      return requestScope.search === active.search && requestScope.page === active.page
+    }
+    const lastResultsScope = resultsScopeRef.current
+    const sameScopeRefresh = lastResultsScope?.search === search && lastResultsScope?.page === page
+    setRefreshing(sameScopeRefresh)
+    setLoading(!sameScopeRefresh)
     setLoadError(false)
     try {
       const response = await adminApis.getPublicModels(
@@ -126,23 +142,25 @@ const PublicModelList: React.FC = () => {
         PUBLIC_MODELS_PAGE_SIZE,
         search || undefined
       )
-      if (requestId !== requestIdRef.current) return
+      if (requestId !== requestIdRef.current || !isActiveScope()) return
       setModels(response.items)
       setTotal(response.total)
+      resultsScopeRef.current = { search, page }
       setResultsScope({ search, page })
     } catch (_error) {
-      if (requestId !== requestIdRef.current) return
+      if (requestId !== requestIdRef.current || !isActiveScope()) return
       setLoadError(true)
     } finally {
-      if (requestId === requestIdRef.current) {
+      if (requestId === requestIdRef.current && isActiveScope()) {
         setLoading(false)
+        setRefreshing(false)
       }
     }
   }, [page, search])
 
   useEffect(() => {
     fetchModels()
-  }, [fetchModels])
+  }, [fetchModels, refreshToken])
 
   // Persist the committed search and page in the URL so a refresh restores them.
   useEffect(() => {
@@ -342,7 +360,7 @@ const PublicModelList: React.FC = () => {
       toast({ title: t('admin:public_models.success.created') })
       setIsCreateDialogOpen(false)
       resetForm()
-      fetchModels()
+      setRefreshToken(token => token + 1)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -391,7 +409,7 @@ const PublicModelList: React.FC = () => {
       toast({ title: t('admin:public_models.success.updated') })
       setIsEditDialogOpen(false)
       resetForm()
-      fetchModels()
+      setRefreshToken(token => token + 1)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -412,7 +430,7 @@ const PublicModelList: React.FC = () => {
       toast({ title: t('admin:public_models.success.deleted') })
       setIsDeleteDialogOpen(false)
       setSelectedModel(null)
-      fetchModels()
+      setRefreshToken(token => token + 1)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -480,7 +498,7 @@ const PublicModelList: React.FC = () => {
             onChange={event => setSearchQuery(event.target.value)}
             placeholder={t('admin:public_models.search_placeholder')}
             aria-label={t('admin:public_models.search_placeholder')}
-            className="h-11 pl-9 pr-12 sm:h-9 sm:pr-10"
+            className="h-11 pl-9 pr-12 md:h-9 md:pr-10"
             data-testid="public-model-search-input"
           />
           {searchQuery && (
@@ -489,7 +507,7 @@ const PublicModelList: React.FC = () => {
               onClick={() => setSearchQuery('')}
               aria-label={t('admin:public_models.clear_search')}
               data-testid="public-model-search-clear"
-              className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-text-muted hover:text-text-primary sm:right-2 sm:h-8 sm:w-8"
+              className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-text-muted hover:text-text-primary md:right-2 md:h-8 md:w-8"
             >
               <X className="h-4 w-4" />
             </button>
@@ -503,6 +521,17 @@ const PublicModelList: React.FC = () => {
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
+          </div>
+        )}
+
+        {/* Same-scope refresh keeps the current list visible */}
+        {refreshing && (
+          <div
+            className="flex items-center justify-center py-2"
+            role="status"
+            data-testid="public-model-refreshing"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
           </div>
         )}
 
@@ -524,7 +553,7 @@ const PublicModelList: React.FC = () => {
         )}
 
         {/* Empty State */}
-        {!loading && !loadError && models.length === 0 && (
+        {!loading && !loadError && hasCurrentResults && models.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
             <p className="text-text-muted">
@@ -536,7 +565,7 @@ const PublicModelList: React.FC = () => {
         )}
 
         {/* Model List */}
-        {!loading && models.length > 0 && (!loadError || hasCurrentResults) && (
+        {!loading && hasCurrentResults && models.length > 0 && (
           <PublicModelCardList
             models={models}
             onEdit={openEditDialog}
@@ -902,8 +931,14 @@ const PublicModelList: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteModel} className="bg-error hover:bg-error/90">
+            <AlertDialogCancel data-testid="cancel-delete-public-model">
+              {t('admin:common.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteModel}
+              className="bg-error hover:bg-error/90"
+              data-testid="confirm-delete-public-model"
+            >
               {t('admin:common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -60,6 +60,7 @@ export const PublicModelCardList: React.FC<PublicModelCardListProps> = ({
       {models.map(model => (
         <Card
           key={model.id}
+          data-testid="public-model-card"
           className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
         >
           <div className="flex items-center justify-between min-w-0">
@@ -114,18 +115,20 @@ export const PublicModelCardList: React.FC<PublicModelCardListProps> = ({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-11 w-11 md:h-8 md:w-8"
                 onClick={() => onEdit(model)}
                 title={t('admin:public_models.edit_model')}
+                data-testid={`edit-public-model-${model.id}`}
               >
                 <PencilIcon className="w-4 h-4" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 hover:text-error"
+                className="h-11 w-11 hover:text-error md:h-8 md:w-8"
                 onClick={() => onDelete(model)}
                 title={t('admin:public_models.delete_model')}
+                data-testid={`delete-public-model-${model.id}`}
               >
                 <TrashIcon className="w-4 h-4" />
               </Button>
