@@ -38,7 +38,12 @@ export async function prepareIssueRuntimeTask({
   await port.bindTask(issueId, task, title, dispatch)
   if (!project) return () => port.unbindTask(issueId, task)
   const projectRef = { projectStore: project.project_store, projectId: String(project.id) }
-  publishProjectSpaceTaskBindingChanged({ task: address, project: projectRef, type: 'bound' })
+  publishProjectSpaceTaskBindingChanged({
+    task: address,
+    project: projectRef,
+    type: 'bound',
+    itemId: issueId,
+  })
   const status = await prepareIssueStartStatus(issues, issueId, {
     projectStore: project.project_store,
     dispatchRoundId: dispatchRoundId ?? dispatch?.dispatchRoundId,
@@ -49,7 +54,12 @@ export async function prepareIssueRuntimeTask({
       await status.rollback?.()
     } finally {
       await port.unbindTask(issueId, task)
-      publishProjectSpaceTaskBindingChanged({ task: address, project: projectRef, type: 'unbound' })
+      publishProjectSpaceTaskBindingChanged({
+        task: address,
+        project: projectRef,
+        type: 'unbound',
+        itemId: issueId,
+      })
     }
   }
 }

@@ -346,7 +346,12 @@ export function createCloudTodoTaskActions(
         )
       }
       const project = projectSpaceRef(selectedItemProject)
-      publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
+      publishProjectSpaceTaskBindingChanged({
+        task: address,
+        project,
+        type: 'bound',
+        itemId: latest.id,
+      })
       let rollbackStatus: (() => Promise<void>) | undefined
       if (selectedItemProject.location === 'cloud') {
         const status = await prepareIssueStartStatus(cloudWorkspaceApi!.issues, latest.id, {
@@ -363,7 +368,12 @@ export function createCloudTodoTaskActions(
           await rollbackStatus?.()
         } finally {
           await runtimeBindingApi.unbindTask(latest.id, address)
-          publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'unbound' })
+          publishProjectSpaceTaskBindingChanged({
+            task: address,
+            project,
+            type: 'unbound',
+            itemId: latest.id,
+          })
           setBoardRefreshNonce(value => value + 1)
         }
       }

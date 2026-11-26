@@ -464,6 +464,23 @@ fn uses_calendar_connection_policy(origin: &Value) -> bool {
         && origin["memoryReview"] != true
 }
 
+pub(crate) fn calendar_allows_full_access(request: &ExecutionRequest) -> bool {
+    let Some(schedule) = request.extra.get("standInSchedule") else {
+        return false;
+    };
+    if schedule["askBeforeAct"] != false || request.extra.contains_key("standInDelegation") {
+        return false;
+    }
+    match request
+        .extra
+        .get("origin")
+        .filter(|origin| !origin.is_null())
+    {
+        Some(origin) => uses_calendar_connection_policy(origin),
+        None => schedule["continuation"] == true,
+    }
+}
+
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
     if request
         .extra
