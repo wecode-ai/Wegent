@@ -30,6 +30,9 @@ def test_oauth_token_endpoint_body_is_excluded_from_telemetry() -> None:
     assert _should_capture_http_body("/api/external/oauth/token") is False
     assert _should_capture_http_body("/api/external/oauth/revoke") is False
     assert _should_capture_http_body("/api/external/oauth/userinfo") is True
+    assert not _should_capture_http_body(
+        "/api/connector-apps/dingtalk_docs/oauth/sessions"
+    )
 
 
 def test_site_environment_variable_bodies_are_excluded_from_telemetry() -> None:

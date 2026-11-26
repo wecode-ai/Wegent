@@ -252,6 +252,7 @@ export function AutomationDetailWorkspace({
                 <ActionMenu
                   ariaLabel={t('todo.automation_actions', '自动化操作')}
                   testId={`automation-detail-actions-${automation.id}`}
+                  placement="bottom-end"
                   items={[
                     {
                       testId: 'automation-run-now-button',

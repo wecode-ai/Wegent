@@ -46,6 +46,11 @@ import type {
 type Messages = (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en']
 
 interface IssueDetailProps {
+  embedded?: boolean
+  taskRequest?: { key: string; binding: SharedIssueDetailTaskBinding }
+  headerActions?: ReactNode
+  panelExpansion?: { expanded: boolean; onChange(expanded: boolean): void; testId: string }
+  onOpenRelatedIssue?(issue: CollaborationIssue): void
   commentBoard?: import('./issue-detail/issueCommentActions').IssueCommentBoardContext
   api: Pick<
     SharedWorkspaceApi,
@@ -183,6 +188,11 @@ export function IssueDetail(props: IssueDetailProps) {
 }
 
 function BrowserIssueDetail({
+  embedded,
+  taskRequest,
+  headerActions,
+  panelExpansion,
+  onOpenRelatedIssue,
   commentBoard,
   api,
   project,
@@ -215,6 +225,11 @@ function BrowserIssueDetail({
     issueId: string
     binding: SharedIssueDetailTaskBinding
   } | null>(null)
+  const [handledTaskRequest, setHandledTaskRequest] = useState<string>()
+  if (taskRequest && handledTaskRequest !== taskRequest.key) {
+    setHandledTaskRequest(taskRequest.key)
+    setConversationSelection({ issueId: issue.id, binding: taskRequest.binding })
+  }
   const selectedConversation =
     conversationSelection?.issueId === issue.id ? conversationSelection.binding : null
   const closeConversation = () => setConversationSelection(null)
@@ -245,6 +260,7 @@ function BrowserIssueDetail({
   return (
     <>
       <IssueConversationDrawers
+        embedded={embedded}
         label={editorTranslate('todo.issue_details', '任务详情')}
         conversation={
           selectedConversation && api.runtime ? (
@@ -287,6 +303,10 @@ function BrowserIssueDetail({
             workspacePanelFill
             readFirst
             showPanelControls
+            headerActions={headerActions}
+            panelExpansion={panelExpansion}
+            onOpenChildTask={onOpenRelatedIssue}
+            onOpenRelatedIssue={onOpenRelatedIssue}
             showAssignee
             canAssign={permissions.canAssign}
             currentAssignment={currentAssignment}

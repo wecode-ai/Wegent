@@ -310,10 +310,16 @@ class TestKnowledgeTool:
         )
 
         async def fake_retrieve(**kwargs):
+            record = {
+                "knowledge_base_id": 7,
+                "document_id": 11,
+                "title": "Policy.txt",
+                "content": "policy marker",
+            }
             return {
                 "query": kwargs["query"],
-                "records": [],
-                "total": 0,
+                "records": [record, {**record, "content": "another chunk"}],
+                "total": 2,
                 "mode": "rag_retrieval",
             }
 
@@ -341,6 +347,14 @@ class TestKnowledgeTool:
         assert mock_retrieve.call_args.kwargs["folder_ids"] == [5]
         assert mock_retrieve.call_args.kwargs["include_subfolders"] is False
         assert result["query"] == "policy"
+        assert result["sources"] == [
+            {
+                "knowledge_base_id": 7,
+                "document_id": 11,
+                "document_name": "Policy.txt",
+                "knowledge_base_name": "Unknown",
+            }
+        ]
 
     def test_read_document_content_returns_orchestrator_payload(self):
         """Test that read_document_content returns the orchestrator payload."""

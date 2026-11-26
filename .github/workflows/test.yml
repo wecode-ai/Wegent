@@ -212,7 +212,7 @@ jobs:
         uses: ./.github/actions/setup-rust-cache
         with:
           manifest-path: backend-rs/Cargo.toml
-          components: rustfmt, clippy
+          components: rustfmt
 
       - name: Check Rust backend formatting
         working-directory: backend-rs
@@ -225,7 +225,6 @@ jobs:
         run: |
           cargo fmt --manifest-path shared/rust/Cargo.toml --all --check
           cargo test --manifest-path shared/rust/Cargo.toml --locked
-          cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
       - name: Run Rust backend tests
         working-directory: backend-rs
@@ -233,6 +232,7 @@ jobs:
           set -o pipefail
           mkdir -p ../.ci-artifacts/backend-rs-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
+          cargo test --locked --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/backend-rs-test-artifacts.jsonl"
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
@@ -271,7 +271,7 @@ jobs:
           GIT_INBOX_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-git-inbox --lib store::redis_tests -- --ignored --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-git-inbox store::redis_tests --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/git-inbox-redis.log
 
       - name: Verify native MySQL schema lifecycle and initialization
@@ -328,14 +328,14 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-plugin-runtime --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-plugin-runtime plugins_installed::auto_update::auto_update_mysql_tests --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
 
       - name: Verify plugin batch reads with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-plugin-runtime --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-plugin-runtime plugins_installed::handler::mysql_tests --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-installed-list-mysql.log
           cargo test --locked --lib batch_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-batch-reads-mysql.log
@@ -344,14 +344,14 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-attachments --lib attachments_task_all::auth::mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-attachments attachments_task_all::auth::mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/attachment-auth-mysql.log
 
       - name: Verify handoff title search with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-tasks --lib tasks_search::mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-tasks tasks_search::mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
 
       - name: Verify assignment index schema compatibility with MySQL
@@ -360,16 +360,16 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
-          cargo test --locked -p wegent-project-participation --lib human_requests::mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-project-participation human_requests::mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-project-coordination --lib cloud_projects::members::roster_mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-project-coordination cloud_projects::members::roster_mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
-          cargo test --locked -p wegent-project-coordination --lib cloud_projects::agent_deletion_mysql_tests -- --ignored \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-project-coordination cloud_projects::agent_deletion_mysql_tests \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
           cargo test --locked --lib cloud_projects::collaboration_metrics::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/collaboration-metrics-mysql.log
@@ -428,7 +428,7 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked -p wegent-connector-apps --lib apps_installed::refresh_mysql_tests -- --ignored --test-threads=1 \
+          bash ../.github/scripts/run-backend-rs-ignored-test.sh wegent-connector-apps apps_installed::refresh_mysql_tests --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/connector-refresh-mysql.log
 
       - name: Upload Rust backend test evidence
@@ -439,9 +439,32 @@ jobs:
           path: .ci-artifacts/backend-rs-tests/
           if-no-files-found: error
 
+  lint-backend-rs:
+    name: Lint Backend Rust
+    needs: changes
+    if: needs.changes.outputs.backend_rs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up shared Rust toolchain and cache
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: backend-rs/Cargo.toml
+          components: clippy
+
       - name: Check Rust backend lints
         working-directory: backend-rs
         run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Check shared Rust library lints
+        run: cargo clippy --manifest-path shared/rust/Cargo.toml --all-targets --locked -- -D warnings
 
   test-plugin-auth-mysql:
     name: Test Backend MySQL Regressions
@@ -1121,6 +1144,7 @@ jobs:
         changes,
         test-backend,
         test-backend-rs,
+        lint-backend-rs,
         test-plugin-auth-mysql,
         test-executor,
         test-executor-local-auth-platforms,
@@ -1158,6 +1182,7 @@ jobs:
           fi
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
           assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
+          assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.lint-backend-rs.result }}" "Backend Rust lints"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor.result }}" "Executor tests"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor-local-auth-platforms.result }}" "Executor local auth platform tests"

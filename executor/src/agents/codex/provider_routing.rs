@@ -73,6 +73,7 @@ pub(super) fn configure_request_provider(
     launch: &mut CodexLaunchConfig,
     request: &ExecutionRequest,
     route_scope: &str,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<(), String> {
     let upstream = request_upstream(request)?;
     let route = upstream
@@ -90,16 +91,17 @@ pub(super) fn configure_request_provider(
     log_route(request, route, &provider)?;
     if let Some((mut upstream, _)) = upstream {
         inject_session_headers(&mut upstream.default_headers, &request.task_id);
+        upstream.routing_model_id = codex_request_model(request);
         let official_websocket = upstream.is_official_chatgpt_codex()
             && native_provider::official_websocket_enabled(&request_home(request)?)?;
         configure_codex_router(
             launch,
             route_scope,
             upstream,
-            codex_request_model(request),
             request_model_switched(request),
             vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
             official_websocket,
+            gateway_credentials,
         );
     } else {
         launch.model_provider = Some(codex_model_catalog::PROVIDER_ID.to_owned());
@@ -194,7 +196,7 @@ experimental_bearer_token="must-not-select"
             }),
             ..ExecutionRequest::default()
         };
-        let (upstream, source) = request_upstream(&request).unwrap().unwrap();
+        let (mut upstream, source) = request_upstream(&request).unwrap().unwrap();
         assert_eq!(source, "local_proxy_official_subscription");
         assert!(upstream.is_official_chatgpt_codex());
         assert!(upstream.api_key.is_empty());
@@ -204,14 +206,15 @@ experimental_bearer_token="must-not-select"
             local_model_proxy::CodexRequestMode::OfficialSubscription
         );
         let mut launch = CodexLaunchConfig::default();
+        upstream.routing_model_id = Some("gpt-test".to_owned());
         configure_codex_router(
             &mut launch,
             "official-chatgpt-test",
             upstream,
-            Some("gpt-test".to_owned()),
             false,
             None,
             false,
+            None,
         );
         assert!(launch.local_proxy_registration.is_some());
         assert!(!launch

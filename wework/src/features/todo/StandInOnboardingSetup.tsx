@@ -10,6 +10,7 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
+import { isDingTalkSource } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -278,11 +279,22 @@ export function StandInOnboardingSetup({
               >
                 <p>{source.name}</p>
                 <p className="text-text-secondary">
-                  {source.configurationSummary ??
-                    t('standIn.workspace.connection_default_configuration')}
+                  {isDingTalkSource(source)
+                    ? t(
+                        source.kind === 'group'
+                          ? 'standIn.dingtalk_delegation.group_mentions'
+                          : 'standIn.dingtalk_delegation.direct'
+                      )
+                    : (source.configurationSummary ??
+                      t('standIn.workspace.connection_default_configuration'))}
                 </p>
               </div>
             ))}
+            {role.connections?.some(isDingTalkSource) && (
+              <p className="text-sm text-text-secondary">
+                {t('standIn.dingtalk_delegation.onboarding')}
+              </p>
+            )}
             {!role.collaboration.enabled && !role.connections?.length && (
               <p className="text-sm text-text-secondary">{t('standIn.onboarding.no_apps')}</p>
             )}

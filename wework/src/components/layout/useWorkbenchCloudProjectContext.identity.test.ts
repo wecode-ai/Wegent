@@ -1,15 +1,28 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import type { CloudLoopItem } from '@/api/deliveries'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  DEFAULT_WORK_ITEM_PROJECT_KEY,
+  type CloudLoopItem,
+} from '@/api/deliveries'
+import { ApiError } from '@/api/http'
 import {
   findProjectSpaceContextSourceForTask,
+  projectSpaceForRuntimeTask,
   projectSpaceRef,
+  publishProjectSpaceTaskBindingChanged,
   publishProjectSpaceTaskContextChanged,
 } from '@/features/todo/projectSpaceSelection'
 import type { DeliveryApi } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import * as navigation from '@/lib/navigation'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
+
+const systemProject = {
+  ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+  project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+}
 
 test('defers project context lookup until optimistic task creation is accepted', async () => {
   const board = project('creation-board')
@@ -105,38 +118,416 @@ test('retains the same owner binding during alias refresh but isolates another d
   expect(result.current.boundCloudItem).toBeNull()
 })
 
-test('recovers a persisted task association after a transient lookup timeout', async () => {
-  vi.useFakeTimers()
-  try {
+test.each([false, true])(
+  'recovers a persisted task association after a transient lookup timeout (system Issue: %s)',
+  async hasSystemIssue => {
+    vi.useFakeTimers()
     const board = project('persisted-board')
     const item = loopItem(board.id)
-    const findCloudContextForTask = vi
-      .fn()
-      .mockImplementationOnce(() => new Promise<never>(() => {}))
-      .mockResolvedValue({ project: board, loop_item: item })
-    const services = { workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }) }
+    const response = Promise.withResolvers<{ project: typeof board; loop_item: CloudLoopItem }>()
+    try {
+      const findCloudContextForTask = vi
+        .fn()
+        .mockReturnValueOnce(response.promise)
+        .mockResolvedValue({ project: board, loop_item: item })
+      const services = {
+        workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }),
+        ...(hasSystemIssue
+          ? {
+              projectSpaceApis: {
+                local: {
+                  findCloudContextForTask: async () => ({
+                    project: systemProject,
+                    loop_item: loopItem(systemProject.id),
+                  }),
+                } as DeliveryApi,
+              },
+            }
+          : {}),
+      }
+      const { result, unmount } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: {
+            deviceId: 'persisted-device',
+            taskId: `persisted-task-${hasSystemIssue}`,
+          },
+          defaultProjectSpace: null,
+          paneKey: 'runtime:persisted-device:persisted-task',
+          runtimeTaskTitle: 'Persisted task',
+          services,
+          userId: 1,
+        })
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_200)
+      })
+      expect(result.current.boundCloudProject?.id).toBe(board.id)
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      await act(async () => {
+        response.resolve({ project: systemProject, loop_item: loopItem(systemProject.id) })
+      })
+      expect(result.current.boundCloudProject?.id).toBe(board.id)
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      unmount()
+    } finally {
+      response.resolve({ project: board, loop_item: item })
+      vi.useRealTimers()
+    }
+  }
+)
+
+test('reopening a task resolves its remote Issue even when the system Issue was remembered', async () => {
+  const board = project('reopened-board')
+  const item = { ...loopItem(board.id), id: 'REMOTE-42' }
+  let linked = false
+  const services = {
+    projectSpaceApis: {
+      local: {
+        findCloudContextForTask: async () => ({
+          project: systemProject,
+          loop_item: loopItem(systemProject.id),
+        }),
+      } as DeliveryApi,
+    },
+    workspaceRuntimePort: cloudRuntimePort({
+      async findCloudContextForTask() {
+        if (!linked) throw new ApiError('Not bound to a cloud project', 404)
+        return { project: board, loop_item: item }
+      },
+    }),
+  }
+  const options = {
+    active: true,
+    currentRuntimeTask: { deviceId: 'reopened-device', taskId: 'reopened-task' },
+    defaultProjectSpace: null,
+    paneKey: 'runtime:reopened-device:reopened-task',
+    runtimeTaskTitle: 'Reopened task',
+    services,
+    userId: 1,
+  }
+  const original = renderHook(() => useWorkbenchCloudProjectContext(options))
+  await waitFor(() => expect(original.result.current.boundCloudProject?.id).toBe(systemProject.id))
+  original.unmount()
+
+  linked = true
+  const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+  try {
+    const reopened = renderHook(() => useWorkbenchCloudProjectContext(options))
+    await waitFor(() => expect(reopened.result.current.boundCloudItem?.id).toBe(item.id))
+    expect(reopened.result.current.boundCloudProject?.id).toBe(board.id)
+    act(() => reopened.result.current.openBoundProjectSpaceTask())
+    expect(navigate).toHaveBeenCalledWith(
+      `/todo?projectStore=backend&projectId=${board.id}&itemId=${item.id}`
+    )
+    reopened.unmount()
+  } finally {
+    navigate.mockRestore()
+  }
+})
+
+test.each(['changed', 'missing', 'failed'] as const)(
+  'retries an incomplete cloud association after the Issue read is %s',
+  async issueRead => {
+    vi.useFakeTimers()
+    const previous = project('previous-board')
+    const latest = project('changed-board')
+    const latestItem = { ...loopItem(latest.id), id: 'CHANGED-42' }
+    const expectedItem = issueRead === 'missing' ? null : latestItem
+    const issueReadStarted = Promise.withResolvers<void>()
+    const issueResponse = Promise.withResolvers<CloudLoopItem>()
+    try {
+      let context: { project: typeof previous; loop_item: CloudLoopItem | null } = {
+        project: previous,
+        loop_item: loopItem(previous.id),
+      }
+      const port = cloudRuntimePort({ findCloudContextForTask: async () => context })
+      vi.spyOn(port, 'findIssueForTask').mockImplementationOnce(() => {
+        issueReadStarted.resolve()
+        return issueResponse.promise
+      })
+      const services = {
+        projectSpaceApis: {
+          local: {
+            findCloudContextForTask: async () => ({
+              project: systemProject,
+              loop_item: loopItem(systemProject.id),
+            }),
+          } as DeliveryApi,
+        },
+        workspaceRuntimePort: port,
+      }
+      const { result, unmount } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: { deviceId: 'changed-device', taskId: `changed-task-${issueRead}` },
+          defaultProjectSpace: null,
+          paneKey: `runtime:changed-device:changed-task-${issueRead}`,
+          runtimeTaskTitle: 'Changed task',
+          services,
+        })
+      )
+      await act(async () => {
+        await issueReadStarted.promise
+        context = { project: latest, loop_item: expectedItem }
+        if (issueRead === 'changed') issueResponse.resolve(latestItem)
+        else if (issueRead === 'missing') issueResponse.reject(new ApiError('Issue not found', 404))
+        else issueResponse.reject(new Error('Issue read failed'))
+      })
+      expect(result.current.boundCloudProject).toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(100))
+      expect(result.current.boundCloudProject?.id).toBe(latest.id)
+      expect(result.current.boundCloudItem?.id ?? null).toBe(expectedItem?.id ?? null)
+      unmount()
+    } finally {
+      issueResponse.resolve(latestItem)
+      vi.useRealTimers()
+    }
+  }
+)
+
+test.each([
+  { failure: 'issue read', confirmed: false },
+  { failure: 'timeout', confirmed: false },
+  { failure: 'issue read', confirmed: true },
+  { failure: 'timeout', confirmed: true },
+] as const)(
+  'exposes a retry after exhausted $failure failures (confirmed: $confirmed)',
+  async ({ failure, confirmed }) => {
+    vi.useFakeTimers()
+    const board = project('retry-board')
+    const item = { ...loopItem(board.id), id: 'RETRY-42' }
+    let currentItem = item
+    const delayed = Promise.withResolvers<{ project: typeof board; loop_item: CloudLoopItem }>()
+    let recovered = confirmed
+    const findCloudContextForTask = vi.fn(async () =>
+      !recovered && failure === 'timeout'
+        ? delayed.promise
+        : { project: board, loop_item: currentItem }
+    )
+    const port = cloudRuntimePort({ findCloudContextForTask })
+    const readIssue = port.findIssueForTask
+    if (failure === 'issue read')
+      vi.spyOn(port, 'findIssueForTask').mockImplementation(async task => {
+        if (!recovered) throw new ApiError('Issue not found', 404)
+        return readIssue(task)
+      })
+    const services = {
+      projectSpaceApis: {
+        local: {
+          findCloudContextForTask: async () => ({
+            project: systemProject,
+            loop_item: loopItem(systemProject.id),
+          }),
+        } as DeliveryApi,
+      },
+      workspaceRuntimePort: port,
+    }
+    const task = { deviceId: 'retry-device', taskId: `retry-task-${failure}-${confirmed}` }
     const { result, unmount } = renderHook(() =>
       useWorkbenchCloudProjectContext({
         active: true,
-        currentRuntimeTask: { deviceId: 'persisted-device', taskId: 'persisted-task' },
+        currentRuntimeTask: task,
         defaultProjectSpace: null,
-        paneKey: 'runtime:persisted-device:persisted-task',
-        runtimeTaskTitle: 'Persisted task',
+        paneKey: `runtime:retry-device:${task.taskId}`,
+        runtimeTaskTitle: 'Retry task',
         services,
-        userId: 1,
       })
     )
+    try {
+      if (confirmed) {
+        await act(async () => {})
+        expect(result.current.boundCloudItem?.id).toBe(item.id)
+        recovered = false
+        await act(async () =>
+          publishProjectSpaceTaskContextChanged({ task, project: projectSpaceRef(board) })
+        )
+        currentItem = { ...item, id: 'RETRY-43' }
+      }
+      await act(async () =>
+        vi.advanceTimersByTimeAsync(51 * 100 + (failure === 'timeout' ? 51 * 5_000 : 0))
+      )
+      expect(findCloudContextForTask).toHaveBeenCalledTimes(confirmed ? 52 : 51)
+      expect(result.current.boundCloudProject?.id ?? null).toBe(confirmed ? board.id : null)
+      expect(result.current.boundCloudItem?.id ?? null).toBe(confirmed ? item.id : null)
+      expect(result.current.activeDeliveryItem?.id ?? null).toBe(confirmed ? item.id : null)
+      expect(result.current.todoBindingError).toBeTruthy()
+      const retry = result.current.projectSpaceContextRetryAction
+      expect(retry?.onClick).toBeTypeOf('function')
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_200)
-    })
-    expect(result.current.boundCloudProject?.id).toBe(board.id)
-    expect(result.current.boundCloudItem?.id).toBe(item.id)
-    unmount()
-  } finally {
-    vi.useRealTimers()
+      recovered = true
+      await act(async () => {
+        retry?.onClick()
+        retry?.onClick()
+      })
+      expect(findCloudContextForTask).toHaveBeenCalledTimes(confirmed ? 53 : 52)
+      expect(result.current.boundCloudProject?.id).toBe(board.id)
+      expect(result.current.boundCloudItem?.id).toBe(currentItem.id)
+      expect(result.current.todoBindingError).toBeNull()
+      expect(result.current.projectSpaceContextRetryAction).toBeUndefined()
+
+      await act(async () => {
+        delayed.resolve({ project: systemProject, loop_item: loopItem(systemProject.id) })
+      })
+      expect(result.current.boundCloudProject?.id).toBe(board.id)
+    } finally {
+      unmount()
+      delayed.resolve({ project: board, loop_item: item })
+      vi.useRealTimers()
+    }
   }
-})
+)
+
+test.each(['remapped project', 'remapped item', 'same item', 'unbound', 'system bound'] as const)(
+  'handles a confirmed project context when the task is %s during an incomplete lookup',
+  async change => {
+    vi.useFakeTimers()
+    const board = project('confirmed-board')
+    const item = loopItem(board.id)
+    const task = { deviceId: 'confirmed-device', taskId: `confirmed-task-${change}` }
+    let currentBoard = board
+    let currentItem = item
+    const port = cloudRuntimePort({
+      findCloudContextForTask: async () => ({
+        project: currentBoard,
+        loop_item: currentItem,
+      }),
+    })
+    const services = { workspaceRuntimePort: port }
+    const { result, unmount } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: task,
+        defaultProjectSpace: null,
+        paneKey: `runtime:confirmed-device:${task.taskId}`,
+        runtimeTaskTitle: 'Confirmed task',
+        services,
+      })
+    )
+    try {
+      await act(async () => {})
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      vi.spyOn(port, 'findIssueForTask').mockRejectedValue(new ApiError('Issue not found', 404))
+      const changedProject =
+        change === 'remapped project'
+          ? project('new-board')
+          : change === 'system bound'
+            ? systemProject
+            : board
+      if (change === 'remapped project') {
+        currentBoard = changedProject
+        currentItem = loopItem(currentBoard.id)
+      } else if (change === 'remapped item') {
+        currentItem = { ...item, id: 'todo-2' }
+      }
+      await act(async () =>
+        publishProjectSpaceTaskBindingChanged({
+          task,
+          project: projectSpaceRef(changedProject),
+          type: change === 'unbound' ? 'unbound' : 'bound',
+          itemId: currentItem.id,
+        })
+      )
+      const retains = change === 'same item' || change === 'system bound'
+      const expectedProject = retains ? board.id : null
+      const expectedItem = retains ? item.id : null
+      const assertRetainedSubmission = () => {
+        expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(systemProject))
+        const submission = result.current.prepareSubmission('Follow up')
+        expect(submission.additionalContext?.cloudCollaboration?.value).toContain(
+          JSON.stringify({ project_store: 'backend', space_id: board.id, item_id: item.id })
+        )
+        expect(submission.cloudProjectId).toBe(board.id)
+        expect(submission.origin).toEqual({
+          type: 'board_task',
+          projectStore: 'backend',
+          cloudProjectId: board.id,
+          loopItemId: item.id,
+        })
+      }
+      expect(result.current.boundCloudProject?.id ?? null).toBe(expectedProject)
+      expect(result.current.boundCloudItem?.id ?? null).toBe(expectedItem)
+      if (change === 'system bound') assertRetainedSubmission()
+      await act(async () => vi.advanceTimersByTimeAsync(51 * 100))
+      expect(result.current.boundCloudProject?.id ?? null).toBe(expectedProject)
+      expect(result.current.boundCloudItem?.id ?? null).toBe(expectedItem)
+      expect(result.current.activeDeliveryItem?.id ?? null).toBe(expectedItem)
+      expect(result.current.projectSpaceContextRetryAction?.onClick).toBeTypeOf('function')
+      if (change === 'system bound') assertRetainedSubmission()
+    } finally {
+      unmount()
+      vi.useRealTimers()
+    }
+  }
+)
+
+test.each(['local', 'backend'] as const)(
+  'opens the current association while an explicit %s execution can return to its source',
+  async projectStore => {
+    const execution = { projectId: 'source-project', issueId: 'source-issue' }
+    const board = project('latest-board')
+    const item = { ...loopItem(board.id), id: 'LATEST-42' }
+    const response = Promise.withResolvers<{ project: typeof board; loop_item: CloudLoopItem }>()
+    const services = {
+      workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask: () => response.promise }),
+    }
+    const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+    try {
+      const { result, unmount } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: {
+            deviceId: 'execution-device',
+            taskId: `execution-task-${projectStore}`,
+            issueExecution: execution,
+            ...(projectStore === 'backend' ? { projectSession: execution } : {}),
+          },
+          defaultProjectSpace: null,
+          paneKey: `execution-pane-${projectStore}`,
+          runtimeTaskTitle: 'Execution',
+          services,
+        })
+      )
+      const sourceRoute = `/todo?projectStore=${projectStore}&projectId=source-project&itemId=source-issue`
+      act(() => result.current.openIssueExecutionSource())
+      expect(navigate).toHaveBeenLastCalledWith(sourceRoute)
+      act(() => result.current.openBoundProjectSpaceTask())
+      expect(navigate).toHaveBeenLastCalledWith(sourceRoute)
+
+      await act(async () => response.resolve({ project: board, loop_item: item }))
+      expect(result.current.boundCloudItem?.id).toBe(item.id)
+      const submission = result.current.prepareSubmission('Follow up')
+      const submissionProjectId = projectStore === 'backend' ? execution.projectId : board.id
+      const submissionItemId = projectStore === 'backend' ? execution.issueId : item.id
+      expect(submission.additionalContext?.cloudCollaboration?.value).toContain(
+        JSON.stringify({
+          project_store: 'backend',
+          space_id: submissionProjectId,
+          item_id: submissionItemId,
+        })
+      )
+      expect(submission.cloudProjectId).toBe(submissionProjectId)
+      expect(submission.origin).toEqual({
+        type: 'board_task',
+        projectStore: 'backend',
+        cloudProjectId: submissionProjectId,
+        loopItemId: submissionItemId,
+      })
+      act(() => result.current.openBoundProjectSpaceTask())
+      expect(navigate).toHaveBeenLastCalledWith(
+        `/todo?projectStore=backend&projectId=${board.id}&itemId=${item.id}`
+      )
+
+      act(() => result.current.openIssueExecutionSource())
+      expect(navigate).toHaveBeenLastCalledWith(sourceRoute)
+      unmount()
+    } finally {
+      response.resolve({ project: board, loop_item: item })
+      navigate.mockRestore()
+    }
+  }
+)
 
 test('completes task association when the board items load during tracking', async () => {
   const board = project('tracking-board')
