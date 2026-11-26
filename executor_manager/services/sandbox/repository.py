@@ -329,6 +329,7 @@ class SandboxRepository(metaclass=SingletonMeta):
 
             # Keep the session available for retry if lookup or revocation fails.
             record = self.redis_client.hget(hash_key, SANDBOX_FIELD_NAME)
+            e2b_sandbox_id = None
             if record is not None:
                 sandbox = json.loads(record)
                 container_name = sandbox.get("container_name")
@@ -337,14 +338,12 @@ class SandboxRepository(metaclass=SingletonMeta):
                 ):
                     return False
                 e2b_sandbox_id = (sandbox.get("metadata") or {}).get("e2b_sandbox_id")
-                if e2b_sandbox_id:
-                    self._delete_e2b_index(e2b_sandbox_id)
 
-            # Remove from both the scoped index and any legacy membership.
-            self._remove_sandbox_from_active_indexes(str(task_id))
-
-            # Delete entire session Hash
+            # Until the session is deleted, E2B requests and GC must still find it.
             self.redis_client.delete(hash_key)
+            if e2b_sandbox_id:
+                self._delete_e2b_index(e2b_sandbox_id)
+            self._remove_sandbox_from_active_indexes(str(task_id))
 
             logger.debug(
                 f"[SandboxRepository] Cleaned Redis for sandbox: sandbox_id={sandbox_id}"
