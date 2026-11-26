@@ -415,6 +415,12 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.error(f"[SandboxRepository] Failed to get expired sandboxes: {e}")
             return []
 
+    def get_sandbox_activity_score(self, sandbox_id: str) -> Optional[float]:
+        """Read the same activity index that selects expiry candidates."""
+        if self.redis_client is None:
+            raise RuntimeError("Sandbox storage is unavailable")
+        return self.redis_client.zscore(self._active_sandboxes_zset, sandbox_id)
+
     def remove_from_active_set(self, sandbox_id: str) -> bool:
         """Remove a sandbox from the active sandboxes ZSet.
 

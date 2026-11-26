@@ -2491,7 +2491,9 @@ class TestSandboxManager:
         assert mock_terminate.call_args.args[0] == "12345"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("change", ["renewed", "replaced"])
+    @pytest.mark.parametrize(
+        "change", ["renewed", "replaced", "new_execution", "lookup_failed"]
+    )
     async def test_collect_expired_sandboxes_preserves_changed_runtime(
         self,
         sandbox_manager_with_mock_redis,
@@ -2507,8 +2509,12 @@ class TestSandboxManager:
         renewed = copy.copy(sample_sandbox)
         if change == "renewed":
             renewed.last_activity_at = time.time()
-        else:
+        elif change == "replaced":
             renewed.created_at += 1
+        elif change == "new_execution":
+            mock_redis_client.zscore.return_value = time.time()
+        else:
+            mock_redis_client.zscore.side_effect = OSError("Redis unavailable")
         mocker.patch.object(
             manager._repository,
             "load_sandbox",

@@ -913,7 +913,22 @@ class SandboxManager(metaclass=SingletonMeta):
                     "skipped": True,
                     "reason": "sandbox_lifecycle_lease_lost",
                 }
-            current = self._repository.load_sandbox(sandbox_id)
+            try:
+                current = self._repository.load_sandbox(
+                    sandbox_id, require_definitive_result=True
+                )
+                activity = (
+                    self._repository.get_sandbox_activity_score(sandbox_id)
+                    if idle_before is not None and current is not None
+                    else None
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not verify Sandbox %s for cleanup: %s",
+                    sandbox_id,
+                    type(error).__name__,
+                )
+                return {**result, "skipped": True, "reason": "sandbox_lookup_failed"}
             expected_runtime = (
                 (sandbox.container_name, sandbox.created_at) if sandbox else None
             )
@@ -925,7 +940,7 @@ class SandboxManager(metaclass=SingletonMeta):
             if (
                 idle_before is not None
                 and current
-                and (current.last_activity_at or 0) > idle_before
+                and max(current.last_activity_at or 0, activity or 0) > idle_before
             ):
                 return {**result, "skipped": True, "reason": "not_stale"}
             cleanup = asyncio.create_task(
