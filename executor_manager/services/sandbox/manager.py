@@ -737,25 +737,28 @@ class SandboxManager(metaclass=SingletonMeta):
         Returns:
             Sandbox if found, None otherwise
         """
-        sandbox = self._repository.load_sandbox(sandbox_id)
-        if sandbox is None:
-            return None
-
-        # Optionally check health via HTTP
-        if check_health and sandbox.base_url:
-            is_healthy = self._health_checker.check_health_sync(sandbox.base_url)
-            if not is_healthy:
-                logger.info(
-                    "[SandboxManager] Sandbox health check failed; cleaning stale "
-                    "metadata: sandbox_id=%s container=%s base_url=%s",
-                    sandbox.sandbox_id,
-                    sandbox.container_name,
-                    sandbox.base_url,
-                )
-                await self._cleanup_selected_sandbox(sandbox_id, sandbox)
+        # Retry the lookup once if a replacement appeared during the health check.
+        for _ in range(2):
+            sandbox = self._repository.load_sandbox(sandbox_id)
+            if sandbox is None:
                 return None
-
-        return sandbox
+            if (
+                not check_health
+                or not sandbox.base_url
+                or self._health_checker.check_health_sync(sandbox.base_url)
+            ):
+                return sandbox
+            logger.info(
+                "[SandboxManager] Sandbox health check failed; cleaning stale "
+                "metadata: sandbox_id=%s container=%s base_url=%s",
+                sandbox.sandbox_id,
+                sandbox.container_name,
+                sandbox.base_url,
+            )
+            cleanup = await self._cleanup_selected_sandbox(sandbox_id, sandbox)
+            if cleanup.get("reason") != "sandbox_replaced":
+                return None
+        return None
 
     @asynccontextmanager
     async def _lock_current_sandbox(

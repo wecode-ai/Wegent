@@ -1178,7 +1178,7 @@ class TestSandboxManager:
         assert sandbox is None
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("runtime_status", ["success", "failed"])
+    @pytest.mark.parametrize("runtime_status", ["success", "failed", "replaced"])
     async def test_get_sandbox_health_check_fails(
         self,
         sandbox_manager_with_mock_redis,
@@ -1187,12 +1187,23 @@ class TestSandboxManager:
         mocker,
         runtime_status,
     ):
-        """An unhealthy sandbox keeps its binding until removal succeeds."""
+        """Remove only the unhealthy runtime and return a healthy replacement."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
-        mocker.patch.object(
+        check_health = mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=False
         )
+        if runtime_status == "replaced":
+            replacement = json.loads(sample_sandbox_redis_data)
+            replacement["container_name"] = "replacement"
+            replacement["base_url"] = "http://replacement:8080"
+            replacement_data = json.dumps(replacement)
+            mock_redis_client.hget.side_effect = [
+                sample_sandbox_redis_data,
+                replacement_data,
+                replacement_data,
+            ]
+            check_health.side_effect = lambda url: url == replacement["base_url"]
         delete_sandbox = mocker.patch.object(
             manager._repository, "delete_sandbox", return_value=True
         )
@@ -1206,7 +1217,14 @@ class TestSandboxManager:
 
         sandbox = await manager.get_sandbox("12345", check_health=True)
 
-        assert sandbox is None
+        if runtime_status == "replaced":
+            assert sandbox is not None
+            assert sandbox.container_name == replacement["container_name"]
+            check_health.assert_called_with(replacement["base_url"])
+            executor.delete_executor.assert_not_called()
+            executor.delete_executor_by_task_id.assert_not_called()
+        else:
+            assert sandbox is None
         if runtime_status == "success":
             delete_sandbox.assert_called_once_with("12345")
         else:
