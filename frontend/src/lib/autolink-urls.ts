@@ -1,5 +1,6 @@
 import type { Element, Root, RootContent, Text } from 'hast'
 import { decodeString } from 'micromark-util-decode-string'
+import { normalizeUri } from 'micromark-util-sanitize-uri'
 
 // GFM autolink literals are disabled for iOS 16.
 const URL_REGEX =
@@ -7,6 +8,7 @@ const URL_REGEX =
 const URL_PREFIX_REGEX = new RegExp(`^${URL_REGEX.source}`, 'i')
 const TRAILING_REFERENCE = /&(?:#(?:\d{1,7}|x[\da-f]{1,6})|[\da-z]{1,31});$/i
 const LINE_ENDING = /(\r\n?|\n)/
+const CONTINUATION_PREFIX = /^[\t >]*/
 
 const NON_LINKABLE_ELEMENTS = new Set([
   'a',
@@ -23,17 +25,19 @@ const NON_LINKABLE_ELEMENTS = new Set([
 
 type SourcePart<Child> = { node: Child; start: number; end: number }
 
+function decodeMarkdownText(value: string): string {
+  return decodeString(value.replace(/\0/g, '\uFFFD'))
+}
+
 function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
   const sourceLines = raw.split(LINE_ENDING)
-  const textLines = node.value.split(LINE_ENDING)
-  if (sourceLines.length !== textLines.length || sourceLines.length === 1 || !node.position) {
-    return []
-  }
+  if (sourceLines.length === 1 || !node.position) return []
 
   const parts: SourcePart<Text>[] = []
   const { offset: startOffset } = node.position.start
   if (startOffset === undefined) return []
   let offset = startOffset
+  let textOffset = 0
   let { line, column } = node.position.start
 
   // Markdown strips indentation and quote markers on continuation lines.
@@ -41,18 +45,18 @@ function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
   for (let index = 0; index < sourceLines.length; index += 2) {
     const sourceLine = sourceLines[index]
     const lineEnding = sourceLines[index + 1] ?? ''
-    const value = textLines[index] + (textLines[index + 1] ?? '')
-    const decoded = decodeString(sourceLine)
-    const prefixLength = decoded.length - textLines[index].length
-    const prefix = sourceLine.slice(0, prefixLength)
-    if (
-      prefixLength < 0 ||
-      (index === 0 && prefixLength !== 0) ||
-      !/^[\t >]*$/.test(prefix) ||
-      decodeString(sourceLine.slice(prefixLength)) + lineEnding !== value
-    ) {
-      return []
-    }
+    const prefix = index === 0 ? '' : (CONTINUATION_PREFIX.exec(sourceLine)?.[0] ?? '')
+    const body = decodeMarkdownText(sourceLine.slice(prefix.length)) + lineEnding
+    const rendered = node.value.slice(textOffset, textOffset + prefix.length + body.length)
+    // An entity can add a line break to the rendered text. Match the decoded
+    // source line as a whole instead of splitting the rendered text into lines.
+    const keptPrefix = lineEnding
+      ? rendered.indexOf(body)
+      : node.value.length - textOffset - body.length
+    if (keptPrefix < 0 || keptPrefix > prefix.length) return []
+    const prefixLength = prefix.length - keptPrefix
+    const value = prefix.slice(prefixLength) + body
+    if (!rendered.startsWith(value)) return []
 
     const start = offset + prefixLength
     const end = offset + sourceLine.length + lineEnding.length
@@ -73,10 +77,11 @@ function continuationParts(node: Text, raw: string): SourcePart<Text>[] {
       })
     }
     offset = end
+    textOffset += value.length
     line++
     column = 1
   }
-  return parts
+  return textOffset === node.value.length ? parts : []
 }
 
 function sourceParts<Child extends RootContent>(
@@ -88,7 +93,9 @@ function sourceParts<Child extends RootContent>(
   if (start === undefined || end === undefined || start >= end) return []
   if (node.type === 'text') {
     const raw = source.slice(start, end)
-    return decodeString(raw) === node.value ? [{ node, start, end }] : continuationParts(node, raw)
+    return decodeMarkdownText(raw) === node.value
+      ? [{ node, start, end }]
+      : continuationParts(node, raw)
   }
   if (node.type === 'element') {
     const marker = source[start]
@@ -104,7 +111,7 @@ function createLink(url: string): Element {
   return {
     type: 'element',
     tagName: 'a',
-    properties: { href: /^www\./i.test(url) ? `https://${url}` : url },
+    properties: { href: normalizeUri(/^www\./i.test(url) ? `https://${url}` : url) },
     children: [{ type: 'text', value: url }],
   }
 }
@@ -136,7 +143,7 @@ function linkRun<Child extends RootContent>(
         if (cursor === part.start && next === part.end) {
           output.push(visit(part.node))
         } else {
-          output.push({ type: 'text', value: decodeString(source.slice(cursor, next)) })
+          output.push({ type: 'text', value: decodeMarkdownText(source.slice(cursor, next)) })
         }
       }
       cursor = next
@@ -175,7 +182,7 @@ function linkRun<Child extends RootContent>(
 
     advance(start, true)
     advance(end, false)
-    const link = createLink(decodeString(source.slice(start, end)))
+    const link = createLink(decodeMarkdownText(source.slice(start, end)))
     const before = source.slice(positionOffset, start).split(/\r\n?|\n/)
     line += before.length - 1
     column = before.length === 1 ? column + before[0].length : before[before.length - 1].length + 1

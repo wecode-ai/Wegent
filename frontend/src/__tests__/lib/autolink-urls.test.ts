@@ -109,6 +109,26 @@ describe('rehypeAutolinkUrls', () => {
     }
   )
 
+  it('preserves source matching after an encoded newline in a quote', () => {
+    const url = 'https://example.com/search?q=a(b)c'
+    const { container } = renderMarkdown(
+      '> Intro&#10;\n> https://example.com/search?q=a&#40;b&#41;c'
+    )
+
+    expect(screen.getByRole('link', { name: url })).toHaveAttribute('href', url)
+    expect(container.querySelector('p')).toHaveTextContent(/^Intro https:\/\/example\.com/)
+  })
+
+  it('normalizes a bare URL destination like an explicit Markdown link', () => {
+    const url = 'https://example.com/search?q=a&#10;b&#124;c%20d'
+    renderMarkdown(`${url} [Explicit](${url})`)
+
+    const [bare, explicit] = screen.getAllByRole('link')
+    expect(explicit).toHaveAttribute('href', 'https://example.com/search?q=a%0Ab%7Cc%20d')
+    expect(bare).toHaveAttribute('href', explicit.getAttribute('href'))
+    expect(bare.textContent).toBe('https://example.com/search?q=a\nb|c%20d')
+  })
+
   it.each(['（说明）', '说明'])('stops a bare URL before %s', suffix => {
     const url = 'https://example.com/path'
     const { container } = renderMarkdown(`见 ${url}${suffix}`)

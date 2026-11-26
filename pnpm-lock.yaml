@@ -329,6 +329,9 @@ importers:
       micromark-util-decode-string:
         specifier: 2.0.1
         version: 2.0.1
+      micromark-util-sanitize-uri:
+        specifier: 2.0.1
+        version: 2.0.1
       msw:
         specifier: ^2.10.5
         version: 2.14.6(@types/node@22.19.21)(typescript@5.9.3)
