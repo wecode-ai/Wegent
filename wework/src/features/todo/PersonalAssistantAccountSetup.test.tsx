@@ -20,16 +20,25 @@ const blank: PersonalStandInSettings = {
   roles: [],
 }
 
-function setup(initial: PersonalAssistantAccount | Error | null, local = blank) {
+function setup(
+  initial: PersonalAssistantAccount | Error | null,
+  local = blank,
+  boundDevice?: string
+) {
   const get = vi.fn(async () => {
     if (initial instanceof Error) throw initial
     return initial
   })
-  const personalGet = vi.fn(async () => local)
+  const personalGet = vi.fn(async (_user: number, device: string) =>
+    boundDevice && device !== boundDevice ? blank : local
+  )
+  const binding = vi.fn(async () => ({
+    target: boundDevice ? { userId: 7, deviceId: boundDevice, backendUrl: 'https://cloud' } : null,
+  }))
   const initialize = vi.fn(async () => account)
   const services = {
     personalAssistantAccountApi: { get, initialize },
-    standInApi: { personalGet },
+    standInApi: { personalGet, binding },
     getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
   } as unknown as WorkbenchServices
   const workspace = (preferredDevice?: string) => (
@@ -88,6 +97,20 @@ test('a saved legacy profile requires confirmation before import', async () => {
   fireEvent.click(await screen.findByTestId('personal-assistant-account-migrate-confirm'))
   expect(await screen.findByText('primary')).toBeVisible()
   expect(initialize).toHaveBeenCalledWith(expect.any(String), edited)
+})
+
+test('imports the bound remote profile after confirmation on the current computer', async () => {
+  const remote = { ...blank, version: 1, executionDeviceId: 'docker' }
+  const { personalGet, initialize } = setup(null, remote, 'docker')
+  const confirm = await screen.findByTestId('personal-assistant-account-migrate-confirm')
+  expect(initialize).not.toHaveBeenCalled()
+  fireEvent.click(confirm)
+  expect(await screen.findByText('primary')).toBeVisible()
+  expect(personalGet.mock.calls).toEqual([
+    [7, 'docker'],
+    [7, 'docker'],
+  ])
+  expect(initialize).toHaveBeenCalledWith(expect.any(String), remote)
 })
 
 test('a missing cloud and legacy profile takes ordinary initialization', async () => {

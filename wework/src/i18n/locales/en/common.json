@@ -6821,10 +6821,10 @@
       "legacy_binding": "This device is still bound to a legacy assistant. Stop it to select an execution device for your current account.",
       "connection_required": "Connect to the cloud service to use your assistant.",
       "later": "Migrate later",
-      "local_profile": "This device has an existing assistant profile. Migrate it to the cloud to use it.",
+      "local_profile": "An existing assistant profile was found. Migrate it to the cloud to use it.",
       "device_only": "Device profile",
       "delete_role_help": "Delete the cloud definition and this device’s settings for “{{name}}”? Stop automatic intake separately on other devices. Existing work records and memories are kept.",
-      "migrate_description": "Import the assistant names and instructions saved on this device into your connected cloud account. Device settings, connection grants, conversations, and learning records stay on the original device."
+      "migrate_description": "Import the assistant names and instructions saved on the original execution device into your connected cloud account. Device settings, connection grants, conversations, and learning records stay on the original device."
     },
     "instance": {
       "stop": "Stop stand-in",
