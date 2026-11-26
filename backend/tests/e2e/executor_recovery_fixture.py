@@ -15,11 +15,24 @@ from typing import Literal
 import httpx
 import pymysql
 from fastapi import FastAPI, Header, HTTPException, Request, Response
+from mcp.server.fastmcp import FastMCP
 from minio import Minio
 
 MANAGER_URL = "http://127.0.0.1:8001"
 MANAGER_PREFIX = "/executor-manager"
 ARCHIVE_BUCKET = "wegent-archives"
+
+connector_mcp = FastMCP("sandbox-connector", stateless_http=True)
+
+
+@connector_mcp.tool()
+def sandbox_connector_probe(nonce: str) -> dict[str, str]:
+    """Read the fixture's platform identity over MCP."""
+    return {
+        "platform": os.uname().sysname,
+        "probe": nonce,
+        "source": "sandbox-connector-e2e",
+    }
 
 
 @dataclass
@@ -38,16 +51,20 @@ recoveries: dict[int, Recovery] = {}
 async def lifespan(app: FastAPI):
     # The fixture and Executor Manager can expire idle HTTP connections at the
     # same time. Use a fresh loopback connection for each forwarded request.
-    async with httpx.AsyncClient(
-        base_url=MANAGER_URL,
-        timeout=180,
-        limits=httpx.Limits(max_keepalive_connections=0),
-    ) as client:
+    async with (
+        httpx.AsyncClient(
+            base_url=MANAGER_URL,
+            timeout=180,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ) as client,
+        connector_mcp.session_manager.run(),
+    ):
         app.state.manager = client
         yield
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/fixture/sandbox-connector", connector_mcp.streamable_http_app())
 
 
 @app.get("/health")

@@ -78,6 +78,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         decision_http: wegent_model_decisions::build_client().unwrap(),
         url_metadata_http: wegent_web_content::build_client().unwrap(),
         erp: Arc::new(crate::erp_provider::NoopErpProvider),
+        issue_im_recipient: None,
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
         cloud_device_destroyer: None,
@@ -103,3 +104,5 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         responses_dispatch: Arc::new(crate::responses::dispatch::spawn()),
     })
 }
+
+pub(crate) const PROJECT_CHAT_MESSAGES_DDL: &str = "CREATE TABLE project_chat_messages(id BIGINT AUTO_INCREMENT PRIMARY KEY,message_id VARCHAR(64) NOT NULL UNIQUE,client_message_id VARCHAR(64) NOT NULL DEFAULT '',project_id VARCHAR(64) NOT NULL,task_id VARCHAR(64) NOT NULL,sender_type VARCHAR(32) NOT NULL DEFAULT 'agent',sender_id VARCHAR(64) NOT NULL DEFAULT '',sender_name VARCHAR(255) NOT NULL DEFAULT '',message_type VARCHAR(32) NOT NULL DEFAULT 'run',content TEXT NOT NULL,metadata JSON NOT NULL,trigger_message_id VARCHAR(64) NOT NULL DEFAULT '',reply_to_message_id VARCHAR(64) NOT NULL DEFAULT '',thread_root_message_id VARCHAR(64) NOT NULL DEFAULT '',agent_id VARCHAR(64) NOT NULL DEFAULT '',runtime_device_id VARCHAR(64) NOT NULL DEFAULT '',runtime_task_id VARCHAR(64) NOT NULL DEFAULT '',runtime_activity_key VARCHAR(64) NULL UNIQUE,deleted_at DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00',status VARCHAR(32) NOT NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB";

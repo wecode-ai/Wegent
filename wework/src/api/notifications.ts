@@ -17,6 +17,7 @@ export interface WeworkNotificationPayload {
   status?: string
   executionId?: string
   action?: string
+  failureCode?: string
   idempotencyKey?: string
   issueId?: string
   dispatchTaskId?: string

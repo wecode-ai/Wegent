@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { deriveRuntimePaneStatus } from '../runtimePaneStatus'
@@ -32,6 +32,27 @@ function task(
 }
 
 describe('native lifecycle ownership', () => {
+  test('keeps an authoritative Goal clear stable until the Goal status changes', () => {
+    const store = new RuntimeTaskLifecycleStore('native-goal-clear-identity')
+    store.syncRuntimeTask(address, { ...task('2', 'idle', null, 'turn-1'), goalStatus: null })
+    const snapshot = store.getSnapshot()
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+
+    store.goalStatusReceived(address, null)
+
+    expect(store.getSnapshot()).toBe(snapshot)
+    expect(listener).not.toHaveBeenCalled()
+
+    store.goalStatusReceived(address, 'active')
+    expect(store.getTask(address)?.goalStatus).toBe('active')
+    expect(listener).toHaveBeenCalledOnce()
+    store.goalStatusReceived(address, null)
+    expect(store.getTask(address)?.goalStatus).toBeNull()
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+  })
+
   test.each(['waitingForUserInput', 'awaitingUserReply'] as const)(
     'one accepted answer cannot clear native aggregate %s before its revision advances',
     interactionStatus => {

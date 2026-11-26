@@ -1,3 +1,4 @@
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useMemo, useRef, useState } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { standInState } from '@/features/notifications/standInNotifications'
@@ -16,7 +17,8 @@ export function useExperienceTeamState(
   active: boolean,
   projects: readonly ExperienceProjectData[]
 ) {
-  const { runtimeTaskReminders, state, refreshWorkLists } = useWorkbench()
+  const { state, refreshWorkLists } = useWorkbench()
+  const runtimeTaskReminders = useWorkbenchTaskReminders()
   const { t } = useTranslation('collaborationExp')
   const source = useAssistantSources(active)
   const scope = source.scope

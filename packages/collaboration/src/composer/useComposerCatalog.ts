@@ -32,10 +32,9 @@ export function useComposerCatalog<Skill, App>({
       ...sources,
       resource: createComposerCatalogResource(
         sources,
-        scope.appsStore === appsStore &&
-          (isMenuOpen() ||
-            scope.resource.getSnapshot().loading ||
-            scope.resource.getSnapshot().appsLoading)
+        isMenuOpen() ||
+          (scope.appsStore === appsStore &&
+            (scope.resource.getSnapshot().loading || scope.resource.getSnapshot().appsLoading))
       ),
     })
   }

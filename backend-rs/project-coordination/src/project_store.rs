@@ -216,6 +216,13 @@ async fn insert_with_conflict_clause(
         let value = row.get(&column.column_name);
         args.push(match value {
             Some(Value::Null) | None if column.is_nullable == "YES" => Arg::Null,
+            Some(Value::String(value))
+                if column.column_name == "cloud_project_id"
+                    && column.is_nullable == "YES"
+                    && value.is_empty() =>
+            {
+                Arg::Null
+            }
             Some(Value::String(value)) => Arg::Text(value.clone()),
             Some(Value::Number(value)) => Arg::Int(value.as_i64().unwrap_or(0)),
             Some(Value::Bool(value)) => Arg::Int(i64::from(*value)),
@@ -263,6 +270,10 @@ pub fn status_name(project: &Node, status: &str) -> String {
             .unwrap_or("")
             .into();
     }
+    default_status_name(status).into()
+}
+
+pub fn default_status_name(status: &str) -> &'static str {
     match status {
         "inbox" => "收集箱",
         "pending" => "待开始",
@@ -271,7 +282,6 @@ pub fn status_name(project: &Node, status: &str) -> String {
         "completed" => "已完成",
         _ => "",
     }
-    .into()
 }
 
 pub fn new_uuid() -> String {
@@ -294,6 +304,7 @@ pub fn new_uuid() -> String {
 }
 
 const DATABASE_OFFSET: chrono::Duration = chrono::Duration::hours(8);
+pub const DATABASE_NOW_SQL: &str = "DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 8 HOUR)";
 
 /// Encode a UTC instant using the same database-session convention as reads.
 pub fn database_timestamp(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {

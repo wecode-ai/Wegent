@@ -91,7 +91,7 @@ def test_direct_assignment_card_names_the_issue_and_pending_assignee(
 
     card = _card(capture_notification)
     assert card["kindLabel"] == "任务分配"
-    assert card["headline"] == "新任务：修复通知卡片"
+    assert card["headline"] == "项目经理 将任务分配给你"
     assert card["itemTitle"] == "修复通知卡片"
     assert card["itemKey"] == "2026TEST-12"
     assert card["metaLine"] == "发布看板 · 待人工验收 · 负责人：新负责人"
@@ -125,8 +125,8 @@ def test_collaboration_dispatch_keeps_personal_task_actions_and_issue_context(
     )
 
     card = _card(capture_notification)
-    assert card["headline"] == "新任务：验收本轮通知展示"
-    assert card["itemTitle"] == "修复通知卡片"
+    assert card["headline"] == "项目经理 将任务分配给你"
+    assert card["itemTitle"] == "验收本轮通知展示"
     assert card["itemKey"] == "2026TEST-12"
     assert card["metaLine"] == "发布看板 · 待人工验收 · 负责人：新负责人"
     notification = capture_notification.call_args.kwargs
@@ -183,8 +183,8 @@ def test_external_assignment_card_uses_the_provider_target_not_the_sparse_index(
 
     card = _card(capture_notification)
     assert card["kindLabel"] == "任务分配"
-    assert card["headline"] == "新任务：处理远端任务"
-    assert card["itemTitle"] == "远端 Issue 的标题"
+    assert card["headline"] == "项目经理 将任务分配给你"
+    assert card["itemTitle"] == "处理远端任务"
     assert card["itemKey"] == "123EXT-42"
     assert card["metaLine"] == "代码托管看板 · 等待确认 · 负责人：新负责人"
     # The explicit target replaces board context lookup, not the wakeup's node lock.

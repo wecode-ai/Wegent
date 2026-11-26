@@ -1,8 +1,10 @@
 import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
+import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { createStandInRoleDraft, type InitialStandInRoleRequest } from './standInRoleDraft'
+import { PersonalAssistantDefinitionSaveError } from './personalAssistantDeviceSettings'
 
 type Failure = { cause: unknown; operation: 'load_settings_failed' | 'save_settings_failed' }
 type ErrorState = Failure | string | null
@@ -182,7 +184,10 @@ export function createPersonalStandInSettingsResource({
       errorOverride = undefined
       void resource.reload()
     },
-    async save(value = state.draft) {
+    async save(
+      value = state.draft,
+      definitionChange?: Parameters<StandInExecutorApi['personalSave']>[4]
+    ) {
       const loaded = resource.getSnapshot().data
       if (!listeners.size || !api || !value || saving || moving || state.loading || !loaded)
         return null
@@ -191,13 +196,20 @@ export function createPersonalStandInSettingsResource({
       errorOverride = null
       publish()
       try {
-        const receipt = await api.personalSave(userId, value, loaded.deviceId)
+        const receipt = definitionChange
+          ? await api.personalSave(userId, value, loaded.deviceId, undefined, definitionChange)
+          : await api.personalSave(userId, value, loaded.deviceId)
         if (!listeners.size) return null
         if (editRevision === submittedRevision) draft = undefined
         resource.update(() => ({ ...loaded, settings: receipt }))
         return receipt
       } catch (cause) {
         reportStandInError('save_settings', cause, loaded.deviceId)
+        if (listeners.size && cause instanceof PersonalAssistantDefinitionSaveError) {
+          const edited = draft ?? value
+          draft = { ...edited, version: cause.saved.version }
+          resource.update(() => ({ ...loaded, settings: cause.saved }))
+        }
         if (listeners.size) errorOverride = { cause, operation: 'save_settings_failed' }
         return null
       } finally {

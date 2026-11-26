@@ -17,19 +17,20 @@ use std::{
 mod artifact_tests;
 pub(crate) use wegent_model_proxy::codex_model_catalog;
 mod config;
+mod envd_process;
+mod file_upload;
 pub(crate) use wegent_model_proxy::harness_context;
 pub(crate) use wegent_model_proxy::local_decision_proxy;
 pub(crate) use wegent_model_proxy::local_model_proxy;
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Multipart, Query, State},
+    extract::{DefaultBodyLimit, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{process::Command, sync::Semaphore, time::timeout};
@@ -46,7 +47,6 @@ use crate::{
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
     local::session::terminal_metrics_snapshot,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
-    process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, TaskStatus},
     runner::BackgroundTaskRunner,
     workspace_paths::{task_workspace_dir, workspace_root},
@@ -121,6 +121,10 @@ where
             local_model_proxy::token_route(),
         )
         .route(
+            local_model_proxy::OFFICIAL_HTTP_ROUTE,
+            local_model_proxy::official_http_route(),
+        )
+        .route(
             local_model_proxy::HARNESS_MESSAGES_ROUTE,
             local_model_proxy::harness_messages_route(),
         )
@@ -143,12 +147,19 @@ where
         .route("/filesystem.Filesystem/Stat", post(connect_stat_path))
         .route("/filesystem.Filesystem/MakeDir", post(connect_make_dir))
         .route("/process.Process/List", post(connect_process_list))
-        .route("/process.Process/Start", post(connect_process_start))
+        .route("/process.Process/Start", post(envd_process::start))
         .route(
             "/process.Process/SendSignal",
             post(connect_process_send_signal),
         )
-        .route("/files", get(download_envd_file).post(upload_envd_file))
+        .route(
+            "/files",
+            get(download_envd_file)
+                .post(file_upload::upload_envd_file)
+                .layer(DefaultBodyLimit::max(
+                    file_upload::MAX_ENVD_FILE_UPLOAD_BYTES,
+                )),
+        )
         .route("/api/archive", post(archive_workspace))
         .route("/api/runtime/prepare", post(prepare_runtime_workspace))
         .route("/api/restore", post(restore_workspace))
@@ -449,32 +460,6 @@ async fn connect_process_send_signal() -> Json<Value> {
     Json(json!({}))
 }
 
-async fn connect_process_start(body: Body) -> Result<Response, HttpError> {
-    let bytes = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("failed to read process start request: {error}"),
-        })?;
-    let request: ProcessStartRequest = serde_json::from_slice(&connect_request_payload(&bytes)?)
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("invalid process start request: {error}"),
-        })?;
-    let output = run_envd_process(&request).await;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/connect+json"),
-    );
-    Ok((
-        StatusCode::OK,
-        headers,
-        Body::from(process_start_stream_body(&output)),
-    )
-        .into_response())
-}
-
 async fn download_workspace_file(
     Query(query): Query<WorkspacePathQuery>,
 ) -> Result<Response, HttpError> {
@@ -743,118 +728,6 @@ async fn zip_directory(path: &Path) -> Result<Vec<u8>, HttpError> {
 fn zip_download_semaphore() -> &'static Semaphore {
     static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
     SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
-}
-
-async fn upload_envd_file(
-    headers: HeaderMap,
-    Query(query): Query<WorkspacePathQuery>,
-    mut multipart: Multipart,
-) -> Result<Json<Vec<EntryInfo>>, HttpError> {
-    log_executor_event(
-        "envd file upload request",
-        &[
-            ("path", query.path.clone().unwrap_or_default()),
-            ("username", query.username.clone().unwrap_or_default()),
-            ("content_type", header_value(&headers, header::CONTENT_TYPE)),
-        ],
-    );
-    let path = resolve_envd_path(&query)?;
-    let Some(parent) = path.parent() else {
-        return Err(HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: "Path is required".to_owned(),
-        });
-    };
-    fs::create_dir_all(parent).map_err(|error| {
-        log_executor_event(
-            "envd file upload parent create failed",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("parent", parent.to_string_lossy().to_string()),
-                ("error", error.to_string()),
-            ],
-        );
-        HttpError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: format!("failed to create parent directory: {error}"),
-        }
-    })?;
-    if let Some(usage) = disk_usage_bytes(parent) {
-        let free = usage.total.saturating_sub(usage.used);
-        log_executor_event(
-            "envd file upload disk check",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("parent", parent.to_string_lossy().to_string()),
-                ("free_bytes", free.to_string()),
-                ("required_bytes", MIN_UPLOAD_FREE_SPACE_BYTES.to_string()),
-            ],
-        );
-        if free < MIN_UPLOAD_FREE_SPACE_BYTES {
-            return Err(HttpError {
-                status: StatusCode::INSUFFICIENT_STORAGE,
-                detail: "Not enough disk space".to_owned(),
-            });
-        }
-    }
-
-    while let Some(field) = multipart.next_field().await.map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("invalid multipart body: {error}"),
-    })? {
-        let field_name = field.name().unwrap_or_default().to_owned();
-        let file_name = field.file_name().unwrap_or_default().to_owned();
-        log_executor_event(
-            "envd file upload multipart field",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("field_name", field_name.clone()),
-                ("file_name", file_name),
-            ],
-        );
-        if field_name != "file" {
-            continue;
-        }
-        let bytes = field.bytes().await.map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("failed to read uploaded file: {error}"),
-        })?;
-        let size = bytes.len();
-        fs::write(&path, &bytes).map_err(|error| {
-            log_executor_event(
-                "envd file upload write failed",
-                &[
-                    ("path", path.to_string_lossy().to_string()),
-                    ("size", size.to_string()),
-                    ("error", error.to_string()),
-                ],
-            );
-            HttpError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                detail: format!("failed to write uploaded file: {error}"),
-            }
-        })?;
-        log_executor_event(
-            "envd file upload succeeded",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("size", size.to_string()),
-            ],
-        );
-        return Ok(Json(vec![EntryInfo {
-            path: path.to_string_lossy().to_string(),
-            name: path
-                .file_name()
-                .map(|value| value.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            entry_type: "file".to_owned(),
-        }]));
-    }
-
-    Err(HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: "multipart field 'file' is required".to_owned(),
-    })
 }
 
 async fn archive_workspace(
@@ -1280,31 +1153,6 @@ struct ConnectMakeDirResponse {
     entry: FsEntryInfo,
 }
 
-#[derive(Debug, Deserialize)]
-struct ProcessStartRequest {
-    process: ProcessStartConfig,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessStartConfig {
-    cmd: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    envs: HashMap<String, String>,
-    #[serde(default)]
-    cwd: Option<String>,
-}
-
-#[derive(Debug)]
-struct ProcessOutput {
-    pid: u32,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    exit_code: i32,
-    error: String,
-}
-
 #[derive(Debug, Serialize)]
 struct FsEntryInfo {
     name: String,
@@ -1575,155 +1423,6 @@ fn resolve_envd_filesystem_path(raw_path: &str) -> Result<PathBuf, HttpError> {
         })
 }
 
-async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
-    let requested_environment = request
-        .process
-        .envs
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<Vec<_>>();
-    let process_environment = process_environment::process_env(&requested_environment);
-    let (program, prefix_args) = crate::process::spawn_program_parts(&request.process.cmd);
-    let mut command = Command::new(program);
-    crate::process::hide_windows_console(&mut command);
-    command
-        .args(prefix_args)
-        .args(&request.process.args)
-        .env_clear()
-        .envs(process_environment)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(cwd) = request
-        .process
-        .cwd
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        command.current_dir(cwd);
-    }
-    log_executor_event(
-        "envd process start request",
-        &[
-            ("cmd", request.process.cmd.clone()),
-            ("arg_count", request.process.args.len().to_string()),
-            ("cwd", request.process.cwd.clone().unwrap_or_default()),
-        ],
-    );
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return ProcessOutput {
-                pid: 0,
-                stdout: Vec::new(),
-                stderr: error.to_string().into_bytes(),
-                exit_code: -1,
-                error: error.to_string(),
-            };
-        }
-    };
-    let pid = child.id().unwrap_or_default();
-    match child.wait_with_output().await {
-        Ok(output) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            log_executor_event(
-                "envd process finished",
-                &[
-                    ("pid", pid.to_string()),
-                    ("exit_code", exit_code.to_string()),
-                    ("stdout_len", output.stdout.len().to_string()),
-                    ("stderr_len", output.stderr.len().to_string()),
-                ],
-            );
-            ProcessOutput {
-                pid,
-                stdout: output.stdout,
-                stderr: output.stderr,
-                exit_code,
-                error: String::new(),
-            }
-        }
-        Err(error) => ProcessOutput {
-            pid,
-            stdout: Vec::new(),
-            stderr: error.to_string().into_bytes(),
-            exit_code: -1,
-            error: error.to_string(),
-        },
-    }
-}
-
-fn connect_request_payload(bytes: &[u8]) -> Result<Vec<u8>, HttpError> {
-    if bytes.len() < CONNECT_ENVELOPE_HEADER_LEN {
-        return Ok(bytes.to_vec());
-    }
-    let flags = bytes[0];
-    let len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
-    if bytes.len() == CONNECT_ENVELOPE_HEADER_LEN + len {
-        if flags & CONNECT_FLAG_COMPRESSED != 0 {
-            return Err(HttpError {
-                status: StatusCode::BAD_REQUEST,
-                detail: "compressed connect requests are not supported".to_owned(),
-            });
-        }
-        return Ok(bytes[CONNECT_ENVELOPE_HEADER_LEN..].to_vec());
-    }
-    Ok(bytes.to_vec())
-}
-
-fn process_start_stream_body(output: &ProcessOutput) -> Vec<u8> {
-    let mut stream = Vec::new();
-    append_connect_json_message(
-        &mut stream,
-        json!({"event": {"start": {"pid": output.pid}}}),
-    );
-    if !output.stdout.is_empty() {
-        append_connect_json_message(
-            &mut stream,
-            json!({"event": {"data": {"stdout": base64_encode(&output.stdout)}}}),
-        );
-    }
-    if !output.stderr.is_empty() {
-        append_connect_json_message(
-            &mut stream,
-            json!({"event": {"data": {"stderr": base64_encode(&output.stderr)}}}),
-        );
-    }
-    append_connect_json_message(
-        &mut stream,
-        json!({
-            "event": {
-                "end": {
-                    "exitCode": output.exit_code,
-                    "exited": true,
-                    "status": if output.exit_code == 0 { "success" } else { "error" },
-                    "error": output.error,
-                }
-            }
-        }),
-    );
-    append_connect_envelope(&mut stream, CONNECT_FLAG_END_STREAM, b"{}");
-    stream
-}
-
-fn append_connect_json_message(stream: &mut Vec<u8>, value: Value) {
-    append_connect_envelope(stream, 0, value.to_string().as_bytes());
-}
-
-fn append_connect_envelope(stream: &mut Vec<u8>, flags: u8, data: &[u8]) {
-    stream.push(flags);
-    stream.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    stream.extend_from_slice(data);
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-const CONNECT_ENVELOPE_HEADER_LEN: usize = 5;
-const CONNECT_FLAG_COMPRESSED: u8 = 0b0000_0001;
-const CONNECT_FLAG_END_STREAM: u8 = 0b0000_0010;
-
 fn runtime_home_path(mode: ArchiveMode) -> PathBuf {
     match mode {
         ArchiveMode::Executor => home_path(),
@@ -1859,7 +1558,6 @@ fn default_runtime_type() -> String {
     "executor".to_owned()
 }
 
-const MIN_UPLOAD_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
 const DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB: u64 = 500;
 const MAX_WORKSPACE_ZIP_CONCURRENCY: usize = 2;
 const MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS: u64 = 120;
@@ -2174,25 +1872,6 @@ mod tests {
         fs::write(&marker, "preserved").unwrap();
         prepare_runtime_directories(&workspace, &home, &roots).unwrap();
         assert_eq!(fs::read_to_string(marker).unwrap(), "preserved");
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn envd_process_filters_exported_bash_functions() {
-        let request = ProcessStartRequest {
-            process: ProcessStartConfig {
-                cmd: "/bin/bash".to_owned(),
-                args: vec!["-c".to_owned(), "printf ready".to_owned()],
-                envs: HashMap::from([("BASH_FUNC_which%%".to_owned(), "() {".to_owned())]),
-                cwd: None,
-            },
-        };
-
-        let output = run_envd_process(&request).await;
-
-        assert_eq!(output.exit_code, 0);
-        assert_eq!(output.stdout, b"ready");
-        assert!(output.stderr.is_empty());
     }
 
     #[test]

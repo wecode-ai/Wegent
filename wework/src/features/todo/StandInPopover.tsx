@@ -1,3 +1,5 @@
+import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { roleIncludesProject } from '@/api/personalStandIn'
 import { BetaBadge } from '@/components/common/BetaBadge'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -53,13 +55,18 @@ export function StandInPopover({
   onOpenPersonalSettings?(roleId: string, deviceId: string): void
 }) {
   const { t } = useTranslation('common')
+  const cloud = useOptionalCloudConnection()
+  const connected = cloud.isConnected && !!cloud.user
   const [open, setOpen] = useState(embedded)
   const [savedDeviceId, setSavedDeviceId] = useState<string>()
   const editorDeviceId = initialDeviceId || savedDeviceId
   const [saving, setSaving] = useState(false)
   const editorRef = useRef<StandInSettingsHandle>(null)
   const requestClose = () => {
-    if (!saving) editorRef.current?.requestClose()
+    if (!connected) {
+      setOpen(false)
+      onCancel?.()
+    } else if (!saving) editorRef.current?.requestClose()
   }
   const dialogRef = useRef<HTMLElement>(null)
   const settingsResource = useMemo(
@@ -75,7 +82,7 @@ export function StandInPopover({
     [services, userId, editorDeviceId]
   )
   const settingsSnapshot = useSyncExternalStore(
-    settingsResource?.subscribe ?? subscribeIdleResource,
+    connected && settingsResource ? settingsResource.subscribe : subscribeIdleResource,
     settingsResource?.getSnapshot ?? getIdleResourceSnapshot,
     getIdleResourceSnapshot
   )
@@ -90,7 +97,7 @@ export function StandInPopover({
     [api, userId]
   )
   const projectSnapshot = useSyncExternalStore(
-    open && services?.standInApi && userId != null
+    connected && open && services?.standInApi && userId != null
       ? projectResource.subscribe
       : subscribeIdleResource,
     projectResource.getSnapshot,
@@ -112,7 +119,9 @@ export function StandInPopover({
       ])
     ).values(),
   ]
-  const editor = (
+  const editor = !connected ? (
+    <StandInCloudConnectionPrompt />
+  ) : (
     <StandInSettingsPage
       ref={editorRef}
       api={api}

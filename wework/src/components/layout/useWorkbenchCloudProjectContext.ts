@@ -119,6 +119,22 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
       ? snapshot.deliveryItem
       : null
   const mentionScope = workbenchCloudMentionScope(composerCloudProject, composerTodoItem)
+  const mutationError = sameTask ? snapshot.todoBindingError : null
+  const contextError = sameTask ? snapshot.contextAvailabilityError : null
+  const retryProjectSpaceContext =
+    !mutationError && contextError ? source.retryProjectSpaceContext : undefined
+  const projectSpaceContextRetryAction = useMemo(
+    () =>
+      retryProjectSpaceContext
+        ? {
+            label: t('workbench.retry'),
+            testId: 'project-space-context-retry',
+            onClick: retryProjectSpaceContext,
+            pending: false,
+          }
+        : undefined,
+    [retryProjectSpaceContext, t]
+  )
   return {
     activeDeliveryItem,
     boundCloudItem,
@@ -139,7 +155,9 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
       : undefined,
     clearCloudActionNotice: source.clearCloudActionNotice,
     clearPendingProjectContext: source.clearPendingProjectContext,
-    clearTodoBindingError: source.clearTodoBindingError,
+    clearTodoBindingError: mutationError
+      ? source.clearTodoBindingError
+      : source.clearContextAvailabilityError,
     closeDeliveryDialog: source.closeDeliveryDialog,
     cloudActionNotice: snapshot.cloudActionNotice,
     cloudProjects,
@@ -152,15 +170,17 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
     handleTodoBound: source.handleTodoBound,
     openDelivery: source.openDelivery,
     openBoundProjectSpaceTask: source.openBoundProjectSpaceTask,
+    openIssueExecutionSource: source.openIssueExecutionSource,
     pendingCloudProject,
     pendingTodoItem,
     prepareSubmission: source.prepareSubmission,
     removeCloudProjectContext: source.removeCloudProjectContext,
+    projectSpaceContextRetryAction,
     taskBoardAssociation: snapshot.taskBoardAssociation,
     closeTaskBoardAssociation: source.closeTaskBoardAssociation,
     associateRuntimeTaskWithNewItem: source.associateRuntimeTaskWithNewItem,
     associateRuntimeTaskWithExistingItem: source.associateRuntimeTaskWithExistingItem,
-    todoBindingError: snapshot.todoBindingError ?? snapshot.contextAvailabilityError,
+    todoBindingError: mutationError ?? contextError,
     visibleCloudMentionCandidates:
       mentionScope && snapshot.mentions?.scope === mentionScope
         ? snapshot.mentions.candidates

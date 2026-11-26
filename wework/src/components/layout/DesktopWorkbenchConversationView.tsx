@@ -10,6 +10,7 @@ import {
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { updateAppPreferences } from '@/desktop/appPreferences'
+import { createConversationMentionReference } from '@/lib/conversation-mentions'
 import { getErrorMessage } from '@/lib/error-message'
 import { localHarnessLabel } from '@/lib/local-harness'
 import { cn } from '@/lib/utils'
@@ -80,6 +81,7 @@ export function DesktopWorkbenchConversationView({
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
+    startNewChat,
     services,
     t,
     currentRuntimeTask,
@@ -108,7 +110,7 @@ export function DesktopWorkbenchConversationView({
     runtimeTaskSummary,
     cloudProjectMentionCandidates,
     handleSelectCloudProject,
-    openBoundProjectSpaceTask,
+    openIssueExecutionSource,
     visibleCloudMentionCandidates,
     issueExecutionReadOnly,
     mcpAppConversationServices,
@@ -347,10 +349,8 @@ export function DesktopWorkbenchConversationView({
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
                 scrollerClassName="h-auto flex-1 overflow-visible"
                 contentClassName={rightPanelExpanded ? 'invisible' : undefined}
-                messageListClassName={cn(
-                  DESKTOP_MESSAGE_LIST_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
+                messageListClassName={cn(DESKTOP_MESSAGE_LIST_CLASS, 'transition-none')}
+                layoutRevision={`${chatColumnWidth}:${chatColumnMaxWidth}:${environmentInfoPanelExpanded}`}
                 contentFooter={
                   isCreatingWorktree ? (
                     <WorktreeCreationStatus className="py-8" />
@@ -433,7 +433,7 @@ export function DesktopWorkbenchConversationView({
                                 variant="unstyled"
                                 type="button"
                                 data-testid="project-execution-open-issue"
-                                onClick={openBoundProjectSpaceTask}
+                                onClick={openIssueExecutionSource}
                                 className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
                               >
                                 {t('workbench.back_to_work_item', '返回 Issue')}
@@ -494,6 +494,14 @@ export function DesktopWorkbenchConversationView({
                                       source={currentRuntimeTask}
                                       messages={paneMessages}
                                       onCollapse={onCollapse}
+                                      onSkip={() =>
+                                        paneSession.skipRequestUserInput(
+                                          pendingRequestUserInputPayloads(
+                                            paneMessages,
+                                            paneSession.answeredRequestUserInputIds
+                                          )
+                                        )
+                                      }
                                       onSubmit={response => {
                                         const isImplementationPlanRequest =
                                           isImplementationPlanRequestUserInput(
@@ -642,6 +650,17 @@ export function DesktopWorkbenchConversationView({
                 }
                 scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                 devices={devices}
+                onContinueInNewConversation={
+                  !issueExecutionReadOnly && currentRuntimeTask
+                    ? () => {
+                        const reference = createConversationMentionReference(
+                          runtimeTaskSummary?.title ?? workbenchTitle ?? currentRuntimeTask.taskId,
+                          currentRuntimeConversationSource ?? currentRuntimeTask
+                        )
+                        startNewChat({ initialInput: `${reference} ` })
+                      }
+                    : undefined
+                }
                 onRetryFailedMessage={
                   issueExecutionReadOnly
                     ? undefined

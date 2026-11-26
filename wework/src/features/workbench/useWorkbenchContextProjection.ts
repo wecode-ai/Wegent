@@ -1,6 +1,31 @@
 import { useMemo } from 'react'
 import type { WorkbenchContextValue, WorkbenchPaneContextValue } from './workbenchContextTypes'
 import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
+
+export function useWorkbenchContextValue(
+  paneValue: WorkbenchPaneContextValue,
+  {
+    state,
+    cloudWorkStatus,
+    projectChat,
+    updateUserPreferences,
+  }: Pick<
+    WorkbenchContextValue,
+    'state' | 'cloudWorkStatus' | 'projectChat' | 'updateUserPreferences'
+  >
+): WorkbenchContextValue {
+  return useMemo(
+    () => ({
+      ...paneValue,
+      state,
+      cloudWorkStatus,
+      projectChat,
+      updateUserPreferences,
+    }),
+    [paneValue, state, cloudWorkStatus, projectChat, updateUserPreferences]
+  )
+}
+
 export function createWorkbenchPaneActions(operations: WorkbenchSessionOperations) {
   return {
     setProjectExecutionMode: operations.stableSetProjectExecutionMode,
@@ -232,10 +257,10 @@ export function useWorkbenchPaneValue(input: WorkbenchPaneContextValue): Workben
   return useMemo(
     () => ({
       services: input.services,
+      workspaceTabId: input.workspaceTabId,
       state: input.state,
       isStartupReady: input.isStartupReady,
       workspaceFileApi: input.workspaceFileApi,
-      runtimeTaskReminders: input.runtimeTaskReminders,
       projectChat: input.projectChat,
       upgradingDevices: input.upgradingDevices,
       projectExecutionMode: input.projectExecutionMode,
@@ -320,10 +345,10 @@ export function useWorkbenchPaneValue(input: WorkbenchPaneContextValue): Workben
     }),
     [
       input.services,
+      input.workspaceTabId,
       input.state,
       input.isStartupReady,
       input.workspaceFileApi,
-      input.runtimeTaskReminders,
       input.projectChat,
       input.upgradingDevices,
       input.projectExecutionMode,

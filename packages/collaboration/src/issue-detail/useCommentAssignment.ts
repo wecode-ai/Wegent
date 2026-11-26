@@ -14,6 +14,7 @@ export interface CommentSubmissionOptions {
 }
 export interface CommentAssignment {
   options: SearchableSelectOption[]
+  currentAssignee?: string
   canAssignCurrent?: boolean
   assign(target: string): Promise<void | boolean>
   createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue | false>
@@ -39,7 +40,8 @@ export function useCommentAssignment(
 ) {
   const [selectedTarget, setSelectedTarget] = useState('')
   const [moveTarget, setMoveTarget] = useState('')
-  const [pendingToggle, setPendingToggle] = useState<boolean | null>(null)
+  const [closeSelected, setCloseSelected] = useState(false)
+  const closeWithComment = closeSelected && actions?.canToggle === true && !actions.closed
   const [commentCommitted, setCommentCommitted] = useState(false)
   const committedBody = useRef<string | null>(null)
   const [mode, setAssignmentMode] = useState<'current' | 'child'>(
@@ -74,14 +76,14 @@ export function useCommentAssignment(
     setSelectedTarget(next)
     if (childCancelled) setPendingChild(current => (current ? { ...current, target: next } : null))
     if (next && actions?.assigneeMoves?.includes(moveTarget)) setMoveTarget('')
-    if (!next && !moveTarget && pendingToggle === null) clearCommittedComment()
+    if (!next && !moveTarget && !closeWithComment) clearCommittedComment()
   }
 
   function setMove(next: string) {
     setError(null)
     setMoveTarget(next)
     if (actions?.assigneeMoves?.includes(next)) setSelectedTarget('')
-    if (!next && !target && pendingToggle === null) clearCommittedComment()
+    if (!next && !target && !closeWithComment) clearCommittedComment()
   }
 
   function clearCommittedComment() {
@@ -90,7 +92,11 @@ export function useCommentAssignment(
   }
 
   function setMode(next: 'current' | 'child') {
+    if (next === effectiveMode) return
     setAssignmentMode(next)
+    setCloseSelected(false)
+    setSelectedTarget('')
+    setFocusedSuggestion('')
     if (next === 'child') setMoveTarget('')
   }
 
@@ -111,24 +117,28 @@ export function useCommentAssignment(
     return true
   }
 
-  async function submit(draft: string, closed?: boolean) {
+  function selectCloseWithComment(selected: boolean) {
+    setError(null)
+    setCloseSelected(selected)
+  }
+
+  async function submit(draft: string) {
     if (submitting.current) return
     const { body, mentions } = issueCommentSubmission(draft)
-    const toggle = closed ?? pendingToggle
-    const creatingChild = effectiveMode === 'child' && toggle === null
+    const creatingChild = effectiveMode === 'child' && !closeWithComment
     const currentTarget = effectiveMode === 'child' && !creatingChild ? '' : target
     if (
       creatingChild
         ? !body && !pendingChild
-        : !body && !currentTarget && !moveTarget && toggle === null
+        : closeWithComment
+          ? !body && !commentCommitted
+          : !body && !currentTarget && !moveTarget
     )
       return
     if (currentTarget && assignment?.canAssignCurrent === false && !creatingChild) return
-    if (closed !== undefined && !actions?.canToggle) return
     submitting.current = true
     setBusy(true)
     setError(null)
-    if (closed !== undefined) setPendingToggle(closed)
     try {
       if (creatingChild) {
         if (!assignment?.createChild) return
@@ -151,7 +161,7 @@ export function useCommentAssignment(
       }
       if (body && committedBody.current !== body) {
         const result =
-          actions && (currentTarget || moveTarget || toggle !== null)
+          actions && (currentTarget || moveTarget || closeWithComment)
             ? await onSubmit(body, mentions, { commentOnly: true })
             : await onSubmit(body, mentions)
         if (result === false) return
@@ -172,9 +182,9 @@ export function useCommentAssignment(
         if ((await actions.move(moveTarget)) === false) return
         setMoveTarget('')
       }
-      if (toggle !== null && actions) {
-        await actions.toggle(toggle)
-        setPendingToggle(null)
+      if (closeWithComment && actions) {
+        await actions.toggle(true)
+        setCloseSelected(false)
       }
       clearCommittedComment()
     } catch (cause) {
@@ -194,7 +204,8 @@ export function useCommentAssignment(
     target,
     moveTarget,
     setMove,
-    pendingToggle,
+    closeWithComment,
+    selectCloseWithComment,
     commentCommitted,
     suggestion,
     setTarget,

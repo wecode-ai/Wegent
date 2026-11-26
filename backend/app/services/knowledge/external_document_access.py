@@ -15,6 +15,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
+from app.services.knowledge.document_text_sources import (
+    DocumentTextSources,
+    load_document_text_sources,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 DOWNLOAD_TOKEN_HEADER = "X-Wegent-Download-Token"
@@ -112,8 +116,11 @@ def build_document_capabilities(
     attachment: Optional[SubtaskContext],
     *,
     original_download_allowed: bool = True,
+    text_sources: Optional[DocumentTextSources] = None,
 ) -> ExternalDocumentAccess:
     """Build external metadata and capability flags for a document."""
+    if text_sources is not None:
+        attachment = text_sources.original
     is_attachment = (
         attachment is not None
         and attachment.context_type == ContextType.ATTACHMENT.value
@@ -144,7 +151,15 @@ def build_document_capabilities(
     return ExternalDocumentAccess(
         document=document,
         attachment=attachment if is_attachment else None,
-        content_readable=bool(is_attachment and attachment.extracted_text),
+        content_readable=(
+            text_sources.content_readable
+            if text_sources is not None
+            else bool(
+                is_attachment
+                and isinstance(attachment.extracted_text, str)
+                and attachment.extracted_text.strip()
+            )
+        ),
         downloadable=downloadable,
         previewable=previewable,
         mime_type=mime_type,
@@ -152,30 +167,6 @@ def build_document_capabilities(
         file_extension=file_extension,
         file_size=file_size,
     )
-
-
-def load_attachment_map(
-    db: Session,
-    documents: list[KnowledgeDocument],
-) -> dict[int, SubtaskContext]:
-    """Load document attachments in bulk and index them by attachment ID."""
-    attachment_ids = {
-        document.attachment_id
-        for document in documents
-        if document.attachment_id and document.attachment_id > 0
-    }
-    if not attachment_ids:
-        return {}
-
-    attachments = (
-        db.query(SubtaskContext)
-        .filter(
-            SubtaskContext.id.in_(attachment_ids),
-            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-        )
-        .all()
-    )
-    return {attachment.id: attachment for attachment in attachments}
 
 
 def get_document_access_or_raise(
@@ -201,17 +192,10 @@ def get_document_access_or_raise(
     if not has_access:
         raise ExternalDocumentAccessError("Access denied to this document", "forbidden")
 
-    attachment = None
-    if document.attachment_id and document.attachment_id > 0:
-        attachment = (
-            db.query(SubtaskContext)
-            .filter(
-                SubtaskContext.id == document.attachment_id,
-                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-            )
-            .first()
-        )
-    return build_document_capabilities(document, attachment)
+    sources = load_document_text_sources(db, [document], include_text=False)[
+        document.id
+    ]
+    return build_document_capabilities(document, sources.original, text_sources=sources)
 
 
 def get_document_file_or_raise(

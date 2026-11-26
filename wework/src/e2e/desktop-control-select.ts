@@ -17,7 +17,8 @@ export function chooseDesktopControlOption(element: HTMLElement, selection: stri
 export function selectDesktopControlOption(
   element: HTMLSelectElement,
   selection: string,
-  mode: DesktopControlSelectMode = 'value'
+  mode: DesktopControlSelectMode = 'value',
+  includeOptionsOnError = false
 ): string {
   const option = Array.from(element.options).find(candidate =>
     mode === 'label' ? candidate.label.trim() === selection.trim() : candidate.value === selection
@@ -29,7 +30,18 @@ export function selectDesktopControlOption(
   )
     throw new Error('Select option is disabled')
   if (!option) {
-    throw new Error(`Unable to find select option by ${mode} "${selection}"`)
+    const diagnostics = includeOptionsOnError
+      ? `; select=${JSON.stringify({
+          selectedValue: element.value,
+          selectedLabel: element.selectedOptions[0]?.label.trim() ?? null,
+          options: Array.from(element.options, candidate => ({
+            value: candidate.value,
+            label: candidate.label.trim(),
+            disabled: candidate.disabled,
+          })),
+        })}`
+      : ''
+    throw new Error(`Unable to find select option by ${mode} "${selection}"${diagnostics}`)
   }
 
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
@@ -128,7 +140,8 @@ export async function selectDesktopControlChoice(
   element: HTMLElement,
   selection: string,
   mode: DesktopControlSelectMode = 'value',
-  timeoutMs = 1000
+  timeoutMs = 1000,
+  includeOptionsOnError = false
 ): Promise<string> {
   if (!element.isConnected) throw new Error('Selection target is no longer mounted')
   if (!desktopControlElementEnabled(element)) throw new Error('Selection target is disabled')
@@ -137,7 +150,7 @@ export async function selectDesktopControlChoice(
       Array.from(element.options).find(option =>
         mode === 'label' ? option.label.trim() === selection.trim() : option.value === selection
       )?.value ?? selection
-    const label = selectDesktopControlOption(element, selection, mode)
+    const label = selectDesktopControlOption(element, selection, mode, includeOptionsOnError)
     await waitForSelection(element, '', expected, timeoutMs)
     return label
   }
@@ -185,7 +198,21 @@ export async function selectDesktopControlChoice(
       if (!option) await waitForDomChange(element.ownerDocument.documentElement)
     }
   }
-  if (!option) throw new Error(`Unable to find select option by ${mode} "${selection}"`)
+  if (!option) {
+    const available = includeOptionsOnError
+      ? await selectionAgent.query({ within: target.ref })
+      : null
+    const diagnostics = includeOptionsOnError
+      ? `; select=${JSON.stringify({
+          selectedValue: selectionValue(element, target.ref),
+          options:
+            available && !('error' in available)
+              ? available[0]?.items?.map(item => ({ value: item.value, label: item.label }))
+              : [],
+        })}`
+      : ''
+    throw new Error(`Unable to find select option by ${mode} "${selection}"${diagnostics}`)
+  }
   const result = await selectionAgent.act({
     steps: [{ ref: target.ref, action: 'setValue', args: [option.value] }],
   })

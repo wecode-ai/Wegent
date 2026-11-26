@@ -7,6 +7,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from app.services.knowledge.document_read_service import DocumentReadService
+from app.services.knowledge.document_text_sources import DocumentTextSources
 from app.services.knowledge.orchestrator import KnowledgeOrchestrator
 from shared.event_reporting import register_event_receiver
 
@@ -42,7 +43,12 @@ def test_batch_read_reports_every_result(
     mocker.patch.object(
         service,
         "_load_attachment_contexts",
-        return_value={i: SimpleNamespace(extracted_text="text") for i in documents},
+        return_value={
+            i: DocumentTextSources(
+                original=SimpleNamespace(extracted_text="text"), content_readable=True
+            )
+            for i in documents
+        },
     )
     results = service.read_documents(
         MagicMock(), document_ids=list(documents), user_id=7
@@ -83,7 +89,12 @@ def test_single_read_records_final_outcome_and_actor(
     mocker.patch.object(
         DocumentReadService,
         "_load_attachment_contexts",
-        return_value={1: SimpleNamespace(extracted_text=text)},
+        return_value={
+            9: DocumentTextSources(
+                original=SimpleNamespace(extracted_text=text),
+                content_readable=bool(text),
+            )
+        },
     )
     user = SimpleNamespace(id=7)
     if expected_status == "failed":
@@ -136,16 +147,16 @@ def test_external_mcp_document_read_reports_caller(
         "app.mcp_server.tools.knowledge_external.get_document_access_or_raise",
         return_value=SimpleNamespace(knowledge_base_id=1, document=document),
     )
-    mocker.patch.object(
-        DocumentReadService, "_load_documents", return_value={9: document}
-    )
-    mocker.patch.object(
-        DocumentReadService,
-        "_load_attachment_contexts",
-        return_value={1: SimpleNamespace(extracted_text="body")},
+    mocker.patch(
+        "app.mcp_server.tools.knowledge_external.load_document_text_sources",
+        return_value={
+            9: DocumentTextSources(
+                original=SimpleNamespace(extracted_text="body"), content_readable=True
+            )
+        },
     )
     result = _get_document_content_sync(user_id=7, document_id=9, offset=0, limit=10)
-    assert '"content":"body"' in result
+    assert result["content"] == "body"
     assert len(read_events) == 1
     assert read_events[0]["data"]["actor_user_id"] == 7
     assert read_events[0]["data"]["effective_reader_id"] == 7
@@ -167,18 +178,18 @@ def test_external_mcp_serialization_failure_is_not_reported_as_success(
         "app.mcp_server.tools.knowledge_external.get_document_access_or_raise",
         return_value=SimpleNamespace(knowledge_base_id=1, document=document),
     )
-    mocker.patch.object(
-        DocumentReadService, "_load_documents", return_value={9: document}
-    )
-    mocker.patch.object(
-        DocumentReadService,
-        "_load_attachment_contexts",
-        return_value={1: SimpleNamespace(extracted_text="body")},
+    mocker.patch(
+        "app.mcp_server.tools.knowledge_external.load_document_text_sources",
+        return_value={
+            9: DocumentTextSources(
+                original=SimpleNamespace(extracted_text="body"), content_readable=True
+            )
+        },
     )
     mocker.patch(
         "app.mcp_server.tools.knowledge_external.ExternalDocumentContentResponse",
         side_effect=ValueError("invalid response"),
     )
     result = _get_document_content_sync(user_id=7, document_id=9, offset=0, limit=10)
-    assert "internal_error" in result
+    assert result == {"error": "Internal error", "code": "internal_error"}
     assert [event["status"] for event in read_events] == ["failed"]

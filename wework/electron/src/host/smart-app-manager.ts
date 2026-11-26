@@ -32,6 +32,7 @@ import {
 import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 import { ensureDirectory } from './ensure-directory.js'
+import { observeSmartAppInstall } from './smart-app-install-diagnostics.js'
 import { decideDecisionModelGrant } from './smart-app-capability-policy.js'
 
 export interface SmartAppInstallation {
@@ -438,8 +439,14 @@ export class SmartAppManager {
     smartAppId?: number | null
     releaseId?: number | null
   }): Promise<SmartAppInstallation> {
+    const observe = observeSmartAppInstall(this.options.environment)
+    observe?.('manager_received')
     return this.serial(async () => {
-      const preview = await this.preview(input.archivePath)
+      observe?.('serial_entered')
+      observe?.('preview_started')
+      const preview = await this.preview(input.archivePath).finally(() =>
+        observe?.('preview_finished')
+      )
       if (!preview.valid || !preview.manifest) {
         throw new Error(preview.issues.join('\n') || 'Smart app package is invalid')
       }
@@ -450,7 +457,9 @@ export class SmartAppManager {
         input.smartAppId === null || input.smartAppId === undefined
           ? preview.manifest.name
           : `market-${input.smartAppId}`
-      if (this.options.runtimeHost()?.runningTabIds().has(tabId(id))) {
+      const running = this.options.runtimeHost()?.runningTabIds().has(tabId(id)) ?? false
+      observe?.('running_guard', running)
+      if (running) {
         throw new Error('Stop the Smart app before installing a new version')
       }
       const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
@@ -484,7 +493,7 @@ export class SmartAppManager {
       this.syncGrantedCapabilities(installation)
       await this.writeRegistry([...installations.filter(item => item.id !== id), installation])
       return installation
-    })
+    }).finally(() => observe?.('manager_finished'))
   }
 
   async start(input: {

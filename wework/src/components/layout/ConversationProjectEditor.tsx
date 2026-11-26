@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
@@ -14,7 +14,7 @@ export function ConversationProjectEditor({
   projectWork: RuntimeProjectWork
   onClose: () => void
 }) {
-  const workbench = useWorkbench()
+  const workbench = useWorkbenchPaneContext()
   const { project } = projectWork
   const apis = useMemo(() => projectSpaceApis(workbench.services), [workbench.services])
   const owner = getRuntimeProjectOwner(projectWork)

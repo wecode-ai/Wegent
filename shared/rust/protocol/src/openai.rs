@@ -7,6 +7,51 @@ use thiserror::Error;
 
 use super::execution::{ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE};
 
+/// Map the top-level routing model without re-encoding opaque provider fields.
+pub fn map_request_model(body: &[u8], model: &str) -> serde_json::Result<Vec<u8>> {
+    use serde::Deserialize;
+    use serde_json::value::RawValue;
+
+    // The routing projection skips unrelated fields and rejects duplicate model keys.
+    #[derive(Deserialize)]
+    struct Routing<'a> {
+        #[serde(borrow, default, deserialize_with = "present")]
+        model: Option<&'a RawValue>,
+    }
+
+    fn present<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<&'de RawValue>, D::Error> {
+        <&RawValue>::deserialize(de).map(Some)
+    }
+
+    let start_object = body.iter().position(|byte| !byte.is_ascii_whitespace());
+    let Some(open) = start_object.filter(|&index| body[index] == b'{') else {
+        return Err(serde::de::Error::custom(
+            "model request must be a JSON object",
+        ));
+    };
+    let routing: Routing = serde_json::from_slice(body)?;
+    if let Some(raw) = routing.model {
+        let raw = raw.get();
+        if serde_json::from_str::<String>(raw).is_ok_and(|current| current == model) {
+            return Ok(body.to_vec());
+        }
+        let start = raw.as_ptr() as usize - body.as_ptr() as usize;
+        let mut mapped = body[..start].to_vec();
+        serde_json::to_writer(&mut mapped, model)?;
+        mapped.extend_from_slice(&body[start + raw.len()..]);
+        return Ok(mapped);
+    }
+    let rest = &body[open + 1..];
+    let mut mapped = body[..=open].to_vec();
+    mapped.extend_from_slice(br#""model":"#);
+    serde_json::to_writer(&mut mapped, model)?;
+    if rest.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'}') {
+        mapped.push(b',');
+    }
+    mapped.extend_from_slice(rest);
+    Ok(mapped)
+}
+
 #[derive(Debug, Error)]
 pub enum ProtocolError {
     #[error("OpenAI Responses request must be a JSON object")]
@@ -103,6 +148,7 @@ impl OpenAIResponsesRequest {
             executor_name: get_string(&metadata, "executor_name"),
             executor_namespace: get_string(&metadata, "executor_namespace"),
             agent_home_runtime_task_id: None,
+            stand_in_task_permissions: None,
             backend_url: get_string(&metadata, "backend_url"),
             validation_params: metadata
                 .get("validation_params")
@@ -361,4 +407,30 @@ fn copy_renamed(source: &Value, target: &mut Map<String, Value>, from: &str, to:
 
 fn copy_same(source: &Value, target: &mut Map<String, Value>, key: &str) {
     copy_renamed(source, target, key, key);
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::map_request_model;
+
+    #[test]
+    fn maps_only_the_top_level_model_token() {
+        for (body, expected) in [
+            (
+                r#"{ "model":null, "n":1.00 }"#,
+                r#"{ "model":"x", "n":1.00 }"#,
+            ),
+            (
+                r#"{ "nested":{"model":"a"} }"#,
+                r#"{"model":"x", "nested":{"model":"a"} }"#,
+            ),
+            (r#"{ "model":"\u0078" }"#, r#"{ "model":"\u0078" }"#),
+        ] {
+            assert_eq!(
+                map_request_model(body.as_bytes(), "x").unwrap(),
+                expected.as_bytes()
+            );
+        }
+        assert!(map_request_model(br#"{"model":"a","model":"b"}"#, "x").is_err());
+    }
 }

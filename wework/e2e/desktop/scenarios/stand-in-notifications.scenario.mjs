@@ -53,21 +53,6 @@ async function assertInboxReady(control) {
   )
 }
 
-export async function prepareNotificationHitTesting(control, content, issueId, notificationRow) {
-  // Establish the Issue explicitly; reload may restore it or leave the board without one.
-  await control.command('clickWhenEnabled', notificationRow)
-  // Dismissal follows this row's mark-read and local Issue navigation, even if an Issue was open.
-  await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
-    visible: false,
-  })
-  const issue = `${content} [data-testid="cloud-todo-detail"]`
-  await control.command('waitFor', issue, { text: issueId })
-  await control.command('clickWhenEnabled', `${content} [data-testid="cloud-todo-detail-close"]`)
-  await control.command('waitFor', issue, { visible: false })
-  // The clipped exit frame can be invisible while its modal layer still owns hit testing.
-  await control.command('waitFor', `${content}:not(:has([data-testid="cloud-todo-detail"]))`)
-}
-
 export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
@@ -295,11 +280,11 @@ export function createDesktopScenario({
         // A clipped exit frame is invisible before the modal releases its route and inert scope.
         await control.command('waitFor', `${CONTENT}:not(:has([data-testid="cloud-todo-detail"]))`)
       }
-      // Reload can restore the Issue opened for the follow-up. Its modal makes
-      // the notification popover inert until the Issue drawer releases the board.
-      if (Number(await control.command('getElementCount', detail))) await closeIssueDrawer()
-      await openCollaborationNotifications(control)
-      await prepareNotificationHitTesting(control, CONTENT, issue.id, notificationRow)
+      // Establish the active board and its Issue before dismissing the modal.
+      // A single DOM sample after reload can precede restoration of the board tab.
+      await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
+      await control.command('waitFor', detail, { text: issue.id, timeoutMs: uiTimeoutMs })
+      await closeIssueDrawer()
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await openCollaborationNotifications(control)

@@ -1,6 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
 import type { UseChatStreamHandlersOptions } from '@/features/tasks/components/chat/useChatStreamHandlers'
+import {
+  createMessageSendQueue,
+  type PreparedChatSend,
+} from '@/features/tasks/session/messageSendQueue'
 import type { TaskDetail } from '@/types/api'
 import type React from 'react'
 
@@ -15,8 +19,10 @@ const mockRefreshSelectedTaskDetail = jest.fn()
 const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 const mockRefreshProjects = jest.fn()
 const mockRouterPush = jest.fn()
+let mockMessageSendQueue: ReturnType<typeof createMessageSendQueue<PreparedChatSend>>
 
 let isMachineStreamingMock = true
+let hasRuntimeStatusMock = true
 let derivedIsStreamingMock: boolean | undefined
 let activeStreamSubtaskIdMock: number | undefined = 77
 let taskInputMessageMock = 'next question'
@@ -40,6 +46,7 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
     currentTaskId: currentTaskIdMock,
+    messageSendQueue: mockMessageSendQueue,
     selectedTaskDetail: selectedTaskDetailMock,
     refreshTasks: jest.fn(),
     refreshSelectedTaskDetail: mockRefreshSelectedTaskDetail,
@@ -53,7 +60,7 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
       messages: new Map(),
       isStopping: false,
       runtime: {
-        taskStatus: getTaskStatusMock(),
+        taskStatus: hasRuntimeStatusMock ? getTaskStatusMock() : undefined,
         activeStreamSubtaskId: activeStreamSubtaskIdMock,
       },
       derived: {
@@ -157,7 +164,9 @@ function renderQueueableHook(overrides: Partial<UseChatStreamHandlersOptions> = 
 describe('useChatStreamHandlers queue integration', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockMessageSendQueue = createMessageSendQueue<PreparedChatSend>()
     isMachineStreamingMock = true
+    hasRuntimeStatusMock = true
     derivedIsStreamingMock = undefined
     activeStreamSubtaskIdMock = 77
     taskInputMessageMock = 'next question'
@@ -170,6 +179,52 @@ describe('useChatStreamHandlers queue integration', () => {
       subtasks: [],
     } as unknown as TaskDetail
     mockSendChatGuidance.mockResolvedValue({ success: true })
+  })
+
+  it('restores a queued follow-up after remounting and sends it once the original task is ready', async () => {
+    const firstView = renderQueueableHook()
+    await act(() => firstView.result.current.handleSendMessage())
+    expect(firstView.result.current.queuedMessages[0]).toMatchObject({
+      displayMessage: 'next question',
+      status: 'queued',
+    })
+    firstView.unmount()
+
+    isMachineStreamingMock = false
+    currentTaskIdMock = 43
+    selectedTaskDetailMock = null
+    const otherView = renderQueueableHook()
+    expect(otherView.result.current.queuedMessages).toEqual([])
+    expect(mockContextSendMessage).not.toHaveBeenCalled()
+    otherView.unmount()
+
+    currentTaskIdMock = 42
+    hasRuntimeStatusMock = false
+    const returnedView = renderQueueableHook()
+    expect(returnedView.result.current.queuedMessages[0]).toMatchObject({ status: 'queued' })
+    expect(mockCheckHealth).toHaveBeenCalledTimes(1)
+    expect(mockContextSendMessage).not.toHaveBeenCalled()
+
+    let acknowledgeSend!: (taskId: number) => void
+    mockContextSendMessage.mockReturnValueOnce(
+      new Promise<number>(resolve => {
+        acknowledgeSend = resolve
+      })
+    )
+    hasRuntimeStatusMock = true
+    returnedView.rerender()
+    expect(mockContextSendMessage).toHaveBeenCalledTimes(1)
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ task_id: 42, message: 'next question', attachment_ids: [11] }),
+      expect.anything()
+    )
+    returnedView.unmount()
+
+    const pendingView = renderQueueableHook()
+    expect(pendingView.result.current.queuedMessages[0]).toMatchObject({ status: 'sending' })
+    expect(mockContextSendMessage).toHaveBeenCalledTimes(1)
+    await act(async () => acknowledgeSend(42))
+    expect(pendingView.result.current.queuedMessages).toEqual([])
   })
 
   it.each(['normal', 'model-override'] as const)(
@@ -206,6 +261,34 @@ describe('useChatStreamHandlers queue integration', () => {
     }
   )
 
+  it('notifies the failed URL action and treats a manual retry as a normal send', async () => {
+    isMachineStreamingMock = false
+    currentTaskIdMock = null
+    selectedTaskDetailMock = null
+    mockContextSendMessage.mockRejectedValueOnce(new Error('Send failed'))
+    const onFailure = jest.fn()
+    const view = renderQueueableHook()
+
+    await act(() =>
+      view.result.current.handleSendMessage('Linked prompt', { urlAutoSend: { onFailure } })
+    )
+
+    expect(mockContextSendMessage).toHaveBeenCalledTimes(1)
+    expect(onFailure).toHaveBeenCalledTimes(1)
+
+    searchParamsMock = new URLSearchParams('conversationGroupId=31')
+    view.rerender()
+    mockContextSendMessage.mockImplementationOnce(async (_request, options) => {
+      options.onMessageSent('local-user-1', 501)
+      return 501
+    })
+    const retry = mockToast.mock.calls[0][0].action as React.ReactElement<{ onClick: () => void }>
+    await act(async () => retry.props.onClick())
+
+    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=501')
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+
   it('repairs a stale task id in the URL after a message is accepted', async () => {
     isMachineStreamingMock = false
     currentTaskIdMock = 42
@@ -230,36 +313,50 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockRouterPush).toHaveBeenCalledWith('?taskId=42')
   })
 
-  it('associates a new chat with its conversation group without entering device mode', async () => {
-    isMachineStreamingMock = false
-    activeStreamSubtaskIdMock = undefined
-    currentTaskIdMock = null
-    selectedTaskDetailMock = null
-    searchParamsMock = new URLSearchParams({ conversationGroupId: '31' })
-    mockContextSendMessage.mockResolvedValueOnce(-1)
+  it.each([false, true])(
+    'associates a new chat with its conversation group (URL auto-send: %s)',
+    async autoSend => {
+      isMachineStreamingMock = false
+      activeStreamSubtaskIdMock = undefined
+      currentTaskIdMock = null
+      selectedTaskDetailMock = null
+      searchParamsMock = new URLSearchParams({ conversationGroupId: '31' })
+      if (autoSend) {
+        searchParamsMock.set('q', 'Linked prompt')
+        searchParamsMock.set('autoSend', 'true')
+      }
+      mockContextSendMessage.mockResolvedValueOnce(-1)
 
-    const { result } = renderQueueableHook()
+      const { result } = renderQueueableHook()
 
-    await act(async () => {
-      await result.current.handleSendMessage()
-    })
+      await act(async () => {
+        await result.current.handleSendMessage(
+          autoSend ? 'Linked prompt' : undefined,
+          autoSend ? { urlAutoSend: { onFailure: jest.fn() } } : undefined
+        )
+      })
 
-    expect(mockContextSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: 31,
-        device_id: undefined,
-      }),
-      expect.any(Object)
-    )
+      expect(mockContextSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: 31,
+          device_id: undefined,
+        }),
+        expect.any(Object)
+      )
 
-    const sendOptions = mockContextSendMessage.mock.calls[0][1]
-    act(() => {
-      sendOptions.onMessageSent('local-user-1', 501)
-    })
+      const sendOptions = mockContextSendMessage.mock.calls[0][1]
+      act(() => {
+        sendOptions.onMessageSent('local-user-1', 501)
+      })
 
-    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=501')
-    expect(mockRefreshProjects).toHaveBeenCalledTimes(1)
-  })
+      expect(mockRouterPush).toHaveBeenCalledWith(
+        autoSend
+          ? '?conversationGroupId=31&q=Linked+prompt&autoSend=true&taskId=501'
+          : '?taskId=501'
+      )
+      expect(mockRefreshProjects).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {
     const { result } = renderQueueableHook()

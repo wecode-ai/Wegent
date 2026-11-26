@@ -1883,6 +1883,7 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    personalAssistantAccountApi: cloudServices.personalAssistantAccountApi,
     standInApi: {
       async binding(deviceId, operation, version, target) {
         return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)
@@ -1897,6 +1898,14 @@ export function createHybridWorkbenchServices(
         async resolve(deviceId, resolution) {
           return (await standInApiForDevice(deviceId)).taskCommands.resolve(deviceId, resolution)
         },
+      },
+      async setTaskPermissions(userId, deviceId, taskId, taskPermissions) {
+        return (await standInApiForDevice(deviceId)).setTaskPermissions(
+          userId,
+          deviceId,
+          taskId,
+          taskPermissions
+        )
       },
       async gitConnection(deviceId, input) {
         return (await standInApiForDevice(deviceId)).gitConnection(deviceId, input)
@@ -2020,6 +2029,17 @@ export function createHybridWorkbenchServices(
       async workMessages(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
       },
+      async takeOverWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).takeOverWork(userId, deviceId, workId)
+      },
+      async verifyWorkDelivery(userId, deviceId, workId, recordId) {
+        return (await standInApiForDevice(deviceId)).verifyWorkDelivery(
+          userId,
+          deviceId,
+          workId,
+          recordId
+        )
+      },
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },
@@ -2048,6 +2068,14 @@ export function createHybridWorkbenchServices(
       async connectionProviders(deviceId) {
         return (await standInApiForDevice(deviceId)).connectionProviders(deviceId)
       },
+      async connectionReadiness(deviceId, providerId, profile, sources) {
+        return (await standInApiForDevice(deviceId)).connectionReadiness(
+          deviceId,
+          providerId,
+          profile,
+          sources
+        )
+      },
       async installConnectionDependencies(deviceId, providerId, aliases) {
         return (await standInApiForDevice(deviceId)).installConnectionDependencies(
           deviceId,
@@ -2055,14 +2083,15 @@ export function createHybridWorkbenchServices(
           aliases
         )
       },
-      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope) {
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope, profile) {
         return (await standInApiForDevice(deviceId)).searchConnectionResources(
           deviceId,
           providerId,
           kind,
           query,
           cursor,
-          ...(scope ? ([scope] as const) : [])
+          scope,
+          profile
         )
       },
       async conversation(userId, deviceId, message, roleId, options) {
@@ -2077,8 +2106,11 @@ export function createHybridWorkbenchServices(
       async proposal(userId, deviceId, roleId) {
         return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
       },
-      async latestAppliedGhost(userId, deviceId, roleId) {
-        return (await standInApiForDevice(deviceId)).latestAppliedGhost(userId, deviceId, roleId)
+      async learningReport(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).learningReport(userId, deviceId, roleId)
+      },
+      async runLearning(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).runLearning(userId, deviceId, roleId)
       },
       async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
         return (await standInApiForDevice(deviceId)).resolveProposal(
@@ -2098,6 +2130,34 @@ export function createHybridWorkbenchServices(
           deviceId
         )
       },
+      sharing: {
+        async list(userId, deviceId) {
+          return (await standInApiForDevice(deviceId)).sharing.list(userId, deviceId)
+        },
+        async searchUsers(userId, deviceId, query) {
+          return (await standInApiForDevice(deviceId)).sharing.searchUsers(userId, deviceId, query)
+        },
+        async definition(userId, deviceId, kind, id) {
+          return (await standInApiForDevice(deviceId)).sharing.definition(
+            userId,
+            deviceId,
+            kind,
+            id
+          )
+        },
+        async publish(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.publish(userId, deviceId, share)
+        },
+        async direct(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.direct(userId, deviceId, share)
+        },
+        async revoke(userId, deviceId, share) {
+          return (await standInApiForDevice(deviceId)).sharing.revoke(userId, deviceId, share)
+        },
+        async copy(userId, deviceId, share, update) {
+          return (await standInApiForDevice(deviceId)).sharing.copy(userId, deviceId, share, update)
+        },
+      },
       async deviceIdentity(deviceId) {
         const api = await standInApiForDevice(deviceId)
         if (api === localServices.standInApi) return api.deviceIdentity(deviceId)
@@ -2111,8 +2171,13 @@ export function createHybridWorkbenchServices(
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
       },
-      async personalSave(userId, settings, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      async personalSave(userId, settings, deviceId, transferRoleId) {
+        return (await standInApiForDevice(deviceId)).personalSave(
+          userId,
+          settings,
+          deviceId,
+          transferRoleId
+        )
       },
       async saveDelegationRoute(userId, deviceId, version, roleId, route) {
         return (await standInApiForDevice(deviceId)).saveDelegationRoute(

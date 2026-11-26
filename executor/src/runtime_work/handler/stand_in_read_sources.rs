@@ -280,8 +280,22 @@ mod tests {
         let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
         let source = settings["primary"]["connections"][0].clone();
         let parent = "stand-in-chat-7-primary";
-        handler.upsert_local_task(RuntimeTaskLink {local_task_id:parent.into(),runtime:"codex".into(),
-            runtime_handle:json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac"},"executionRequest":{"user_id":7}}),..Default::default()});
+        let origin = json!({"type":"stand_in_identity","userId":7,"deviceId":"mac"});
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin.clone());
+        request.extra.insert("user_id".into(), json!(7));
+        handler
+            .stamp_stand_in_owner_request(parent, &mut request, false)
+            .unwrap();
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: parent.into(),
+            runtime: "codex".into(),
+            runtime_handle: json!({
+                "origin": origin,
+                "executionRequest": request,
+            }),
+            ..Default::default()
+        });
         let identity = StandInMcpIdentity {
             task_id: parent.into(),
             user: 7,

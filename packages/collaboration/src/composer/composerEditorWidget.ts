@@ -718,8 +718,51 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
         listeners.delete(listener)
       }
     },
-    attach(element: HTMLElement, props: ComposerProseMirrorEditorProps) {
+    update(props: ComposerProseMirrorEditorProps) {
       const previous = currentProps
+      currentProps = { ...props, services: props.services ?? browserComposerEditorServices }
+      const view = currentView
+      if (!view || !attached) return
+      if (
+        previous.textareaRef !== currentProps.textareaRef &&
+        previous.textareaRef.current === view.dom
+      )
+        (previous.textareaRef as { current: HTMLElement | null }).current = null
+      if (
+        Boolean(previous.onActivateMention) !== Boolean(currentProps.onActivateMention) ||
+        Boolean(previous.onOpenMentionReference) !== Boolean(currentProps.onOpenMentionReference)
+      ) {
+        createMentionView = makeMentionView()
+        view.setProps({
+          nodeViews: { ...view.props.nodeViews, composer_mention: createMentionView },
+        })
+      }
+      if (
+        ['className', 'disabled', 'placeholder', 'ariaLabel', 'rows', 'testId'].some(
+          key =>
+            previous[key as keyof typeof previous] !==
+            currentProps[key as keyof typeof currentProps]
+        )
+      )
+        view.setProps({
+          attributes: editorAttributes(currentProps),
+          editable: () => !currentProps.disabled,
+        })
+      if (previous.services !== currentProps.services) bindWindowFocus()
+      if (previous.scrollContainerClassName !== currentProps.scrollContainerClassName) bindFade()
+      if (previous.value !== props.value && props.value !== snapshot.value) {
+        const selectionOffset = view.hasFocus() ? props.value.length : undefined
+        recordComposerDiagnostic('external-value-apply', {
+          composerId: composerDiagnosticId,
+          valueLength: props.value.length,
+          selectionEnd: selectionOffset ?? null,
+          viewIsComposing: view.composing,
+        })
+        replaceComposerValue(view, props.value, selectionOffset, true)
+      }
+      ;(currentProps.textareaRef as { current: HTMLElement | null }).current = view.dom
+    },
+    attach(element: HTMLElement) {
       const resumed = suspended
       if (mount && mount !== element) dispose()
       mount = element
@@ -727,52 +770,14 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
       attached = true
       suspended = false
       const ticket = ++lease
-      currentProps = { ...props, services: props.services ?? browserComposerEditorServices }
-      if (
-        previous.textareaRef !== currentProps.textareaRef &&
-        previous.textareaRef.current === currentView?.dom
-      )
-        (previous.textareaRef as { current: HTMLElement | null }).current = null
       if (!currentView) {
         destroyView = create(element)
         bindFade()
       } else {
         const view = currentView
-        if (
-          Boolean(previous.onActivateMention) !== Boolean(currentProps.onActivateMention) ||
-          Boolean(previous.onOpenMentionReference) !== Boolean(currentProps.onOpenMentionReference)
-        ) {
-          createMentionView = makeMentionView()
-          view.setProps({
-            nodeViews: { ...view.props.nodeViews, composer_mention: createMentionView },
-          })
-        }
-        if (
-          ['className', 'disabled', 'placeholder', 'ariaLabel', 'rows', 'testId'].some(
-            key =>
-              previous[key as keyof typeof previous] !==
-              currentProps[key as keyof typeof currentProps]
-          )
-        )
-          view.setProps({
-            attributes: editorAttributes(currentProps),
-            editable: () => !currentProps.disabled,
-          })
-        if (resumed || previous.services !== currentProps.services || !releaseWindowFocus)
-          bindWindowFocus()
-        if (resumed || previous.scrollContainerClassName !== currentProps.scrollContainerClassName)
-          bindFade()
-        if (previous.value !== props.value && props.value !== snapshot.value) {
-          const selectionOffset = view.hasFocus() ? props.value.length : undefined
-          recordComposerDiagnostic('external-value-apply', {
-            composerId: composerDiagnosticId,
-            valueLength: props.value.length,
-            selectionEnd: selectionOffset ?? null,
-            viewIsComposing: view.composing,
-          })
-          replaceComposerValue(view, props.value, selectionOffset, true)
-        }
+        if (!releaseWindowFocus) bindWindowFocus()
         if (resumed) {
+          bindFade()
           publish({ value: readComposerSnapshot(view.state).value, composing: view.composing })
           scheduleReady(view)
         }

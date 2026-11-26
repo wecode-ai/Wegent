@@ -2496,6 +2496,7 @@ def _runtime_send_response(
         return RuntimeSendResponse(
             accepted=False,
             taskId=str(result.get("taskId") or local_task_id),
+            code=result.get("code"),
             error=str(result.get("error") or "Runtime send failed"),
         )
     return RuntimeSendResponse(
@@ -2503,6 +2504,9 @@ def _runtime_send_response(
         taskId=str(result.get("taskId") or local_task_id),
         status=result.get("status"),
         queuePosition=result.get("queuePosition"),
+        turnId=result.get("turnId") or result.get("turn_id"),
+        guidanceId=result.get("guidanceId") or result.get("guidance_id"),
+        code=result.get("code"),
         error=result.get("error"),
     )
 

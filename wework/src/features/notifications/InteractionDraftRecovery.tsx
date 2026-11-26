@@ -36,7 +36,7 @@ export function InteractionDraftRecovery() {
             readOnly
             value={text}
             rows={3}
-            className="w-full resize-y rounded-md border border-border bg-background px-2 py-2 text-base outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            className="w-full resize-y rounded-md border border-border bg-background px-2 py-2 text-base"
           />
           <Button
             data-testid="interaction-discard-unsent"

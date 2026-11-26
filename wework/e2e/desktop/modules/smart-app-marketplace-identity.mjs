@@ -37,13 +37,13 @@ export async function verifySmartAppMarketplaceIdentity({
 
   await control.command('click', `${active} [data-testid="smart-apps-section-marketplace"]`)
   await control.command(
-    'waitFor',
-    `[data-testid="smart-app-marketplace-install-${marketItem.id}"]`,
+    'clickWhenEnabled',
+    `${active} [data-testid="smart-app-marketplace-install-${marketItem.id}"]`,
     {
+      visible: true,
       timeoutMs: uiTimeoutMs,
     }
   )
-  await control.command('click', `[data-testid="smart-app-marketplace-install-${marketItem.id}"]`)
   await control.command('waitFor', '[data-testid="harness-app-preview"]', {
     timeoutMs: uiTimeoutMs,
   })

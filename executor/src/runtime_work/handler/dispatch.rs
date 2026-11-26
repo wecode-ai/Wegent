@@ -62,6 +62,19 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.stand_in_onboarding_rpc(method, payload).await },
                 )
             }
+            "runtime.stand_in.share.definition" => {
+                boxed_rpc(move || async move { self.stand_in_share_definition(payload).await })
+            }
+            "runtime.stand_in.share.list"
+            | "runtime.stand_in.share.search_users"
+            | "runtime.stand_in.share.publish"
+            | "runtime.stand_in.share.direct"
+            | "runtime.stand_in.share.revoke" => {
+                boxed_rpc(move || async move { self.share_stand_in_cloud(method, payload).await })
+            }
+            "runtime.stand_in.share.copy" => {
+                boxed_rpc(move || async move { self.copy_stand_in_share(payload).await })
+            }
             "runtime.stand_in.personal.save" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, true).await },
@@ -116,6 +129,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.proposal.get" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, false).await })
             }
+            "runtime.stand_in.learning.run" => {
+                boxed_rpc(move || async move { self.run_stand_in_learning(payload) })
+            }
             "runtime.stand_in.proposal.resolve" => {
                 boxed_rpc(move || async move { self.stand_in_proposal(payload, true).await })
             }
@@ -127,6 +143,14 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.readiness" => boxed_rpc(move || async move {
+                let mut payload = payload;
+                let provider = string_field(&payload, "providerId")
+                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
+                payload["readiness"] = json!(true);
+                self.connection_call("check", Some(&provider), payload)
+                    .await
+            }),
             "runtime.connections.observations.sync" => {
                 boxed_rpc(
                     move || async move { self.sync_cloud_connection_subscription(payload).await },
@@ -235,6 +259,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.work.run" => {
                 boxed_rpc(move || async move { self.run_connection_stand_in_work(payload).await })
             }
+            "runtime.stand_in.work.takeover" => {
+                boxed_rpc(move || async move { self.take_over_delegated_dingtalk_work(payload) })
+            }
+            "runtime.stand_in.work.verify_delivery" => {
+                boxed_rpc(
+                    move || async move { self.verify_delegated_dingtalk_delivery(payload).await },
+                )
+            }
             "runtime.stand_in.work.adjust" => {
                 boxed_rpc(move || async move { self.adjust_connection_stand_in_work(payload) })
             }
@@ -267,6 +299,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.tasks.get" => {
                 boxed_rpc(move || async move { self.get_task_with_active_provider(&payload).await })
+            }
+            "runtime.tasks.permissions.set" => {
+                boxed_rpc(move || async move { self.set_stand_in_task_permissions(payload).await })
             }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })

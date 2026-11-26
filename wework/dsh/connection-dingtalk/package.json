@@ -75,12 +75,20 @@
                 "json"
               ],
               "operations": {
+                "componentInfo": {
+                  "command": [
+                    "version"
+                  ],
+                  "parameters": {}
+                },
                 "authStatus": {
                   "command": [
                     "auth",
                     "status"
                   ],
-                  "parameters": {}
+                  "parameters": {
+                    "profile": "--profile"
+                  }
                 },
                 "listProfiles": {
                   "command": [
@@ -108,6 +116,16 @@
                   ],
                   "parameters": {
                     "query": "--query",
+                    "profile": "--profile"
+                  }
+                },
+                "conversationInfo": {
+                  "command": [
+                    "chat",
+                    "conversation-info"
+                  ],
+                  "parameters": {
+                    "peer": "--open-dingtalk-id",
                     "profile": "--profile"
                   }
                 },
@@ -240,6 +258,32 @@
             "inputSchema": {
               "type": "object",
               "properties": {
+                "delegatedMessage": {
+                  "type": "object",
+                  "description": "Read bounded evidence for one previously collected message in a delegated conversation.",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    },
+                    "conversationId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    },
+                    "at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "conversationId",
+                    "at"
+                  ],
+                  "additionalProperties": false
+                },
                 "since": {
                   "type": "string",
                   "format": "date-time",

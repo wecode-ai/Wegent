@@ -15,6 +15,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectKey, runtimeProjectToProject } from '@/lib/runtime-project'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { StandInSettingsError } from './StandInSettingsLayout'
+import { standInProjectWorkspace } from './useStandInRuntimeWork'
 
 type StandInComposerProps = {
   draft: WorkspaceStandInSettings
@@ -52,31 +53,25 @@ export function StandInComposerFields({
   models: ReturnType<typeof useStandInComposerDraft>['models']
 }) {
   const { t } = useTranslation('common')
-  const composerCatalog = useStandInComposerCatalog(
-    draft.executionDeviceId
-      ? {
-          deviceId: draft.executionDeviceId,
-          scope: 'workspace',
-          workspacePath: draft.workspace?.workspacePath ?? null,
-        }
-      : null,
-    services,
-    t
-  )
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
-    const workspace = row.deviceWorkspaces.find(
-      workspace =>
-        workspace.deviceId === draft.executionDeviceId &&
-        workspace.available &&
-        workspace.workspaceKind !== 'chat' &&
-        workspace.workspaceSource !== 'remote'
-    )
+    const workspace = standInProjectWorkspace(row, draft.executionDeviceId)
     return workspace ? [{ ...row, deviceWorkspaces: [workspace] }] : []
   })
   const projects = rows.map(runtimeProjectToProject)
   const selected = rows.find(row => runtimeProjectKey(row.project) === draft.workspace?.projectKey)
   const project = selected ? runtimeProjectToProject(selected) : null
   const workspace = selected?.deviceWorkspaces[0] ?? null
+  const composerCatalog = useStandInComposerCatalog(
+    draft.executionDeviceId
+      ? {
+          deviceId: draft.executionDeviceId,
+          scope: 'workspace',
+          workspacePath: workspace?.workspacePath ?? null,
+        }
+      : null,
+    services,
+    t
+  )
   const device =
     devices.find(device =>
       [device.device_id, device.app_device_id].includes(draft.executionDeviceId)
@@ -102,7 +97,6 @@ export function StandInComposerFields({
       workspace: row
         ? {
             projectKey: runtimeProjectKey(row.project),
-            workspacePath: row.deviceWorkspaces[0].workspacePath,
             executionMode: 'current_workspace',
           }
         : null,

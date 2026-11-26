@@ -12,16 +12,17 @@ export function useCloudConnection(): CloudConnectionContextValue {
 
 export function useOptionalCloudConnection(): CloudConnectionContextValue {
   const context = useContext(CloudConnectionContext)
-  const runtimeConfig = getRuntimeConfig()
-  const fallbackToken = localStorage.getItem('auth_token') ?? 'fallback-token'
-  const fallback = useMemo<CloudConnectionContextValue>(() => {
+  const { apiBaseUrl = '', socketBaseUrl = '', socketPath = '' } = context ? {} : getRuntimeConfig()
+  const fallbackToken = context ? '' : (localStorage.getItem('auth_token') ?? 'fallback-token')
+  return useMemo<CloudConnectionContextValue>(() => {
+    if (context) return context
     const fallbackUser = { id: 0, user_name: 'backend', email: '' }
     return {
       status: 'connected',
-      backendUrl: runtimeConfig.socketBaseUrl,
-      apiBaseUrl: runtimeConfig.apiBaseUrl,
-      socketBaseUrl: runtimeConfig.socketBaseUrl,
-      socketPath: runtimeConfig.socketPath,
+      backendUrl: socketBaseUrl,
+      apiBaseUrl,
+      socketBaseUrl,
+      socketPath,
       credentialMode: 'legacy_access_token',
       token: fallbackToken,
       tokenExpiresAt: null,
@@ -29,20 +30,12 @@ export function useOptionalCloudConnection(): CloudConnectionContextValue {
       connectedAt: null,
       error: null,
       isConnected: true,
-      serviceKey: `fallback:${runtimeConfig.apiBaseUrl}`,
+      serviceKey: `fallback:${apiBaseUrl}`,
       connectWithAuthorization: async () => {
         throw new Error('Cloud connection provider is unavailable')
       },
       refreshUser: async () => fallbackUser,
       disconnect: () => undefined,
     }
-  }, [
-    fallbackToken,
-    runtimeConfig.apiBaseUrl,
-    runtimeConfig.socketBaseUrl,
-    runtimeConfig.socketPath,
-  ])
-
-  if (context) return context
-  return fallback
+  }, [apiBaseUrl, context, fallbackToken, socketBaseUrl, socketPath])
 }

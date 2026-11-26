@@ -1,3 +1,4 @@
+import { ApiError } from '@/api/http'
 import { Button } from '@/components/ui/button'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -48,6 +49,46 @@ function syncLoadErrorMessage(t: ReturnType<typeof useTranslation>['t'], error: 
   return error instanceof Error && error.message
     ? error.message
     : t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
+}
+
+function syncApplyErrorMessage(t: ReturnType<typeof useTranslation>['t'], error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.errorCode) {
+      case 'git_not_found':
+        return t('workbench.git_device_sync_git_missing')
+      case 'invalid_workbench_home':
+      case 'credential_directory_invalid':
+      case 'credential_directory_unwritable':
+      case 'legacy_credentials_unmanaged':
+        return t('workbench.git_device_sync_directory_error')
+      case 'git_config_failed':
+        return t('workbench.git_device_sync_git_config_error')
+      case 'profile_update_failed':
+        return t('workbench.git_device_sync_profile_error')
+      case 'sync_in_progress':
+        return t('workbench.git_device_sync_in_progress')
+      case 'git_sync_result_unconfirmed':
+        return t('workbench.git_device_sync_result_unconfirmed')
+      case 'credential_payload_missing':
+      case 'credential_payload_invalid':
+      case 'git_sync_device_unavailable':
+        return t('workbench.git_device_sync_delivery_error')
+      case 'credential_lock_failed':
+      case 'credential_lock_invalid':
+        return t('workbench.git_device_sync_lock_error')
+      case 'managed_git_config_invalid':
+        return t('workbench.git_device_sync_generated_config_error')
+      case 'credential_rollback_failed':
+        return t('workbench.git_device_sync_rollback_error')
+      case 'credential_stage_failed':
+      case 'credential_publish_failed':
+      case 'credential_apply_failed':
+        return t('workbench.git_device_sync_failed')
+    }
+  }
+  return error instanceof Error && error.message
+    ? error.message
+    : t('workbench.git_device_sync_failed')
 }
 
 function createGitSyncResources(
@@ -160,9 +201,7 @@ function DeviceGitSyncContent({
   const inventoryError = devices === undefined && inventory.status === 'error'
   const inventoryUnavailable = inventoryPending || (devices === undefined && !inventory.data)
   const syncError = syncFailure
-    ? syncFailure.cause instanceof Error && syncFailure.cause.message
-      ? syncFailure.cause.message
-      : t('workbench.git_device_sync_failed')
+    ? syncApplyErrorMessage(t, syncFailure.cause)
     : summary.status === 'error'
       ? syncLoadErrorMessage(t, summary.error)
       : refreshFailure
@@ -436,13 +475,21 @@ function DeviceGitSyncContent({
                   </p>
                 ) : null}
                 {syncResult.cli
-                  .filter(item => item.status !== 'configured')
+                  .filter(
+                    item =>
+                      item.status !== 'configured' || item.reason_code === 'cli_git_protocol_failed'
+                  )
                   .map(item => (
                     <p key={`${item.provider}-${item.domain}`} className="mt-1">
                       {item.provider} · {item.domain}:{' '}
-                      {item.status === 'not_installed'
-                        ? t('workbench.git_device_sync_cli_missing', 'CLI 未安装，Git 认证已生效')
-                        : t('workbench.git_device_sync_cli_failed', 'CLI 登录失败，Git 认证已生效')}
+                      {item.status === 'configured'
+                        ? t('workbench.git_device_sync_cli_protocol_failed')
+                        : item.status === 'not_installed'
+                          ? t('workbench.git_device_sync_cli_missing', 'CLI 未安装，Git 认证已生效')
+                          : t(
+                              'workbench.git_device_sync_cli_failed',
+                              'CLI 登录失败，Git 认证已生效'
+                            )}
                       {item.status === 'failed' && item.detail ? `（${item.detail}）` : null}
                     </p>
                   ))}

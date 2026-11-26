@@ -626,29 +626,36 @@ async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_res
     );
 }
 
-#[tokio::test]
-async fn terminating_shared_app_servers_releases_every_registered_process() {
-    let mut child = spawn_idle_app_server_child();
-    let stdin = child.stdin.take().expect("the child should expose stdin");
-    let state = shared_codex_app_server_state("codex-app-server-termination-test");
-    state.lock().await.process = Some(CodexAppServerProcess {
-        child,
-        stdin: Arc::new(Mutex::new(stdin)),
-        pending: Arc::new(Mutex::new(HashMap::new())),
-        notifications: CodexNotificationHub::new(),
-        reader_task: tokio::spawn(async {}),
-    });
+#[test]
+fn terminating_shared_app_servers_releases_every_registered_process() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut child = spawn_idle_app_server_child();
+            let stdin = child.stdin.take().expect("the child should expose stdin");
+            let state = shared_codex_app_server_state("codex-app-server-termination-test");
+            state.lock().await.process = Some(CodexAppServerProcess {
+                child,
+                stdin: Arc::new(Mutex::new(stdin)),
+                pending: Arc::new(Mutex::new(HashMap::new())),
+                notifications: CodexNotificationHub::new(),
+                reader_task: tokio::spawn(async {}),
+            });
 
-    let terminated = terminate_shared_codex_app_servers().await;
+            let terminated = terminate_shared_codex_app_servers().await;
 
-    assert!(
-        terminated >= 1,
-        "the registered app-server process was not terminated"
-    );
-    assert!(
-        state.lock().await.process.is_none(),
-        "the terminated app-server process stayed registered"
-    );
+            assert!(
+                terminated >= 1,
+                "the registered app-server process was not terminated"
+            );
+            assert!(
+                state.lock().await.process.is_none(),
+                "the terminated app-server process stayed registered"
+            );
+        });
 }
 
 #[tokio::test]
@@ -1496,7 +1503,7 @@ fn mcp_tool_call_elicitation_can_be_auto_approved() {
 
 #[test]
 fn mcp_tool_call_request_user_input_can_be_auto_approved() {
-    let message = json!({
+    let mut message = json!({
         "id": 75,
         "method": "item/tool/requestUserInput",
         "params": {
@@ -1521,7 +1528,7 @@ fn mcp_tool_call_request_user_input_can_be_auto_approved() {
     });
 
     assert!(is_mcp_tool_call_approval_request(&message));
-    assert!(!codex_notification_requires_user_input(&message));
+    assert!(!prepare_runtime_notification(&mut message, true, false));
     assert_eq!(
         mcp_tool_call_request_user_input_response(message_params(&message)),
         Some(json!({
@@ -4727,7 +4734,6 @@ fn stand_in_mcp_confirmation_waits_for_one_time_input() {
             {"label":"Allow"},{"label":"Allow for this session"},{"label":"Cancel"}
         ]}]
     }});
-    assert!(!codex_notification_requires_user_input(&message));
     restrict_stand_in_approval(&mut message);
     assert!(codex_notification_requires_user_input(&message));
     assert_eq!(

@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore, type Ref, type ReactNode } from 'react'
+import { useId, useMemo, useState, useSyncExternalStore, type Ref, type ReactNode } from 'react'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import { ComposerProjectSelector } from '../composer/ComposerProjectSelector'
 import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
@@ -22,7 +22,9 @@ import {
 } from './issueHomeAttachmentDraft'
 import { issueHomeOwners, type IssueHomeOwner } from './issueHomeOwners'
 import type { CollaborationGroup } from '../types'
-import type { WorkspaceProjectAgent } from '../ports/SharedWorkspaceApi'
+import type { SharedWorkspaceApi, WorkspaceProjectAgent } from '../ports/SharedWorkspaceApi'
+import { BrowserIssueHomeTask, type BrowserIssueHomeTaskDraft } from './BrowserIssueHomeTask'
+import { IssueHomeModeTabs } from './IssueHomeModeTabs'
 
 const emptyAgents: WorkspaceProjectAgent[] = []
 const emptyGroups: CollaborationGroup[] = []
@@ -56,7 +58,8 @@ export interface IssueHomeTaskComposerProps {
   projectControl?: ReactNode
   onTaskCreated?(
     issue: CollaborationIssue,
-    task: import('../ports/SharedWorkspaceApi').WorkspaceRuntimeTaskAddress
+    task: import('../ports/SharedWorkspaceApi').WorkspaceRuntimeTaskAddress,
+    confirmed?: boolean
   ): void
 }
 const images: AttachmentImageServices<PendingFile> = {
@@ -94,6 +97,7 @@ export function IssueHomeComposer({
   error,
   environmentNotice,
   renderTaskComposer,
+  browserHome,
   currentUserId,
 }: {
   currentUserId?: number
@@ -123,7 +127,16 @@ export function IssueHomeComposer({
   error: string | null
   environmentNotice?: ReactNode
   renderTaskComposer?(props: IssueHomeTaskComposerProps): ReactNode
+  browserHome?: {
+    api: SharedWorkspaceApi
+    translate(key: string): string
+    onTaskCreated: NonNullable<IssueHomeTaskComposerProps['onTaskCreated']>
+  }
 }) {
+  const [taskMode, setTaskMode] = useState(false)
+  const [taskPending, setTaskPending] = useState(false)
+  const [taskDrafts] = useState(() => new Map<string, BrowserIssueHomeTaskDraft>())
+  const composerId = useId()
   const [attachmentDraft] = useState(createIssueHomeAttachmentDraft)
   const files = useSyncExternalStore(
     attachmentDraft.subscribe,
@@ -181,7 +194,12 @@ export function IssueHomeComposer({
       onChange={id => setOwnerOverride({ projectId, id })}
     />
   )
-  const submit = async (draft: string, standInDeviceId?: string, standInId?: string) => {
+  const submit = async (
+    draft: string,
+    standInDeviceId?: string,
+    standInId?: string,
+    startTask?: (content: string, files: File[]) => Promise<boolean>
+  ) => {
     const mentions = parseComposerMentions(draft)
     if (
       mentions.some(
@@ -208,12 +226,15 @@ export function IssueHomeComposer({
         content = content.slice(0, mention.start) + mention.name + content.slice(mention.end)
       }
     }
-    const accepted = await onSubmit(
-      content.trim(),
-      candidates.find(candidate => candidate.id === selectedOwner)?.owner ?? null,
-      files.map(item => item.file),
-      ...(standInDeviceId ? [standInDeviceId, ...(standInId ? [standInId] : [])] : [])
-    )
+    const pendingFiles = files.map(item => item.file)
+    const accepted = startTask
+      ? await startTask(content.trim(), pendingFiles)
+      : await onSubmit(
+          content.trim(),
+          candidates.find(candidate => candidate.id === selectedOwner)?.owner ?? null,
+          pendingFiles,
+          ...(standInDeviceId ? [standInDeviceId, ...(standInId ? [standInId] : [])] : [])
+        )
     if (accepted) {
       resetDraft()
       onChange('')
@@ -229,13 +250,14 @@ export function IssueHomeComposer({
     <ComposerProjectSelector
       testId="collaboration-issue-project"
       labelTestId="collaboration-issue-project-label"
-      label={projectLabel}
+      label={browserHome?.translate('personalHome.collaborationProject') ?? projectLabel}
       value={projectId}
-      disabled={pending}
+      disabled={pending || taskPending}
       onChange={onSelectProject}
       options={projects.map(project => ({ value: String(project.id), label: project.name }))}
     />
   )
+  const validationError = referenceError ? translate('issue_creation.invalid_reference') : null
   if (renderTaskComposer)
     return (
       <>
@@ -254,12 +276,7 @@ export function IssueHomeComposer({
           onSubmit: submit,
           disabled: pending,
           placeholder,
-          error: referenceError
-            ? translate(
-                'issue_creation.invalid_reference',
-                'The project changed. Remove or reselect mentions before creating the Issue.'
-              )
-            : error,
+          error: validationError ?? error,
           members: [...candidates, ...issueCandidates],
           attachments: files,
           pendingFiles: files.map(item => item.file),
@@ -270,12 +287,26 @@ export function IssueHomeComposer({
         })}
       </>
     )
-  return (
+  const renderComposer = (task?: {
+    controls: ReactNode
+    pending: boolean
+    ready: boolean
+    error: string | null
+    submit(content: string, files: File[]): Promise<boolean>
+  }) => (
     <>
-      <ComposerErrorBanner error={error} />
-      {environmentNotice}
+      <ComposerErrorBanner error={validationError ?? task?.error ?? error} />
       <ProjectComposerBody
-        workBar={projectSelector}
+        workBar={
+          task ? (
+            <>
+              {projectSelector}
+              {task.controls}
+            </>
+          ) : (
+            projectSelector
+          )
+        }
         ref={ref}
         translate={translate}
         value={value}
@@ -283,12 +314,16 @@ export function IssueHomeComposer({
           draftChanged(draft)
           onChange(draft)
         }}
-        onSubmit={value => submit(value)}
-        disabled={pending}
+        onSubmit={value => submit(value, undefined, undefined, task?.submit)}
+        disabled={pending || (task?.pending ?? false)}
         requireText
-        isModelSelectionReady
-        placeholder={placeholder}
-        inputTestId="collaboration-home-issue-content"
+        isModelSelectionReady={task?.ready ?? true}
+        placeholder={
+          browserHome && !task
+            ? browserHome.translate('issue_creation.web_record_placeholder')
+            : placeholder
+        }
+        inputTestId={task ? 'personal-home-task-content' : 'collaboration-home-issue-content'}
         attachments={[]}
         uploadingCount={0}
         attachmentErrorCount={0}
@@ -322,21 +357,77 @@ export function IssueHomeComposer({
           <ComposerToolbar
             {...props}
             translate={translate}
-            disabled={pending}
+            disabled={pending || task?.pending}
             showExecutionTools={false}
             models={[]}
             selectedModel={null}
             selectedModelOptions={{}}
-            isModelSelectionReady
+            isModelSelectionReady={task?.ready ?? true}
             renderModelSelector={() => null}
             onSelectModel={() => {}}
             onSelectModelOption={() => {}}
             onFileSelect={addFiles}
-            sendButtonTestId="collaboration-home-create-issue"
-            leadingContext={ownerControl}
+            sendButtonTestId={task ? 'personal-home-start-task' : 'collaboration-home-create-issue'}
+            sendButtonLabel={
+              browserHome
+                ? browserHome.translate(
+                    task ? 'issue_creation.create_task' : 'issue_creation.record_submit'
+                  )
+                : undefined
+            }
+            leadingContext={task ? undefined : ownerControl}
           />
         )}
       />
     </>
+  )
+  if (!browserHome)
+    return (
+      <>
+        {environmentNotice}
+        {renderComposer()}
+      </>
+    )
+  const runtime = browserHome.api.runtime
+  const project = projects.find(item => item.id === projectId)
+  const taskAvailable = Boolean(runtime && browserHome.api.taskBindings)
+  const mode = taskMode && taskAvailable ? 'task' : 'record'
+  return (
+    <section
+      className="flex w-full min-w-0 flex-col gap-3"
+      data-testid="collaboration-issue-workspace"
+    >
+      <IssueHomeModeTabs
+        id={composerId}
+        taskMode={mode === 'task'}
+        taskAvailable={taskAvailable}
+        disabled={pending || taskPending}
+        onChange={setTaskMode}
+        translate={browserHome.translate}
+      />
+      {environmentNotice}
+      <div
+        id={composerId + '-' + mode + '-panel'}
+        role="tabpanel"
+        aria-labelledby={composerId + '-' + mode + '-tab'}
+      >
+        {mode === 'task' && runtime && project ? (
+          <BrowserIssueHomeTask
+            key={project.id}
+            api={browserHome.api}
+            runtime={runtime}
+            project={project}
+            drafts={taskDrafts}
+            translate={translate}
+            onCreated={browserHome.onTaskCreated}
+            translateStatus={browserHome.translate}
+            onPendingChange={setTaskPending}
+            render={renderComposer}
+          />
+        ) : (
+          renderComposer()
+        )}
+      </div>
+    </section>
   )
 }

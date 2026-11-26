@@ -6,7 +6,7 @@ import {
   getPublicModelVisibilityFromConfig,
   parsePublicModelConfig,
   setPublicModelVisibilityInConfig,
-} from '@/features/admin/components/PublicModelList'
+} from '@/features/admin/components/publicModelConfig'
 
 describe('PublicModelList visibility config synchronization', () => {
   test('reads spec.isVisible from valid JSON', () => {

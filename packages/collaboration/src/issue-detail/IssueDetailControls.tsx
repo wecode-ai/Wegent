@@ -4,12 +4,7 @@ import { Button as ControlButton } from '../markdown/Button'
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  useMemo,
-  useSyncExternalStore,
-  useRef,
-  useState,
-} from 'react'
+import { useMemo, useSyncExternalStore, useRef, useState } from 'react'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
@@ -247,17 +242,21 @@ export function IssueDetailStatusSelect({
 
 export function IssueDetailPrioritySelect({
   labels,
+  includeNone = true,
   ...props
 }: Omit<IssueDetailSelectProps<CollaborationPriority>, 'options'> & {
   labels: Record<CollaborationPriority, string>
+  includeNone?: boolean
 }) {
   return (
     <IssueDetailSelect
       {...props}
-      options={(['none', 'low', 'medium', 'high', 'urgent'] as const).map(value => ({
-        value,
-        label: labels[value],
-      }))}
+      options={(['none', 'low', 'medium', 'high', 'urgent'] as const)
+        .filter(value => includeNone || value !== 'none')
+        .map(value => ({
+          value,
+          label: labels[value],
+        }))}
     />
   )
 }

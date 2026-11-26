@@ -129,6 +129,39 @@ def test_native_comment_http_uses_activity_and_checks_project_scope(
     )
 
 
+def test_listing_issue_activity_does_not_write_stale_run_metadata(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    issue_context: tuple[CloudProject, LoopItem],
+) -> None:
+    project, item = issue_context
+    message = ProjectChatMessage(
+        message_id=uuid4().hex,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id="agent",
+        sender_name="Agent",
+        message_type="text",
+        content="Finished",
+        status="completed",
+        metadata_json={"run_status": "running"},
+    )
+    test_db.add(message)
+    test_db.commit()
+
+    response = test_client.get(
+        f"/api/v1/cloud-projects/{project.id}/loop-items/{item.id}/activity-comments",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["id"] == message.message_id
+    test_db.refresh(message)
+    assert message.metadata_json["run_status"] == "running"
+
+
 @pytest.mark.parametrize("invited", [False, True])
 def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding(
     test_client: TestClient,

@@ -1,4 +1,3 @@
-import type { FormEvent } from 'react'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
 import {
   navigateEmbeddedBrowser,
@@ -6,13 +5,15 @@ import {
   readEmbeddedBrowserPageState,
   reloadEmbeddedBrowser,
   setEmbeddedBrowserBounds,
-  type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserNavigationError,
   type EmbeddedBrowserPageState,
 } from '@/lib/embedded-browser'
-import { readEmbeddedBrowserDownloadSnapshot } from '@/lib/embedded-browser-download-store'
 import { openInExternalBrowser } from '@/lib/external-links'
-import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
+import {
+  browserDiagnosticOrigin,
+  hasInvalidBrowserPort,
+  normalizeBrowserUrl,
+} from '@/lib/browser-url'
 import { track } from '@/telemetry/client'
 import type { BrowserSessionModel } from './workspaceBrowserSessionTypes'
 import {
@@ -37,33 +38,6 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
     model.set('canGoBack', Boolean(pageState.canGoBack))
     model.set('canGoForward', Boolean(pageState.canGoForward))
   }
-  const applyDownloadEvent = (download: EmbeddedBrowserDownloadEvent): void => {
-    model.set('downloads', current => {
-      const remaining = current.filter(item => item.id !== download.id)
-      if (download.status === 'deleted') return remaining
-      return [download, ...remaining].slice(0, 10)
-    })
-    // Codex-style interaction: the downloads list never opens itself. A
-    // transient peek card surfaces completion or failure and dismisses itself.
-    if (download.status === 'finished' || download.status === 'failed') {
-      model.set('downloadPeek', {
-        id: `${download.id}-${Date.now()}`,
-        fileName: download.path?.split(/[\\/]/).pop() || download.url,
-        path: download.path,
-        status: download.status,
-      })
-    }
-  }
-  const reconcileDownloadSnapshot = (nativeLabel: string): void => {
-    const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
-    model.set('downloads', snapshot)
-    model.runtime.activeDownloadIds = new Set(
-      snapshot
-        .filter(download => download.status === 'started' || download.status === 'progress')
-        .map(download => download.id)
-    )
-    model.options.onDownloadActivityChange?.(model.runtime.activeDownloadIds.size > 0)
-  }
   const adoptNativeLabel = (nativeLabel: string, logicalLabel: string): void => {
     if (
       model.runtime.nativeLabel === nativeLabel &&
@@ -71,6 +45,7 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
     ) {
       return
     }
+    if (model.runtime.nativeLabel !== nativeLabel) model.actions.markDownloadsRead()
     model.runtime.nativeLabel = nativeLabel
     model.runtime.adoptedDownloadOwnerLabel = logicalLabel
     model.options.onNativeLabelChange?.(nativeLabel)
@@ -162,7 +137,14 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
     const nextUrl = normalizeBrowserUrl(rawUrl)
     if (!nextUrl) {
       model.set('status', 'error')
-      model.set('error', model.options.t('workbench.browser_invalid_url'))
+      model.set(
+        'error',
+        model.options.t(
+          hasInvalidBrowserPort(rawUrl)
+            ? 'workbench.browser_invalid_port'
+            : 'workbench.browser_invalid_url'
+        )
+      )
       return
     }
     model.set('address', nextUrl)
@@ -198,13 +180,10 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
     if (!model.embeddedBrowserAvailable) model.runtime.pendingNavigationUrl = null
     track('browser_navigation_completed', { runtime: 'fallback' })
   }
-  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    const urlInput = event.currentTarget.elements.namedItem('url') as HTMLInputElement | null
-    const submittedAddress = urlInput?.value ?? model.state.address
+  const submitAddress = (submittedAddress: string): void => {
     model.actions.openBrowserUrl(submittedAddress)
     model.runtime.addressEditing = false
-    urlInput?.blur()
+    model.dom.addressInput?.blur()
   }
   const handleReload = (): void => {
     if (!model.activePageUrl) return
@@ -481,15 +460,13 @@ export function createBrowserNavigation(model: BrowserSessionModel) {
   }
   return {
     applyNativePageStatus,
-    applyDownloadEvent,
-    reconcileDownloadSnapshot,
     adoptNativeLabel,
     updatePageUrl,
     refreshPageState,
     runBrowserCommand,
     reloadCurrentUrl,
     openBrowserUrl,
-    handleSubmit,
+    submitAddress,
     handleReload,
     handleOpenExternal,
     ensureNativeBrowser,

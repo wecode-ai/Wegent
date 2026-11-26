@@ -21,15 +21,18 @@ use tf_rust_socketio::{
 };
 use tokio::sync::oneshot;
 
+use crate::logging::{format_executor_log, write_executor_log_line};
+
 use super::{
     ConnectionClosedHandler, EventHandler, LocalBackendConfig, LocalBackendTransport,
-    TransportFuture, DEVICE_SYNC_CAPABILITIES_EVENT,
+    TransportFuture, DEVICE_SYNC_CAPABILITIES_EVENT, RUNTIME_RPC_EVENT,
 };
 
 const NAMESPACE: &str = "/local-executor";
 const NAMESPACE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 mod completed_event_budget;
+mod connection_error;
 
 #[cfg(test)]
 mod completed_event_tests;
@@ -111,14 +114,16 @@ impl SocketIoTransport {
         event: &str,
         ack_id: i32,
         payload: Value,
-    ) {
+    ) -> bool {
         if let Err(error) = socket.ack_with_id(ack_id, payload).await {
             eprintln!(
                 "local backend {}",
                 format_socket_error("ack", Some(event), &error)
             );
             self.invalidate_generation(generation).await;
+            return false;
         }
+        true
     }
 
     async fn connected_socket(&self) -> Result<ConnectedSocket, String> {
@@ -138,7 +143,7 @@ impl SocketIoTransport {
         {
             return;
         }
-        state.take();
+        let connected = state.take();
         // Notify synchronously before a new generation can publish its client.
         let listeners = self
             .close_handlers
@@ -147,6 +152,10 @@ impl SocketIoTransport {
             .clone();
         for listener in listeners {
             listener();
+        }
+        drop(state);
+        if let Some(connected) = connected {
+            let _ = connected.client.disconnect().await;
         }
     }
 }
@@ -173,11 +182,13 @@ impl SocketIoTransport {
         let socket_url = normalize_socket_url(socket_url);
         let (connect_sender, connect_receiver) = oneshot::channel();
         let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
+        let error_sender = Arc::clone(&connect_sender);
+        let namespace = self.namespace.unwrap_or(NAMESPACE);
         let closed = Arc::new(AtomicBool::new(false));
         let close_transport = self.clone();
         let close_flag = Arc::clone(&closed);
         let mut builder = ClientBuilder::new(socket_url)
-            .namespace(self.namespace.unwrap_or(NAMESPACE))
+            .namespace(namespace)
             .auth(json!({ "token": token }))
             .transport_type(TransportType::Websocket)
             .reconnect(false)
@@ -186,14 +197,20 @@ impl SocketIoTransport {
                 let connect_sender = Arc::clone(&connect_sender);
                 async move {
                     if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
-                        let _ = sender.send(());
+                        let _ = sender.send(Ok(()));
                     }
                 }
                 .boxed()
             })
-            .on("error", |payload: Payload, _socket: Client| {
+            .on("error", move |payload: Payload, _socket: Client| {
+                let error_sender = Arc::clone(&error_sender);
                 async move {
-                    eprintln!("local backend socket error: {payload:?}");
+                    let error = connection_error::setup_error(payload, namespace);
+                    if let Some(sender) = error_sender.lock().expect("connect lock").take() {
+                        let _ = sender.send(Err(error));
+                    } else {
+                        eprintln!("local backend socket error: {error}");
+                    }
                 }
                 .boxed()
             })
@@ -219,9 +236,33 @@ impl SocketIoTransport {
                     dispatch_handler(run_in_background, async move {
                         let ack_id = payload.ack_id();
                         let value = payload_to_value(payload);
+                        let request_id = value
+                            .get("request_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("-")
+                            .to_owned();
                         let ack_payload = handler(value).await;
+                        if handler_event == RUNTIME_RPC_EVENT {
+                            write_executor_log_line(&format_executor_log(
+                                "runtime:rpc ack prepared",
+                                &[
+                                    ("request_id", request_id.clone()),
+                                    (
+                                        "ack_id",
+                                        ack_id.map_or_else(|| "-".to_owned(), |id| id.to_string()),
+                                    ),
+                                    (
+                                        "response_bytes",
+                                        ack_payload
+                                            .as_ref()
+                                            .map_or(0, |response| response.to_string().len())
+                                            .to_string(),
+                                    ),
+                                ],
+                            ));
+                        }
                         if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
-                            ack_transport
+                            let submitted = ack_transport
                                 .acknowledge(
                                     generation,
                                     &socket,
@@ -230,6 +271,12 @@ impl SocketIoTransport {
                                     ack_payload,
                                 )
                                 .await;
+                            if submitted && handler_event == RUNTIME_RPC_EVENT {
+                                write_executor_log_line(&format_executor_log(
+                                    "runtime:rpc ack submitted",
+                                    &[("request_id", request_id)],
+                                ));
+                            }
                         }
                     })
                     .await;
@@ -242,10 +289,13 @@ impl SocketIoTransport {
             .connect()
             .await
             .map_err(|error| format_socket_error("connect", None, &error))?;
-        let namespace_result = tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
-            .await
-            .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
-            .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
+        // Keep timeout and channel errors in the same Engine.IO cleanup path.
+        let namespace_result =
+            match tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("Socket.IO namespace connection signal was dropped".to_owned()),
+                Err(_) => Err("Socket.IO namespace connection timed out".to_owned()),
+            };
         if let Err(error) = namespace_result {
             let _ = socket.disconnect().await;
             return Err(error);

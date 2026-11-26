@@ -10,7 +10,6 @@ import type { MessageListProps } from './MessageList'
 type MessageListMessageProps = Pick<
   MessageListProps,
   | 'userMessageServices'
-  | 'assistantMessageStyle'
   | 'showProcessingStatus'
   | 'renderVisualization'
   | 'conversationKey'
@@ -18,6 +17,7 @@ type MessageListMessageProps = Pick<
   | 'onOpenWorkspaceFile'
   | 'onOpenLocalSkillFile'
   | 'onEditLastUserMessage'
+  | 'onContinueInNewConversation'
   | 'onRetryFailedMessage'
   | 'onSwitchModelForFailedMessage'
   | 'onLoadFileChangesDiff'
@@ -56,7 +56,6 @@ export const MessageListMessage = memo(function MessageListMessage({
   isHistoricalTurn,
   userMessageServices,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   conversationKey,
   devices,
@@ -70,6 +69,7 @@ export const MessageListMessage = memo(function MessageListMessage({
   onOpenWorkspaceFile,
   onOpenLocalSkillFile,
   onEditLastUserMessage,
+  onContinueInNewConversation,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -112,7 +112,6 @@ export const MessageListMessage = memo(function MessageListMessage({
     />
   ) : (
     <AssistantMessage
-      assistantMessageStyle={assistantMessageStyle}
       showProcessingStatus={showProcessingStatus}
       forceExpanded={forceExpanded}
       imageServices={userMessageServices.images}
@@ -123,6 +122,7 @@ export const MessageListMessage = memo(function MessageListMessage({
       isActiveTurn={isActiveTurn}
       isHistoricalTurn={isHistoricalTurn}
       devices={devices}
+      onContinueInNewConversation={onContinueInNewConversation}
       onRetryFailedMessage={onRetryFailedMessage}
       onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
       onLoadFileChangesDiff={onLoadFileChangesDiff}

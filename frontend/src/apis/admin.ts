@@ -1041,9 +1041,16 @@ export const adminApis = {
    */
   async getPublicModels(
     page: number = 1,
-    limit: number = 20
+    limit: number = 20,
+    search?: string
   ): Promise<AdminPublicModelListResponse> {
-    return apiClient.get(`/admin/public-models?page=${page}&limit=${limit}`)
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    if (search) {
+      params.append('search', search)
+    }
+    return apiClient.get(`/admin/public-models?${params.toString()}`)
   },
 
   /**
@@ -1763,8 +1770,18 @@ export const adminApis = {
     )
   },
 
-  async createConnectorOAuthSession(slug: string): Promise<ConnectorOAuthSession> {
-    return apiClient.post(`/connector-apps/${encodeURIComponent(slug)}/oauth/sessions`, {})
+  async createConnectorOAuthSession(
+    slug: string,
+    authorizationTicket?: string
+  ): Promise<ConnectorOAuthSession> {
+    const url = `/connector-apps/${encodeURIComponent(slug)}/oauth/sessions`
+    return authorizationTicket
+      ? apiClient.post(
+          url,
+          { authorization_ticket: authorizationTicket },
+          { redirectOnUnauthorized: false }
+        )
+      : apiClient.post(url, {})
   },
 
   async disconnectConnectorApp(slug: string): Promise<void> {

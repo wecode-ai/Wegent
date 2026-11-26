@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { X, type LucideIcon } from 'lucide-react'
 import { SearchableSelect, type SearchableSelectOption } from '../controls/SearchableSelect'
 import { ComposerContextButton } from '../composer/ComposerContextButton'
 import { composerIconActionDensity } from '../controls/recipes'
@@ -8,6 +8,8 @@ export function IssueCommentActionPicker({
   testId,
   label,
   placeholder = label,
+  icon: Icon,
+  currentLabel,
   value,
   options,
   disabled,
@@ -19,6 +21,8 @@ export function IssueCommentActionPicker({
   testId: string
   label: string
   placeholder?: string
+  icon?: LucideIcon
+  currentLabel?: string
   value: string
   options: SearchableSelectOption[]
   disabled: boolean
@@ -28,11 +32,14 @@ export function IssueCommentActionPicker({
   onChange(value: string): void
 }) {
   const selected = options.find(option => option.value === value)
+  const name = value ? (selected?.label ?? value) : currentLabel
   return (
-    <span className={`task-detail-comment-action-chip${value ? ' is-selected' : ''}`}>
+    <span
+      className={`task-detail-comment-action-chip${value ? ' is-selected' : ''}${name ? ' has-action-value' : ''}`}
+    >
       <SearchableSelect
         testId={testId}
-        accessibleLabel={value ? `${label}: ${selected?.label ?? value}` : placeholder}
+        accessibleLabel={name ? `${label}: ${name}` : placeholder}
         value={value}
         onChange={onChange}
         disabled={disabled}
@@ -41,14 +48,23 @@ export function IssueCommentActionPicker({
         appearance="composer"
         className="task-detail-comment-action-picker"
         triggerContent={
-          value ? (
-            <>
-              <span className="min-w-0 truncate">{label}</span>
-              <span className="min-w-0 truncate">{selected?.label ?? value}</span>
-            </>
-          ) : (
-            <span className="min-w-0 truncate">{placeholder}</span>
-          )
+          <>
+            {Icon ? (
+              <Icon
+                aria-hidden="true"
+                className="task-detail-comment-action-icon h-4 w-4 shrink-0"
+              />
+            ) : null}
+            {name ? (
+              <span className="task-detail-comment-action-value min-w-0 truncate" title={name}>
+                {name}
+              </span>
+            ) : (
+              <span className="task-detail-comment-action-label min-w-0 truncate">
+                {placeholder}
+              </span>
+            )}
+          </>
         }
         options={options}
       />

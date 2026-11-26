@@ -120,6 +120,7 @@ def test_lazy_mode_apps_build_scoped_skill_configs(
     assert matched_slugs == []
     config = configs[0]
     assert config["name"] == "wegent-connector-lazy-app"
+    assert config["sandbox_deploy"] is False
     assert "mcpServers" in config
     server = config["mcpServers"]["wegent-connector-lazy-app"]
     assert server["url"].endswith("/mcp/connectors/sse")
@@ -176,6 +177,7 @@ def test_lazy_mode_apps_preload_when_message_matches_keywords(
     assert len(configs) == 1
     assert preload == ["wegent-connector-lazy-app"]
     assert matched_slugs == ["lazy-app"]
+    assert configs[0]["sandbox_deploy"] is False
     assert "mcpServers" not in configs[0]
 
 

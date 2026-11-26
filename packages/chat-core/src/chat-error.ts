@@ -22,6 +22,7 @@ export type ChatErrorType =
   | "provider_error"
   | "image_too_large"
   | "model_protocol_error"
+  | "invalid_message_history"
   | "invalid_role"
   | "permission_denied"
   | "authentication_expired"
@@ -91,6 +92,7 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   provider_error: "provider_error",
   image_too_large: "image_too_large",
   model_protocol_error: "model_protocol_error",
+  invalid_message_history: "invalid_message_history",
   invalid_role: "invalid_role",
   permission_denied: "permission_denied",
   authentication_expired: "authentication_expired",
@@ -134,6 +136,7 @@ const ERROR_METADATA: Record<
   provider_error: { category: "model", retryPolicy: "after_backoff" },
   image_too_large: { category: "input", retryPolicy: "after_change" },
   model_protocol_error: { category: "input", retryPolicy: "after_change" },
+  invalid_message_history: { category: "input", retryPolicy: "after_change" },
   invalid_role: { category: "input", retryPolicy: "after_change" },
   permission_denied: { category: "access", retryPolicy: "after_change" },
   authentication_expired: { category: "access", retryPolicy: "after_change" },
@@ -258,6 +261,15 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ],
   ["timeout_error", ["timeout", "timed out", "504 gateway", "超时"]],
   [
+    "invalid_message_history",
+    [
+      "no tool output found for tool call",
+      "unsolicited tool output for",
+      /failed to (?:parse|deserialize) the json body into the target type:\s*(?:input|messages)\[\d+\]/,
+      /invalid 'input\[\d+\]\.id': '[^']+'\. expected an id that begins with 'ctc'/,
+    ],
+  ],
+  [
     "connector_unavailable",
     [
       "connector_unavailable",
@@ -377,17 +389,21 @@ export function parseChatError(
   }
   const metadataType = normalizeSpecificBackendType(errorInfo?.code);
   const backendTypeValue = normalizeSpecificBackendType(backendType);
-  const explicitType = metadataType ?? backendTypeValue;
+  const structuredCode = metadataType || backendTypeValue
+    ? undefined
+    : extractStructuredErrorType(error);
+  const explicitType =
+    metadataType ?? backendTypeValue ?? normalizeSpecificBackendType(structuredCode);
   if (explicitType) {
+    if (
+      (explicitType === "model_unavailable" || explicitType === "provider_error") &&
+      classifyByMessage(error) === "invalid_message_history"
+    ) {
+      return buildParsedChatError("invalid_message_history", error);
+    }
     const retryPolicy =
       metadataType !== undefined ? errorInfo?.retry_policy : undefined;
     return buildParsedChatError(explicitType, error, retryPolicy);
-  }
-
-  const structuredCode = extractStructuredErrorType(error);
-  const structuredType = normalizeSpecificBackendType(structuredCode);
-  if (structuredType) {
-    return buildParsedChatError(structuredType, error);
   }
 
   const messageType = classifyByMessage(error);

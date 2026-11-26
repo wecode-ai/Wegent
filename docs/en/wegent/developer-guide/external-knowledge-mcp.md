@@ -139,6 +139,21 @@ set_external_knowledge_creator_resolver(enterprise_creator_resolver)
 
 ## Tools
 
+All five tools accept the optional `response_format` parameter, which preserves the
+original response format by default:
+
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| `response_format` | `string` | `legacy` | `legacy` retains the JSON string wrapper; `structured` returns the business object directly |
+
+When omitted or set to `legacy`, `structuredContent.result` remains a business JSON
+string and `content[].text` retains that same JSON text. With
+`response_format="structured"`, `structuredContent` contains the business object
+directly, without a `result` wrapper; text content still contains business JSON.
+Successful responses and tool-returned business errors use the selected format.
+MCP framework validation or execution errors set `isError=true` and may omit
+`structuredContent`; callers should check `isError` first.
+
 ### `wegent_kb_list_knowledge_bases`
 
 Returns knowledge bases accessible to the authenticated user.
@@ -184,6 +199,9 @@ Behavior:
 - `recursive` and `include_inactive` must be strict booleans. The string `"false"` is rejected.
 - `include_inactive` defaults to `true`, so inactive documents are shown to callers, matching the internal MCP behavior. Callers can use `index_status` to determine whether a document is searchable.
 - Document nodes return `creator`; folder nodes do not have independent creator information, so their `creator` is `null`.
+- Document nodes return stored `short_summary` and `summary_status`; `short_summary` is
+  `null` when no short summary is available. Listing does not derive previews from
+  attachment text or generate summaries. Folder fields are `null`.
 - Non-recursive listing returns `total_available` and `has_more`; callers should page with `limit` and `offset`.
 - `total_returned` counts every node in the returned tree, including nested children.
 - Root recursive listing pre-counts candidate folders and documents. If the result exceeds `MAX_RECURSIVE_NODES`, it returns `result_too_large` before loading the whole tree.
@@ -205,6 +223,9 @@ Parameters:
 Behavior:
 
 - The returned content comes from parsed attachment text, not the original binary file.
+- Only attachment contexts owned by the document's owner are read. Usable converted
+  text is preferred; missing, empty, or whitespace-only converted text uses the original
+  attachment text. Original whitespace in the selected body is preserved.
 - `content_available` indicates whether the document has readable parsed text.
 - `has_more` indicates whether more text is available; callers should page with `offset` and `limit`.
 - The response includes `index_status` so callers can inspect the document indexing state.
@@ -252,15 +273,32 @@ Parameters:
 | --- | --- | --- | --- |
 | `query` | `string` | required | Search query, at most `2000` characters |
 | `knowledge_base_ids` | `list[int]` | required | Target knowledge base IDs. At most `100` unique IDs, and must be non-empty |
-| `max_results` | `int` | `10` | Number of results to return, from `1` to `50` |
+| `max_results` | `int` | `10` | Returned record limit in both search modes, from `1` to `50` |
+| `deduplicate_by_document` | `bool` | `false` | Deduplicate by knowledge base and document ID, keeping the highest-scoring chunk per known document |
 
 Behavior:
 
 - `knowledge_base_ids` must be provided explicitly and must not be empty. External callers should call `wegent_kb_list_knowledge_bases` first, then search selected knowledge bases.
 - `knowledge_base_ids` are deduplicated before the count limit is enforced, so repeated IDs do not amplify permission checks.
 - `max_results` must be a strict integer. The string `"10"` is rejected.
+- `deduplicate_by_document` must be a strict boolean: only `true` and `false` are accepted;
+  the string `"false"`, integer `1`, and `null` are rejected at the MCP boundary.
+  It defaults to chunk results. When enabled,
+  results are deduplicated by knowledge base ID and document ID before applying `max_results`.
+  Hits without a known document ID remain separate and consume record slots, so document
+  mode does not guarantee `max_results` known documents.
+- Document mode expands candidate `top_k` to at least `min(max_results * 4, 200)` and preserves
+  any larger configured window. A bounded candidate pool cannot guarantee coverage of all documents.
+- `total` is the candidate record count after hierarchical parent merging and before
+  document deduplication and the final limit, rather than the raw child-chunk count or
+  the number of matching documents across the entire knowledge base.
+  `total_returned` counts returned records; `returned_document_count` counts distinct documents
+  with known IDs in those records. The response echoes `deduplicate_by_document`.
 - Inaccessible `knowledge_base_ids` are ignored and returned in `ignored_knowledge_base_ids` with `warnings`. If no requested knowledge base is accessible, the tool returns `not_found`.
 - Search results prefer top-level `document_id`; if absent, they also read `metadata.document_id`, top-level `doc_ref`, or `metadata.doc_ref`.
+- Document mode requires a Knowledge Runtime version that supports
+  `deduplicate_by_document`. Default chunk requests omit the new field on the Runtime
+  wire request and remain compatible with older Runtime versions.
 
 Search has exactly one execution path: retrieval always runs in Knowledge Runtime. The external search tool
 sends only the knowledge base IDs and the retrieval scope allowed for the call, never connection credentials
@@ -288,7 +326,9 @@ Backend" path; a retrieval failure is reported instead of falling back to local 
 
 ## Error Response
 
-Tools return errors as JSON strings:
+Tool-returned business errors have the following object shape. Default `legacy` mode
+serializes it into `structuredContent.result` and `content[].text`; `structured` mode
+places the object directly in `structuredContent`:
 
 ```json
 {
@@ -296,6 +336,9 @@ Tools return errors as JSON strings:
   "code": "bad_request"
 }
 ```
+
+MCP framework validation or execution errors use `isError=true` and text error content.
+They may omit `structuredContent` and do not necessarily have a business `code` below.
 
 Common `code` values:
 

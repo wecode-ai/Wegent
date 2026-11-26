@@ -7,6 +7,7 @@ import { createPaneSessionDiagnostics } from './workbenchPaneSessionDiagnostics'
 import type { SetStateAction } from 'react'
 import type { RuntimeTranscriptLoader } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import {
   getRuntimeConversationMessages,
   getRuntimeConversationSnapshot,
@@ -31,7 +32,7 @@ import {
 import { createPaneSessionView } from './workbenchPaneSessionView'
 import {
   deferHiddenConversationText,
-  isAssistantTextAppend,
+  isTranscriptOnlyStreamingUpdate,
   type PaneTranscript,
 } from './workbenchPaneConversationPresentation'
 import type {
@@ -79,9 +80,12 @@ export function createWorkbenchPaneSessionSource(
   let conversationKey: string | null | undefined
   let unsubscribeConversation: (() => void) | undefined
   let unsubscribeLifecycle: (() => void) | undefined
+  let lifecycleKey: string | undefined
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
+  const presentationActivity = (): WorkbenchWindowActivity =>
+    external.presentationActive ? windowActivity : 'hidden'
   type Conversation = ReturnType<typeof getRuntimeConversationSnapshot>
   let presentedConversation:
     | { key: string; current: Conversation; visible: Conversation }
@@ -91,7 +95,7 @@ export function createWorkbenchPaneSessionSource(
     const current = getRuntimeConversationSnapshot(address)
     const previous = presentedConversation?.key === key ? presentedConversation : undefined
     let visible = current
-    if (windowActivity === 'hidden' && previous) {
+    if (presentationActivity() === 'hidden' && previous) {
       if (previous.current === current) return previous.visible
       visible = deferHiddenConversationText(current, previous.visible)
     }
@@ -110,12 +114,13 @@ export function createWorkbenchPaneSessionSource(
   const flushConversation = (streaming = false) => {
     cancelConversationPublication()
     pendingStreamPresentation = false
-    if (isActive()) publish(streaming)
+    if (isActive() && external.presentationActive) publish(streaming)
   }
   const presentStreamingProgress = () => {
     pendingStreamPresentation = true
-    if (windowActivity === 'foreground') flushConversation(true)
-    else if (windowActivity === 'background' && conversationTimer === undefined)
+    const activity = presentationActivity()
+    if (activity === 'foreground') flushConversation(true)
+    else if (activity === 'background' && conversationTimer === undefined)
       conversationTimer = setTimeout(() => flushConversation(true), 500)
   }
   const publishConversation = () => {
@@ -351,6 +356,10 @@ export function createWorkbenchPaneSessionSource(
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.ignoreRequestUserInput(...args)
     },
+    skipRequestUserInput: (...args: Parameters<PaneCommands['skipRequestUserInput']>) => {
+      if (!isActive()) return
+      return bind().commands.skipRequestUserInput(...args)
+    },
     sendQueuedMessage: (...args: Parameters<PaneCommands['sendQueuedMessage']>) => {
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.sendQueuedMessage(...args)
@@ -520,7 +529,7 @@ export function createWorkbenchPaneSessionSource(
           separateTranscript &&
           streaming &&
           transcriptChanged &&
-          isAssistantTextAppend(transcriptSnapshot, nextTranscript)
+          isTranscriptOnlyStreamingUpdate(transcriptSnapshot, nextTranscript)
         transcriptSnapshot = nextTranscript
         if (!transcriptOnly)
           snapshot = createPaneSessionView(current, commands, search, attachmentCommands)
@@ -563,6 +572,22 @@ export function createWorkbenchPaneSessionSource(
         state = { ...state, retainedRuntimeTaskLoadTarget: retained }
         current = frame()
       }
+      const address = current.lifecycleAddress
+      const nextLifecycleKey = address ? getRuntimeTaskLifecycleKey(address) : undefined
+      if (nextLifecycleKey !== lifecycleKey) {
+        lifecycleKey = nextLifecycleKey
+        unsubscribeLifecycle?.()
+        unsubscribeLifecycle = address
+          ? lifecycleStore.subscribeTask(address, () => {
+              if (!isActive()) return
+              reconcileGoal(frame())
+              // Publish lifecycle and transcript changes from the same turn together.
+              if (external.presentationActive && presentationActivity() === 'foreground')
+                publishConversation()
+              else publish()
+            })
+          : undefined
+      }
       const nextQueueKey = current.queuedMessageScopeKey
       if (queueKey !== nextQueueKey || queueSend !== current.sendRuntimePaneMessage) {
         queueKey = nextQueueKey
@@ -586,7 +611,7 @@ export function createWorkbenchPaneSessionSource(
           ? subscribeRuntimeConversation(
               observedTarget.address,
               (action, coalesced) => {
-                if (!isActive()) return
+                if (!isActive() || !external.presentationActive) return
                 if (coalesced) presentStreamingProgress()
                 else if (!action) {
                   reconcile()
@@ -644,6 +669,10 @@ export function createWorkbenchPaneSessionSource(
     transcript,
     subscribe(next: PaneSessionExternal, listener: () => void) {
       const previousInputScope = currentInputScope()
+      if (external.presentationActive && !next.presentationActive) {
+        cancelConversationPublication()
+        pendingStreamPresentation = false
+      }
       external = next
       accountId ??= next.workbench.state.user?.id
       listeners.add(listener)
@@ -666,6 +695,7 @@ export function createWorkbenchPaneSessionSource(
         next.attachmentState.uploadingFiles,
         next.attachmentState.errors,
         next.debugSnapshotEnabled,
+        next.presentationActive,
       ]
       const changed = differs(externalSignature, signature)
       externalSignature = signature
@@ -682,15 +712,6 @@ export function createWorkbenchPaneSessionSource(
             cancelConversationPublication()
             presentStreamingProgress()
           }
-        })
-        let revision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
-        unsubscribeLifecycle = lifecycleStore.subscribe(() => {
-          const current = frame()
-          const nextRevision = lifecycleStore.getTaskRevision(current.lifecycleAddress)
-          if (revision === nextRevision) return
-          revision = nextRevision
-          reconcileGoal(current)
-          publish()
         })
       }
       reconcile()
@@ -719,6 +740,7 @@ export function createWorkbenchPaneSessionSource(
           conversationKey = undefined
           unsubscribeLifecycle?.()
           unsubscribeLifecycle = undefined
+          lifecycleKey = undefined
           unsubscribeSearch?.()
           unsubscribeSearch = undefined
           diagnostics.dispose()

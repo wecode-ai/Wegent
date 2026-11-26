@@ -26,7 +26,7 @@ import {
   useWorkbenchShellEventHandlers,
   type ProjectCreateRequestOptions,
 } from './workbenchShellEvents'
-import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkbenchSidebarReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -71,7 +71,6 @@ export function useDesktopWorkbenchLayoutModel({
   const { t } = useTranslation('common')
 
   const { logout: onLogout } = useAuth()
-  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const {
     state,
     cloudWorkStatus,
@@ -117,7 +116,6 @@ export function useDesktopWorkbenchLayoutModel({
     getImNotificationSettings: onGetImNotificationSettings,
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
-    runtimeTaskReminders,
     projectChat,
     sendRuntimePaneMessage,
     services,
@@ -267,6 +265,10 @@ export function useDesktopWorkbenchLayoutModel({
   const routedDefaultWorkItemsOpen =
     routeWorkItemsOpen && projectSpaceRouteTargetsDefaultWorkItems(activeProjectSpaceContentRoute)
   const workItemSurfaceOpen = routeWorkItemsOpen || taskBoardOpen
+  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot(
+    undefined,
+    routeActive && workItemSurfaceOpen
+  )
   useDOMEvent('window', 'popstate', layoutSession.onLocation)
   useDOMEvent('window', 'resize', layoutSession.onResize)
   useDOMEvent('window', WORKBENCH_NEW_CHAT_FOCUS_EVENT, layoutSession.consumeComposer)
@@ -276,22 +278,22 @@ export function useDesktopWorkbenchLayoutModel({
     layoutSession.onHarnessSessionsChanged,
     { enabled: !workItemSurfaceOpen && isLocalHarnessAvailable() }
   )
-  useDOMEvent('window', 'keydown', (event: KeyboardEvent) => {
-    if (
-      workItemSurfaceOpen ||
-      event.key.toLowerCase() !== 'k' ||
-      (!event.metaKey && !event.ctrlKey)
-    )
-      return
-    event.preventDefault()
-    setSearchOpen(true)
-  })
+  useDOMEvent(
+    'window',
+    'keydown',
+    (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k' || (!event.metaKey && !event.ctrlKey)) return
+      event.preventDefault()
+      setSearchOpen(true)
+    },
+    { enabled: routeActive && !workItemSurfaceOpen }
+  )
   const workItemUser = state.user ?? (routedDefaultWorkItemsOpen ? LOCAL_USER : null)
   const workItemServicesReady = routedDefaultWorkItemsOpen
     ? availableProjectSpaceApis.length > 0
     : Boolean(services.deliveryApi)
   const activeItem: 'stand-in' | 'chat' = standInOpen ? 'stand-in' : 'chat'
-  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const taskReminders = useWorkbenchSidebarReminders()
   const toggleMyWork = useCallback(() => {
     if (standInOpen) {
       navigateTo(defaultProjectSpaceContentRoute())

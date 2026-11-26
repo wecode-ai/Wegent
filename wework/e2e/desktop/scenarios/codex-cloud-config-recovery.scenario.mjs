@@ -261,12 +261,27 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
 
       // A real bundled-plugin change must restart the idle process without
       // restoring the subscription auth whose cloud configuration is still down.
-      const pluginSync = await rpc(
-        'runtime.codex.plugin.sync_bundled',
-        await preparePluginSyncFixture(resultDir)
+      const pluginFixture = await preparePluginSyncFixture(resultDir)
+      let deferredPluginSyncs = 0
+      const pluginSync = await waitForValue(
+        () => rpc('runtime.codex.plugin.sync_bundled', pluginFixture),
+        result => {
+          assert.ok(
+            result?.status === 'ready' || result?.status === 'deferred',
+            `Unexpected bundled plugin sync result: ${JSON.stringify(result)}`
+          )
+          if (result.status === 'deferred') {
+            assert.equal(result.updated, false, JSON.stringify(result))
+            deferredPluginSyncs += 1
+            return false
+          }
+          return true
+        },
+        'Bundled plugin did not synchronize after native work settled',
+        DEFAULT_STEP_TIMEOUT_MS
       )
       assert.deepEqual(pluginSync, { status: 'ready', updated: true })
-      evidence.push({ pluginSync })
+      evidence.push({ pluginSync, deferredPluginSyncs })
 
       model.plan(`${PREFIX}_NEW_OFFLINE`)
       const offlineTask = await create('NEW_OFFLINE')

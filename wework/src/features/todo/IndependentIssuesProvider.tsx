@@ -31,9 +31,7 @@ export function IndependentIssuesProvider({
         collaborationApi,
         userId,
         revision,
-        selectedId: selection ?? undefined,
         create: () => (api ? onSelect(null) : onLogin()),
-        open: onSelect,
       }}
     >
       {children}
@@ -45,6 +43,7 @@ export function IndependentIssuesProvider({
           userId={userId}
           issueId={selection}
           onClose={() => onSelect(undefined)}
+          onOpenChildTask={issue => onSelect(issue.id)}
           onSaved={issue => {
             setRevision(value => value + 1)
             onSelect(issue?.id)

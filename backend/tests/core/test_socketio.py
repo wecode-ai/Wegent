@@ -9,6 +9,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import socketio
@@ -19,6 +20,28 @@ from socketio.async_pubsub_manager import AsyncPubSubManager
 from app.api.endpoints.health import shutdown_status
 from app.core import socketio as socketio_core
 from app.core import socketio_redis
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_e2e_ack_diagnostics_preserve_callback_without_payload(
+    caplog: pytest.LogCaptureFixture, enabled: bool
+) -> None:
+    manager = socketio_redis.ObservedRedisManager(
+        "redis://localhost", redis_options={}, ack_diagnostics=enabled
+    )
+    callback = Mock()
+    sid = "private-device-session"
+    payload = {"token": "private-response"}
+
+    with caplog.at_level(logging.INFO, logger=socketio_redis.__name__):
+        callback_id = manager._generate_ack_id(sid, callback)
+        await manager.trigger_callback(sid, callback_id, [payload])
+
+    callback.assert_called_once_with(payload)
+    assert "private-device-session" not in caplog.text
+    assert "private-response" not in caplog.text
+    assert ("Socket.IO E2E ACK stage=trigger" in caplog.text) is enabled
 
 
 @pytest.mark.parametrize("requested_interval,expected_interval", [(30, 15), (1, 1)])

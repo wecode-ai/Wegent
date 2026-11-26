@@ -190,16 +190,40 @@ export function createDesktopScenario({
       }
       const tools = programmaticExecTools(body)
       const rejected = !native && tools.some(tool => tool.type === 'custom')
+      const invalidCallIndex = native
+        ? body.input.findIndex(
+            item =>
+              item.type === 'custom_tool_call' &&
+              typeof item.id === 'string' &&
+              !item.id.startsWith('ctc_')
+          )
+        : -1
       requests.push({
         round,
         native,
         rejected,
+        invalidCallIndex,
         tools: tools.map(({ type, name, namespace }) => ({ type, name, namespace })),
       })
       await writeFile(
         join(resultDir, 'responses-tool-compatibility-requests.json'),
         JSON.stringify(requests, null, 2)
       )
+      if (invalidCallIndex >= 0) {
+        const param = `input[${invalidCallIndex}].id`
+        response.writeHead(400, { 'Content-Type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            error: {
+              message: `Invalid '${param}': '${body.input[invalidCallIndex].id}'. Expected an ID that begins with 'ctc'.`,
+              type: 'invalid_request_error',
+              param,
+              code: 'invalid_value',
+            },
+          })
+        )
+        return true
+      }
       if (rejected) {
         response.writeHead(400, { 'Content-Type': 'application/json' })
         response.end(
@@ -241,6 +265,12 @@ export function createDesktopScenario({
           `node -e ${"'" + script.replaceAll("'", "'\\''") + "'"}`,
           workspacePath
         )
+        if (native) {
+          // Simulate a provider whose completed custom call carries a function-call ID.
+          const call = events.find(event => event.type === 'response.output_item.done').item
+          assert.equal(call.type, 'custom_tool_call')
+          assert.equal(call.id, `fc_${callId}`)
+        }
       }
       const id = `responses-response-${requests.length}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -340,6 +370,10 @@ export function createDesktopScenario({
         }
         assert.ok(requests.length >= 6, 'Local, cloud and native turns must execute real tools')
         assert.ok(requests.every(request => !request.rejected))
+        assert.ok(
+          requests.every(request => request.invalidCallIndex < 0),
+          'The native model must accept the replayed custom tool history'
+        )
         assert.ok(convertedWaitingContext, 'The cloud follow-up must convert the waiting snapshot')
       } catch (error) {
         errors.push(error)

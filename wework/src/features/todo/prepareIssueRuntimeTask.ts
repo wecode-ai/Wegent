@@ -21,19 +21,29 @@ export async function prepareIssueRuntimeTask({
   onStatusError,
 }: {
   port: Pick<WeworkWorkspaceRuntimePort, 'bindTask' | 'unbindTask'>
-  project: CollaborationProject
   issueId: string
   title: string
   address: RuntimeTaskAddress
   dispatch?: Parameters<WeworkWorkspaceRuntimePort['bindTask']>[3]
   dispatchRoundId?: string | null
-  issues: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>
-  onStatusError(error: string): void
-}) {
+} & (
+  | {
+      project: CollaborationProject
+      issues: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>
+      onStatusError(error: string): void
+    }
+  | { project?: undefined; issues?: undefined; onStatusError?: undefined }
+)) {
   const task = toWorkspaceRuntimeTaskAddress(address)
-  const projectRef = { projectStore: project.project_store, projectId: String(project.id) }
   await port.bindTask(issueId, task, title, dispatch)
-  publishProjectSpaceTaskBindingChanged({ task: address, project: projectRef, type: 'bound' })
+  if (!project) return () => port.unbindTask(issueId, task)
+  const projectRef = { projectStore: project.project_store, projectId: String(project.id) }
+  publishProjectSpaceTaskBindingChanged({
+    task: address,
+    project: projectRef,
+    type: 'bound',
+    itemId: issueId,
+  })
   const status = await prepareIssueStartStatus(issues, issueId, {
     projectStore: project.project_store,
     dispatchRoundId: dispatchRoundId ?? dispatch?.dispatchRoundId,
@@ -44,7 +54,12 @@ export async function prepareIssueRuntimeTask({
       await status.rollback?.()
     } finally {
       await port.unbindTask(issueId, task)
-      publishProjectSpaceTaskBindingChanged({ task: address, project: projectRef, type: 'unbound' })
+      publishProjectSpaceTaskBindingChanged({
+        task: address,
+        project: projectRef,
+        type: 'unbound',
+        itemId: issueId,
+      })
     }
   }
 }
