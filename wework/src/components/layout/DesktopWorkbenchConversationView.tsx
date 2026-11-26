@@ -349,10 +349,8 @@ export function DesktopWorkbenchConversationView({
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
                 scrollerClassName="h-auto flex-1 overflow-visible"
                 contentClassName={rightPanelExpanded ? 'invisible' : undefined}
-                messageListClassName={cn(
-                  DESKTOP_MESSAGE_LIST_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
+                messageListClassName={cn(DESKTOP_MESSAGE_LIST_CLASS, 'transition-none')}
+                layoutRevision={`${chatColumnWidth}:${chatColumnMaxWidth}:${environmentInfoPanelExpanded}`}
                 contentFooter={
                   isCreatingWorktree ? (
                     <WorktreeCreationStatus className="py-8" />

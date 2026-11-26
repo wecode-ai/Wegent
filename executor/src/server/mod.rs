@@ -17,6 +17,7 @@ use std::{
 mod artifact_tests;
 pub(crate) use wegent_model_proxy::codex_model_catalog;
 mod config;
+mod envd_process;
 mod file_upload;
 pub(crate) use wegent_model_proxy::harness_context;
 pub(crate) use wegent_model_proxy::local_decision_proxy;
@@ -30,7 +31,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{process::Command, sync::Semaphore, time::timeout};
@@ -47,7 +47,6 @@ use crate::{
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
     local::session::terminal_metrics_snapshot,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
-    process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, TaskStatus},
     runner::BackgroundTaskRunner,
     workspace_paths::{task_workspace_dir, workspace_root},
@@ -148,7 +147,7 @@ where
         .route("/filesystem.Filesystem/Stat", post(connect_stat_path))
         .route("/filesystem.Filesystem/MakeDir", post(connect_make_dir))
         .route("/process.Process/List", post(connect_process_list))
-        .route("/process.Process/Start", post(connect_process_start))
+        .route("/process.Process/Start", post(envd_process::start))
         .route(
             "/process.Process/SendSignal",
             post(connect_process_send_signal),
@@ -459,32 +458,6 @@ async fn connect_process_list() -> Json<Value> {
 
 async fn connect_process_send_signal() -> Json<Value> {
     Json(json!({}))
-}
-
-async fn connect_process_start(body: Body) -> Result<Response, HttpError> {
-    let bytes = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("failed to read process start request: {error}"),
-        })?;
-    let request: ProcessStartRequest = serde_json::from_slice(&connect_request_payload(&bytes)?)
-        .map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("invalid process start request: {error}"),
-        })?;
-    let output = run_envd_process(&request).await;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/connect+json"),
-    );
-    Ok((
-        StatusCode::OK,
-        headers,
-        Body::from(process_start_stream_body(&output)),
-    )
-        .into_response())
 }
 
 async fn download_workspace_file(
@@ -1180,31 +1153,6 @@ struct ConnectMakeDirResponse {
     entry: FsEntryInfo,
 }
 
-#[derive(Debug, Deserialize)]
-struct ProcessStartRequest {
-    process: ProcessStartConfig,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProcessStartConfig {
-    cmd: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    envs: HashMap<String, String>,
-    #[serde(default)]
-    cwd: Option<String>,
-}
-
-#[derive(Debug)]
-struct ProcessOutput {
-    pid: u32,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    exit_code: i32,
-    error: String,
-}
-
 #[derive(Debug, Serialize)]
 struct FsEntryInfo {
     name: String,
@@ -1474,155 +1422,6 @@ fn resolve_envd_filesystem_path(raw_path: &str) -> Result<PathBuf, HttpError> {
             detail: format!("failed to resolve current directory: {error}"),
         })
 }
-
-async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
-    let requested_environment = request
-        .process
-        .envs
-        .iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<Vec<_>>();
-    let process_environment = process_environment::process_env(&requested_environment);
-    let (program, prefix_args) = crate::process::spawn_program_parts(&request.process.cmd);
-    let mut command = Command::new(program);
-    crate::process::hide_windows_console(&mut command);
-    command
-        .args(prefix_args)
-        .args(&request.process.args)
-        .env_clear()
-        .envs(process_environment)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(cwd) = request
-        .process
-        .cwd
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        command.current_dir(cwd);
-    }
-    log_executor_event(
-        "envd process start request",
-        &[
-            ("cmd", request.process.cmd.clone()),
-            ("arg_count", request.process.args.len().to_string()),
-            ("cwd", request.process.cwd.clone().unwrap_or_default()),
-        ],
-    );
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return ProcessOutput {
-                pid: 0,
-                stdout: Vec::new(),
-                stderr: error.to_string().into_bytes(),
-                exit_code: -1,
-                error: error.to_string(),
-            };
-        }
-    };
-    let pid = child.id().unwrap_or_default();
-    match child.wait_with_output().await {
-        Ok(output) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            log_executor_event(
-                "envd process finished",
-                &[
-                    ("pid", pid.to_string()),
-                    ("exit_code", exit_code.to_string()),
-                    ("stdout_len", output.stdout.len().to_string()),
-                    ("stderr_len", output.stderr.len().to_string()),
-                ],
-            );
-            ProcessOutput {
-                pid,
-                stdout: output.stdout,
-                stderr: output.stderr,
-                exit_code,
-                error: String::new(),
-            }
-        }
-        Err(error) => ProcessOutput {
-            pid,
-            stdout: Vec::new(),
-            stderr: error.to_string().into_bytes(),
-            exit_code: -1,
-            error: error.to_string(),
-        },
-    }
-}
-
-fn connect_request_payload(bytes: &[u8]) -> Result<Vec<u8>, HttpError> {
-    if bytes.len() < CONNECT_ENVELOPE_HEADER_LEN {
-        return Ok(bytes.to_vec());
-    }
-    let flags = bytes[0];
-    let len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
-    if bytes.len() == CONNECT_ENVELOPE_HEADER_LEN + len {
-        if flags & CONNECT_FLAG_COMPRESSED != 0 {
-            return Err(HttpError {
-                status: StatusCode::BAD_REQUEST,
-                detail: "compressed connect requests are not supported".to_owned(),
-            });
-        }
-        return Ok(bytes[CONNECT_ENVELOPE_HEADER_LEN..].to_vec());
-    }
-    Ok(bytes.to_vec())
-}
-
-fn process_start_stream_body(output: &ProcessOutput) -> Vec<u8> {
-    let mut stream = Vec::new();
-    append_connect_json_message(
-        &mut stream,
-        json!({"event": {"start": {"pid": output.pid}}}),
-    );
-    if !output.stdout.is_empty() {
-        append_connect_json_message(
-            &mut stream,
-            json!({"event": {"data": {"stdout": base64_encode(&output.stdout)}}}),
-        );
-    }
-    if !output.stderr.is_empty() {
-        append_connect_json_message(
-            &mut stream,
-            json!({"event": {"data": {"stderr": base64_encode(&output.stderr)}}}),
-        );
-    }
-    append_connect_json_message(
-        &mut stream,
-        json!({
-            "event": {
-                "end": {
-                    "exitCode": output.exit_code,
-                    "exited": true,
-                    "status": if output.exit_code == 0 { "success" } else { "error" },
-                    "error": output.error,
-                }
-            }
-        }),
-    );
-    append_connect_envelope(&mut stream, CONNECT_FLAG_END_STREAM, b"{}");
-    stream
-}
-
-fn append_connect_json_message(stream: &mut Vec<u8>, value: Value) {
-    append_connect_envelope(stream, 0, value.to_string().as_bytes());
-}
-
-fn append_connect_envelope(stream: &mut Vec<u8>, flags: u8, data: &[u8]) {
-    stream.push(flags);
-    stream.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    stream.extend_from_slice(data);
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-const CONNECT_ENVELOPE_HEADER_LEN: usize = 5;
-const CONNECT_FLAG_COMPRESSED: u8 = 0b0000_0001;
-const CONNECT_FLAG_END_STREAM: u8 = 0b0000_0010;
 
 fn runtime_home_path(mode: ArchiveMode) -> PathBuf {
     match mode {
@@ -2073,25 +1872,6 @@ mod tests {
         fs::write(&marker, "preserved").unwrap();
         prepare_runtime_directories(&workspace, &home, &roots).unwrap();
         assert_eq!(fs::read_to_string(marker).unwrap(), "preserved");
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn envd_process_filters_exported_bash_functions() {
-        let request = ProcessStartRequest {
-            process: ProcessStartConfig {
-                cmd: "/bin/bash".to_owned(),
-                args: vec!["-c".to_owned(), "printf ready".to_owned()],
-                envs: HashMap::from([("BASH_FUNC_which%%".to_owned(), "() {".to_owned())]),
-                cwd: None,
-            },
-        };
-
-        let output = run_envd_process(&request).await;
-
-        assert_eq!(output.exit_code, 0);
-        assert_eq!(output.stdout, b"ready");
-        assert!(output.stderr.is_empty());
     }
 
     #[test]

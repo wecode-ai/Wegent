@@ -57,10 +57,7 @@ impl RuntimeWorkRpcHandler {
                             user,
                             &id,
                             message["recordId"].as_str().unwrap_or_default(),
-                            &json!({
-                                "status":"unknown",
-                                "attemptId":message["delegationResult"]["attemptId"]
-                            }),
+                            &json!({"status":"unknown","attemptId":message["delegationResult"]["attemptId"]}),
                         )
                         .map_err(settings_error)?;
                 }
@@ -763,7 +760,7 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn validate_work_accounts(
+pub(super) fn validate_work_accounts(
     store: &LocalTaskStore,
     user: i64,
     device: &str,

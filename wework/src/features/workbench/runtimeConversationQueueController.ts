@@ -427,6 +427,9 @@ class RuntimeConversationQueueController {
   }
 
   private observeDispatch(reason: string, lifecycle: RuntimeTaskLifecycleSnapshot | null): void {
+    const snapshot = getRuntimeConversationQueueDiagnosticSnapshotByKey(
+      runtimeConversationKey(this.address)
+    )
     const details = {
       reason,
       bindingCount: this.bindings.size,
@@ -437,28 +440,34 @@ class RuntimeConversationQueueController {
       turnPhase: lifecycle?.turn.phase ?? null,
       turnId: lifecycle?.turn.id ?? null,
       turnOutcome: lifecycle?.turn.outcome ?? null,
-      ...getRuntimeConversationQueueDiagnosticSnapshotByKey(runtimeConversationKey(this.address)),
+      ...snapshot,
     }
     const signature = JSON.stringify(details)
     if (signature === this.lastDispatchDiagnostic) return
     this.lastDispatchDiagnostic = signature
-    this.log('queue-dispatch-state', null, details)
+    this.log('queue-dispatch-state', null, details, snapshot)
   }
 
   private log(
     stage: string,
     message: RuntimePaneQueuedMessage | null,
-    details: Record<string, unknown> = {}
+    details: Record<string, unknown> = {},
+    snapshot?: ReturnType<typeof getRuntimeConversationQueueDiagnosticSnapshotByKey>
   ): void {
-    logRuntimeQueueStage(this.address, stage, {
-      owner: 'task-queue',
-      messageId: message?.id ?? null,
-      bindingCount: this.bindings.size,
-      inFlight: this.inFlight !== null,
-      pendingResume: this.pendingResume !== null,
-      lifecycleSubscribed: this.unsubscribeLifecycle !== null,
-      conversationSubscribed: this.unsubscribeConversation !== null,
-      ...details,
-    })
+    logRuntimeQueueStage(
+      this.address,
+      stage,
+      {
+        owner: 'task-queue',
+        messageId: message?.id ?? null,
+        bindingCount: this.bindings.size,
+        inFlight: this.inFlight !== null,
+        pendingResume: this.pendingResume !== null,
+        lifecycleSubscribed: this.unsubscribeLifecycle !== null,
+        conversationSubscribed: this.unsubscribeConversation !== null,
+        ...details,
+      },
+      snapshot
+    )
   }
 }

@@ -673,6 +673,7 @@ async fn assert_question_files_preserve_execution_identity(coordinator: bool) {
     } else {
         "question-files-history"
     });
+    let _workspace = ScalarEnv::set("WORKSPACE_ROOT", root.join("workspace").to_str().unwrap());
     let execution_id = start_test_execution(&handler, "task-1");
     handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
     handler.record_active_codex_transcript_item(

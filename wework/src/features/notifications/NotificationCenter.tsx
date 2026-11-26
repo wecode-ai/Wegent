@@ -505,49 +505,51 @@ function ConnectedNotificationCenter({
     })
 
   const selectedCloudCategory =
-    category === 'collaboration' || category === 'general' ? category : null
+    anchor && (category === 'collaboration' || category === 'general') ? category : null
   const selectedCloudInbox =
     selectedCloudCategory === 'collaboration'
       ? { items: collaboration.items, next_offset: inboxes.collaboration?.next_offset ?? null }
       : selectedCloudCategory
         ? inboxes[selectedCloudCategory]
         : null
-  const categoryRows = [
-    {
-      id: 'tasks' as const,
-      title: t('notifications.category_tasks'),
-      preview: sortedTasks[0]?.task.title,
-      timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
-      unread: taskUnreadCount,
-      icon: CheckCircle2,
-    },
-    {
-      id: 'collaboration' as const,
-      title: t('notifications.category_collaboration'),
-      preview: collaboration.items[0]
-        ? notificationPreview(collaboration.items[0])
-        : api && !inboxes.collaboration && !error
-          ? t('notifications.loading')
-          : undefined,
-      timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
-      unread: collaboration.unreadCount,
-      icon: UsersRound,
-    },
-    {
-      id: 'general' as const,
-      title: t('notifications.category_general'),
-      preview: inboxes.general?.items[0]
-        ? notificationPreview(inboxes.general.items[0])
-        : api && !inboxes.general && !error
-          ? t('notifications.loading')
-          : undefined,
-      timestamp: inboxes.general?.items[0]
-        ? cloudTimestamp(inboxes.general.items[0].created_at)
-        : 0,
-      unread: inboxes.general?.unread_count ?? 0,
-      icon: Bell,
-    },
-  ]
+  const categoryRows = anchor
+    ? [
+        {
+          id: 'tasks' as const,
+          title: t('notifications.category_tasks'),
+          preview: sortedTasks[0]?.task.title,
+          timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
+          unread: taskUnreadCount,
+          icon: CheckCircle2,
+        },
+        {
+          id: 'collaboration' as const,
+          title: t('notifications.category_collaboration'),
+          preview: collaboration.items[0]
+            ? notificationPreview(collaboration.items[0])
+            : api && !inboxes.collaboration && !error
+              ? t('notifications.loading')
+              : undefined,
+          timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
+          unread: collaboration.unreadCount,
+          icon: UsersRound,
+        },
+        {
+          id: 'general' as const,
+          title: t('notifications.category_general'),
+          preview: inboxes.general?.items[0]
+            ? notificationPreview(inboxes.general.items[0])
+            : api && !inboxes.general && !error
+              ? t('notifications.loading')
+              : undefined,
+          timestamp: inboxes.general?.items[0]
+            ? cloudTimestamp(inboxes.general.items[0].created_at)
+            : 0,
+          unread: inboxes.general?.unread_count ?? 0,
+          icon: Bell,
+        },
+      ]
+    : []
   const selectedCategoryRow = categoryRows.find(row => row.id === category)
 
   return (

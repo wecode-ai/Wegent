@@ -41,6 +41,7 @@ afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
   document.documentElement.removeAttribute('data-theme')
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -183,6 +184,60 @@ it('does not remeasure a single visible Markdown chunk when its stream ends', as
   expect(container.querySelector('[data-markdown-window-chunk]')).toBe(chunk)
   expect(chunk.textContent).toContain('Second paragraph.')
   expect(measure).not.toHaveBeenCalled()
+})
+
+it('coalesces streamed Markdown appends with a desktop flush interval', async () => {
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
+  })
+  const services = {
+    ...browserMarkdownServices,
+    windowMarkdown: true,
+    streamingTextFlushIntervalMs: 125,
+  }
+  const render = (content: string, isStreaming = true) =>
+    act(async () =>
+      root.render(
+        <MarkdownServicesProvider value={services}>
+          <AssistantMarkdown
+            content={content}
+            isStreaming={isStreaming}
+            renderVisualization={() => null}
+          />
+        </MarkdownServicesProvider>
+      )
+    )
+  const advance = (milliseconds: number) =>
+    act(async () => vi.advanceTimersByTimeAsync(milliseconds))
+
+  await render('')
+  await render('First text')
+  expect(container.textContent).toBe('First text')
+  const initialParseCount = parses.length
+
+  await advance(100)
+  await render('First text with')
+  await advance(100)
+  await render('First text with two deltas')
+  expect(container.textContent).toBe('First text')
+  expect(parses).toHaveLength(initialParseCount)
+
+  await advance(50)
+  expect(container.textContent).toBe('First text with two deltas')
+  expect(parses.slice(initialParseCount)).toEqual(['First text with two deltas'])
+
+  await render('First text with two deltas and a pending tail')
+  await render('Rewritten text')
+  expect(container.textContent).toBe('Rewritten text')
+  const paragraph = container.querySelector('p')
+
+  await render('Rewritten text with a pending tail')
+  expect(container.textContent).toBe('Rewritten text')
+  await render('Rewritten text with the final tail', false)
+  expect(container.textContent).toBe('Rewritten text with the final tail')
+  expect(container.querySelector('p')).toBe(paragraph)
+  await advance(250)
+  expect(container.textContent).toBe('Rewritten text with the final tail')
 })
 
 it('renders tables and following paragraphs in completed desktop Markdown', async () => {

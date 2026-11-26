@@ -577,6 +577,56 @@ mod tests {
     }
 
     #[test]
+    fn projection_shows_the_latest_handoff_and_keeps_earlier_receipts_and_owner_intervention() {
+        let mut reply = delegated_message("reply", "sent", "sent", "Automatic reply sent");
+        reply["delegationResult"]["receiptId"] = json!("delivery-receipt");
+        let work = json!({"roleId":"@primary","source":reply["source"]});
+        let later = delegated_message("needs_user", "sent", "complete", "Needs user decision");
+        let visible = project_visible_work(&settings(), work.clone(), vec![reply, later]).unwrap();
+        assert_eq!(visible.work["delegationResult"]["action"], "needs_user");
+        assert_eq!(
+            visible.messages[0]["delegationResult"]["receiptId"],
+            "delivery-receipt"
+        );
+
+        let mut owner = delegated_message("skip", "sent", "complete", "The owner already replied");
+        owner["delegationResult"]["reasonCode"] = json!("owner_intervened");
+        let skipped = delegated_message("skip", "sent", "complete", "No reply needed");
+        let visible = project_visible_work(&settings(), work, vec![owner, skipped]).unwrap();
+        assert_eq!(
+            visible.work["delegationResult"]["reasonCode"],
+            "owner_intervened"
+        );
+    }
+
+    #[test]
+    fn projection_keeps_takeover_only_for_the_current_saved_delegation_account() {
+        let message = delegated_message("reply", "pending", "complete", "Existing decision");
+        let mut work = json!({"roleId":"@primary","source":message["source"]});
+        let before =
+            project_visible_work(&settings(), work.clone(), vec![message.clone()]).unwrap();
+        work["takenOverAt"] = json!("2026-01-01T00:02:00Z");
+        let visible =
+            project_visible_work(&settings(), work.clone(), vec![message.clone()]).unwrap();
+        assert_eq!(visible.work["status"], "sent");
+        assert_eq!(visible.work["delegationResult"]["takenOver"], true);
+        assert_ne!(
+            visible.work["refreshVersion"],
+            before.work["refreshVersion"]
+        );
+
+        work["source"] = old_account_message()["source"].clone();
+        let visible = project_visible_work(&settings(), work, vec![message]).unwrap();
+        assert_eq!(visible.work["status"], "pending");
+        assert!(visible.work.get("takenOverAt").is_none());
+        assert!(visible.work["delegationResult"].get("takenOver").is_none());
+        assert_eq!(
+            visible.work["refreshVersion"],
+            before.work["refreshVersion"]
+        );
+    }
+
+    #[test]
     fn refresh_version_tracks_visible_message_state_without_count_or_time_changes() {
         let work = json!({
             "id": "delegated",
@@ -584,9 +634,13 @@ mod tests {
             "source": delegated_message("reply", "sending", "submitting", "Sending reply")["source"],
             "createdAt": "2026-01-01T00:00:00Z"
         });
+        let sent = delegated_message("reply", "sent", "sent", "Automatic reply sent");
+        let mut with_receipt = sent.clone();
+        with_receipt["delegationResult"]["receiptId"] = json!("delivery-receipt");
         let variants = [
             delegated_message("reply", "sending", "submitting", "Sending reply"),
-            delegated_message("reply", "sent", "sent", "Automatic reply sent"),
+            sent,
+            with_receipt,
             delegated_message("reply", "sent", "unknown", "Reply delivery unconfirmed"),
             delegated_message("needs_user", "sent", "complete", "Needs user decision"),
         ];

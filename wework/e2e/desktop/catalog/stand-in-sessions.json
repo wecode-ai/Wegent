@@ -10,6 +10,7 @@
     }
   },
   "paths": [
+    "wework/e2e/desktop/scenarios/stand-in-sessions.scenario.mjs",
     "wework/src/features/todo/StandInHomeWorkspace*",
     "wework/src/features/todo/StandInConversation*",
     "wework/src/api/personalStandIn.ts",
