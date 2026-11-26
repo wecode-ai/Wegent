@@ -1233,7 +1233,9 @@ async function openWorkspaceWindow(input: {
     backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
-      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
+      // Keep the default throttling: the explorer pauses sampling while
+      // `document.hidden`, which stays false on macOS and Linux when
+      // background throttling is disabled.
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,

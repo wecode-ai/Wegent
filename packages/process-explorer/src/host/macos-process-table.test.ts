@@ -1,3 +1,4 @@
+import { basename } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { MacosProcessTable, parsePsLine } from './macos-process-table'
 import { resolveProcessName } from './process-name'
@@ -30,6 +31,10 @@ describe('resolveProcessName', () => {
     // Names longer than 16 characters are restored from the command line.
     ['/Users/x/bin/codex-code-mode-host --stdio', 'codex-code-mode-', 'codex-code-mode-host'],
     ['/bin/sh -c "git fetch fork"', 'sh', 'sh'],
+    // No arguments follow a path with spaces; the whole line is the candidate.
+    ['/tmp/Weibo WeWork Helper', 'Weibo WeWork Hel', 'Weibo WeWork Helper'],
+    // Linux comm is 15 bytes, not 15 characters.
+    ['/tmp/工具工具工具-extra --flag', '工具工具工', '工具工具工具-extra'],
     ['bash -c ls -la', 'bash', 'bash'],
     ['git', 'git', 'git'],
     ['[bash]', 'bash', 'bash'],
@@ -76,7 +81,7 @@ describe('MacosProcessTable', () => {
     expect(parsePsLine('garbage')).toBeNull()
   })
 
-  it('hides its own ps process and reports unparseable lines', async () => {
+  it('hides its own ps process and skips an unparseable line', async () => {
     const readPs = vi.fn(async () => ({
       pid: 99,
       output: [
@@ -88,9 +93,32 @@ describe('MacosProcessTable', () => {
     }))
     const result = await new MacosProcessTable(readPs).read()
     expect(result.processes.map(row => row.pid)).toEqual([2])
+    expect(result.degraded).toEqual([])
+  })
+
+  it('reports a failed read only when no line parses', async () => {
+    const result = await new MacosProcessTable(async () => ({
+      pid: 99,
+      output: ['not a ps line', ''].join('\n'),
+    })).read()
     expect(result.degraded).toEqual([
       { code: 'system-process-table-failed', detail: '1 ps line could not be parsed' },
     ])
+  })
+
+  it('finds the ucomm boundary in bytes and keeps a multi-byte command line', () => {
+    // `ps` truncates ucomm to 16 bytes, here in the middle of the 6th character.
+    const header = Buffer.from(`    7383   7375  0.0  24208 ${STARTED}    `)
+    const line = Buffer.concat([
+      header,
+      Buffer.from('睡眠程序测试').subarray(0, 16),
+      Buffer.from(' /tmp/睡眠程序测试 --flag'),
+    ]).toString('latin1')
+    expect(parsePsLine(line)).toMatchObject({
+      pid: 7383,
+      name: '睡眠程序测试',
+      command: '/tmp/睡眠程序测试 --flag',
+    })
   })
 
   it('reports a failed ps invocation as degradation', async () => {
@@ -101,5 +129,14 @@ describe('MacosProcessTable', () => {
     expect(result.degraded).toEqual([
       { code: 'system-process-table-failed', detail: 'ps exited with code 1' },
     ])
+  })
+
+  // Runs against the real `ps` output wherever the suite executes on macOS.
+  it.skipIf(process.platform !== 'darwin')('parses the live macOS table', async () => {
+    const result = await new MacosProcessTable().read()
+    expect(result.degraded).toEqual([])
+    expect(result.processes.find(row => row.pid === process.pid)?.name).toBe(
+      basename(process.execPath)
+    )
   })
 })

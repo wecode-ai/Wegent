@@ -3,6 +3,7 @@ import type {
   HostProcessProvider,
   ProcessDegradation,
   ProcessExplorerClient,
+  ProcessRecord,
   ProcessSnapshot,
   ProcessSnapshotOptions,
 } from '../contract.js'
@@ -56,9 +57,16 @@ export class ProcessExplorerService implements ProcessExplorerClient {
   private cachedMetrics: readonly ElectronProcessMetric[] | null = null
   private lastMetricsAt = 0
   private readonly recentlyExited = new Map<string, ExitedProcessRecord>()
-  /** Live child pid to the pid of its exited parent, pruned with the parent. */
-  private readonly reparentedChildren = new Map<number, number>()
-  /** Last snapshot built from a complete, non-degraded system table. */
+  /**
+   * Live child pid to its exited parent, pruned with the parent. The child's
+   * identity is kept so a reused pid is never reparented.
+   */
+  private readonly reparentedChildren = new Map<number, { parentPid: number; identity: string }>()
+  /** When the cached system table was read; previews reuse it until the next read. */
+  private systemTableReadAt = 0
+  private collectSequence = 0
+  private completeSequence = 0
+  private lastCompleteReadAt = 0
   private lastComplete: ProcessSnapshot | null = null
 
   constructor(private readonly options: ProcessExplorerServiceOptions) {}
@@ -98,6 +106,10 @@ export class ProcessExplorerService implements ProcessExplorerClient {
     now: number,
     system: SystemProcessTableResult | null
   ): Promise<ProcessSnapshot> {
+    // Captured before the first await: a slower collection that resumes after a
+    // newer one must not write exit state from its older table.
+    const sequence = ++this.collectSequence
+    const tableReadAt = this.systemTableReadAt
     const systemTable = this.options.systemTable ?? null
     const minimumInterval = this.options.minimumSampleIntervalMs ?? 1000
     if (!this.cachedMetrics || now - this.lastMetricsAt >= minimumInterval) {
@@ -129,10 +141,18 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       })
     const lingering = this.pruneExited(now)
     let snapshot = assemble([...lingering.values()])
-    const exits = this.recordExits(snapshot, system, hostProcesses.degraded.length === 0, now)
+    const exits = this.recordExits(snapshot, system, hostProcesses.degraded.length === 0, {
+      sequence,
+      tableReadAt,
+      now,
+    })
     // Children orphaned by this exit need it to stay in its tree.
     if (exits.records.length > 0) snapshot = assemble([...lingering.values(), ...exits.records])
-    if (exits.complete) this.lastComplete = snapshot
+    if (exits.complete) {
+      this.lastComplete = snapshot
+      this.lastCompleteReadAt = tableReadAt
+      this.completeSequence = sequence
+    }
     snapshot.recentlyExited = [...this.recentlyExited.values()]
     snapshot.collectingSystemProcesses = Boolean(systemTable && !system)
     // A slower preview must not replace a completed table's cached snapshot.
@@ -145,43 +165,56 @@ export class ProcessExplorerService implements ProcessExplorerClient {
 
   /**
    * Marks processes missing between two complete observations as exited. A
-   * preview, a failed table or host-metadata read, or a sampling gap longer
-   * than the linger window cannot prove an exit, so they change nothing.
+   * preview built from a reused table, a failed table or host-metadata read, a
+   * sampling gap longer than the linger window, or a collection superseded by a
+   * newer one cannot prove an exit, so they change nothing.
    */
   private recordExits(
     snapshot: ProcessSnapshot,
     system: SystemProcessTableResult | null,
     hostMetadataReadable: boolean,
-    now: number
+    observation: { sequence: number; tableReadAt: number; now: number }
   ): { complete: boolean; records: ExitedProcessRecord[] } {
     const exited: ExitedProcessRecord[] = []
     const complete =
+      observation.sequence >= this.completeSequence &&
       hostMetadataReadable &&
       system !== null &&
       !system.degraded.some(item => item.code.startsWith('system-process-table'))
     if (!complete) return { complete, records: exited }
     const previous = this.lastComplete
-    if (previous && now - previous.capturedAt <= this.exitedLingerMs()) {
-      // A host descriptor and its OS row share a pid but not an identity, so
-      // liveness must accept both forms.
-      // A process the OS reparented to launchd is alive but outside the tree,
-      // so liveness comes from the table as well as from the assembled snapshot.
+    // Gaps are measured between table reads. A preview that reuses an old table
+    // must not renew the baseline and hide everything that exited meanwhile.
+    if (previous && observation.tableReadAt - this.lastCompleteReadAt <= this.exitedLingerMs()) {
+      // A host descriptor and its OS row share a pid but not an identity, and a
+      // process the OS reparented to launchd is alive but outside the tree, so
+      // liveness also accepts a table row with the same pid and start time.
       const live = new Set(snapshot.processes.map(record => record.id))
-      for (const row of system?.processes ?? []) live.add(`${row.pid}:${row.identity}`)
+      const startedByPid = new Map<number, number | null>()
+      for (const row of system?.processes ?? []) {
+        live.add(`${row.pid}:${row.identity}`)
+        startedByPid.set(row.pid, row.startedAt)
+      }
+      const isLive = (record: ProcessRecord) =>
+        live.has(record.id) ||
+        (record.startedAt !== null && startedByPid.get(record.pid) === record.startedAt)
       for (const record of previous.processes) {
-        if (!live.has(record.id)) {
-          const exitedRecord = { ...record, exitedAt: now }
-          this.recentlyExited.set(record.id, exitedRecord)
-          exited.push(exitedRecord)
-        }
+        if (isLive(record)) continue
+        const exitedRecord = { ...record, exitedAt: observation.now }
+        this.recentlyExited.set(record.id, exitedRecord)
+        exited.push(exitedRecord)
       }
       // The OS reparents a live child to launchd when its parent exits. Keep
       // the last known parent so the child stays under the lingering row.
       const exitedPids = new Set(exited.map(record => record.pid))
       for (const record of previous.processes) {
-        if (live.has(record.id) && record.parentPid !== null && exitedPids.has(record.parentPid)) {
-          this.reparentedChildren.set(record.pid, record.parentPid)
+        if (!isLive(record) || record.parentPid === null || !exitedPids.has(record.parentPid)) {
+          continue
         }
+        this.reparentedChildren.set(record.pid, {
+          parentPid: record.parentPid,
+          identity: record.id.slice(record.id.indexOf(':') + 1),
+        })
       }
     }
     return { complete, records: exited }
@@ -193,8 +226,8 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       if (now - record.exitedAt > this.exitedLingerMs()) this.recentlyExited.delete(id)
       else byPid.set(record.pid, record)
     }
-    for (const [child, parent] of this.reparentedChildren) {
-      if (!byPid.has(parent)) this.reparentedChildren.delete(child)
+    for (const [child, entry] of this.reparentedChildren) {
+      if (!byPid.has(entry.parentPid)) this.reparentedChildren.delete(child)
     }
     return byPid
   }
@@ -218,6 +251,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
     )
       .then(result => {
         this.systemTableResult = result
+        this.systemTableReadAt = this.currentTime()
         this.lastCollectedAt = Number.NEGATIVE_INFINITY
       })
       .finally(() => {

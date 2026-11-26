@@ -1,4 +1,7 @@
-/** macOS and Linux limit kernel-reported executable names to this length. */
+/**
+ * Kernel-reported executable names are truncated to this many bytes: 16 on
+ * macOS, 15 plus a terminator on Linux.
+ */
 export const MAX_COMM_LENGTH = 16
 
 /**
@@ -13,29 +16,40 @@ export function resolveProcessName(args: string, kernelName: string): string {
   if (zombie) return zombie[1]
   if (!kernelName) return firstWord(trimmed)
   if (!trimmed) return kernelName
+  const truncated = isTruncated(kernelName)
 
   // Find the shortest prefix of the command line whose last path segment is
   // the executable. Paths with spaces resolve at their real boundary because
-  // no earlier segment can match the kernel name.
-  let boundary = trimmed.indexOf(' ')
-  while (boundary !== -1) {
-    const candidate = basename(trimmed.slice(0, boundary))
-    if (isExecutableName(candidate, kernelName)) return candidate
-    boundary = trimmed.indexOf(' ', boundary + 1)
+  // no earlier segment can match the kernel name. The last slash is carried
+  // forward so each candidate costs only its own name.
+  let lastSlash = -1
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const character = trimmed[index]
+    if (character === '/') lastSlash = index
+    else if (/\s/.test(character)) {
+      const candidate = trimmed.slice(lastSlash + 1, index)
+      if (isExecutableName(candidate, kernelName, truncated)) return candidate
+    }
   }
+
+  // The command line is the executable path alone.
+  const whole = trimmed.slice(lastSlash + 1)
+  if (isExecutableName(whole, kernelName, truncated)) return whole
 
   // The command line does not start with the executable path (PATH lookup,
   // shell scripts). Its first word is argv[0] when it agrees with the kernel.
   const invoked = basename(firstWord(trimmed))
-  if (isExecutableName(invoked, kernelName)) return invoked
+  if (isExecutableName(invoked, kernelName, truncated)) return invoked
   // argv[0] was rewritten by the caller; the kernel name is all we know.
   return kernelName
 }
 
-function isExecutableName(name: string, kernelName: string): boolean {
-  // Linux keeps 15 characters, macOS 16; treat a full-length name as truncated.
-  const truncated = kernelName.length >= MAX_COMM_LENGTH - 1
+function isExecutableName(name: string, kernelName: string, truncated: boolean): boolean {
   return name === kernelName || (truncated && name.startsWith(kernelName))
+}
+
+function isTruncated(kernelName: string): boolean {
+  return new TextEncoder().encode(kernelName).length >= MAX_COMM_LENGTH - 1
 }
 
 function firstWord(value: string): string {

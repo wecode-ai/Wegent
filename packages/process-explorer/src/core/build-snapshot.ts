@@ -54,8 +54,11 @@ export interface BuildProcessSnapshotInput {
   hostProcesses?: readonly HostProcessDescriptor[]
   /** Recently exited records, kept so their orphaned children stay in the tree. */
   recentlyExited?: readonly ExitedProcessRecord[]
-  /** Child pid to the pid of its exited parent, for children the OS reparented to launchd. */
-  reparentedChildren?: ReadonlyMap<number, number>
+  /**
+   * Live child pid to its exited parent, for children the OS reparented to
+   * launchd. Applied only while the row still has the recorded identity.
+   */
+  reparentedChildren?: ReadonlyMap<number, { parentPid: number; identity: string }>
   degraded?: readonly ProcessDegradation[]
 }
 
@@ -168,13 +171,19 @@ export function collectDescendantPids(
 }
 
 export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessSnapshot {
-  const reparented = input.reparentedChildren
+  // A reused pid must not inherit the reparenting of its predecessor.
+  const reparented = new Map<number, number>()
+  for (const row of input.system ?? []) {
+    const entry = input.reparentedChildren?.get(row.pid)
+    if (entry && entry.identity === row.identity) reparented.set(row.pid, entry.parentPid)
+  }
   const systemRows =
-    reparented && reparented.size > 0
-      ? (input.system ?? []).map(row => {
-          const parentPid = reparented.get(row.pid)
-          return parentPid === undefined ? row : { ...row, parentPid }
-        })
+    reparented.size > 0
+      ? (input.system ?? []).map(row =>
+          reparented.has(row.pid)
+            ? { ...row, parentPid: reparented.get(row.pid) ?? row.parentPid }
+            : row
+        )
       : (input.system ?? [])
   const systemByPid = new Map<number, SystemProcessInfo>()
   for (const processInfo of systemRows) {
@@ -257,12 +266,13 @@ export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessS
     // Children reparented by an exit stay in the tree with their whole subtree
     // and keep the exited parent's owner while the parent lingers.
     const knownOwners = new Map(injectedOwners)
-    if (reparented) {
-      for (const [child, parent] of reparented) {
-        descendants.add(child)
-        for (const pid of collectDescendantPids(systemRows, [child])) descendants.add(pid)
-        const parentRecord = exitedByPid.get(parent)
-        if (isHostKind(parentRecord)) knownOwners.set(child, parentRecord.owner)
+    for (const [child, parent] of reparented) {
+      descendants.add(child)
+      for (const pid of collectDescendantPids(systemRows, [child])) descendants.add(pid)
+      const parentRecord = exitedByPid.get(parent)
+      // A child with its own host owner keeps it; only orphans inherit.
+      if (isHostKind(parentRecord) && !knownOwners.has(child)) {
+        knownOwners.set(child, parentRecord.owner)
       }
     }
     for (const pid of descendants) {

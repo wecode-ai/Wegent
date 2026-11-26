@@ -101,9 +101,14 @@ describe('systeminformation process table', () => {
   })
 
   it('parses kernel names and ignores other lines', () => {
-    expect([...parseKernelNames('   1 systemd\n 742 git-remote-http\n\n bad line\n')]).toEqual([
+    expect([
+      ...parseKernelNames(
+        '   1 systemd\n 742 git-remote-http\n  42 WeWork Helper  \n\n bad line\n'
+      ),
+    ]).toEqual([
       [1, 'systemd'],
       [742, 'git-remote-http'],
+      [42, 'WeWork Helper'],
     ])
   })
 

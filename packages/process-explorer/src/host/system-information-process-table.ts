@@ -34,8 +34,9 @@ async function readLinuxKernelNames(): Promise<Map<number, string> | null> {
 export function parseKernelNames(output: string): Map<number, string> {
   const names = new Map<number, string>()
   for (const line of output.split('\n')) {
-    const match = /^\s*(\d+)\s+(\S+)\s*$/.exec(line)
-    if (match) names.set(Number(match[1]), match[2])
+    // `comm` may contain spaces, so everything after the pid is the name.
+    const match = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line)
+    if (match) names.set(Number(match[1]), match[2].trim())
   }
   return names
 }

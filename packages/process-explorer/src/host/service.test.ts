@@ -430,6 +430,100 @@ describe('ProcessExplorerService', () => {
       table.setRows([])
       const snapshot = await service.snapshot()
       expect(snapshot.recentlyExited.map(row => row.pid)).toEqual([40, 41])
+    }) +
+      it('does not renew the baseline from a stale table reused by a preview', async () => {
+        let resolveRead!: (value: {
+          processes: ReturnType<typeof systemRow>[]
+          degraded: ProcessDegradation[]
+        }) => void
+        const read = vi.fn(
+          () =>
+            new Promise(resolve => {
+              resolveRead = resolve
+            })
+        )
+        const { service, advance } = createService({ systemTable: { read } })
+        const first = service.snapshot()
+        await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+        resolveRead({
+          processes: [systemRow(40, 10, 'c40'), systemRow(41, 40, 'c41')],
+          degraded: [],
+        })
+        await first
+
+        // Hidden for a minute; the first sample on return reuses the old table.
+        advance(60_000)
+        await service.snapshot({ waitForSystemProcesses: false })
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+        resolveRead({ processes: [systemRow(41, 1, 'c41')], degraded: [] })
+        const fresh = await service.snapshot()
+        expect(fresh.recentlyExited).toEqual([])
+      })
+
+    it('ignores an older collection that resumes after a newer one', async () => {
+      const table = mutableTable()
+      let release!: (value: (typeof executorProcess)[]) => void
+      const held = new Promise<(typeof executorProcess)[]>(resolve => {
+        release = resolve
+      })
+      const hostProcesses = vi.fn().mockReturnValueOnce(held).mockReturnValue([executorProcess])
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses,
+      })
+      const older = service.snapshot()
+      await vi.waitFor(() => expect(hostProcesses).toHaveBeenCalledTimes(1))
+
+      advance(1000)
+      table.setRows([systemRow(41, 1, 'created-41')])
+      const newer = await service.snapshot()
+      expect(newer.recentlyExited).toEqual([])
+
+      release([executorProcess])
+      await older
+      // The resumed older collection must not become the exit baseline.
+      advance(1000)
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+    })
+
+    it('does not report a process as exited when only its descriptor disappears', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [{ ...executorProcess, identity: 'executor' }]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+
+      advance(1000)
+      descriptors = []
+      const snapshot = await service.snapshot()
+      expect(snapshot.recentlyExited).toEqual([])
+      expect(snapshot.processes.filter(row => row.pid === 40).map(row => row.kind)).toEqual([
+        'system',
+      ])
+    })
+
+    it('does not reparent a reused pid onto a lingering parent', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [
+        { ...executorProcess, identity: 'executor', includeDescendants: true },
+      ]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'created-41')])
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([{ ...systemRow(41, 1, 'reused'), startedAt: 9000 }])
+      const snapshot = await service.snapshot()
+      expect(snapshot.processes.map(row => row.pid)).not.toContain(41)
+      expect(snapshot.recentlyExited.map(row => row.id)).toEqual(['40:executor', '41:created-41'])
     })
 
     it('tells a reused pid apart from a process that kept running', async () => {
@@ -439,7 +533,7 @@ describe('ProcessExplorerService', () => {
       await service.snapshot()
 
       advance(1000)
-      table.setRows([systemRow(50, 10, 'second')])
+      table.setRows([{ ...systemRow(50, 10, 'second'), startedAt: 2000 }])
       const snapshot = await service.snapshot()
       expect(snapshot.processes.map(row => row.id)).toContain('50:second')
       expect(snapshot.recentlyExited.map(row => row.id)).toEqual(['50:first'])
