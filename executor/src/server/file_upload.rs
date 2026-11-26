@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    env,
     fmt::Display,
     fs,
     io::{self, Seek, SeekFrom},
@@ -27,7 +26,6 @@ use super::{
 
 // The Backend accepts attachment files up to 100 MiB. Include multipart framing overhead.
 pub(super) const MAX_ENVD_FILE_UPLOAD_BYTES: usize = 101 * 1024 * 1024;
-const MIN_UPLOAD_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
 
 fn multipart_http_error(error: MultipartError) -> HttpError {
     HttpError {
@@ -70,14 +68,6 @@ pub(super) async fn upload_envd_file(
             detail: format!("failed to create parent directory: {error}"),
         }
     })?;
-    let staging_dir = env::temp_dir();
-    check_upload_space(
-        &path,
-        &staging_dir,
-        disk_usage_bytes(&staging_dir),
-        MIN_UPLOAD_FREE_SPACE_BYTES,
-    )?;
-
     let mut staged = None;
     while let Some(mut field) = multipart.next_field().await.map_err(multipart_http_error)? {
         if staged.is_none() && field.name() == Some("file") {
@@ -92,7 +82,7 @@ pub(super) async fn upload_envd_file(
                     ),
                 ],
             );
-            staged = Some(stage_file(&path, &staging_dir, &mut field).await?);
+            staged = Some(stage_file(&path, &mut field).await?);
         }
     }
     let staged = staged.ok_or_else(|| HttpError {
@@ -135,22 +125,17 @@ pub(super) async fn upload_envd_file(
     }]))
 }
 
-async fn stage_file(
-    path: &Path,
-    staging_dir: &Path,
-    field: &mut Field<'_>,
-) -> Result<fs::File, HttpError> {
-    let temporary =
-        tempfile::tempfile_in(staging_dir).map_err(|error| upload_write_error(path, error))?;
+async fn stage_file(path: &Path, field: &mut Field<'_>) -> Result<fs::File, HttpError> {
+    let temporary = tempfile::tempfile().map_err(|error| upload_io_error(path, error))?;
     let mut file = File::from_std(temporary);
     while let Some(chunk) = field.chunk().await.map_err(multipart_http_error)? {
         file.write_all(&chunk)
             .await
-            .map_err(|error| upload_write_error(path, error))?;
+            .map_err(|error| upload_io_error(path, error))?;
     }
     file.flush()
         .await
-        .map_err(|error| upload_write_error(path, error))?;
+        .map_err(|error| upload_io_error(path, error))?;
     Ok(file.into_std().await)
 }
 
@@ -162,15 +147,16 @@ fn publish_staged_file(
 ) -> Result<u64, HttpError> {
     let size = staged
         .metadata()
-        .map_err(|error| upload_write_error(path, error))?
+        .map_err(|error| upload_io_error(path, error))?
         .len();
+    // A single directory link and allocated blocks do not establish how much space
+    // truncating will release. Shared extents and snapshots can retain those blocks.
     check_upload_space(path, directory, usage, size)?;
     staged
         .seek(SeekFrom::Start(0))
-        .map_err(|error| upload_write_error(path, error))?;
-    let mut destination =
-        fs::File::create(path).map_err(|error| upload_write_error(path, error))?;
-    io::copy(&mut staged, &mut destination).map_err(|error| upload_write_error(path, error))
+        .map_err(|error| upload_io_error(path, error))?;
+    let mut destination = fs::File::create(path).map_err(|error| upload_io_error(path, error))?;
+    io::copy(&mut staged, &mut destination).map_err(|error| upload_io_error(path, error))
 }
 
 fn check_upload_space(
@@ -191,13 +177,50 @@ fn check_upload_space(
             ],
         );
         if free < required {
-            return Err(HttpError {
-                status: StatusCode::INSUFFICIENT_STORAGE,
-                detail: "Not enough disk space".to_owned(),
-            });
+            return Err(insufficient_storage());
         }
     }
     Ok(())
+}
+
+fn insufficient_storage() -> HttpError {
+    HttpError {
+        status: StatusCode::INSUFFICIENT_STORAGE,
+        detail: "Not enough disk space".to_owned(),
+    }
+}
+
+fn upload_io_error(path: &Path, error: io::Error) -> HttpError {
+    let response = upload_write_error(path, &error);
+    if is_capacity_error(&error) {
+        insufficient_storage()
+    } else {
+        response
+    }
+}
+
+#[cfg(unix)]
+fn is_capacity_error(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT))
+}
+
+#[cfg(windows)]
+fn is_capacity_error(error: &io::Error) -> bool {
+    use windows_sys::Win32::Foundation::{
+        ERROR_DISK_FULL, ERROR_DISK_QUOTA_EXCEEDED, ERROR_HANDLE_DISK_FULL,
+    };
+
+    error.raw_os_error().is_some_and(|code| {
+        matches!(
+            code as u32,
+            ERROR_DISK_FULL | ERROR_DISK_QUOTA_EXCEEDED | ERROR_HANDLE_DISK_FULL
+        )
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn is_capacity_error(_error: &io::Error) -> bool {
+    false
 }
 
 fn upload_write_error(path: &Path, error: impl Display) -> HttpError {
@@ -240,5 +263,14 @@ mod tests {
 
         assert_eq!(error.status, StatusCode::INSUFFICIENT_STORAGE);
         assert_eq!(fs::read(&target).unwrap(), b"original");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn actual_storage_errors_return_insufficient_storage() {
+        let path = Path::new("upload.bin");
+        let error = upload_io_error(path, io::Error::from_raw_os_error(libc::ENOSPC));
+
+        assert_eq!(error.status, StatusCode::INSUFFICIENT_STORAGE);
     }
 }
