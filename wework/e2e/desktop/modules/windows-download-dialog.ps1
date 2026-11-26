@@ -72,9 +72,15 @@ function Find-SaveDialogs {
     }
 }
 
-function Find-ById($Window, [string]$Id) {
+function Find-ById($Window, [string]$Id, [System.Windows.Automation.ControlType]$ControlType) {
     $condition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $Id)
+    if ($null -ne $ControlType) {
+        $typeCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ControlType)
+        $condition = [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.Condition[]]@($condition, $typeCondition))
+    }
     return $Window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
@@ -113,16 +119,16 @@ while ([DateTime]::UtcNow -lt $deadline) {
     if ($dialogs.Count -gt 1) { throw 'More than one new native Save As dialog was found' }
     if ($dialogs.Count -eq 1) {
         $dialog = $dialogs[0]
-        $button = Find-ById $dialog $(if ($Action -eq 'save') { '1' } else { '2' })
+        # File list items can share a standard button's AutomationId.
+        $buttonId = if ($Action -eq 'save') { '1' } else { '2' }
+        $button = Find-ById $dialog $buttonId ([System.Windows.Automation.ControlType]::Button)
         $handle = [IntPtr]$dialog.Current.NativeWindowHandle
         $foreground = [DownloadDialogInput]::GetForegroundWindow() -eq $handle
         $dialogState = "window=$handle foreground=$foreground"
         if ($null -ne $button) {
             $dialogState += " control=$($button.Current.ControlType.ProgrammaticName) enabled=$($button.Current.IsEnabled) offscreen=$($button.Current.IsOffscreen)"
         }
-        if ($null -ne $button -and $button.Current.IsEnabled -and -not $button.Current.IsOffscreen -and
-            $button.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
-            $foreground) {
+        if ($null -ne $button -and $button.Current.IsEnabled -and -not $button.Current.IsOffscreen -and $foreground) {
             if ($Action -eq 'save') {
                 $editor = Find-ById $dialog '1001'
                 if ($null -eq $editor) { throw 'Could not find the native Save As filename field' }
