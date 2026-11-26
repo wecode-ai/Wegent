@@ -254,20 +254,24 @@ export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessS
     const parentByPid = new Map(systemRows.map(row => [row.pid, row.parentPid]))
     const roots = [input.applicationPid, ...injectedRoots]
     const descendants = collectDescendantPids(systemRows, roots)
-    // Children reparented by an exit stay in the tree while the parent lingers.
-    if (reparented) for (const pid of reparented.keys()) descendants.add(pid)
+    // Children reparented by an exit stay in the tree with their whole subtree
+    // and keep the exited parent's owner while the parent lingers.
+    const knownOwners = new Map(injectedOwners)
+    if (reparented) {
+      for (const [child, parent] of reparented) {
+        descendants.add(child)
+        for (const pid of collectDescendantPids(systemRows, [child])) descendants.add(pid)
+        const parentRecord = exitedByPid.get(parent)
+        if (isHostKind(parentRecord)) knownOwners.set(child, parentRecord.owner)
+      }
+    }
     for (const pid of descendants) {
       if (records.has(pid)) continue
       const systemRow = systemByPid.get(pid)
       if (!systemRow) continue
-      const owner = findInjectedOwner(pid, injectedOwners, parentByPid)
+      const owner = findInjectedOwner(pid, knownOwners, parentByPid)
       const exitedParent = exitedByPid.get(systemRow.parentPid)
-      const inheritedOwner =
-        !owner &&
-        exitedParent &&
-        (exitedParent.kind === 'host-service' || exitedParent.kind === 'host-child')
-          ? exitedParent.owner
-          : null
+      const inheritedOwner = !owner && isHostKind(exitedParent) ? exitedParent.owner : null
       records.set(pid, {
         id: `${pid}:${systemRow.identity}`,
         pid,
@@ -295,6 +299,11 @@ export function buildProcessSnapshot(input: BuildProcessSnapshotInput): ProcessS
     recentlyExited: [],
     degraded: [...(input.degraded ?? [])],
   }
+}
+
+/** Host descriptors and their descendants carry an owner worth inheriting. */
+function isHostKind(record: ProcessRecord | undefined): record is ProcessRecord {
+  return record?.kind === 'host-service' || record?.kind === 'host-child'
 }
 
 function findInjectedOwner(

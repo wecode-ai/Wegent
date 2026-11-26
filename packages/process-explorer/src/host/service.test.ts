@@ -356,6 +356,82 @@ describe('ProcessExplorerService', () => {
       expect(recovered.recentlyExited.map(row => row.pid)).toEqual([40])
     })
 
+    it('does not infer exits when host process metadata fails', async () => {
+      const table = mutableTable()
+      let failHost = false
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => {
+          if (failHost) throw new Error('runtime unavailable')
+          return [{ ...executorProcess, identity: 'executor', includeDescendants: true }]
+        },
+      })
+      await service.snapshot()
+
+      advance(1000)
+      failHost = true
+      const degraded = await service.snapshot()
+      expect(degraded.degraded).toContainEqual({
+        code: 'host-process-provider-failed',
+        detail: 'runtime unavailable',
+      })
+      expect(degraded.recentlyExited).toEqual([])
+
+      // The baseline survived, so nothing is reported exited once it recovers.
+      advance(1000)
+      failHost = false
+      const recovered = await service.snapshot()
+      expect(recovered.recentlyExited).toEqual([])
+      expect(recovered.processes.filter(row => row.pid === 40).map(row => row.id)).toEqual([
+        '40:executor',
+      ])
+    })
+
+    it('keeps the whole subtree and ownership of a reparented child', async () => {
+      const table = mutableTable()
+      table.setRows([systemRow(40, 10, 'c40'), systemRow(41, 40, 'c41'), systemRow(42, 41, 'c42')])
+      let descriptors: (typeof executorProcess)[] = [
+        { ...executorProcess, identity: 'executor', includeDescendants: true },
+      ]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'c41'), systemRow(42, 41, 'c42')])
+      const snapshot = await service.snapshot()
+      expect(snapshot.recentlyExited.map(row => row.pid)).toEqual([40])
+      expect(snapshot.processes.filter(row => row.pid >= 41)).toMatchObject([
+        { pid: 41, parentPid: 40, kind: 'host-child', owner: { id: 'executor' } },
+        { pid: 42, parentPid: 41, kind: 'host-child', owner: { id: 'executor' } },
+      ])
+    })
+
+    it('uses the restored snapshot as the exit baseline', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [
+        { ...executorProcess, identity: 'executor', includeDescendants: true },
+      ]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'created-41')])
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([])
+      const snapshot = await service.snapshot()
+      expect(snapshot.recentlyExited.map(row => row.pid)).toEqual([40, 41])
+    })
+
     it('tells a reused pid apart from a process that kept running', async () => {
       const table = mutableTable()
       table.setRows([systemRow(50, 10, 'first')])

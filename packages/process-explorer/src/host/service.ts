@@ -129,9 +129,10 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       })
     const lingering = this.pruneExited(now)
     let snapshot = assemble([...lingering.values()])
-    const newlyExited = this.recordExits(snapshot, system, now)
+    const exits = this.recordExits(snapshot, system, hostProcesses.degraded.length === 0, now)
     // Children orphaned by this exit need it to stay in its tree.
-    if (newlyExited.length > 0) snapshot = assemble([...lingering.values(), ...newlyExited])
+    if (exits.records.length > 0) snapshot = assemble([...lingering.values(), ...exits.records])
+    if (exits.complete) this.lastComplete = snapshot
     snapshot.recentlyExited = [...this.recentlyExited.values()]
     snapshot.collectingSystemProcesses = Boolean(systemTable && !system)
     // A slower preview must not replace a completed table's cached snapshot.
@@ -143,21 +144,26 @@ export class ProcessExplorerService implements ProcessExplorerClient {
   }
 
   /**
-   * Marks processes missing between two complete tables as exited. A preview,
-   * a failed read, or a sampling gap longer than the linger window cannot
-   * prove an exit, so they only reset the baseline.
+   * Marks processes missing between two complete observations as exited. A
+   * preview, a failed table or host-metadata read, or a sampling gap longer
+   * than the linger window cannot prove an exit, so they change nothing.
    */
   private recordExits(
     snapshot: ProcessSnapshot,
     system: SystemProcessTableResult | null,
+    hostMetadataReadable: boolean,
     now: number
-  ): ExitedProcessRecord[] {
+  ): { complete: boolean; records: ExitedProcessRecord[] } {
     const exited: ExitedProcessRecord[] = []
     const complete =
-      system !== null && !system.degraded.some(item => item.code.startsWith('system-process-table'))
-    if (!complete) return exited
+      hostMetadataReadable &&
+      system !== null &&
+      !system.degraded.some(item => item.code.startsWith('system-process-table'))
+    if (!complete) return { complete, records: exited }
     const previous = this.lastComplete
     if (previous && now - previous.capturedAt <= this.exitedLingerMs()) {
+      // A host descriptor and its OS row share a pid but not an identity, so
+      // liveness must accept both forms.
       // A process the OS reparented to launchd is alive but outside the tree,
       // so liveness comes from the table as well as from the assembled snapshot.
       const live = new Set(snapshot.processes.map(record => record.id))
@@ -178,8 +184,7 @@ export class ProcessExplorerService implements ProcessExplorerClient {
         }
       }
     }
-    this.lastComplete = snapshot
-    return exited
+    return { complete, records: exited }
   }
 
   private pruneExited(now: number): Map<number, ExitedProcessRecord> {
