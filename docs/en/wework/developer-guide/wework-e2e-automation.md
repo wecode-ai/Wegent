@@ -362,6 +362,9 @@ other platforms retain OS write-denial checks. All platforms still verify explic
 authorized writes, native approval denial of private reads, and no private data
 disclosure. The network probe declares a text response type so PowerShell does not
 enumerate response bytes.
+On Windows, the role delegation scenario enables the unelevated sandbox in its
+isolated Codex configuration. It verifies actual writes in workspace-write mode
+and write denial after switching the same task to read-only mode.
 The subscription model fixture rejects every upgrade path with HTTP 426 and
 handles `ECONNRESET` throughout the socket lifetime; other socket errors still
 fail. Node regressions cover different paths, repeated resets, and unexpected errors, preventing
