@@ -77,7 +77,8 @@ export function createScopedDraftStore(options: ScopedDraftStoreOptions = {}) {
     if (value) persistedDrafts.set(scope, value)
     else persistedDrafts.delete(scope)
   }
-  const update = (scope: string, value: string, replace: boolean) => {
+  const publish = (scope: string) => listenersByScope.get(scope)?.forEach(listener => listener())
+  const recordDraft = (scope: string, value: string, replace: boolean) => {
     const previous = read(scope)
     if (value === previous.value && !replace) return false
     const alreadyScheduled = (persistedDrafts.get(scope) ?? '') === value
@@ -90,22 +91,24 @@ export function createScopedDraftStore(options: ScopedDraftStoreOptions = {}) {
     if (!alreadyScheduled) schedulePersist(value === '')
     return true
   }
-  const publish = (scope: string) => listenersByScope.get(scope)?.forEach(listener => listener())
+  const update = (scope: string, value: string, replace: boolean) => {
+    const changed = recordDraft(scope, value, replace)
+    if (changed) publish(scope)
+    return changed
+  }
   return {
     read,
     write(scope: string, value: string) {
-      if (update(scope, value, false)) publish(scope)
+      update(scope, value, false)
     },
     replace(scope: string, value: string) {
       update(scope, value, true)
       schedulePersist(true)
-      publish(scope)
     },
     persistDraft(scope: string, value: string) {
-      const previous = persistedDrafts.get(scope) ?? ''
-      if (previous === value) return
-      setPersistedDraft(scope, value)
-      schedulePersist(value === '')
+      // The composer already renders the local edit. Record it for authoritative clears
+      // without rerendering every subscriber before the coalesced update.
+      recordDraft(scope, value, false)
     },
     flush() {
       persistNow()

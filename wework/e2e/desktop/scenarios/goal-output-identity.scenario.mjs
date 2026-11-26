@@ -37,6 +37,7 @@ const FINAL = 'The ordinary follow-up must also keep its own answer.'
 const RESTARTED_FINAL = 'A completed conversation must remain sendable after recovery.'
 const INTERRUPTED = 'The interrupted continuation had already saved this commentary.'
 const RESTORED_FINAL = 'Restored history with an older streaming turn must remain sendable.'
+const UNSENT_DRAFT = 'WEWORK_OUTPUT_IDENTITY_UNSENT_DRAFT'
 
 function assertLatestDoneSendable({ transcript, lifecycle }) {
   const latestTurn = transcript.turns.at(-1)
@@ -526,6 +527,27 @@ export function createDesktopScenario(options) {
           recoveryEvidence.afterRestoredSend.transcript.turns.at(-1).id,
           recoveryEvidence.afterRestoredRestart.transcript.turns.at(-1).id
         )
+        phase = 'persist-unsent-draft'
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: UNSENT_DRAFT })
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+          text: UNSENT_DRAFT,
+          stableMs: 500,
+        })
+        phase = 'restart-with-unsent-draft'
+        await restartDesktopApp({ forceStop: true })
+        await control.command('waitFor', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
+        await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
+        await waitText(RESTORED_FINAL)
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+          text: UNSENT_DRAFT,
+          stableMs: 500,
+        })
+        assert.equal(
+          await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+          UNSENT_DRAFT,
+          'A forced restart discarded the unsent composer draft'
+        )
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
         await writeFile(
           join(options.resultDir, 'output-identity-recovery.json'),
           JSON.stringify({ ...recoveryEvidence, requestTrace }, null, 2)
