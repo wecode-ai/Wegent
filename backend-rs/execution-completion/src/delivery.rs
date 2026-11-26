@@ -174,3 +174,36 @@ where
     }
     result
 }
+
+#[cfg(test)]
+mod device_stream_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn redispatch_of_cancelled_subtask_rejects_late_terminal_and_replayed_ack() {
+        let initial = json!({"status":{"status":"CANCELLED"}});
+        let redispatched =
+            json!({"status":{"status":"RUNNING","executionAttempts":{"73":"retry-1"}}});
+        let legacy = DeviceStream {
+            owner: 11,
+            devices: [Some("device-route"), None, None],
+            attempt: "73",
+        };
+        let current = DeviceStream {
+            attempt: "retry-1",
+            ..legacy
+        };
+        let namespace = Some("user-11");
+        let executor = Some("device-device-route");
+        assert!(legacy.matches(&initial, 73, namespace, executor));
+        assert!(!legacy.matches(&redispatched, 73, namespace, executor));
+        assert!(current.matches(&redispatched, 73, namespace, executor));
+        assert!(!current.matches(&redispatched, 73, Some("user-12"), executor));
+        assert!(!current.matches(&redispatched, 73, namespace, Some("device-other")));
+        use wegent_execution_runtime::delivery::attempt_notification_key;
+        let key = |attempt| attempt_notification_key(22, 73, "callback", attempt);
+        assert_eq!(key(None), key(Some("73")));
+        assert_ne!(key(Some("73")), key(Some("retry-1")));
+    }
+}
