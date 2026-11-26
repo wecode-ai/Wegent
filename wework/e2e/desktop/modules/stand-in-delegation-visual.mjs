@@ -5,14 +5,13 @@ import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
 const testId = name => `[data-testid="${name}"]`
-const addConnection = testId('stand-in-dingtalk-add')
 const connectionKind = testId('stand-in-dingtalk-kind')
 const templates = ['document', 'schedule', 'process'].map(kind =>
   testId(`stand-in-delegation-template-${kind}`)
 )
 const noSources = testId('stand-in-delegation-no-sources')
 const enable = testId('stand-in-delegation-enable')
-const save = testId('stand-in-primary-save')
+const save = testId('stand-in-dingtalk-save-scope')
 const appearanceKey = 'wework.appearance'
 
 async function rendererValue(expression) {
@@ -108,8 +107,6 @@ async function verifyKeyboard(control, captureScreenshot) {
 }
 
 export async function verifyStandInDelegationVisual(control, { captureScreenshot }) {
-  // A migrated row displays the Add Connection action before the source picker.
-  await control.command('nativePress', addConnection, { key: 'Enter' })
   await control.command('waitFor', connectionKind)
   const stored = await control.command('getLocalStorageItem', 'body', { value: appearanceKey })
   const originalAppearance = stored || null

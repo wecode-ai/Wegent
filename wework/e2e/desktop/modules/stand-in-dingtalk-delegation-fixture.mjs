@@ -6,16 +6,19 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createStandInDingTalkFixture } from './stand-in-dingtalk-fixture.mjs'
 
+const org = 'dots-org'
+const owner = 'dots-owner'
+
 export const DINGTALK_DELEGATION_IDS = Object.freeze({
-  profile: 'dots-e2e-account',
-  owner: 'dots-owner',
+  profile: `${org}:${owner}`,
+  owner,
   peer: 'dots-peer',
   peer2: 'dots-other-peer',
   group: 'dots-group',
   otherGroup: 'dots-other-group',
   direct: 'dots-direct',
   otherDirect: 'dots-other-direct',
-  org: 'dots-org',
+  org,
 })
 
 /** Replace only the DingTalk transport boundary of the native desktop flow. */

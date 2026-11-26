@@ -17,6 +17,17 @@ export const defaultDingTalkDelegation: StandInDingTalkDelegation = {
 export const isDingTalkSource = (source: Pick<StandInSourceConnection, 'providerId'>) =>
   source.providerId === STAND_IN_DINGTALK_PROVIDER
 
+export function dingTalkInboxScope(delegation?: StandInDingTalkDelegation) {
+  if (!delegation?.accountId) return undefined
+  return JSON.stringify([
+    delegation.profile,
+    delegation.accountId,
+    delegation.organizationId,
+    delegation.accountInvalidated,
+    delegation.version,
+  ])
+}
+
 type SourceIdentity = Pick<
   StandInSourceConnection,
   'providerId' | 'id' | 'kind' | 'profile' | 'accountId' | 'scope' | 'collectionKey'

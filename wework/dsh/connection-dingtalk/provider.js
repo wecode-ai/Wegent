@@ -1,9 +1,12 @@
 import {
+  accountProfiles,
   activeAccountIdentity,
   boundAccount,
   delegatedMessageContext,
   exactConversation,
   validateDelegatedSource,
+  verifiedProfile,
+  verifyAccountToken,
 } from './delegated-reads.js'
 import { createReadCursor } from './read-cursor.js'
 import { readImages } from './read-images.js'
@@ -13,18 +16,24 @@ const GROUP_CATCH_UP_WINDOW_MINUTES = 15
 const DELEGATION_CATCH_UP_MS = 30 * 60_000
 const DELEGATION_CATCH_UP_MESSAGES = 50
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
+const READINESS_ERRORS = new Map([
+  ['connector_auth_required', 'auth_required'],
+  ['dingtalk_account_changed', 'identity_required'],
+  ['dingtalk_permissions_required', 'permissions_required'],
+])
 
 export function createProvider() {
   const identities = new Map()
   const readCursors = createReadCursor()
   return {
-    async check(ctx) {
+    async check(ctx, input) {
+      if (input?.readiness === true) return connectionReadiness(ctx, input)
       let authTarget
       try {
         authTarget = await ctx.cli.describe('dingtalk')
         await requireAuthentication(ctx)
         const account = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
-        return { status: 'ready', authTarget, ...account }
+        return { status: 'ready', authTarget, ...accountDisplay(account) }
       } catch (error) {
         return {
           status: error.code === 'connector_auth_required' ? 'auth_required' : 'error',
@@ -34,8 +43,13 @@ export function createProvider() {
       }
     },
     async listResources(ctx, input) {
-      const { profile, accountId } = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
-      await requireAuthentication(ctx)
+      const selected =
+        input.profile === undefined
+          ? undefined
+          : await verifiedProfile(ctx, input.profile, readTool)
+      const { profile, accountId } =
+        selected ?? activeAccountIdentity(await readTool(ctx, 'listProfiles'))
+      if (!selected) await requireAuthentication(ctx)
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
       if (input.scope === 'all') {
@@ -69,11 +83,13 @@ export function createProvider() {
           throw error
         // A token can expire between connection checks. Re-read auth state before
         // showing a generic provider failure.
-        await requireAuthentication(ctx)
+        if (selected) await verifyAccountToken(ctx, selected, readTool)
+        else await requireAuthentication(ctx)
         throw error
       }
       const rows = kind === 'group' ? response.result?.groups : response.result
       if (!Array.isArray(rows)) throw invalid('Invalid search response')
+      if (selected) await verifyAccountToken(ctx, selected, readTool)
       return {
         items: rows.map(row => ({
           id: required(row, kind === 'group' ? 'openConversationId' : 'openDingTalkId'),
@@ -431,16 +447,39 @@ async function trainingHistory(ctx, source, state, ownId, readCursors) {
   }
 }
 
+async function delegatedMessagePageRequest(ctx, source, window) {
+  const conversationId = await exactConversation(
+    ctx,
+    source,
+    window.end,
+    readTool,
+    validateNativePage
+  )
+  if (!conversationId) return undefined
+  const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  if (source.kind === 'group') {
+    return { tool: 'listMentions', args: { ...args, group: conversationId }, conversationId }
+  }
+  return {
+    tool: 'searchMessages',
+    args: { ...args, conversationIds: conversationId, senderIds: source.id },
+    conversationId,
+  }
+}
+
 async function readMessagePage(ctx, source, window, ownId) {
-  const delegated = source.delegated === true
-  let conversationId
-  if (delegated) {
-    conversationId = await exactConversation(ctx, source, window.end, readTool, validateNativePage)
-    if (!conversationId || (source.kind === 'direct' && source.id === ownId))
+  if (source.delegated === true) {
+    if (source.kind === 'direct' && source.id === ownId)
       return { events: [], hasMore: false, nextCursor: '0' }
+    const request = await delegatedMessagePageRequest(ctx, source, window)
+    if (!request) return { events: [], hasMore: false, nextCursor: '0' }
+    return readCollectedMessagePage(ctx, source, window, ownId, request, {
+      delegated: true,
+      conversationId: request.conversationId,
+    })
   }
   let selfConversationId
-  if (!delegated && source.kind === 'direct' && source.scope !== 'all' && source.id === ownId) {
+  if (source.kind === 'direct' && source.scope !== 'all' && source.id === ownId) {
     const page = await readTool(ctx, 'listDirectConversation', {
       peer: ownId,
       profile: required(source, 'profile'),
@@ -459,14 +498,17 @@ async function readMessagePage(ctx, source, window, ownId) {
   if (source.scope !== 'all') {
     if (source.kind === 'group')
       args[allMessages ? 'conversationIds' : 'group'] = required(source, 'id')
-    else {
-      args.senderIds = required(source, 'id')
-      if (delegated) args.conversationIds = conversationId
-    }
+    else args.senderIds = required(source, 'id')
   }
   const tool = source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages'
-  const options = { delegated, conversationId, selfConversationId }
-  return readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options)
+  return readCollectedMessagePage(
+    ctx,
+    source,
+    window,
+    ownId,
+    { tool, args },
+    { selfConversationId }
+  )
 }
 
 async function readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options) {
@@ -659,6 +701,101 @@ function isTextMessage(message) {
   return type === undefined || (typeof type === 'string' && type.toLowerCase() === 'text')
 }
 
+function accountDisplay({ profile, accountId, accountName, organizationId, organizationName }) {
+  return { profile, accountId, accountName, organizationId, organizationName }
+}
+
+async function connectionReadiness(ctx, { profile, sources }) {
+  const details = {}
+  try {
+    details.authTarget = await ctx.cli.describe('dingtalk')
+    const component = await readTool(ctx, 'componentInfo')
+    if (!['managed', 'bundled', 'external'].includes(component.componentSource))
+      throw invalid('Missing component source')
+    details.component = {
+      source: component.componentSource,
+      version: required(component, 'version'),
+    }
+
+    const profiles = accountProfiles(await readTool(ctx, 'listProfiles'))
+    const current = [...profiles.values()].filter(({ row }) => row.isCurrent === true)
+    details.candidates = [...profiles.values()]
+      .filter(({ row }) => row.status === 'active')
+      .map(({ identity }) => readinessIdentity(identity))
+    const selected =
+      profile === undefined
+        ? current.length === 1 && current[0].row.isOrgCurrent === true
+          ? current[0]
+          : undefined
+        : profiles.get(profile)
+    if (!selected)
+      return {
+        ...details,
+        status: details.candidates.length ? 'identity_required' : 'auth_required',
+      }
+    details.identity = readinessIdentity(selected.identity)
+    await verifyAccountToken(ctx, selected.identity, readTool)
+    const read = await verifyMessageRead(ctx, selected.identity, sources)
+    if (read === 'verified') await verifyAccountToken(ctx, selected.identity, readTool)
+    return { ...details, status: 'ready', permissions: { read, reply: 'unverified' } }
+  } catch (error) {
+    return {
+      ...details,
+      status: READINESS_ERRORS.get(error.code) ?? 'error',
+      code: error.code ?? 'dingtalk_response_invalid',
+    }
+  }
+}
+
+function readinessIdentity(identity) {
+  return {
+    ...accountDisplay(identity),
+    accountName: identity.accountName ?? identity.userId,
+    organizationName: identity.organizationName ?? identity.organizationId,
+  }
+}
+
+async function verifyMessageRead(ctx, identity, sources) {
+  if (sources === undefined) return 'unchecked'
+  if (!Array.isArray(sources) || !sources.length) throw invalid('Select a conversation')
+  const end = Date.now()
+  const window = {
+    start: new Date(end - 1000).toISOString(),
+    end: new Date(end).toISOString(),
+    limit: 1,
+    cursor: '0',
+  }
+  for (const item of sources) {
+    const source = { ...item, ...accountDisplay(identity), delegated: true }
+    validateDelegatedSource(source)
+    const request = await delegatedMessagePageRequest(ctx, source, window)
+    if (!request) throw invalid('Message read permission could not be verified')
+    const { tool, args, conversationId } = request
+    const response = await readTool(ctx, tool, args)
+    const { hasMore, conversationMessagesList, nextCursor } = response.result ?? {}
+    if (
+      response.success === true &&
+      hasMore === false &&
+      conversationMessagesList === undefined &&
+      typeof nextCursor === 'string'
+    )
+      continue
+    if (
+      response.success !== true ||
+      typeof hasMore !== 'boolean' ||
+      !Array.isArray(conversationMessagesList) ||
+      conversationMessagesList.some(
+        conversation =>
+          conversation.openConversationId !== conversationId ||
+          conversation.singleChat !== (source.kind === 'direct') ||
+          !Array.isArray(conversation.messages)
+      )
+    )
+      throw invalid('Message read permission could not be verified')
+  }
+  return 'verified'
+}
+
 async function requireAuthentication(ctx) {
   const response = await readTool(ctx, 'authStatus')
   if (response.authenticated !== true || response.token_valid === false)
@@ -672,7 +809,7 @@ async function ownIdentity(ctx, source, cache) {
   const profile = required(source, 'profile')
   const delegated = source.delegated === true
   const bound = delegated ? await boundAccount(ctx, source, readTool) : null
-  const key = delegated ? source.accountId : profile
+  const key = bound?.accountId ?? profile
   const cached = cache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.id
   const account =
@@ -682,7 +819,7 @@ async function ownIdentity(ctx, source, cache) {
       code: 'connector_auth_required',
     })
   const users = await readTool(ctx, 'searchUsers', {
-    query: required(account, 'userName'),
+    query: required(account, bound ? 'accountName' : 'userName'),
     profile,
   })
   // A profile can be reassigned while the contact lookup is in flight.

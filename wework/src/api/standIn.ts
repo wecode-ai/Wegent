@@ -73,6 +73,28 @@ export interface ConnectionProviderDescriptor {
   }>
 }
 
+export interface ConnectionReadinessIdentity {
+  profile: string
+  accountId: string
+  accountName: string
+  organizationId: string
+  organizationName: string
+}
+
+export interface ConnectionReadinessSource {
+  id: string
+  kind: 'direct' | 'group'
+}
+
+export interface ConnectionReadiness {
+  status: 'ready' | 'auth_required' | 'identity_required' | 'permissions_required' | 'error'
+  identity?: ConnectionReadinessIdentity
+  candidates?: ConnectionReadinessIdentity[]
+  component?: { source: 'managed' | 'bundled' | 'external'; version: string }
+  permissions?: { read: 'verified' | 'unchecked'; reply: 'unverified' }
+  authTarget?: ConnectionProviderDescriptor['authTarget']
+}
+
 export interface StandInDelegationResult {
   action: 'reply' | 'needs_user' | 'skip'
   status: 'complete' | 'submitting' | 'sent' | 'unknown'
@@ -411,6 +433,12 @@ export interface StandInExecutorApi {
   telemetryFacts(userId: number, deviceId: string): Promise<{ items: StandInTelemetryFact[] }>
   acknowledgeTelemetry(userId: number, deviceId: string, ids: string[]): Promise<void>
   connectionProviders(deviceId: string): Promise<{ items: ConnectionProviderDescriptor[] }>
+  connectionReadiness(
+    deviceId: string,
+    providerId: string,
+    profile?: string,
+    sources?: ConnectionReadinessSource[]
+  ): Promise<ConnectionReadiness>
   installConnectionDependencies(
     deviceId: string,
     providerId: string,
@@ -489,7 +517,8 @@ export interface StandInExecutorApi {
     kind: string,
     query: string,
     cursor?: string,
-    scope?: 'all'
+    scope?: 'all',
+    profile?: string
   ): Promise<{
     items: Pick<
       StandInSourceConnection,
@@ -706,6 +735,12 @@ export function createStandInExecutorApi(
       await request('runtime.stand_in.telemetry.ack', { userId, ids }, deviceId)
     },
     connectionProviders: deviceId => request('runtime.connections.catalog', {}, deviceId),
+    connectionReadiness: (deviceId, providerId, profile, sources) =>
+      request(
+        'runtime.connections.readiness',
+        { providerId, ...(profile ? { profile } : {}), ...(sources ? { sources } : {}) },
+        deviceId
+      ),
     installConnectionDependencies: (deviceId, providerId, aliases) =>
       installStandInConnectionDependencies({
         deviceId,
@@ -791,10 +826,17 @@ export function createStandInExecutorApi(
       ),
     retrySource: (userId, deviceId, source) =>
       request('runtime.stand_in.source.retry', { userId, source }, deviceId),
-    searchConnectionResources: (deviceId, providerId, kind, query, cursor, scope) =>
+    searchConnectionResources: (deviceId, providerId, kind, query, cursor, scope, profile) =>
       request(
         'runtime.connections.resources',
-        { providerId, kind, query, cursor, ...(scope ? { scope } : {}) },
+        {
+          providerId,
+          kind,
+          query,
+          cursor,
+          ...(scope ? { scope } : {}),
+          ...(profile ? { profile } : {}),
+        },
         deviceId
       ),
     conversation: (userId, deviceId, message, roleId, options) =>

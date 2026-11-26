@@ -26,6 +26,8 @@ test('DingTalk declares its bounded read operations against its exact dependency
   const declaration = parsed.providers[0].cliReadTools.dingtalk
   assert.deepEqual(Object.keys(declaration.operations).sort(), [
     'authStatus',
+    'componentInfo',
+    'conversationInfo',
     'downloadImage',
     'listConversation',
     'listDirectConversation',
@@ -37,6 +39,9 @@ test('DingTalk declares its bounded read operations against its exact dependency
     'searchUsers',
   ])
   assert.deepEqual(declaration.operations.authStatus.command, ['auth', 'status'])
+  assert.equal(declaration.operations.authStatus.parameters.profile, '--profile')
+  assert.deepEqual(declaration.operations.componentInfo.command, ['version'])
+  assert.equal(declaration.operations.conversationInfo.parameters.peer, '--open-dingtalk-id')
   assert.deepEqual(declaration.operations.listProfiles.command, ['profile', 'list'])
   assert.equal(declaration.operations.listMentions.parameters.group, '--group')
   assert.deepEqual(declaration.outputArgs, ['--format', 'json'])

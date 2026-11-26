@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const PROFILE: &str = "dots-e2e-account";
+const PROFILE: &str = "dots-org:dots-owner";
 const GROUP: &str = "dots-group";
 const OTHER_GROUP: &str = "dots-other-group";
 const PEER: &str = "dots-peer";
@@ -128,13 +128,16 @@ fn audit_read(root: &Path, operation: &str, conversation: &str, args: &[&str]) {
     }
 }
 
-fn native_direct(root: &Path, args: &[&str]) -> String {
-    let peer = required(args, "--open-dingtalk-id");
-    let conversation = match peer {
+fn direct_conversation(args: &[&str]) -> &'static str {
+    match required(args, "--open-dingtalk-id") {
         PEER => DIRECT,
         OTHER_PEER => OTHER_DIRECT,
-        _ => panic!("Unknown DingTalk test peer {peer}"),
-    };
+        peer => panic!("Unknown DingTalk test peer {peer}"),
+    }
+}
+
+fn native_direct(root: &Path, args: &[&str]) -> String {
+    let conversation = direct_conversation(args);
     audit_read(root, "list-direct", conversation, args);
     let until = timestamp(required(args, "--time"));
     let limit = required(args, "--limit").parse::<usize>().expect("limit");
@@ -267,12 +270,17 @@ fn main() {
     let root = binary.parent().unwrap().join("delegation-dingtalk");
     let account = read(&root, "account.tsv");
     let (user, org) = account.split_once('\t').expect("DingTalk account fixture");
+    let profile = quote(&format!("{org}:{user}"));
     let owner = "Dots owner";
     let response = match args.as_slice() {
         ["health" | "login", ..] => r#"{"status":"ok"}"#.into(),
-        ["auth", "status", ..] => r#"{"success":true,"authenticated":true,"token_valid":true}"#.into(),
+        ["version", "--format", "json"] => r#"{"version":"1.0.58"}"#.into(),
+        ["auth", "status", ..] => format!(
+            "{{\"success\":true,\"authenticated\":true,\"token_valid\":true,\"user_id\":{},\"corp_id\":{}}}",
+            quote(user), quote(org)
+        ),
         ["profile", "list", ..] => format!(
-            "{{\"currentProfile\":\"{PROFILE}\",\"profiles\":[{{\"profile\":\"{PROFILE}\",\"userName\":\"{owner}\",\"userId\":{},\"corpId\":{},\"orgName\":\"Dots test organization\"}}]}}",
+            "{{\"currentProfile\":{profile},\"profiles\":[{{\"profile\":{profile},\"userName\":\"{owner}\",\"userId\":{},\"corpId\":{},\"orgName\":\"Dots test organization\",\"isCurrent\":true,\"isOrgCurrent\":true,\"status\":\"active\"}}]}}",
             quote(user), quote(org)
         ),
         ["chat", "search", ..] => {
@@ -296,6 +304,11 @@ fn main() {
             });
             let matched = matching_resources(&args, &people);
             format!("{{\"success\":true,\"result\":[{matched}]}}")
+        }
+        ["chat", "conversation-info", ..] => {
+            let conversation = direct_conversation(&args);
+            audit_read(&root, "conversation-info", conversation, &args);
+            format!("{{\"result\":{{\"openConversationId\":\"{conversation}\"}}}}")
         }
         ["chat", "+messages-list-direct", ..] => native_direct(&root, &args),
         ["chat", "message", "list-mentions", ..] => search_messages(&root, &args, true),

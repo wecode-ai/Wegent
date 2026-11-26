@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -192,11 +193,11 @@ export function createDesktopScenario(options) {
       const sourceState = (kind, id = kind === 'direct' ? ids.peer : ids.group) =>
         rows('stand_in_source').find(row => row.source.kind === kind && row.source.id === id)
       const records = () => new Map(rows('stand_in_message').map(row => [row.id, row]))
-      const awaitOutcomes = (ids, expected, label) =>
+      const awaitOutcomes = (ids, expected, label, waitMs = timeout) =>
         storyUntil(
           () => ids.map(id => records().get(id)?.delegationResult),
           outcomes => outcomes.every(outcome => outcome?.status === expected),
-          timeout,
+          waitMs,
           label
         )
       const visibleSourceError = (kind, predicate) =>
@@ -220,10 +221,12 @@ export function createDesktopScenario(options) {
       }
       async function assertDelivered(samples) {
         const idsToCheck = samples.map(sample => sample.question.id)
+        // Wait for delivery receipts up to the same deadline that each reply must meet.
         const outcomes = await awaitOutcomes(
           idsToCheck,
           'sent',
-          'Every reply must reach its channel receipt'
+          'Every reply must reach its channel receipt',
+          REPLY_LIMIT_MS
         )
         const replies = await mailbox.replies()
         samples.forEach((sample, index) => {
@@ -284,19 +287,24 @@ export function createDesktopScenario(options) {
           provider: selectedModel.provider,
           model_id: selectedModel.model_id,
         }
+        const accountId = createHash('sha256')
+          .update(JSON.stringify([ids.profile, ids.org, ids.owner]))
+          .digest('hex')
         const selected = await Promise.all(
           ['direct', 'group'].map(async kind => {
             const page = await request('runtime.connections.resources', {
               providerId: PROVIDER,
               kind,
+              profile: ids.profile,
               query: kind === 'group' ? 'Dots selected group' : 'Dots selected peer',
             })
             const source = page.items.find(
               item => item.id === (kind === 'group' ? ids.group : ids.peer)
             )
-            assert.ok(
+            assert.equal(
               source?.accountId,
-              `Native ${kind} lookup must identify the actual connected account`
+              accountId,
+              `Native ${kind} lookup must bind the verified organization and account`
             )
             return { ...source, policy: { automatic: true, askBeforeAct: false, immediate: true } }
           })
@@ -320,6 +328,9 @@ export function createDesktopScenario(options) {
           },
         })
         assert.equal(enabled.primary.delegation.authorized, true)
+        assert.equal(enabled.primary.delegation.profile, ids.profile)
+        assert.equal(enabled.primary.delegation.accountId, accountId)
+        assert.equal(enabled.primary.delegation.organizationId, ids.org)
         await storyUntil(
           () => ['direct', 'group'].map(kind => sourceState(kind)),
           states => states.every(state => state?.checkpoint?.after && !state.error),

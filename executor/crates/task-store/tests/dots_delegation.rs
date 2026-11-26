@@ -129,6 +129,126 @@ fn activation_requires_explicit_intent_and_one_account_with_exact_sources() {
 }
 
 #[test]
+fn verified_scope_reopens_paused_and_changes_accounts_in_one_delegation() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    let account = json!({
+        "profile":"current", "accountId":"account-a",
+        "organizationId":"org-a", "organizationName":"First Organization",
+        "accountName":"Fixture Owner"
+    });
+    settings["primary"]["delegation"] =
+        json!({"action":"prepare", "profile":"current", "accountId":"account-a"});
+    let mut mismatched = settings.clone();
+    mismatched["primary"]["delegation"]["accountId"] = json!("account-b");
+    assert!(store
+        .save_personal_stand_in(7, "desktop", mismatched)
+        .is_err());
+    assert!(store
+        .propose_stand_in_settings(7, "desktop", None, "Prepare scope", settings.clone())
+        .is_err());
+    assert!(store
+        .save_personal_stand_in(7, "desktop", settings.clone())
+        .is_err());
+    let original = store
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            7,
+            "desktop",
+            None,
+            settings,
+            Some(&account),
+        )
+        .unwrap();
+    let mut reopened = store.personal_stand_in(7, "desktop").unwrap();
+    assert_eq!(reopened, original);
+    let identity = primary(&reopened);
+    let selected = &identity["connections"][0];
+    assert_eq!(identity["delegation"]["version"], 0);
+    assert_eq!(
+        identity["delegation"]["organizationName"],
+        "First Organization"
+    );
+    assert_eq!(identity["delegation"]["authorized"], false);
+    assert_eq!(identity["delegation"]["paused"], true);
+    assert!(identity["delegation"]["effectiveAfter"].is_null());
+    assert_eq!(selected["organizationId"], "org-a");
+    assert!(selected["enabledAfter"].is_null());
+    assert!(active_delegated_source(&identity, selected).is_none());
+
+    reopened["primary"]["delegation"]["action"] = json!("enable");
+    reopened["primary"]["delegation"]["organizationId"] = json!("forged");
+    reopened["primary"]["connections"][0]["organizationId"] = json!("forged");
+    let mut enabled = saved(&store, reopened);
+    let identity = primary(&enabled);
+    let selected = &identity["connections"][0];
+    assert_eq!(identity["delegation"]["version"], 1);
+    assert_eq!(identity["delegation"]["organizationId"], "org-a");
+    assert_eq!(selected["organizationId"], "org-a");
+    assert!(active_delegated_source(&identity, selected).is_some());
+    assert!(!permits_delegated_message(
+        &identity,
+        selected,
+        &selected["enabledAfter"]
+    ));
+
+    enabled["primary"]["connections"] = json!([]);
+    enabled["primary"]["delegation"] =
+        json!({"action":"prepare", "profile":"other", "accountId":"account-b"});
+    let other = json!({"profile":"other", "accountId":"account-b", "organizationId":"org-b"});
+    let switched = store
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            7,
+            "desktop",
+            None,
+            enabled,
+            Some(&other),
+        )
+        .unwrap();
+    let replacement = primary(&switched);
+    assert_eq!(replacement["delegation"]["version"], 2);
+    assert_eq!(replacement["delegation"]["profile"], "other");
+    assert_eq!(replacement["delegation"]["organizationId"], "org-b");
+    assert_eq!(replacement["delegation"]["authorized"], false);
+    assert_eq!(replacement["delegation"]["paused"], true);
+    assert!(replacement["connections"].as_array().unwrap().is_empty());
+    assert!(active_delegated_source(&replacement, selected).is_none());
+}
+
+#[test]
+fn first_enable_can_bind_authoritative_identity_without_a_saved_draft() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let mut settings = draft(&store, json!([source("peer", "direct", "account-a")]));
+    settings["primary"]["delegation"] = json!({"action":"enable", "organizationId":"forged"});
+    let mut verified = json!({"profile":"other", "accountId":"account-a", "organizationId":"org"});
+    assert!(store
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            7,
+            "desktop",
+            None,
+            settings.clone(),
+            Some(&verified),
+        )
+        .is_err());
+    verified["profile"] = json!("current");
+    let enabled = store
+        .save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            7,
+            "desktop",
+            None,
+            settings,
+            Some(&verified),
+        )
+        .unwrap();
+    let identity = primary(&enabled);
+    let selection = &identity["connections"][0];
+    assert!(active_delegated_source(&identity, selection).is_some());
+    assert_eq!(selection["organizationId"], "org");
+    assert_eq!(identity["delegation"]["organizationId"], "org");
+}
+
+#[test]
 fn source_and_template_changes_apply_only_to_their_effective_ranges() {
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();

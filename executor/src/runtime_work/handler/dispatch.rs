@@ -143,6 +143,14 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.readiness" => boxed_rpc(move || async move {
+                let mut payload = payload;
+                let provider = string_field(&payload, "providerId")
+                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
+                payload["readiness"] = json!(true);
+                self.connection_call("check", Some(&provider), payload)
+                    .await
+            }),
             "runtime.connections.observations.sync" => {
                 boxed_rpc(
                     move || async move { self.sync_cloud_connection_subscription(payload).await },

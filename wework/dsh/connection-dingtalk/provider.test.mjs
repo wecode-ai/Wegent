@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { activeAccountIdentity } from './delegated-reads.js'
 import { createProvider, normalizeMessages } from './provider.js'
 const conversation = (id, direct, sender) => ({
   openConversationId: id,
@@ -306,6 +307,178 @@ test('discovers authorization identity from the exact installed dependency', asy
   })
   assert.equal(status.status, 'auth_required')
   assert.deepEqual(status.authTarget, target)
+})
+
+function readinessFixture() {
+  const provider = createProvider()
+  const calls = []
+  const accounts = [
+    {
+      profile: 'org-a:owner',
+      userId: 'owner',
+      userName: 'Owner',
+      corpId: 'org-a',
+      corpName: 'Organization A',
+      status: 'active',
+      isCurrent: true,
+      isOrgCurrent: true,
+    },
+    {
+      profile: 'org-b:owner',
+      userId: 'owner',
+      userName: 'Owner',
+      corpId: 'org-b',
+      corpName: 'Organization B',
+      status: 'active',
+      isCurrent: false,
+      isOrgCurrent: false,
+    },
+  ]
+  const state = {}
+  const authTarget = { pluginKey: 'dingtalk', connectorSlug: 'dingtalk-local' }
+  const ctx = {
+    cli: {
+      describe: async () => authTarget,
+      async callTool(_alias, input) {
+        calls.push(input)
+        if (input.tool === 'componentInfo') return { componentSource: 'managed', version: '1.0.57' }
+        if (input.tool === 'listProfiles')
+          return { currentProfile: accounts[0].profile, profiles: accounts }
+        if (input.tool === 'authStatus') {
+          const selected = accounts.find(account => account.profile === input.arguments.profile)
+          assert.ok(selected)
+          return {
+            authenticated: true,
+            token_valid: true,
+            user_id: selected.userId,
+            corp_id: state.tokenOrganization ?? selected.corpId,
+          }
+        }
+        if (input.tool === 'conversationInfo') return { result: { openConversationId: 'direct' } }
+        if (input.tool === 'listMentions' || input.tool === 'searchMessages') {
+          if (state.denied)
+            throw Object.assign(new Error('Read permission missing'), {
+              code: 'dingtalk_permissions_required',
+            })
+          state.afterMessageRead?.()
+          return {
+            success: true,
+            result: {
+              conversationMessagesList: state.unexpected
+                ? [conversation('unexpected', false, 'p')]
+                : [],
+              hasMore: false,
+              nextCursor: '0',
+            },
+          }
+        }
+        if (input.tool === 'searchUsers') {
+          return { result: [{ userId: 'owner', openDingTalkId: 'owner-id', name: 'Owner' }] }
+        }
+        assert.fail(`Unexpected operation: ${input.tool}`)
+      },
+    },
+  }
+  return { ctx, provider, calls, accounts, authTarget, state }
+}
+
+test('reuses the W90 account fingerprint and only selects an unambiguous current profile', async () => {
+  const { ctx, provider, accounts, calls, authTarget } = readinessFixture()
+  const baseIdentity = activeAccountIdentity({
+    currentProfile: accounts[0].profile,
+    profiles: accounts,
+  })
+  const ready = await provider.check(ctx, { readiness: true })
+  assert.equal(ready.status, 'ready')
+  assert.equal(ready.identity.accountId, baseIdentity.accountId)
+  assert.equal(ready.identity.organizationId, 'org-a')
+  assert.equal(ready.identity.userId, undefined)
+  assert.deepEqual(ready.component, { source: 'managed', version: '1.0.57' })
+  assert.deepEqual(ready.authTarget, authTarget)
+  assert.deepEqual(ready.permissions, { read: 'unchecked', reply: 'unverified' })
+  accounts[1].isCurrent = true
+  calls.length = 0
+  const ambiguous = await provider.check(ctx, { readiness: true })
+  assert.equal(ambiguous.status, 'identity_required')
+  assert.deepEqual(
+    ambiguous.candidates.map(row => row.organizationName),
+    ['Organization A', 'Organization B']
+  )
+  assert.deepEqual(
+    calls.map(call => call.tool),
+    ['componentInfo', 'listProfiles']
+  )
+})
+
+test('probes only selected conversations and reports denied reads and mismatched profile tokens', async () => {
+  const { ctx, provider, calls, state } = readinessFixture()
+  const profile = 'org-b:owner'
+  const input = {
+    readiness: true,
+    profile,
+    sources: [
+      { id: 'group', kind: 'group' },
+      { id: 'peer', kind: 'direct' },
+    ],
+  }
+  const result = await provider.check(ctx, input)
+  assert.equal(result.status, 'ready')
+  assert.equal(result.permissions.read, 'verified')
+  assert.equal(result.identity.organizationId, 'org-b')
+  assert.equal(calls.find(call => call.tool === 'listMentions').arguments.group, 'group')
+  assert.equal(calls.find(call => call.tool === 'conversationInfo').arguments.peer, 'peer')
+  const read = calls.find(call => call.tool === 'searchMessages').arguments
+  assert.equal(read.profile, profile)
+  assert.equal(read.conversationIds, 'direct')
+  assert.equal(read.senderIds, 'peer')
+
+  state.denied = true
+  const denied = await provider.check(ctx, input)
+  assert.equal(denied.status, 'permissions_required')
+  assert.equal(denied.permissions, undefined)
+  state.denied = false
+  state.unexpected = true
+  assert.equal((await provider.check(ctx, input)).status, 'error')
+
+  state.unexpected = false
+  state.afterMessageRead = () => {
+    state.tokenOrganization = 'org-a'
+  }
+  calls.length = 0
+  assert.equal((await provider.check(ctx, input)).status, 'identity_required')
+  assert.equal(calls.at(-1).tool, 'authStatus')
+
+  state.tokenOrganization = 'org-a'
+  calls.length = 0
+  assert.equal((await provider.check(ctx, input)).status, 'identity_required')
+  assert.deepEqual(
+    calls.map(call => call.tool),
+    ['componentInfo', 'listProfiles', 'authStatus']
+  )
+})
+
+test('search and collection keep using the explicitly selected organization profile', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-24T00:10:00Z') })
+  const { ctx, provider, calls, state } = readinessFixture()
+  const profile = 'org-b:owner'
+  const { identity } = await provider.check(ctx, { readiness: true, profile })
+  const page = await provider.listResources(ctx, { kind: 'direct', query: 'Owner', profile })
+  assert.equal(page.items[0].accountId, identity.accountId)
+  assert.equal(page.items[0].profile, profile)
+  const source = {
+    providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+    delegated: true,
+    profile,
+    accountId: identity.accountId,
+    organizationId: identity.organizationId,
+    id: 'peer',
+    kind: 'direct',
+    enabledAfter: '2026-11-24T00:00:00Z',
+  }
+  assert.deepEqual((await provider.collect(ctx, { source })).events, [])
+  assert.equal(calls.find(call => call.tool === 'searchMessages').arguments.profile, profile)
+  state.tokenOrganization = 'org-a'
+  await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_account_changed' })
 })
 
 test('requires reauthorization before contact search when the legacy token cannot refresh', async () => {

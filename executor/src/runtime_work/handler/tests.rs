@@ -25,6 +25,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.cli",
         "runtime.connections.host",
         "runtime.connections.catalog",
+        "runtime.connections.readiness",
         "runtime.connections.resources",
         "runtime.connections.observations.collect",
         "runtime.connections.dependencies.inventory",
