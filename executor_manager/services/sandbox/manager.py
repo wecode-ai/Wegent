@@ -1285,21 +1285,24 @@ class SandboxManager(metaclass=SingletonMeta):
         if sandbox is None:
             return None, f"Sandbox {sandbox_id} not found"
 
-        if not sandbox.is_active():
-            return (
-                None,
-                f"Sandbox {sandbox_id} is not active (status: {sandbox.status.value})",
-            )
-
-        sandbox.extend_timeout(additional_timeout)
-        self._repository.save_sandbox(sandbox)
+        async with self._lock_current_sandbox(sandbox) as (current, error):
+            if current is None:
+                return None, error
+            if not current.is_active():
+                return (
+                    None,
+                    f"Sandbox {sandbox_id} is not active (status: {current.status.value})",
+                )
+            current.extend_timeout(additional_timeout)
+            if not self._repository.save_sandbox(current):
+                return None, f"Could not extend Sandbox {sandbox_id} timeout"
 
         logger.info(
             f"[SandboxManager] Sandbox keep-alive: {sandbox_id}, "
-            f"new expiry={sandbox.expires_at}"
+            f"new expiry={current.expires_at}"
         )
 
-        return sandbox, None
+        return current, None
 
     async def pause_sandbox(self, sandbox_id: str) -> Tuple[bool, str]:
         """Pause a running sandbox (E2B standard).

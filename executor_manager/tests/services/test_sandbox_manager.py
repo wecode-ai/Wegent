@@ -1512,24 +1512,38 @@ class TestSandboxManager:
     # ----- keep_alive Tests -----
 
     @pytest.mark.asyncio
-    async def test_keep_alive_success(
+    @pytest.mark.parametrize("condition", ["healthy", "replaced", "storage_failed"])
+    async def test_keep_alive_revalidates_before_persisting(
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
-        mocker,
+        condition,
     ):
-        """Test successful timeout extension."""
+        """Renew only the observed runtime and require a successful write."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
-        mocker.patch.object(
-            manager._health_checker, "check_health_sync", return_value=True
-        )
+        if condition == "replaced":
+            replacement = json.loads(sample_sandbox_redis_data)
+            replacement["created_at"] += 1
+            mock_redis_client.hget.side_effect = [
+                sample_sandbox_redis_data,
+                json.dumps(replacement),
+            ]
+        elif condition == "storage_failed":
+            mock_redis_client.hset.side_effect = OSError("Redis unavailable")
 
         sandbox, error = await manager.keep_alive("12345", additional_timeout=600)
 
-        assert error is None
-        assert sandbox is not None
+        if condition == "healthy":
+            assert error is None
+            assert sandbox is not None
+            assert sandbox.expires_at > time.time()
+        else:
+            assert sandbox is None
+            assert error
+            if condition == "replaced":
+                mock_redis_client.hset.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_keep_alive_sandbox_not_found(
