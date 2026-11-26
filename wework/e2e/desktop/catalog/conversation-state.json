@@ -19,7 +19,6 @@
     "wework/src/components/chat/FileChangesReviewPanel.tsx",
     "wework/src/components/chat/FileChangesPatchDiff.tsx",
     "wework/src/components/chat/fileChangesPatchCache*",
-    "wework/src/components/chat/fileChangesReview*",
-    "wework/src/components/code/PierreCodeProvider.tsx"
+    "wework/src/components/chat/fileChangesReview*"
   ]
 }
