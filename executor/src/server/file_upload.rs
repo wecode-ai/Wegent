@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     fmt::Display,
     fs,
     io::{self, Seek, SeekFrom},
@@ -20,8 +21,8 @@ use axum::{
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::{
-    disk_usage_bytes, header_value, log_executor_event, resolve_envd_path, EntryInfo, HttpError,
-    WorkspacePathQuery,
+    disk_usage_bytes, header_value, log_executor_event, resolve_envd_path, ByteUsage, EntryInfo,
+    HttpError, WorkspacePathQuery,
 };
 
 // The Backend accepts attachment files up to 100 MiB. Include multipart framing overhead.
@@ -69,24 +70,13 @@ pub(super) async fn upload_envd_file(
             detail: format!("failed to create parent directory: {error}"),
         }
     })?;
-    if let Some(usage) = disk_usage_bytes(parent) {
-        let free = usage.total.saturating_sub(usage.used);
-        log_executor_event(
-            "envd file upload disk check",
-            &[
-                ("path", path.to_string_lossy().to_string()),
-                ("parent", parent.to_string_lossy().to_string()),
-                ("free_bytes", free.to_string()),
-                ("required_bytes", MIN_UPLOAD_FREE_SPACE_BYTES.to_string()),
-            ],
-        );
-        if free < MIN_UPLOAD_FREE_SPACE_BYTES {
-            return Err(HttpError {
-                status: StatusCode::INSUFFICIENT_STORAGE,
-                detail: "Not enough disk space".to_owned(),
-            });
-        }
-    }
+    let staging_dir = env::temp_dir();
+    check_upload_space(
+        &path,
+        &staging_dir,
+        disk_usage_bytes(&staging_dir),
+        MIN_UPLOAD_FREE_SPACE_BYTES,
+    )?;
 
     let mut staged = None;
     while let Some(mut field) = multipart.next_field().await.map_err(multipart_http_error)? {
@@ -102,7 +92,7 @@ pub(super) async fn upload_envd_file(
                     ),
                 ],
             );
-            staged = Some(stage_file(&path, parent, &mut field).await?);
+            staged = Some(stage_file(&path, &staging_dir, &mut field).await?);
         }
     }
     let staged = staged.ok_or_else(|| HttpError {
@@ -113,14 +103,21 @@ pub(super) async fn upload_envd_file(
     // Consume the entire multipart form before opening the destination. Copying into the
     // destination preserves its existing permissions and follows links as a normal write does.
     let destination = path.clone();
-    let size = tokio::task::spawn_blocking(move || -> io::Result<u64> {
-        let mut staged = staged;
-        staged.seek(SeekFrom::Start(0))?;
-        io::copy(&mut staged, &mut fs::File::create(destination)?)
+    let destination_dir = parent.to_path_buf();
+    let size = tokio::task::spawn_blocking(move || {
+        let destination_dir = fs::canonicalize(&destination)
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .unwrap_or(destination_dir);
+        publish_staged_file(
+            staged,
+            &destination,
+            &destination_dir,
+            disk_usage_bytes(&destination_dir),
+        )
     })
     .await
-    .map_err(|error| upload_write_error(&path, error))?
-    .map_err(|error| upload_write_error(&path, error))?;
+    .map_err(|error| upload_write_error(&path, error))??;
     log_executor_event(
         "envd file upload succeeded",
         &[
@@ -140,11 +137,11 @@ pub(super) async fn upload_envd_file(
 
 async fn stage_file(
     path: &Path,
-    parent: &Path,
+    staging_dir: &Path,
     field: &mut Field<'_>,
 ) -> Result<fs::File, HttpError> {
     let temporary =
-        tempfile::tempfile_in(parent).map_err(|error| upload_write_error(path, error))?;
+        tempfile::tempfile_in(staging_dir).map_err(|error| upload_write_error(path, error))?;
     let mut file = File::from_std(temporary);
     while let Some(chunk) = field.chunk().await.map_err(multipart_http_error)? {
         file.write_all(&chunk)
@@ -155,6 +152,52 @@ async fn stage_file(
         .await
         .map_err(|error| upload_write_error(path, error))?;
     Ok(file.into_std().await)
+}
+
+fn publish_staged_file(
+    mut staged: fs::File,
+    path: &Path,
+    directory: &Path,
+    usage: Option<ByteUsage>,
+) -> Result<u64, HttpError> {
+    let size = staged
+        .metadata()
+        .map_err(|error| upload_write_error(path, error))?
+        .len();
+    check_upload_space(path, directory, usage, size)?;
+    staged
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| upload_write_error(path, error))?;
+    let mut destination =
+        fs::File::create(path).map_err(|error| upload_write_error(path, error))?;
+    io::copy(&mut staged, &mut destination).map_err(|error| upload_write_error(path, error))
+}
+
+fn check_upload_space(
+    path: &Path,
+    directory: &Path,
+    usage: Option<ByteUsage>,
+    required: u64,
+) -> Result<(), HttpError> {
+    if let Some(usage) = usage {
+        let free = usage.total.saturating_sub(usage.used);
+        log_executor_event(
+            "envd file upload disk check",
+            &[
+                ("path", path.to_string_lossy().to_string()),
+                ("directory", directory.to_string_lossy().to_string()),
+                ("free_bytes", free.to_string()),
+                ("required_bytes", required.to_string()),
+            ],
+        );
+        if free < required {
+            return Err(HttpError {
+                status: StatusCode::INSUFFICIENT_STORAGE,
+                detail: "Not enough disk space".to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn upload_write_error(path: &Path, error: impl Display) -> HttpError {
@@ -168,5 +211,34 @@ fn upload_write_error(path: &Path, error: impl Display) -> HttpError {
     HttpError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("failed to write uploaded file: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn insufficient_publish_space_keeps_the_existing_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("upload.bin");
+        fs::write(&target, b"original").unwrap();
+        let mut staged = tempfile::tempfile().unwrap();
+        staged.write_all(b"replacement").unwrap();
+
+        let error = publish_staged_file(
+            staged,
+            &target,
+            directory.path(),
+            Some(ByteUsage {
+                total: 20,
+                used: 17,
+            }),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.status, StatusCode::INSUFFICIENT_STORAGE);
+        assert_eq!(fs::read(&target).unwrap(), b"original");
     }
 }

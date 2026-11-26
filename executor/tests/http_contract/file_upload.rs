@@ -96,3 +96,30 @@ async fn rejects_an_oversized_multipart_form_without_replacing_the_existing_file
     );
     assert_eq!(fs::read(&target).unwrap(), b"original");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn overwrites_a_writable_file_in_a_read_only_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = env_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("HOME", &home.path().display().to_string());
+    let directory = home.path().join("attachments");
+    fs::create_dir(&directory).unwrap();
+    let target = directory.join("upload.bin");
+    fs::write(&target, b"original").unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let request = upload_request(
+        &target,
+        [file_header(), Bytes::from_static(b"replacement")].into_iter(),
+    );
+    let response = create_router(AppState::new(RecordingRunner::default()))
+        .oneshot(request)
+        .await;
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(response.unwrap().status(), StatusCode::OK);
+    assert_eq!(fs::read(&target).unwrap(), b"replacement");
+}
