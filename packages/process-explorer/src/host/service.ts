@@ -153,7 +153,16 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       this.lastCompleteReadAt = tableReadAt
       this.completeSequence = sequence
     }
-    snapshot.recentlyExited = [...this.recentlyExited.values()]
+    if (this.recentlyExited.size > 0) {
+      // A complete sample can rediscover a process omitted by an earlier read.
+      // Never publish the same identity as both running and exited.
+      const liveIds = new Set(snapshot.processes.map(record => record.id))
+      snapshot.recentlyExited = [...this.recentlyExited.values()].filter(record => {
+        if (!liveIds.has(record.id)) return true
+        if (exits.complete) this.recentlyExited.delete(record.id)
+        return false
+      })
+    }
     snapshot.collectingSystemProcesses = Boolean(systemTable && !system)
     // A slower preview must not replace a completed table's cached snapshot.
     if (system === this.systemTableResult) {

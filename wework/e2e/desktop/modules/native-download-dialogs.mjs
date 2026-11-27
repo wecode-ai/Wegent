@@ -223,13 +223,18 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   }
 }
 
-export async function clickLinuxPointer(waitForPress) {
+export async function clickLinuxPointer(button = 1, waitForPress) {
   const options = { encoding: 'utf8', timeout: 3_000 }
-  await execute('xdotool', ['mousedown', '1'], options)
+  const number = String(button)
+  if (!waitForPress) {
+    await execute('xdotool', ['click', '--clearmodifiers', number], options)
+    return
+  }
   try {
+    await execute('xdotool', ['mousedown', number], options)
     await waitForPress()
   } finally {
-    await execute('xdotool', ['mouseup', '1'], options)
+    await execute('xdotool', ['mouseup', number], options)
   }
 }
 
