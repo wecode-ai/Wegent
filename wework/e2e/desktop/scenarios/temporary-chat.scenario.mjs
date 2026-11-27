@@ -8,7 +8,12 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createTemporaryChatFilePreview } from '../modules/temporary-chat-file-preview.mjs'
 
-import { selectE2EModel } from '../modules/shared.mjs'
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  MODEL_PROVIDER_ID,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   assertTemporaryChatMessages,
@@ -29,7 +34,8 @@ const SIDE_CHAT = `${ACTIVE_SURFACE} [data-testid="right-workspace-chat-panel"]`
 const SIDE_SCROLL = `${SIDE_CHAT} [data-testid="right-workspace-chat-scroll-area"]`
 const SIDE_COMPOSER = `${SIDE_CHAT} [data-testid="chat-message-input"]`
 const MAIN_MODEL_SELECTOR = `${ACTIVE_SURFACE} [data-testid="desktop-floating-composer-card"] [data-testid="model-selector-button"]`
-const SIDE_MODEL_SELECTOR = `${SIDE_CHAT} [data-testid="model-selector-button"]`
+const SIDE_MODEL_ID = 'gpt-5.6-sol'
+const SIDE_MODEL_LABEL = 'GPT 5.6 Sol'
 const SOURCE_PROMPT = 'TEMPORARY_CHAT_SOURCE_CONVERSATION'
 const SOURCE_COMPLETION = 'TEMPORARY_CHAT_SOURCE_COMPLETE'
 const INITIAL_PROMPT = 'TEMPORARY_CHAT_INITIAL_MESSAGE'
@@ -44,30 +50,15 @@ const ATTACHMENT_TEXT = JSON.stringify({
   content: 'Long attachment preview in a narrow chat '.repeat(20),
 })
 
-async function selectSideChatReasoning(control, timeoutMs) {
-  const track = '[data-testid="model-control-reasoning-track"]'
-  const high = '[data-testid="model-control-reasoning-high"]'
+async function selectSideChatModel(control) {
   const mainModel = await control.command('getText', MAIN_MODEL_SELECTOR)
-  await control.command('clickWhenEnabled', SIDE_MODEL_SELECTOR, { timeoutMs })
-  await control.command('waitFor', high, { visible: true, timeoutMs })
-  const previous = await control.command('getAttribute', track, { value: 'aria-valuetext' })
-  const highLabel = await control.command('getAttribute', high, { value: 'aria-label' })
-  const effort = previous === highLabel ? 'low' : 'high'
-  await control.command('clickWhenEnabled', `[data-testid="model-control-reasoning-${effort}"]`, {
-    timeoutMs,
-  })
-  assert.notEqual(
-    await control.command('getAttribute', track, { value: 'aria-valuetext' }),
-    previous,
-    'The temporary chat did not apply its new reasoning effort'
-  )
-  await control.command('press', 'body', { key: 'Escape' })
+  assert.ok(mainModel.includes(DEFAULT_MODEL_LABEL), 'The source conversation must start on Luna')
+  await selectE2EModel(control, SIDE_MODEL_ID, SIDE_MODEL_LABEL, SIDE_CHAT, MODEL_PROVIDER_ID)
   assert.equal(
     await control.command('getText', MAIN_MODEL_SELECTOR),
     mainModel,
-    'Changing temporary-chat reasoning changed the main conversation model controls'
+    'Switching the temporary-chat model changed the main conversation model'
   )
-  return effort
 }
 
 async function assertComposerBottomSpacing(control, timeoutMs, expanded = false) {
@@ -488,7 +479,7 @@ export function createDesktopScenario({
   let active = false
   let followUpRequestCount = 0
   let recoveredModelHistory = null
-  let initialReasoningEffort
+  let initialModel
   const filePreview = createTemporaryChatFilePreview(workspacePath)
   let releaseSource
   let releaseFollowUp
@@ -533,7 +524,7 @@ export function createDesktopScenario({
       ].find(([prompt]) => input.includes(prompt))
       if (!match) return false
       const [prompt, completion] = match
-      if (prompt === INITIAL_PROMPT) initialReasoningEffort = body.reasoning?.effort
+      if (prompt === INITIAL_PROMPT) initialModel = body.model
       if (prompt === RECOVERY_PROMPT) {
         recoveredModelHistory = JSON.stringify(body.input ?? body.messages ?? [])
       }
@@ -583,7 +574,7 @@ export function createDesktopScenario({
       const taskTimeoutMs = Math.max(uiTimeoutMs, 30_000)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', MAIN_COMPOSER, { timeoutMs: uiTimeoutMs })
-      await selectE2EModel(control, undefined, undefined, ACTIVE_SURFACE)
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_SURFACE)
 
       const knownRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -611,7 +602,7 @@ export function createDesktopScenario({
       await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       await assertComposerBottomSpacing(control, uiTimeoutMs)
-      const sideReasoningEffort = await selectSideChatReasoning(control, uiTimeoutMs)
+      await selectSideChatModel(control)
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await control.command('dropFile', SIDE_COMPOSER, {
@@ -630,9 +621,9 @@ export function createDesktopScenario({
         timeoutMs: taskTimeoutMs,
       })
       assert.equal(
-        initialReasoningEffort,
-        sideReasoningEffort,
-        'The first temporary-chat message did not use the selected reasoning effort'
+        initialModel,
+        SIDE_MODEL_ID,
+        'The first temporary-chat message did not use the selected model'
       )
       await assertSideChatBottomAnchored(control)
       const [scrollMetrics] = JSON.parse(await control.command('getElementMetrics', SIDE_SCROLL))
