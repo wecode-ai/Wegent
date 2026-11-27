@@ -202,6 +202,7 @@ mod tests {
             runtime_device_id: String::new(),
             runtime_task_id: String::new(),
             status: status.into(),
+            observed_state: None,
             approval_status: String::new(),
             execution_payload: String::new(),
             error_message: String::new(),
