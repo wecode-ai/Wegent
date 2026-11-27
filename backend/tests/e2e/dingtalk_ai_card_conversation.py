@@ -520,7 +520,7 @@ async def run() -> None:
         assert await handler.handle_message(
             _message("/new", conversation_id, sender_id)
         )
-        assert "助理详情" in handler.replies[-1]
+        assert "当前为 Wework 助理模式" in handler.replies[-1]
         assert "账号默认执行设备" in handler.replies[-1]
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
         assert runtime_requests[-1]["message"] == "1"
