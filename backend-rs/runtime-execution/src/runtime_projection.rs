@@ -550,6 +550,17 @@ pub async fn handle_runtime_event<T: MysqlTransaction>(
     if updated != 1 {
         return Ok(None);
     }
+    if status == "completed"
+        && let Some(result) = note.as_deref()
+        && execution_intent(&row)["origin_context"]["dispatch_role"] == "member"
+    {
+        transaction
+            .execute(
+                "UPDATE loop_item_executions SET execution_payload=JSON_SET(execution_payload,'$.assignment_result',?) WHERE id=?",
+                (result, row.id),
+            )
+            .await?;
+    }
     let run_status = match status {
         "completed" => "succeeded",
         "failed" => "failed",

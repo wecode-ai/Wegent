@@ -669,10 +669,16 @@ export async function createDesktopScenario({
           const related = response.items.filter(candidate =>
             issueExecution(candidate, rootIssue.id)
           )
-          return related.length === 1 &&
-            ['claimed', 'running'].includes(related[0].status) &&
-            related[0].runtimeTaskId
-            ? related[0]
+          const managers = related.filter(
+            row => row.executorType === 'collaboration_group_dispatch'
+          )
+          const members = related.filter(row => row.executorType === 'project_robot')
+          return managers.length === 1 &&
+            ['claimed', 'running'].includes(managers[0].status) &&
+            managers[0].runtimeTaskId &&
+            members.length === 2 &&
+            members.every(row => row.status === 'running' && row.runtimeTaskId)
+            ? managers[0]
             : null
         },
         'The real remote Executor did not claim the single root group dispatch',
@@ -858,14 +864,20 @@ export async function createDesktopScenario({
           const groupDispatches = related.filter(
             candidate => candidate.executorType === 'collaboration_group_dispatch'
           )
-          return groupDispatches.length === 1 && related.every(terminalExecution)
-            ? groupDispatches
-            : null
+          return groupDispatches.length === 1 && related.every(terminalExecution) ? related : null
         },
         'The real remote Executor did not finish the single root group dispatch',
         modelResponseTimeoutMs
       )
-      const [dispatch] = executionResponse
+      const dispatch = executionResponse.find(row => row.id === runningDispatch.id)
+      assert.ok(dispatch, 'The original manager execution must complete')
+      const memberExecutions = executionResponse.filter(row => row.id !== dispatch.id)
+      assert.equal(memberExecutions.length, 2)
+      assert.ok(memberExecutions.every(row => row.status === 'completed'))
+      assert.deepEqual(
+        memberExecutions.map(row => String(row.agentId)).sort(),
+        [String(collector.id), String(reviewer.id)].sort()
+      )
       assert.equal(
         dispatch.executorType,
         'collaboration_group_dispatch',
@@ -964,7 +976,9 @@ export async function createDesktopScenario({
       )
       const memberMessageId = memberTitle.slice('cloud-task-activity-task-title-'.length)
       const memberCard = `cloud-task-activity-card-${memberMessageId}`
-      const memberTaskId = `${dispatch.runtimeTaskId}-member-${MARKER}-round-1-${MARKER}-assignment-1`
+      const memberTaskId = memberExecutions.find(
+        row => String(row.agentId) === String(collector.id)
+      ).runtimeTaskId
       const memberBinding = bindingsAfterReply.find(binding => binding.task_id === memberTaskId)
       assert.ok(memberBinding, '成员动态没有绑定实际成员会话')
       await verifyRecordedMemberTranscript({
