@@ -39,7 +39,7 @@ import { useRuntimeCacheHydration } from './useRuntimeCacheHydration'
 import { useRuntimeFailures } from './useRuntimeFailures'
 import { useMobileUserInput } from './useMobileUserInput'
 import { recordMobileTaskAddressRename } from '@/telemetry/taskIdentity'
-import { recordMobileTaskOutcome } from '@/telemetry/taskOutcome'
+import { clearMobileTaskOutcome, recordMobileTaskOutcome } from '@/telemetry/taskOutcome'
 import { useConversationActions } from './useConversationActions'
 import {
   runtimeTaskRunning,
@@ -180,11 +180,11 @@ export function useMobileRuntime(
       return (transcript: RuntimeTranscriptResponse) => {
         clearFailure(`transcript${page ? '-older' : ''}:${runtimeTaskKey(address)}`)
         if (page) return
-        if (
+        const projectionChanged =
           typeof transcript.running === 'boolean' &&
           lifecycle.transcriptReceived(observation, transcript.running)
-        )
-          publishTaskLifecycle()
+        if (transcript.running === true && projectionChanged) clearMobileTaskOutcome(address)
+        if (projectionChanged) publishTaskLifecycle()
         if (
           transcript.running === false &&
           lifecycle.snapshot().get(runtimeTaskKey(address)) === false
@@ -223,8 +223,10 @@ export function useMobileRuntime(
     isRunning: address => runtimeTaskRunning(address, workRef.current, lifecycle.snapshot()),
     modelSelection,
     onTurnStarted: address => {
-      lifecycle.executorStarted(address)
-      publishTaskLifecycle()
+      if (lifecycle.executorStarted(address)) {
+        clearMobileTaskOutcome(address)
+        publishTaskLifecycle()
+      }
     },
   })
 
@@ -592,6 +594,7 @@ export function useMobileRuntime(
             const goalResponse = await api.setGoal(address, message)
             if (!goalResponse.accepted) throw new Error('目标创建失败')
           }
+          clearMobileTaskOutcome(address)
           sendTransition = lifecycle.sendRequested(address)
           publishTaskLifecycle()
           await subscribe(address)
@@ -645,6 +648,7 @@ export function useMobileRuntime(
         setCurrentAddress(provisionalAddress)
         activateTranscript(provisionalAddress, { adoptDraft: true })
         setCurrentTitle(titleFrom(message))
+        clearMobileTaskOutcome(provisionalAddress)
         sendTransition = lifecycle.sendRequested(provisionalAddress)
         publishTaskLifecycle()
         await subscribe(provisionalAddress)
@@ -717,6 +721,7 @@ export function useMobileRuntime(
       } catch (cause) {
         if (sendTransition && lifecycle.sendRejected(sendTransition)) {
           recordMobileTaskOutcome(sendTransition.address, 'runtime.task.failed')
+          lifecycle.executorStopped(sendTransition.address)
           publishTaskLifecycle()
         }
         if (

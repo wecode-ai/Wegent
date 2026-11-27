@@ -61,6 +61,16 @@ describe('RuntimeTaskLifecycleProjection', () => {
     expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
   })
 
+  it('publishes a terminal background run and rejects an older running transcript', () => {
+    const lifecycle = new RuntimeTaskLifecycleProjection()
+    lifecycle.sendRequested(address)
+    const staleObservation = lifecycle.transcriptRequested(address)
+
+    expect(lifecycle.executorStopped(address)).toBe(true)
+    expect(lifecycle.transcriptReceived(staleObservation, true)).toBe(false)
+    expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
+  })
+
   it('keeps a terminal projection over a stale work response and releases it on agreement', () => {
     const lifecycle = new RuntimeTaskLifecycleProjection()
     lifecycle.transcriptReceived(lifecycle.transcriptRequested(address), false)

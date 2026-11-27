@@ -22,6 +22,10 @@ export function takeMobileTaskOutcome(address: RuntimeTaskAddress): MobileTeleme
   return result
 }
 
+export function clearMobileTaskOutcome(address: RuntimeTaskAddress): void {
+  outcomes.delete(runtimeTaskKey(address))
+}
+
 export function clearMobileTaskOutcomes(): void {
   outcomes.clear()
 }

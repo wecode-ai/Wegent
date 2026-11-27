@@ -216,8 +216,13 @@ describe('mobile PostHog shutdown', () => {
     expect(methods.indexOf('optOut')).toBeLessThan(methods.indexOf('flushStorage'))
     expect(sdk.instance!.disabled).toBe(true)
     const shutdownIndex = methods.indexOf('shutdown')
-    expect(methods.slice(0, shutdownIndex).lastIndexOf('setPersistedProperty')).toBeLessThan(
-      shutdownIndex
-    )
+    expect(shutdownIndex).toBeGreaterThanOrEqual(0)
+    for (const key of ['queue', 'ai_queue', 'ai_capture_queue', 'logs_queue']) {
+      const clearIndex = calls.findIndex(
+        call => call.method === 'setPersistedProperty' && call.key === key && call.value === null
+      )
+      expect(clearIndex).toBeGreaterThanOrEqual(0)
+      expect(clearIndex).toBeLessThan(shutdownIndex)
+    }
   })
 })

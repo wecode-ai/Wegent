@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  clearMobileTaskOutcome,
   clearMobileTaskOutcomes,
   recordMobileTaskOutcome,
   takeMobileTaskOutcome,
@@ -22,6 +23,12 @@ describe('mobile task outcomes', () => {
   it('consumes each outcome once', () => {
     recordMobileTaskOutcome(address, 'response.completed')
     expect(takeMobileTaskOutcome(address)).toBe('success')
+    expect(takeMobileTaskOutcome(address)).toBeNull()
+  })
+
+  it('clears an outcome when a new run starts', () => {
+    recordMobileTaskOutcome(address, 'runtime.task.cancelled')
+    clearMobileTaskOutcome(address)
     expect(takeMobileTaskOutcome(address)).toBeNull()
   })
 })

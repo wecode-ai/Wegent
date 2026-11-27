@@ -60,6 +60,14 @@ export class RuntimeTaskLifecycleProjection {
     return changed
   }
 
+  executorStopped(address: RuntimeTaskAddress): boolean {
+    const key = runtimeTaskKey(address)
+    const changed = this.runningByTask.get(key) !== false
+    this.advanceRevision(key)
+    this.runningByTask.set(key, false)
+    return changed
+  }
+
   sendRequested(address: RuntimeTaskAddress): RuntimeSendTransition {
     const key = runtimeTaskKey(address)
     const transition = {

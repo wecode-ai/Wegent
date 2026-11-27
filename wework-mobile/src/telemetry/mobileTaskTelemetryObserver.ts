@@ -77,7 +77,9 @@ export class MobileTaskTelemetryObserver {
         lastResult: null,
       }
       const target = executionTarget(address.deviceId, devices)
-      if (!current.running && nextRunning) this.startTask(current, address, target, now)
+      if (!current.running && nextRunning) {
+        this.startTask(current, address, target, now, typeof projected !== 'boolean')
+      }
       if (current.running && !nextRunning) {
         this.completeTask(current, address, task?.status, target, now)
       }
@@ -100,9 +102,10 @@ export class MobileTaskTelemetryObserver {
     task: ObservedTask,
     address: RuntimeTaskAddress,
     target: MobileExecutionTarget,
-    now: number
+    now: number,
+    discardStaleOutcome: boolean
   ): void {
-    takeMobileTaskOutcome(address)
+    if (discardStaleOutcome) takeMobileTaskOutcome(address)
     const runCount = task.runCount + 1
     task.runCount = runCount
     task.startedAt = now

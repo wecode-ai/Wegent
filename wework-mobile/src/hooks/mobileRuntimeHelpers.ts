@@ -9,12 +9,13 @@ export function runtimeTaskRunning(
   runningByTask: ReadonlyMap<string, boolean>
 ): boolean {
   const projected = runningByTask.get(runtimeTaskKey(address))
+  if (typeof projected === 'boolean') return projected
   for (const workspace of allWorkspaces(work)) {
     if (workspace.deviceId !== address.deviceId) continue
     const task = workspace.tasks.find(candidate => candidate.taskId === address.taskId)
-    if (task) return projectedRuntimeTaskRunning(task, projected)
+    if (task) return projectedRuntimeTaskRunning(task, undefined)
   }
-  return projectedRuntimeTaskRunning(undefined, projected)
+  return false
 }
 
 export function sameRuntimeAddress(

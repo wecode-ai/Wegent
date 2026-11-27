@@ -91,7 +91,30 @@ describe('mobile task telemetry observation', () => {
     expect(trackMock.mock.calls[1]?.[1]).toMatchObject({ result: 'failure', duration_ms: 2_000 })
   })
 
-  it('does not apply a stale terminal outcome to the next execution', () => {
+  it('preserves an outcome recorded before the first running observation', () => {
+    const trackMock = vi.fn()
+    const track = trackMock as unknown as MobileTaskTelemetryTracker
+    const observer = new MobileTaskTelemetryObserver(track)
+    recordMobileTaskOutcome(
+      { deviceId: 'device', taskId: 'task-1', runtime: 'codex' },
+      'runtime.task.cancelled'
+    )
+    observer.observe({
+      work: work(task('task-1', true)),
+      taskRunningByKey: new Map([[JSON.stringify(['device', 'task-1']), true]]),
+      devices: [device],
+      now: 1_000,
+    })
+    observer.observe({
+      work: work(task('task-1', false)),
+      taskRunningByKey: new Map(),
+      devices: [device],
+      now: 2_000,
+    })
+    expect(trackMock.mock.calls[1]?.[1]).toMatchObject({ result: 'cancelled' })
+  })
+
+  it('does not apply a stale outcome when a snapshot starts the next execution', () => {
     const trackMock = vi.fn()
     const track = trackMock as unknown as MobileTaskTelemetryTracker
     const observer = new MobileTaskTelemetryObserver(track)
@@ -147,6 +170,34 @@ describe('mobile task telemetry observation', () => {
       devices: [device],
       now: 3_000,
     })
+    expect(trackMock.mock.calls.map(([name]) => name)).toEqual([
+      'mobile_task_started',
+      'mobile_task_completed',
+    ])
+    expect(trackMock.mock.calls[1]?.[1]).toMatchObject({ result: 'failure' })
+  })
+
+  it('completes a rejected provisional send when its lifecycle projection stops', () => {
+    const trackMock = vi.fn()
+    const track = trackMock as unknown as MobileTaskTelemetryTracker
+    const observer = new MobileTaskTelemetryObserver(track)
+    const address = { deviceId: 'device', taskId: 'rejected-task', runtime: 'codex' as const }
+    const key = JSON.stringify([address.deviceId, address.taskId])
+    const empty = { projects: [], chats: [], totalTasks: 0 }
+    observer.observe({
+      work: empty,
+      taskRunningByKey: new Map([[key, true]]),
+      devices: [device],
+      now: 1_000,
+    })
+    recordMobileTaskOutcome(address, 'runtime.task.failed')
+    observer.observe({
+      work: empty,
+      taskRunningByKey: new Map([[key, false]]),
+      devices: [device],
+      now: 2_000,
+    })
+
     expect(trackMock.mock.calls.map(([name]) => name)).toEqual([
       'mobile_task_started',
       'mobile_task_completed',
