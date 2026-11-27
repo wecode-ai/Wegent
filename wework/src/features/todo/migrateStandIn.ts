@@ -1,6 +1,7 @@
 import { dequal } from 'dequal'
 import { newStandInRole, type StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
+import { isStandInDeviceUnreachable } from '@/lib/stand-in-error-message'
 
 import { checkTargetConnectionProviders, transferredConnection } from './standInConnectionTransfer'
 
@@ -9,6 +10,12 @@ export class StandInMigrationError extends Error {
   constructor(code: 'changed' | 'conflict' | 'same_device' | 'not_stopped') {
     super(code)
     this.code = code
+  }
+}
+
+export class StandInMigrationSourceUnavailable extends Error {
+  constructor(cause: unknown) {
+    super('Source device unavailable before copying', { cause })
   }
 }
 
@@ -30,9 +37,15 @@ export async function migrateStandIn(
   const { sourceUser, sourceDevice, roleId, targetUser, targetDevice } = input
   const targetApi = input.targetApi ?? api
   if (sourceDevice === targetDevice) throw new StandInMigrationError('same_device')
-  const [source, memories, target] = await Promise.all([
+  const sourceProfile = Promise.all([
     api.personalGet(sourceUser, sourceDevice, { exportTeamRoleId: roleId ?? '@primary' }),
     api.memories(sourceUser, sourceDevice),
+  ]).catch(cause => {
+    if (isStandInDeviceUnreachable(cause)) throw new StandInMigrationSourceUnavailable(cause)
+    throw cause
+  })
+  const [[source, memories], target] = await Promise.all([
+    sourceProfile,
     targetApi.personalGet(targetUser, targetDevice, { deviceSettingsOnly: true }),
   ])
   if (source.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
@@ -59,6 +72,7 @@ export async function migrateStandIn(
     ...migrated.collaboration,
     allProjects: false,
     tags: role?.collaboration.tags ?? [],
+    tagFilters: original.collaboration?.tagFilters,
   }
   const existing = target.roles.find(role => role.id === id)
   if (
@@ -71,6 +85,7 @@ export async function migrateStandIn(
           existing.model,
           existing.modelOptions,
           existing.collaboration.tags,
+          existing.collaboration.tagFilters,
         ],
         [
           migrated.name,
@@ -78,6 +93,7 @@ export async function migrateStandIn(
           migrated.model,
           migrated.modelOptions,
           migrated.collaboration.tags,
+          migrated.collaboration.tagFilters,
         ]
       ))
   )

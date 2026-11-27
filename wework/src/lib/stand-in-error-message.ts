@@ -111,6 +111,20 @@ const DEVICE_ERROR_CODES: Record<string, string> = {
   'ambiguous-executor-identity': 'executor_ambiguous',
 }
 
+export function isStandInDeviceUnreachable(error: unknown): boolean {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+  const message = getErrorMessage(error, '').replace(/^Error: /, '')
+  const reason = DEVICE_ERROR_CODES[message.split(':')[0]]
+  return (
+    code === 'executor_disconnected' ||
+    code === 'device_disconnected' ||
+    code === 'runtime_rpc_timeout' ||
+    code === 'device_offline' ||
+    reason === 'executor_unavailable' ||
+    reason === 'device_offline'
+  )
+}
+
 /** Log routing and transport identity without request content or raw error messages. */
 export function reportStandInError(operation: string, error: unknown, deviceId?: string): void {
   const value = error && typeof error === 'object' ? error : {}

@@ -1,6 +1,7 @@
 import type { CollaborationProject } from '@wegent/collaboration'
 import { dequal } from 'dequal'
 import type { StandInIdentity, StandInHandlingPolicy, StandInRole } from '@/api/personalStandIn'
+import { standInProjectTags } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 
 type Sources = Pick<StandInIdentity, 'connections' | 'collaboration'>
@@ -66,6 +67,33 @@ export function StandInProposalSources({
           .join(' · ') || t('standIn.workspace.no_project_connection')
   const collaborationChanged = !dequal(previous?.collaboration, identity.collaboration)
   const source = identity.collaboration
+  const previousSource = previous?.collaboration
+  const tagChanges = source?.enabled
+    ? [
+        ...(
+          [
+            ['projects', source.allProjects, 'project_only_all'],
+            ['participating', source.includeParticipatingIssues, 'receive_participating_issues'],
+            ['independent', source.includeIndependentIssues, 'project_scope_independent'],
+          ] as const
+        )
+          .filter(([, enabled]) => enabled)
+          .map(([key, , label]) => ({
+            key,
+            name: t(`standIn.workspace.${label}`),
+            before: previousSource?.tagFilters?.[key] ?? previousSource?.tags ?? [],
+            after: source.tagFilters?.[key] ?? source.tags,
+          })),
+        ...(!source.allProjects
+          ? source.projects.map(project => ({
+              key: `${project.store}:${project.id}`,
+              name: projectName(project.id, project.store),
+              before: previousSource ? standInProjectTags(previousSource, project) : [],
+              after: standInProjectTags(source, project),
+            }))
+          : []),
+      ].filter(row => !dequal(row.before, row.after))
+    : []
   return (
     <div className="space-y-2 text-sm">
       {changed.map(row => (
@@ -139,12 +167,12 @@ export function StandInProposalSources({
                     {source.excludedProjects.map(ref => projectName(ref.id, ref.store)).join('、')}
                   </p>
                 )}
-              {!dequal(previous?.collaboration?.tags, source.tags) && (
-                <p>
-                  {t('standIn.workspace.task_tags_label')}：
-                  {source.tags.join('、') || t('standIn.workspace.no_tag_limit')}
+              {tagChanges.map(change => (
+                <p key={change.key}>
+                  {t('standIn.workspace.project_range_tags', { name: change.name })}：
+                  {change.after.join('、') || t('standIn.workspace.no_tag_limit')}
                 </p>
-              )}
+              ))}
               {source.projectPolicies
                 ?.filter(
                   row =>

@@ -1,6 +1,7 @@
 //! Project-addressed views over the personal stand-in; no project-owned settings.
 use super::personal_stand_in::{
-    empty_role, project_role, read_personal, stand_in_identities, validate_role, write_personal,
+    empty_role, project_role, read_personal, role_project_matches, stand_in_identities,
+    validate_role, write_personal,
 };
 use super::*;
 
@@ -8,6 +9,7 @@ impl LocalTaskStore {
     pub fn stand_in_settings(
         &self,
         project_id: &str,
+        project_store: &str,
         user_id: i64,
         stand_in_id: &str,
     ) -> Result<Value, TaskRuntimeError> {
@@ -20,7 +22,9 @@ impl LocalTaskStore {
                     && role["collaboration"]["projects"]
                         .as_array()
                         .is_some_and(|projects| {
-                            projects.iter().any(|project| project["id"] == project_id)
+                            projects.iter().any(|project| {
+                                project["id"] == project_id && project["store"] == project_store
+                            })
                         })
             })
             .or_else(|| identities.iter().find(|role| role["id"] == stand_in_id))
@@ -38,12 +42,11 @@ impl LocalTaskStore {
                 fields.insert("version".into(), personal["version"].clone());
             }
         }
-        let kind = role["collaboration"]["projects"]
-            .as_array()
-            .and_then(|projects| projects.iter().find(|project| project["id"] == project_id))
-            .and_then(|project| project["store"].as_str())
-            .unwrap_or("local");
-        Ok(project_role(&role, user_id, project_id, kind))
+        let mut config = project_role(&role, user_id, project_id, project_store);
+        if !role_project_matches(&role, project_id, project_store) {
+            config["tags"] = json!([]);
+        }
+        Ok(config)
     }
 
     /// Save a project-addressed view into its owning personal document without duplicate persistence.
@@ -91,7 +94,23 @@ impl LocalTaskStore {
             source["allProjects"] = json!(false);
         }
         source["enabled"] = json!(true);
-        source["tags"] = value.get("tags").cloned().unwrap_or_else(|| json!([]));
+        let tags = value.get("tags").cloned().unwrap_or_else(|| json!([]));
+        let mut filters = source["projectTagFilters"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        filters.retain(|row| row["id"] != project_id || row["store"] != kind);
+        let project_default = source["tagFilters"]
+            .get("projects")
+            .unwrap_or(&source["tags"]);
+        if &tags != project_default {
+            filters.push(json!({"id": project_id, "store": kind, "tags": tags}));
+        }
+        if filters.is_empty() {
+            source.as_object_mut().unwrap().remove("projectTagFilters");
+        } else {
+            source["projectTagFilters"] = json!(filters);
+        }
         let project = json!({"id":project_id,"store":kind});
         if !source["projects"].as_array().unwrap().contains(&project) {
             source["projects"]

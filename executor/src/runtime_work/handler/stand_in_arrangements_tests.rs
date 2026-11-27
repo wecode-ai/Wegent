@@ -852,7 +852,7 @@ async fn memory_review_due_skips_empty_history_and_routes_changed_history_indepe
 }
 
 #[tokio::test]
-async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_policy() {
+async fn calendar_due_routes_directly_with_contents_regardless_of_legacy_timing_policy() {
     for immediate in [false, true] {
         let root = tempfile::tempdir().unwrap();
         let handler = handler(root.path());
@@ -900,17 +900,10 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
             )
             .await
             .unwrap();
-        assert_eq!(
-            snapshot["events"][0]["processingMode"],
-            if immediate { "immediate" } else { "silent" }
-        );
+        assert_eq!(snapshot["events"][0]["processingMode"], "immediate");
         assert_eq!(
             snapshot["events"][0]["dispatch"],
-            if immediate {
-                json!({"roleId":"@primary"})
-            } else {
-                Value::Null
-            }
+            json!({"roleId":"@primary"})
         );
         let mut changed = handler.automation_store.get("once").unwrap();
         changed.prompt = "Updated event".into();

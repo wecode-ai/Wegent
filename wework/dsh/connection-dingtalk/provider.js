@@ -612,11 +612,12 @@ function validateCollection(source) {
   if (
     source.collectionKey !== 'all-messages' ||
     source.kind !== 'group' ||
-    source.scope !== undefined ||
-    required(source, 'id') === '*' ||
+    (source.scope === 'all'
+      ? source.delegated === true || required(source, 'id') !== '*'
+      : source.scope !== undefined || required(source, 'id') === '*') ||
     /[,\r\n]/.test(source.id)
   )
-    throw invalid('All-message intake requires one exact group')
+    throw invalid('Invalid group all-message scope')
 }
 
 function validateNativePage(page, limit) {
@@ -715,10 +716,11 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
       const at = messageSentAt(message)
       const content =
         typeof message.content === 'string' && message.content.trim() ? message.content : undefined
+      if (!content && !options.delegated && isTextMessage(message)) throw invalid('Missing content')
       events.push({
         id: required(message, 'openMessageId'),
         eventType: 'message.received',
-        text: options.delegated ? (content ?? '[Non-text message]') : required(message, 'content'),
+        text: content ?? '[Non-text message]',
         senderId: sender,
         senderName: message.sender ?? null,
         isOwn,

@@ -36,6 +36,7 @@
   "runStatus": {
     "unavailable": "Delegation status unavailable",
     "disconnected": "DingTalk disconnected",
+    "configured": "DingTalk receive scope configured",
     "disabled": "Delegation is off",
     "active": "Handling messages on your behalf",
     "paused": "Delegation paused",

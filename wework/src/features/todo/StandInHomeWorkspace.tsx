@@ -23,6 +23,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { useState } from 'react'
+import { resolveAssistantExecutionDevice } from './personalAssistantDeviceSettings'
 import { StandInConversation } from './StandInConversation'
 import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
@@ -38,6 +39,7 @@ type Props = {
   active: boolean
   settings: PersonalStandInSettings
   account?: PersonalAssistantAccount
+  isKnownAssistantDevice?: (id: string) => boolean
   projects: CollaborationProject[]
   collaborationWork?: PersonalHomeCollaborationWork
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -47,7 +49,10 @@ type Props = {
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
   const definition = props.account?.definitions.find(item => item.roleId === '@primary')
-  const conversationDevice = definition?.bot.spec?.execution_policy?.environment_id ?? deviceId
+  const configured = definition?.bot.spec?.execution_policy?.environment_id
+  const conversationDevice = props.isKnownAssistantDevice
+    ? resolveAssistantExecutionDevice(configured, undefined, deviceId, props.isKnownAssistantDevice)
+    : (configured ?? deviceId)
   const { t } = useTranslation('common')
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const [view, setView] = useState('conversation')

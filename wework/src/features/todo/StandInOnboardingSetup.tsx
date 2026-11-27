@@ -1,8 +1,18 @@
 import { dequal } from 'dequal'
-import { useImperativeHandle, useRef, useState, type Ref } from 'react'
-import type { CollaborationProject } from '@wegent/collaboration'
+import { ChevronLeft } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import {
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
+import { createTagDraft, type CollaborationProject } from '@wegent/collaboration'
 import {
   newStandInPrimaryRole,
+  primaryWithConnectionMode,
   type PersonalStandInSettings,
   type StandInRole,
 } from '@/api/personalStandIn'
@@ -10,17 +20,21 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
-import { isDingTalkSource } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import {
   StandInConnectionSettings,
   type StandInConnectionNavigationHandle,
 } from './StandInConnectionSettings'
+import {
+  connectionConfigurationChanges,
+  hasConnectionDraft,
+  rebaseConnectionDraft,
+} from './standInConnectionSettingsModel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { findStandInProject } from './standInProjects'
 import type { DeviceInfo } from '@/types/api'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSettingsError } from './StandInSettingsLayout'
@@ -34,8 +48,8 @@ export interface StandInOnboardingConfiguration {
   localDeviceId: string
   devices?: DeviceInfo[]
   services?: WorkbenchServices
-  dingtalkSourceProblem?: string
-  onSelectDevice?(deviceId: string): void
+  executionDeviceId?: string
+  onSelectDevice?(deviceId: string): void | Promise<void>
   onSave(value: PersonalStandInSettings): Promise<PersonalStandInSettings | null>
   onReload(): void
 }
@@ -46,12 +60,20 @@ export function StandInOnboardingSetup({
   api,
   onComplete,
   onBusyChange,
+  backSlot,
+  backLabel,
+  footerSlot,
+  onScopeTitleChange,
   ref,
 }: {
   configuration: StandInOnboardingConfiguration
   api: StandInExecutorApi
   onComplete(openConversation: boolean): Promise<boolean>
   onBusyChange(busy: boolean): void
+  backSlot?: HTMLElement | null
+  backLabel?: string
+  footerSlot?: HTMLElement | null
+  onScopeTitleChange?(connectionTitle: string | null, pageTitle: string | null): void
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
 }) {
   const { t } = useTranslation('common')
@@ -70,11 +92,29 @@ export function StandInOnboardingSetup({
     setRole(initial)
     setInitialRole(initial)
   }
-  const [confirming, setConfirming] = useState(false)
-  const [detail, setDetail] = useState(false)
+  const [connectionPage, setConnectionPage] = useState<{
+    detail: string | null
+    scope: string | null
+  }>({ detail: null, scope: null })
+  const { detail, scope } = connectionPage
+  const detailTitleChanged = useCallback(
+    (title: string | null, view: string | null, pageTitle: string | null) => {
+      setConnectionPage({ detail: view, scope: pageTitle })
+      onScopeTitleChange?.(title, pageTitle)
+    },
+    [onScopeTitleChange]
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [discard, setDiscard] = useState(false)
+  const [discard, setDiscard] = useState<'leave' | 'chat' | null>(null)
+  const [connectionEditorDirty, setConnectionEditorDirty] = useState(false)
+  const [tagDraft] = useState(createTagDraft)
+  const tagDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
+  const connectionEditPending = connectionEditorDirty || tagDraftDirty
   const models = useStandInModels(
     configuration.services,
     {
@@ -89,12 +129,11 @@ export function StandInOnboardingSetup({
   )
   const model = models.resolve(models.selectedModel)
   const connections = useRef<StandInConnectionNavigationHandle>(null)
-  const navigation = useStandInPanelNavigation(
-    !dequal(initialRole?.connections, role?.connections) ||
-      !dequal(initialRole?.collaboration, role?.collaboration),
-    busy,
-    () => setDiscard(true)
+  const connectionChanged = Boolean(role && hasConnectionDraft(role, initialRole ?? undefined))
+  const currentConnectionChanged = Boolean(
+    detail && role && hasConnectionDraft(role, initialRole ?? undefined, detail)
   )
+  const navigation = useStandInPanelNavigation(connectionChanged, busy, () => setDiscard('leave'))
   const discardConnections = () => {
     if (!initialRole) return
     setRole(
@@ -117,37 +156,47 @@ export function StandInOnboardingSetup({
     else leave()
   }
   useImperativeHandle(ref, () => ({ requestLeave }))
-  /** Persist settings before completion, retaining the saved version for completion-only retries. */
-  const finish = async (saveConnections: boolean) => {
-    if (!baseline || !role || !model || busy) return
+  const submit = async (target: 'connections' | 'chat') => {
+    const chatting = target === 'chat'
+    if (!baseline || !role || busy || connectionEditPending) return
+    if (chatting ? !model : !detail || !currentConnectionChanged) return
     setBusy(true)
     onBusyChange(true)
     setError(null)
     try {
       const next: PersonalStandInSettings = {
         ...baseline,
-        primary: {
+        primary: primaryWithConnectionMode(baseline.primary, {
+          enabled: false,
           prompt: '',
           preferences: '',
           ...baseline.primary,
-          enabled: saveConnections || (baseline.primary?.enabled ?? false),
-          model,
-          modelOptions: role.modelOptions,
-          ...(saveConnections && {
-            connections: role.connections,
-            collaboration: role.collaboration,
-          }),
-        },
+          ...(chatting && model
+            ? {
+                enabled: true,
+                model,
+                ...(role.modelOptions === undefined ? {} : { modelOptions: role.modelOptions }),
+              }
+            : {}),
+          ...(!chatting && detail
+            ? connectionConfigurationChanges(baseline.primary, role, detail)
+            : {}),
+        }),
       }
       if (!dequal(next, baseline)) {
         const saved = await configuration.onSave(next)
         if (!saved) return
         setBaseline(saved)
-        const savedRole = { ...role, ...saved.primary }
-        setRole(savedRole)
+        const savedRole = { ...newStandInPrimaryRole(saved.executionDeviceId), ...saved.primary }
         setInitialRole(savedRole)
+        setRole(
+          !chatting && detail
+            ? rebaseConnectionDraft(role, initialRole ?? role, savedRole, detail)
+            : savedRole
+        )
       }
-      await onComplete(!saveConnections)
+      if (chatting) await onComplete(true)
+      else connections.current?.returnToScopeList()
     } catch (cause) {
       setError(getStandInErrorMessage(cause))
     } finally {
@@ -155,41 +204,102 @@ export function StandInOnboardingSetup({
       onBusyChange(false)
     }
   }
-  const projectName = (value: { id: string; store: 'local' | 'cloud' }) =>
-    findStandInProject(projects, value)?.name ?? value.id
+  const selectedDeviceId = configuration.executionDeviceId ?? baseline?.executionDeviceId
+  const selectDevice = async (deviceId: string) => {
+    if (!configuration.onSelectDevice || busy || deviceId === selectedDeviceId) return
+    setBusy(true)
+    onBusyChange(true)
+    setError(null)
+    try {
+      await configuration.onSelectDevice(deviceId)
+    } catch (cause) {
+      setError(getStandInErrorMessage(cause))
+    } finally {
+      setBusy(false)
+      onBusyChange(false)
+    }
+  }
+  const currentDevice =
+    baseline && findWorkbenchDevice(configuration.devices ?? [], baseline.executionDeviceId)
+  const editingConnection = Boolean(detail)
+  const actions = (!editingConnection || scope || currentConnectionChanged || busy) && (
+    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border px-5 py-3 md:px-6">
+      {connectionChanged && !editingConnection && (
+        <p
+          role="status"
+          data-testid="stand-in-connections-pending"
+          className="mr-auto min-w-0 text-sm text-text-secondary"
+        >
+          {t('standIn.workspace.connection_pending')}
+        </p>
+      )}
+      {scope && (
+        <Button
+          variant="outline"
+          data-testid="stand-in-onboarding-drop-scope"
+          disabled={busy}
+          className="min-h-11 md:min-h-10"
+          onClick={() => connections.current?.back()}
+        >
+          {t('standIn.personal.discard')}
+        </Button>
+      )}
+      <Button
+        data-testid={
+          editingConnection
+            ? 'stand-in-onboarding-save-connections'
+            : 'stand-in-onboarding-complete'
+        }
+        className="min-h-11 md:min-h-10"
+        aria-busy={busy}
+        disabled={
+          busy ||
+          loading ||
+          connectionEditPending ||
+          (editingConnection ? !currentConnectionChanged : !role || !model)
+        }
+        onClick={() => {
+          if (editingConnection) void submit('connections')
+          else if (connectionChanged) setDiscard('chat')
+          else void submit('chat')
+        }}
+      >
+        {t(
+          busy
+            ? 'standIn.onboarding.saving'
+            : editingConnection
+              ? 'standIn.personal.save_receive_scope'
+              : 'standIn.onboarding.start'
+        )}
+      </Button>
+    </div>
+  )
   return (
     <div className="space-y-5" data-testid="stand-in-onboarding-setup">
-      {configuration.onSelectDevice && baseline && (
+      {!detail && configuration.onSelectDevice && selectedDeviceId && (
         <label className="flex items-center gap-2 text-sm">
-          <span>{t('standIn.device')}</span>
+          <span>{t('standIn.onboarding.device_label')}</span>
           <StandInDeviceSelect
-            value={baseline.executionDeviceId}
+            value={selectedDeviceId}
             currentDeviceId={localDeviceId}
             devices={configuration.devices ?? []}
             disabled={busy}
+            testId={configuration.executionDeviceId ? 'stand-in-onboarding-device' : undefined}
+            ariaLabel={t('standIn.onboarding.device_label')}
             onChange={device => {
-              requestLeave(() => configuration.onSelectDevice?.(device))
+              requestLeave(() => void selectDevice(device))
             }}
           />
         </label>
       )}
-      <ol
-        className="flex flex-wrap gap-5 text-sm text-text-secondary"
-        aria-label={t('standIn.onboarding.steps_label')}
-      >
-        {['connect_step', 'confirm_step'].map((key, index) => (
-          <li
-            key={key}
-            aria-current={Number(confirming) === index ? 'step' : undefined}
-            className={Number(confirming) === index ? 'font-medium text-text-primary' : ''}
-          >
-            {index + 1}. {t(`standIn.onboarding.${key}`)}
-          </li>
-        ))}
-      </ol>
-      {role && baseline && (
+      {!detail && role && baseline && (
         <div className="space-y-2" data-testid="stand-in-onboarding-model">
-          <h3 className="text-sm font-medium">{t('standIn.model_label')}</h3>
+          <h3 className="text-sm font-medium">{t('standIn.onboarding.model_required')}</h3>
+          {!configuration.onSelectDevice && currentDevice && (
+            <p className="text-sm text-text-secondary">
+              {t('standIn.onboarding.execution_device', { name: currentDevice.name })}
+            </p>
+          )}
           <ModelSelector
             models={models.models}
             getModelOptionId={models.getModelOptionId}
@@ -224,7 +334,7 @@ export function StandInOnboardingSetup({
           <p className="text-sm text-text-secondary" data-testid="stand-in-onboarding-model-help">
             {t('standIn.onboarding.model_help')}
           </p>
-          {models.loading && (
+          {models.loading && !models.models.length && (
             <p role="status" className="text-sm text-text-secondary">
               {t('workbench.local_model_loading_models_action')}
             </p>
@@ -232,7 +342,7 @@ export function StandInOnboardingSetup({
           <StandInSettingsError
             error={
               models.error ??
-              (!models.loading && !model ? t('standIn.errors.model_unavailable') : null)
+              (!models.loading && !models.models.length ? t('standIn.onboarding.no_models') : null)
             }
             retry={{
               testId: 'stand-in-onboarding-model-retry',
@@ -242,142 +352,48 @@ export function StandInOnboardingSetup({
           />
         </div>
       )}
-      <p className="text-sm text-text-secondary">
-        {t(`standIn.onboarding.${confirming ? 'confirm_help' : 'connect_help'}`)}
-      </p>
       {role && baseline ? (
-        confirming ? (
-          <section className="space-y-4" data-testid="stand-in-onboarding-summary">
-            <h3 className="font-medium">{t('standIn.onboarding.selected_apps')}</h3>
-            {role.collaboration.enabled && (
-              <div className="space-y-1 text-sm">
-                <p>{t('standIn.personal.collaboration')}</p>
-                <p className="text-text-secondary">
-                  {role.collaboration.allProjects
-                    ? t('standIn.personal.all_projects')
-                    : role.collaboration.projects.map(projectName).join(' · ')}
-                </p>
-                {!!role.collaboration.excludedProjects.length && (
-                  <p className="text-text-secondary">
-                    {t('standIn.onboarding.excluded_projects', {
-                      names: role.collaboration.excludedProjects.map(projectName).join(' · '),
-                    })}
-                  </p>
-                )}
-                {!!role.collaboration.tags.length && (
-                  <p className="text-text-secondary">
-                    {t('standIn.onboarding.project_tags', {
-                      names: role.collaboration.tags.join(' · '),
-                    })}
-                  </p>
-                )}
-              </div>
-            )}
-            {(role.connections ?? []).map(source => (
-              <div
-                key={JSON.stringify([source.providerId, source.profile, source.kind, source.id])}
-                className="text-sm"
-              >
-                <p>{source.name}</p>
-                <p className="text-text-secondary">
-                  {isDingTalkSource(source)
-                    ? t(
-                        source.kind === 'group'
-                          ? 'standIn.dingtalk_delegation.group_mentions'
-                          : 'standIn.dingtalk_delegation.direct'
-                      )
-                    : (source.configurationSummary ??
-                      t('standIn.workspace.connection_default_configuration'))}
-                </p>
-              </div>
-            ))}
-            {role.connections?.some(isDingTalkSource) && (
-              <p className="text-sm text-text-secondary">
-                {t(
-                  baseline.primary?.delegation?.authorized &&
-                    !baseline.primary.delegation.paused &&
-                    !baseline.primary.delegation.accountInvalidated &&
-                    !baseline.lifecycle &&
-                    !configuration.dingtalkSourceProblem
-                    ? 'standIn.dingtalk_delegation.enabled'
-                    : 'standIn.dingtalk_delegation.paused'
-                )}
-              </p>
-            )}
-            {!role.collaboration.enabled && !role.connections?.length && (
-              <p className="text-sm text-text-secondary">{t('standIn.onboarding.no_apps')}</p>
-            )}
-            <p className="rounded-lg bg-muted p-3 text-sm text-text-secondary">
-              {t('standIn.onboarding.attention_help')}
-            </p>
-          </section>
-        ) : (
-          <>
-            {detail && (
+        <section className={detail ? 'space-y-3' : 'space-y-3 border-t border-border pt-4'}>
+          {!detail && (
+            <div>
+              <h3 className="text-sm font-medium">
+                {t('standIn.onboarding.connections_optional')}
+              </h3>
+            </div>
+          )}
+          {detail &&
+            backSlot &&
+            createPortal(
               <Button
                 variant="ghost"
+                size="sm"
+                className="min-h-11 max-w-full gap-1.5 px-2 text-sm text-text-primary md:min-h-9"
                 data-testid="stand-in-onboarding-connections-back"
-                className="min-h-11 md:min-h-10"
                 disabled={busy}
                 onClick={() => connections.current?.back()}
               >
-                {t('standIn.onboarding.back_apps')}
-              </Button>
+                <ChevronLeft className="size-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 whitespace-normal text-left">{backLabel}</span>
+              </Button>,
+              backSlot
             )}
-            <StandInConnectionSettings
-              ref={connections}
-              role={role}
-              projects={projects}
-              api={api}
-              deviceId={baseline.executionDeviceId}
-              localDeviceId={localDeviceId}
-              disabled={busy || loading}
-              hideHeading
-              onChange={setRole}
-              onDetailViewChange={setDetail}
-              dingTalk={{
-                saved: baseline.primary ?? { enabled: false, prompt: '', preferences: '' },
-                services: configuration.services,
-                devices: configuration.devices,
-                primaryStopped: Boolean(baseline.lifecycle),
-                sourceProblem: configuration.dingtalkSourceProblem,
-                modelSelection: {
-                  identity:
-                    model && !models.errors[model.source === 'cloud' ? 'cloud' : 'native']
-                      ? model
-                      : null,
-                  label: models.selectedModel?.displayName,
-                  options: role.modelOptions,
-                },
-                onBusyChange(saving) {
-                  setBusy(saving)
-                  onBusyChange(saving)
-                },
-                async onSave(primary) {
-                  const saved = await configuration.onSave({ ...baseline, primary })
-                  if (!saved?.primary) return false
-                  const savedPrimary = saved.primary
-                  const dingTalkRows = (savedPrimary.connections ?? []).filter(isDingTalkSource)
-                  const updateRole = (current: StandInRole | null) =>
-                    current && {
-                      ...current,
-                      enabled: savedPrimary.enabled,
-                      model: savedPrimary.model,
-                      modelOptions: savedPrimary.modelOptions,
-                      connections: [
-                        ...(current.connections ?? []).filter(row => !isDingTalkSource(row)),
-                        ...dingTalkRows,
-                      ],
-                    }
-                  setBaseline(saved)
-                  setRole(updateRole)
-                  setInitialRole(updateRole)
-                  return true
-                },
-              }}
-            />
-          </>
-        )
+          <StandInConnectionSettings
+            ref={connections}
+            role={role}
+            savedConfiguration={initialRole ?? undefined}
+            projects={projects}
+            api={api}
+            deviceId={baseline.executionDeviceId}
+            localDeviceId={localDeviceId}
+            disabled={busy || loading}
+            onScheduleDirtyChange={setConnectionEditorDirty}
+            tagDraft={tagDraft}
+            hideHeading
+            showPendingStatus={false}
+            onChange={setRole}
+            onDetailTitleChange={detailTitleChanged}
+          />
+        </section>
       ) : loading ? (
         <p role="status">{t('standIn.onboarding.loading')}</p>
       ) : null}
@@ -390,8 +406,7 @@ export function StandInOnboardingSetup({
               className="min-h-11 min-w-11 md:min-h-10"
               disabled={busy || loading}
               onClick={() =>
-                navigation.requestLeave(() => {
-                  setConfirming(false)
+                requestLeave(() => {
                   setBaseline(null)
                   setRole(null)
                   setInitialRole(null)
@@ -404,67 +419,35 @@ export function StandInOnboardingSetup({
           )}
         </div>
       )}
-      <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 bg-background pt-3">
-        <Button
-          variant="ghost"
-          data-testid="stand-in-onboarding-skip"
-          className="min-h-11 md:min-h-10"
-          aria-busy={busy}
-          disabled={busy || loading || !model}
-          onClick={() => requestLeave(() => void finish(false))}
-        >
-          {t('standIn.onboarding.skip_connections')}
-        </Button>
-        {confirming && (
-          <Button
-            variant="ghost"
-            data-testid="stand-in-onboarding-back"
-            className="min-h-11 md:min-h-10"
-            disabled={busy}
-            onClick={() => setConfirming(false)}
-          >
-            {t('standIn.onboarding.back_apps')}
-          </Button>
-        )}
-        <Button
-          variant="primary"
-          data-testid={confirming ? 'stand-in-onboarding-complete' : 'stand-in-onboarding-continue'}
-          className="min-h-11 md:min-h-10"
-          aria-busy={busy}
-          disabled={busy || !role || loading || (confirming && !model)}
-          onClick={() => {
-            if (confirming) void finish(true)
-            else if (connections.current)
-              connections.current.requestLeave(() => setConfirming(true))
-            else setConfirming(true)
-          }}
-        >
-          {t(
-            busy
-              ? 'standIn.onboarding.saving'
-              : confirming
-                ? 'standIn.onboarding.start'
-                : 'standIn.onboarding.continue'
-          )}
-        </Button>
-      </div>
+      {footerSlot ? createPortal(actions, footerSlot) : actions}
       <ConfirmDialog
-        open={discard}
+        open={discard !== null}
         destructive
-        title={t('standIn.personal.discard_help')}
-        description={t('standIn.personal.discard_description')}
+        title={t(
+          discard === 'chat'
+            ? 'standIn.onboarding.discard_connections'
+            : 'standIn.personal.discard_help'
+        )}
+        description={t(
+          discard === 'chat'
+            ? 'standIn.onboarding.keep_saved_scopes'
+            : 'standIn.personal.discard_description'
+        )}
         cancelLabel={t('standIn.personal.keep_editing')}
-        confirmLabel={t('standIn.personal.discard')}
+        confirmLabel={t(
+          discard === 'chat' ? 'standIn.onboarding.discard_and_start' : 'standIn.personal.discard'
+        )}
         confirmTestId="stand-in-onboarding-discard"
         cancelTestId="stand-in-onboarding-keep-editing"
         onClose={() => {
           navigation.cancelLeave()
-          setDiscard(false)
+          setDiscard(null)
         }}
         onConfirm={() => {
-          setDiscard(false)
+          setDiscard(null)
           discardConnections()
-          navigation.confirmLeave(() => {})
+          if (discard === 'chat') void submit('chat')
+          else navigation.confirmLeave(() => {})
         }}
       />
     </div>

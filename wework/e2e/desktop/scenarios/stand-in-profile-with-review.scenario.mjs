@@ -1,3 +1,4 @@
+import { addAllProjectScopes, openProjectScopeDetails } from '../modules/stand-in-flows.mjs'
 import {
   openStandInExamples,
   openStandInSettings,
@@ -50,7 +51,7 @@ export function onboardingArrangementIds(items) {
 async function verifyGuideExamples(control, completed = false) {
   if (!completed) {
     await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
-    await control.command('waitFor', '[data-testid="stand-in-onboarding-continue"]:enabled')
+    await control.command('waitFor', '[data-testid="stand-in-onboarding-complete"]:enabled')
     assert.equal(
       await control.command(
         'getElementCount',
@@ -59,7 +60,7 @@ async function verifyGuideExamples(control, completed = false) {
       '0'
     )
     assert.equal(
-      await control.command('getElementCount', '[data-testid="stand-in-onboarding-complete"]'),
+      await control.command('getElementCount', '[data-testid="stand-in-onboarding-summary"]'),
       '0'
     )
     return
@@ -297,32 +298,17 @@ export function createDesktopScenario(options) {
         initialScheduleIds,
         'Closing the introduction must not create any arrangement beyond the native memory default'
       )
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-resume"]')
       await verifyGuideExamples(control)
       const beforeSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-summary"]')
-      await control.command('click', '[data-testid="stand-in-onboarding-back"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-source-collaboration"]')
-      await control.command('click', '[data-testid="stand-in-all-projects"]')
+      await addAllProjectScopes(control)
       assert.deepEqual(
         await rpc('runtime.stand_in.personal.get', { userId: USER }),
         beforeSetup,
-        'Selecting a connection must remain a draft until final confirmation'
+        'Selecting a scope must remain a draft until saving'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-summary"]', {
-        text: '所有',
-      })
-      await control.command('click', '[data-testid="stand-in-onboarding-back"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('waitFor', '[data-testid="stand-in-all-projects"][aria-checked="true"]')
-      await control.command('click', '[data-testid="stand-in-source-collaboration"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
-      await control.command('waitFor', '[data-testid="stand-in-onboarding-summary"]', {
-        text: '还没有连接应用',
-      })
+      const saveConnection = '[data-testid="stand-in-onboarding-save-connections"]'
       const concurrentSettings = await rpc('runtime.stand_in.personal.save', {
         userId: USER,
         settings: {
@@ -335,7 +321,7 @@ export function createDesktopScenario(options) {
           },
         },
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
+      await control.command('clickWhenEnabled', saveConnection)
       await control.command('waitFor', '[data-testid="stand-in-onboarding-setup"] [role="alert"]')
       assert.equal(
         (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
@@ -347,7 +333,29 @@ export function createDesktopScenario(options) {
         '[data-testid="stand-in-onboarding-settings-retry"]'
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-discard"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
+      await addAllProjectScopes(control)
+      await control.command('waitFor', saveConnection, { enabled: true })
+      await options.captureScreenshot(control, 'onboarding-project-scope-before-save.png', GUIDE)
+      await control.command('clickWhenEnabled', saveConnection)
+      await control.command('waitFor', '[data-testid="stand-in-project-open-scope-projects"]')
+      await control.command('waitFor', saveConnection, { visible: false })
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-onboarding-complete"]'),
+        '0'
+      )
+      const savedConnection = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      assert.equal(savedConnection.primary.collaboration.allProjects, true)
+      assert.equal(savedConnection.primary.enabled, false)
+      assert.equal(
+        (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
+        false
+      )
+      await options.captureScreenshot(control, 'onboarding-project-scope-saved.png', GUIDE)
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-onboarding-connections-back"]'
+      )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', GUIDE, { visible: false })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
@@ -366,13 +374,10 @@ export function createDesktopScenario(options) {
         'First-time setup must display only the primary stand-in'
       )
       assert.deepEqual(afterSetup.roles, [], 'First-time setup must not save a scenario role')
-      assert.equal(
-        afterSetup.primary.enabled,
-        true,
-        'No connections must still allow enabling the stand-in'
-      )
+      assert.equal(afterSetup.primary.enabled, true, 'Starting chat enables the stand-in')
       assert.equal(afterSetup.primary.preferences, 'E2E concurrent settings')
-      assert.equal(afterSetup.primary.collaboration.enabled, false)
+      assert.equal(afterSetup.primary.collaboration.enabled, true)
+      assert.equal(afterSetup.primary.collaboration.allProjects, true)
       assert.equal(afterSetup.primary.connections?.length ?? 0, 0)
       assert.deepEqual(
         afterSetup.roles.map(role => ({ ...role, version: 0 })),
@@ -388,18 +393,26 @@ export function createDesktopScenario(options) {
         initialScheduleIds,
         'Completing the guide must not create any arrangement beyond the native memory default'
       )
-      // Connecting later reuses the same settings UI without repeating setup.
+      // Changing the connection later reuses the same settings UI without repeating setup.
       await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-source-collaboration"]')
+      await openProjectScopeDetails(control)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-off"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-path-scope"]', {
+        visible: false,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-profile-close"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
       })
       const connectedLater = await rpc('runtime.stand_in.personal.get', { userId: USER })
       assert.equal(connectedLater.primary.enabled, true)
       assert.equal(connectedLater.primary.collaboration.enabled, true)
+      assert.equal(connectedLater.primary.collaboration.allProjects, false)
       assert.equal(connectedLater.primary.collaboration.policy.immediate, false)
       await openStandInExamples(control)
       await verifyGuideExamples(control, true)

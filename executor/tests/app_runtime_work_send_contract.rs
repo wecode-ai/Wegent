@@ -3769,6 +3769,8 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
             .to_string(),
     );
     let log_path = temp_path("runtime-guidance-log", "jsonl");
+    let attachment_path = temp_path("runtime-guidance-notes", "txt");
+    std::fs::write(&attachment_path, "guidance attachment contents").unwrap();
     let fake_codex = write_fake_codex_hanging_turn(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
@@ -3788,13 +3790,32 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
     wait_for_method_count(&log_path, "turn/start", 1).await;
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
+    let unavailable = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.guidance",
+            "payload": {
+                "taskId": "local-task-guide",
+                "message": "do not send this partial message",
+                "attachments": [{"id": -2, "filename": "missing.txt"}]
+            }
+        }))
+        .await
+        .expect_err("a missing file should reject the entire guidance");
+    assert_eq!(unavailable.code, "guidance_attachment_unavailable");
+    assert!(unavailable.message.contains("missing.txt"));
+
     let guided = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.guidance",
             "payload": {
                 "workspacePath": "/tmp/project",
                 "taskId": "local-task-guide",
-                "message": "use this steering input",
+                "attachments": [{
+                    "id": "-1",
+                    "filename": "notes.txt",
+                    "mime_type": "text/plain",
+                    "local_path": attachment_path,
+                }],
                 "clientGuidanceId": "guide-1",
                 "additionalContext": {
                     "wework.terminal.current": {
@@ -3829,6 +3850,16 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
         steer["params"]["additionalContext"]["wework.terminal.current"]["value"],
         "terminal output"
     );
+    assert!(steer["params"]["input"][0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("guidance attachment contents")));
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "turn/steer")
+            .count(),
+        1
+    );
     assert_eq!(
         calls
             .iter()
@@ -3836,6 +3867,7 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
             .count(),
         0
     );
+    std::fs::remove_file(attachment_path).unwrap();
 }
 
 #[tokio::test]

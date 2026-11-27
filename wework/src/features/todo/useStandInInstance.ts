@@ -35,6 +35,7 @@ export function useStandInInstance(
     stop: source.stop,
     bind: source.bind,
     migrate: source.migrate,
+    initializeOnDevice: source.initializeOnDevice,
     reload: source.reload,
   }
 }

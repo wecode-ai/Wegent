@@ -337,6 +337,43 @@ pub fn role_receives_participating_issues(role: &Value) -> bool {
         && role["collaboration"]["includeParticipatingIssues"] == true
 }
 
+#[derive(Clone, Copy)]
+pub enum IssueIntakeTrigger {
+    Assignment,
+    Mention,
+}
+
+impl IssueIntakeTrigger {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Assignment => "assignment",
+            Self::Mention => "mention",
+        }
+    }
+
+    pub fn matches(self, role: &Value, scope: &str) -> bool {
+        role["collaboration"]
+            .get(scope)
+            .map_or(true, |mode| mode == "both" || mode == self.key())
+    }
+}
+
+pub fn collaboration_scope_tags<'a>(role: &'a Value, scope: &str) -> &'a Value {
+    let source = &role["collaboration"];
+    source["tagFilters"].get(scope).unwrap_or(&source["tags"])
+}
+
+pub fn collaboration_project_tags<'a>(role: &'a Value, project: &str, store: &str) -> &'a Value {
+    let source = &role["collaboration"];
+    if let Some(filter) = source["projectTagFilters"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|row| row["id"] == project && row["store"] == store)
+    }) {
+        return &filter["tags"];
+    }
+    collaboration_scope_tags(role, "projects")
+}
+
 pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     if let Some(fields) = config.as_object_mut() {
@@ -346,6 +383,7 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
             "recoveringDispatch",
             "triggerCommentId",
             "triggerMessage",
+            "issueScopeTags",
         ] {
             fields.remove(key);
         }
@@ -353,7 +391,7 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config["projectId"] = json!(project);
     config["projectStore"] = json!(store);
     config["userId"] = json!(user);
-    config["tags"] = role["collaboration"]["tags"].clone();
+    config["tags"] = collaboration_project_tags(role, project, store).clone();
     config["handlingPolicy"] = project_policy(role, project, store);
     if let Some(boundary) = role["projectBoundaries"].as_array().and_then(|rows| {
         rows.iter()
@@ -364,15 +402,17 @@ pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Valu
     config
 }
 
+fn valid_project_ref(project: &Value) -> bool {
+    project["id"]
+        .as_str()
+        .is_some_and(|id| !id.trim().is_empty())
+        && matches!(project["store"].as_str(), Some("local" | "cloud"))
+}
+
 fn validate_projects(value: &Value) -> bool {
-    value.as_array().is_some_and(|projects| {
-        projects.iter().all(|project| {
-            project["id"]
-                .as_str()
-                .is_some_and(|id| !id.trim().is_empty())
-                && matches!(project["store"].as_str(), Some("local" | "cloud"))
-        })
-    })
+    value
+        .as_array()
+        .is_some_and(|projects| projects.iter().all(valid_project_ref))
 }
 
 /// Validate a normalized independent role and its execution and connection settings.
@@ -484,6 +524,12 @@ mod session_policy_tests {
 }
 
 fn valid_collaboration(source: &Value) -> bool {
+    let valid_tags = |value: &Value| {
+        value.as_array().is_some_and(|tags| {
+            tags.iter()
+                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
+        })
+    };
     source["enabled"].is_boolean()
         && source["allProjects"].is_boolean()
         && source
@@ -492,11 +538,30 @@ fn valid_collaboration(source: &Value) -> bool {
         && source
             .get("includeParticipatingIssues")
             .map_or(true, Value::is_boolean)
+        && ["projectTrigger", "participatingTrigger"]
+            .iter()
+            .all(|key| {
+                source.get(key).map_or(true, |value| {
+                    matches!(value.as_str(), Some("both" | "assignment" | "mention"))
+                })
+            })
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
-        && source["tags"].as_array().is_some_and(|tags| {
-            tags.iter()
-                .all(|tag| tag.as_str().is_some_and(|tag| !tag.trim().is_empty()))
+        && valid_tags(&source["tags"])
+        && source.get("tagFilters").map_or(true, |filters| {
+            filters.as_object().is_some_and(|filters| {
+                filters.iter().all(|(key, tags)| {
+                    matches!(key.as_str(), "projects" | "participating" | "independent")
+                        && valid_tags(tags)
+                })
+            })
+        })
+        && source.get("projectTagFilters").map_or(true, |filters| {
+            filters.as_array().is_some_and(|filters| {
+                filters
+                    .iter()
+                    .all(|row| valid_project_ref(row) && valid_tags(&row["tags"]))
+            })
         })
 }
 
@@ -1101,6 +1166,32 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    let mut trigger_boundaries = serde_json::Map::new();
+    for scope in ["projectTrigger", "participatingTrigger"] {
+        for trigger in [IssueIntakeTrigger::Assignment, IssueIntakeTrigger::Mention] {
+            if !trigger.matches(identity, scope) {
+                continue;
+            }
+            let before = &previous["issueTriggerBoundaries"][scope][trigger.key()];
+            let boundary = if !trigger.matches(previous, scope) {
+                &enabled_at
+            } else {
+                before
+            };
+            if boundary.is_string() {
+                trigger_boundaries
+                    .entry(scope.to_owned())
+                    .or_insert_with(|| json!({}))[trigger.key()] = boundary.clone();
+            }
+        }
+    }
+    if trigger_boundaries.is_empty() {
+        if let Some(fields) = identity.as_object_mut() {
+            fields.remove("issueTriggerBoundaries");
+        }
+    } else {
+        identity["issueTriggerBoundaries"] = Value::Object(trigger_boundaries);
+    }
     if identity["enabled"] == true && role_receives_participating_issues(identity) {
         identity["participatingIssuesEnabledAfter"] = if preserve
             && role_receives_participating_issues(previous)

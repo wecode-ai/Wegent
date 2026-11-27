@@ -1,6 +1,8 @@
 //! Independent assignments use the existing Issue inbox and stand-in task lifecycle.
 use super::{stand_in::settings_error, *};
-use crate::task_runtime::personal_stand_in::{project_role, stand_in_identities};
+use crate::task_runtime::personal_stand_in::{
+    collaboration_scope_tags, project_role, stand_in_identities,
+};
 
 pub(super) const INDEPENDENT: &str = "independent";
 
@@ -11,6 +13,7 @@ pub(super) fn personal_issue_role(role: &Value, user: i64) -> Option<Value> {
         .then(|| {
             let mut config = project_role(role, user, "", INDEPENDENT);
             config["projectId"] = Value::Null;
+            config["tags"] = collaboration_scope_tags(role, "independent").clone();
             config["enabledAfter"] = role["independentIssuesEnabledAfter"].clone();
             config
         })

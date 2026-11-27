@@ -1,4 +1,5 @@
 import {
+  STAND_IN_DINGTALK_PROVIDER as DINGTALK_PROVIDER,
   subscribePersonalStandIn,
   type PersonalStandInSettings,
   type StandInSourceConnection,
@@ -12,7 +13,6 @@ import type {
 } from '@/api/standInMessageCenter'
 import { unavailableMessageCenterSnapshot } from './standInMessageCenterSource'
 
-const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const DETAIL_CONCURRENCY = 4
 const COMPONENT_UNAVAILABLE_CODES = new Set([
   'component_unavailable',
@@ -387,7 +387,12 @@ export function createDingTalkMessageCenterApi(
     if (!ownedBy(settings, scope) || !api.connectionReadiness) {
       return { snapshot: empty('unavailable') }
     }
-    if (!hasAccount(grant)) return { snapshot: empty('disconnected') }
+    if (!hasAccount(grant)) {
+      const configured =
+        settings.primary?.dingTalkConnectionMode === 'confirmed' &&
+        settings.primary.connections?.some(source => source.providerId === DINGTALK_PROVIDER)
+      return { snapshot: empty(configured ? 'configured' : 'disconnected') }
+    }
     const readiness = await api.connectionReadiness(
       scope.deviceId,
       DINGTALK_PROVIDER,

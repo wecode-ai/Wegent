@@ -30,6 +30,10 @@ import {
   E2E_TRANSCRIPT_PAGE_SIZE,
   FOLLOW_UP_COMPLETION_TEXT,
   FOLLOW_UP_PROMPT,
+  GUIDANCE_ATTACHMENT_CONTENT,
+  GUIDANCE_ATTACHMENT_NAME,
+  GUIDANCE_CORRECTION_COMPLETION,
+  GUIDANCE_CORRECTION_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   GUIDANCE_SCROLL_MESSAGE,
@@ -724,6 +728,22 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
   )
 
   await control.command('fill', composerSelector, { value: GUIDANCE_SCROLL_MESSAGE })
+  await control.command(
+    'selectFile',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="attachment-file-input"]`,
+    {
+      filename: GUIDANCE_ATTACHMENT_NAME,
+      mimeType: 'text/plain',
+      value: Buffer.from(GUIDANCE_ATTACHMENT_CONTENT).toString('base64'),
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`,
+    {
+      text: GUIDANCE_ATTACHMENT_NAME,
+    }
+  )
   await control.command('click', '[data-testid="send-mode-menu-button"]')
   await control.command('click', '[data-testid="guide-current-turn-option"]')
   await withTimeout(
@@ -801,6 +821,7 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyGuidanceCorrection(control)
 
   await verifyAttachmentOnlyGuidance({ composerSelector, control })
 
@@ -814,6 +835,78 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+}
+
+async function verifyGuidanceCorrection(control) {
+  const guidance = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('message-assistant-waiting'),
+    'The guided response did not settle before correction'
+  )
+  await control.command('markElementWithText', guidance, {
+    text: GUIDANCE_SCROLL_MESSAGE,
+    value: 'guidance-to-correct',
+  })
+  const marked = `${guidance}[data-e2e-anchor-id="guidance-to-correct"]`
+  await control.command('hover', `${marked} [data-testid="message-hover-region"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="edit-message-button"]`
+  )
+  const editor = '[data-testid="edit-user-message-textarea"]'
+  await control.command('waitFor', editor, { text: GUIDANCE_SCROLL_MESSAGE })
+  await control.command('fill', editor, { value: GUIDANCE_CORRECTION_PROMPT })
+  const submit = '[data-testid="submit-edit-user-message-button"]'
+  assert.match(await control.command('getText', submit), /Send correction|发送修正/)
+  const userMessagesBeforeCorrection = await runtimeUserMessageCount(control)
+  await control.command('clickWhenEnabled', submit)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_CORRECTION_COMPLETION,
+  })
+  // Correcting a guidance row re-renders it in place, so the earlier anchor no
+  // longer identifies the node. Re-anchor by the corrected text itself.
+  await control.command('markElementWithText', guidance, {
+    text: GUIDANCE_CORRECTION_PROMPT,
+    value: 'guidance-corrected',
+  })
+  const corrected = `${guidance}[data-e2e-anchor-id="guidance-corrected"]`
+  await control.command('scrollIntoViewAsUser', corrected, {
+    text: GUIDANCE_CORRECTION_PROMPT,
+  })
+  await control.command('waitFor', corrected, { text: GUIDANCE_CORRECTION_PROMPT })
+  const correctedGuidanceText = await control.command('getText', corrected)
+  assert.equal(
+    countTextOccurrences(correctedGuidanceText, GUIDANCE_CORRECTION_PROMPT),
+    1,
+    'The original guidance row was not updated in place'
+  )
+  assert.equal(
+    countTextOccurrences(correctedGuidanceText, GUIDANCE_SCROLL_MESSAGE),
+    0,
+    'The original guidance text remained after correction'
+  )
+  assert.equal(
+    await runtimeUserMessageCount(control),
+    userMessagesBeforeCorrection,
+    'The correction appended a duplicate user message'
+  )
+  await control.command('scrollIntoViewAsUser', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_COMPLETION_TEXT,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_COMPLETION_TEXT,
+  })
+}
+
+async function runtimeUserMessageCount(control) {
+  const snapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', undefined, { value: 'state-only' })
+  )
+  return snapshot.pane?.messageSummary?.byRole?.user ?? 0
 }
 
 async function verifyAttachmentOnlyGuidance({ composerSelector, control }) {

@@ -59,6 +59,7 @@ import { retryRuntimeConversation } from '@wegent/collaboration/execution/retryR
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
+import { getDefaultModelOptions, inferModelFamily, normalizeModelOptions } from '@/lib/model-ui'
 import {
   requiresNewConversationForModelSwitch,
   selectedModelExecutionFields,
@@ -284,9 +285,12 @@ export function TemporaryChatPanel({
   ) {
     setConfirmedSession(null)
   }
-  const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
-  const globalSelectedModelOptions =
-    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const [draftModel, setDraftModel] = useState<{
+    model: UnifiedModel | null
+    options: ModelOptions
+  } | null>(null)
+  const draftSelectedModel = draftModel ? draftModel.model : projectChat.selectedModel
+  const draftSelectedOptions = draftModel?.options ?? projectChat.selectedModelOptions
   const taskModelIdentityPending = modelControls
     ? modelControls.loading ||
       Boolean(modelControls.unavailable) ||
@@ -325,7 +329,30 @@ export function TemporaryChatPanel({
             ...runtimeTaskModelControlOverrides(projectChat, address, taskModelSelection),
             supportsModelProviderSwitch: taskModelSelection.supportsModelProviderSwitch,
           }
-        : {}),
+        : {
+            activeModel: null,
+            selectedModel: draftSelectedModel,
+            selectedModelOptions: draftSelectedOptions,
+            setSelectedModel: (model: UnifiedModel | null) =>
+              setDraftModel({
+                model,
+                options:
+                  model &&
+                  draftSelectedModel &&
+                  inferModelFamily(model) === inferModelFamily(draftSelectedModel)
+                    ? normalizeModelOptions(model, draftSelectedOptions)
+                    : getDefaultModelOptions(model),
+              }),
+            setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
+              setDraftModel({ model, options }),
+            setSelectedModelOption: (optionId: string, value: string) =>
+              setDraftModel(current => ({
+                model: current ? current.model : draftSelectedModel,
+                options: { ...(current?.options ?? draftSelectedOptions), [optionId]: value },
+              })),
+            getSelectedModel: () => draftSelectedModel,
+            getSelectedModelOptions: () => draftSelectedOptions,
+          }),
       ...(modelControls
         ? {
             ...modelControls,
@@ -373,6 +400,8 @@ export function TemporaryChatPanel({
       attachmentSelection,
       contextUsage,
       projectChat,
+      draftSelectedModel,
+      draftSelectedOptions,
       taskPermissions,
       taskModelSelection,
       instanceId,
@@ -539,8 +568,8 @@ export function TemporaryChatPanel({
       // (for example plan mode) still belong to this conversation.
       return selectedModelExecutionFields(null, taskModelSelection.selectedModelOptions)
     }
-    return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
-  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])
+    return selectedModelExecutionFields(draftSelectedModel, draftSelectedOptions)
+  }, [address, draftSelectedModel, draftSelectedOptions, taskModelSelection, modelControls])
 
   const sessionStartFields =
     activeThreadId &&
@@ -661,6 +690,7 @@ export function TemporaryChatPanel({
         captureAttachmentsForScope: attachmentSelection.captureAttachmentsForScope,
         instanceId,
         selectedModelFields,
+        temporaryExecutionModel: draftModel || modelControls ? selectedModelFields : undefined,
         runtimeContext,
         sendQueuedMessageAsGuidance,
         sendRuntimePaneMessage,

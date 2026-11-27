@@ -36,6 +36,7 @@
   "runStatus": {
     "unavailable": "代管状态不可用",
     "disconnected": "钉钉未连接",
+    "configured": "已设置钉钉接收范围",
     "disabled": "尚未开启代管",
     "active": "正在代你处理",
     "paused": "代管已暂停",
