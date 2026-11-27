@@ -325,7 +325,10 @@ Executor E2E 的设备用例和独立沙箱用例在不同 runner 上并行执�
 macOS 渲染性能门禁按受影响的源码和性能测试输入触发，全量回归也会运行。失败时上传首次测量报告。需要进一步定位时，可在 macOS 上手动执行
 `pnpm --filter wework profile:renderer --capture` 采集 trace。
 
-Linux 桌面 E2E 分片从共享镜像获取原生测试工具。平台 E2E 在 Rust 后端构建期间准备依赖和服务，
+Linux 桌面 E2E 分片从共享镜像获取原生测试工具。
+Linux Core 将长场景 `core-task-flow` 单独分配到现有分片。需要原生启动探针的分片直接运行
+已锁定的 Electron 安装脚本，避免启动包脚本时额外安装根工作区依赖。
+平台 E2E 在 Rust 后端构建期间准备依赖和服务，
 使用前等待同一次 CI 运行的后端产物。同仓库 PR 可复用该 PR 中构建输入完全匹配的 Linux 桌面包。普通 PR 的 macOS 桌面检查构建本地应用和 Executor。
 普通 PR 在缺少精确匹配的 Executor 产物时以优化级别 0 编译 release profile，
 该产物按 PR 单独缓存。完整 macOS 构建仍使用默认优化级别。

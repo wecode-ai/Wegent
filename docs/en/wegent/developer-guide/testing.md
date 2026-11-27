@@ -345,6 +345,9 @@ regressions. It uploads the original measurements on failure.
 For a trace, run `pnpm --filter wework profile:renderer --capture` on macOS.
 
 Linux desktop E2E shards get their native test tools from the shared image.
+Linux Core gives the long `core-task-flow` checkpoint an existing shard of its
+own. Native startup probes call the locked Electron installer directly to avoid
+the additional root workspace install triggered by invoking a package script.
 Platform E2E prepares its dependencies and services while the Rust backend builds,
 then waits for the backend artifact from the same CI run before using it. PRs
 from the same repository can reuse Linux desktop packages with identical build
