@@ -1,5 +1,6 @@
 import { selectedShareExcerpts } from './selectedShareExcerpts'
 import { CollapsiblePanel, CollapsibleRoot, CollapsibleTrigger } from '../controls/Collapsible'
+import { Popover, PopoverContent, PopoverTrigger } from '../controls/Popover'
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
 import { normalizeSelectValue } from '../controls/selectValue'
 import { Textarea as ControlTextarea } from '../controls/Textarea'
@@ -8,6 +9,7 @@ import { Button as ControlButton } from '../markdown/Button'
 import {
   useCallback,
   useId,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -15,7 +17,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { createIndependentIssueDraft } from './independentIssueDraft'
-import { Folder } from 'lucide-react'
+import { ChevronUp, Folder } from 'lucide-react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationProject } from '../types'
 import { usePanelData } from './usePanelData'
@@ -39,6 +41,8 @@ export type IssueShareFiles = ComponentType<{
   selectedConversationFileIds: string[]
   selectedExcerptCount: number
   children: ReactNode
+  messageActions?: ReactNode
+  showConversation?: boolean
   onSelectConversationFiles(ids: string[]): void
   onChange(files: File[]): void
 }>
@@ -202,6 +206,20 @@ export function IndependentIssueEditor({
       {children}
     </label>
   )
+  const optionsTrigger = useRef<HTMLButtonElement>(null)
+  const creating = !issue
+  const hasInvitees = Boolean(draft.participants.length || draft.resource_participants?.length)
+  const creationVisibility = t(
+    projectId
+      ? shareDraft
+        ? project?.default_issue_security === 'related'
+          ? 'taskIssueShare.relatedAudience'
+          : 'taskIssueShare.projectAudience'
+        : 'issue_creation.project_scope_hint'
+      : hasInvitees
+        ? 'taskIssueShare.invitedAudience'
+        : 'taskIssueShare.selfAudience'
+  )
   const audience = (
     <div className="mt-2 grid min-w-0 gap-1">
       {canSelectProject && (
@@ -213,22 +231,15 @@ export function IndependentIssueEditor({
               className="min-h-11 min-w-0 flex-1 rounded-md px-2 py-1 text-sm text-text-primary hover:bg-muted md:min-h-8"
               triggerPlaceholder={t('issue_creation.project_label')}
               scopeHint={
-                <span
-                  data-testid="issue-project-scope"
-                  className="block text-xs text-text-secondary"
-                >
-                  {t(
-                    projectId
-                      ? shareDraft
-                        ? project?.default_issue_security === 'related'
-                          ? 'taskIssueShare.relatedVisibility'
-                          : 'taskIssueShare.projectVisibility'
-                        : 'issue_creation.project_scope_hint'
-                      : draft.participants.length || draft.resource_participants?.length
-                        ? 'taskIssueShare.independentVisibility'
-                        : 'taskIssueShare.privateVisibility'
-                  )}
-                </span>
+                creating && !projectId ? undefined : (
+                  <span
+                    data-testid="issue-project-scope"
+                    className="block truncate text-xs text-text-secondary"
+                    title={creationVisibility}
+                  >
+                    {creationVisibility}
+                  </span>
+                )
               }
               disabled={loadingProjects}
               value={projectId}
@@ -266,6 +277,161 @@ export function IndependentIssueEditor({
       )}
     </div>
   )
+  const issueOptions = (
+    <div className={`grid grid-cols-1 gap-x-4 gap-y-2 ${creating ? '' : 'sm:grid-cols-2'}`}>
+      {field(
+        t('independentIssues.status'),
+        projectId && statuses.length ? (
+          <SelectRoot
+            value={normalizeSelectValue(projectStatus)}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null) return setProjectStatus(selectedValue)
+            }}
+          >
+            <SelectTrigger
+              density="compact"
+              aria-label={t('independentIssues.status')}
+              data-testid="independent-issue-project-status"
+              className="w-full"
+            />
+            <SelectContent>
+              {statuses.map(status => (
+                <SelectItem key={status.id} value={String(status.id)}>
+                  {status.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </SelectRoot>
+        ) : (
+          <SelectRoot
+            value={normalizeSelectValue(draft.status)}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null)
+                return set('status', selectedValue as IndependentIssue['status'])
+            }}
+          >
+            <SelectTrigger
+              density="compact"
+              aria-label={t('independentIssues.status')}
+              data-testid="independent-issue-status"
+              className="w-full"
+            />
+            <SelectContent>
+              {(['pending', 'in_progress', 'completed'] as const).map(status => (
+                <SelectItem key={status} value={String(status)}>
+                  {t(`independentIssues.${status}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </SelectRoot>
+        )
+      )}
+      {field(
+        t('independentIssues.priority'),
+        <SelectRoot
+          value={normalizeSelectValue(draft.priority)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null)
+              return set('priority', selectedValue as IndependentIssue['priority'])
+          }}
+        >
+          <SelectTrigger
+            density="compact"
+            aria-label={t('independentIssues.priority')}
+            data-testid="independent-issue-priority"
+            className="w-full"
+          />
+          <SelectContent>
+            {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
+              <SelectItem key={priority} value={String(priority)}>
+                {t(`independentIssues.${priority}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
+      )}
+      {field(
+        t('independentIssues.due'),
+        <ControlInput
+          type="date"
+          data-testid="independent-issue-due"
+          className={control}
+          value={draft.due_at ?? ''}
+          onChange={event => set('due_at', event.target.value || null)}
+        />
+      )}
+    </div>
+  )
+  const executionSettings = (
+    <>
+      {renderExecutionSettings && (
+        <CollapsibleRoot className="group min-w-0 border-t border-border pt-2">
+          <CollapsibleTrigger
+            data-testid="independent-issue-execution-settings"
+            className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
+          >
+            {t('issue_creation.runtime_label')}
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <div className="grid min-w-0 gap-2 pt-2">
+              <span className="text-sm text-text-secondary">
+                {t(
+                  projectId
+                    ? 'issue_creation.project_device_settings'
+                    : 'workbench.runner_personal_default'
+                )}
+              </span>
+              {renderExecutionSettings(projectId, busy)}
+              <p className="text-xs text-text-secondary">
+                {t(
+                  projectId
+                    ? 'issue_creation.project_device_settings_hint'
+                    : 'issue_creation.personal_runner_hint'
+                )}
+              </p>
+            </div>
+          </CollapsiblePanel>
+        </CollapsibleRoot>
+      )}
+    </>
+  )
+  const renderShareContent =
+    creating && ShareFiles
+      ? (messages?: ReactNode, messageActions?: ReactNode) => (
+          <ShareFiles
+            messageActions={messageActions}
+            showConversation={Boolean(shareDraft)}
+            files={shareFiles}
+            conversationFiles={shareDraft?.conversationFiles ?? []}
+            selectedConversationFileIds={conversationFileIds}
+            selectedExcerptCount={selectedExcerpts.length}
+            onSelectConversationFiles={setConversationFileIds}
+            onChange={setShareFiles}
+          >
+            {shareDraft?.historyUnavailable && (
+              <p role="alert" className="text-sm text-text-secondary">
+                {t('taskIssueShare.firstUnavailable')}
+              </p>
+            )}
+            {messages}
+          </ShareFiles>
+        )
+      : undefined
+  const blankCreation = creating && !shareDraft
+  const description = (
+    <label className={blankCreation ? 'flex min-h-0 flex-1 flex-col gap-1.5' : 'grid gap-1.5'}>
+      <span className="text-sm font-medium">{t('taskIssueShare.description')}</span>
+      <ControlTextarea
+        data-testid="independent-issue-description"
+        placeholder={t('taskIssueShare.descriptionPlaceholder')}
+        value={draft.description}
+        onChange={event => set('description', event.target.value)}
+        rows={2}
+        className={`w-full resize-y rounded-lg border border-border bg-transparent px-3 py-2.5 text-sm leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring ${creating ? 'min-h-28 flex-1' : ''}`}
+      />
+    </label>
+  )
+  const issueOptionsLabel = t('taskIssueShare.issueOptions')
   return (
     <DialogForm
       id={formId}
@@ -315,64 +481,53 @@ export function IndependentIssueEditor({
         )}
       <div
         data-testid="independent-issue-editor-scroll"
-        className="min-h-0 flex-1 overflow-y-auto p-5 [container-type:inline-size]"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-5 [container-type:inline-size]"
       >
-        <fieldset
-          disabled={busy}
-          className="grid min-w-0 gap-5 [@container_(min-width:620px)]:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]"
-        >
-          <aside className="flex min-w-0 flex-col gap-2 [@container_(min-width:620px)]:border-r [@container_(min-width:620px)]:border-border [@container_(min-width:620px)]:pr-5">
-            <p className="flex min-h-11 items-center text-sm font-medium md:min-h-8">
-              {t('taskIssueShare.participantsOptional')}
-            </p>
-            <IssueParticipantPicker
-              api={api}
-              collaborationApi={collaborationApi}
-              userId={userId}
-              selected={people}
-              colleaguesOnly={Boolean(shareDraft)}
-              onChange={changePeople}
-              assigneeKey={assignee}
-              onAssign={changeAssignee}
-              ownerId={owner}
-              disabled={busy || owner !== userId}
-            />
-            {shareDraft && draft.participants.length > 0 && (
-              <p className="text-sm text-text-secondary">{t('taskIssueShare.notifyHint')}</p>
-            )}
-            {canSelectProject && <div className="mt-auto">{audience}</div>}
-          </aside>
-          <div className="grid min-w-0 content-start gap-3">
-            {issue && (
-              <label className="grid gap-1">
-                <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
-                <ControlInput
-                  required
-                  maxLength={255}
-                  data-testid="independent-issue-title"
-                  aria-label={t('independentIssues.title')}
-                  placeholder={t('issue_creation.title_placeholder')}
-                  value={draft.title}
-                  onChange={event => set('title', event.target.value)}
-                  className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-secondary md:min-h-8"
-                />
-              </label>
-            )}
-            {shareDraft && ShareFiles && (
-              <ShareFiles
-                files={shareFiles}
-                conversationFiles={shareDraft.conversationFiles}
-                selectedConversationFileIds={conversationFileIds}
-                selectedExcerptCount={selectedExcerpts.length}
-                onSelectConversationFiles={setConversationFileIds}
-                onChange={setShareFiles}
-              >
-                {shareDraft.historyUnavailable && (
-                  <p role="alert" className="text-sm text-text-secondary">
-                    {t('taskIssueShare.firstUnavailable')}
-                  </p>
-                )}
-                {(availableExcerpts.length > 0 || hasEarlier) && (
+        <fieldset disabled={busy} className="contents">
+          <div className="grid min-w-0 shrink-0 gap-5 [@container_(min-width:620px)]:grow [@container_(min-width:620px)]:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
+            <aside className="flex min-w-0 flex-col gap-2 [@container_(min-width:620px)]:border-r [@container_(min-width:620px)]:border-border [@container_(min-width:620px)]:pr-5">
+              <p className="flex min-h-11 items-center text-sm font-medium md:min-h-8">
+                {t('taskIssueShare.participantsOptional')}
+              </p>
+              <IssueParticipantPicker
+                api={api}
+                collaborationApi={collaborationApi}
+                userId={userId}
+                selected={people}
+                onChange={changePeople}
+                assigneeKey={assignee}
+                onAssign={changeAssignee}
+                ownerId={owner}
+                disabled={busy || owner !== userId}
+              />
+              {shareDraft && draft.participants.length > 0 && (
+                <p className="text-sm text-text-secondary">{t('taskIssueShare.notifyHint')}</p>
+              )}
+              {canSelectProject && <div className="mt-auto">{audience}</div>}
+            </aside>
+            <div
+              className={`min-w-0 gap-3 ${blankCreation ? 'flex flex-col' : 'grid content-start'}`}
+            >
+              {issue && (
+                <label className="grid gap-1">
+                  <span className="text-sm text-text-secondary">
+                    {t('independentIssues.title')}
+                  </span>
+                  <ControlInput
+                    required
+                    maxLength={255}
+                    data-testid="independent-issue-title"
+                    aria-label={t('independentIssues.title')}
+                    placeholder={t('issue_creation.title_placeholder')}
+                    value={draft.title}
+                    onChange={event => set('title', event.target.value)}
+                    className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-secondary md:min-h-8"
+                  />
+                </label>
+              )}
+              {blankCreation && description}
+              {renderShareContent &&
+                (shareDraft ? (
                   <TaskIssueShareExcerpts
                     excerpts={conversationExcerpts}
                     selection={selection}
@@ -382,152 +537,74 @@ export function IndependentIssueEditor({
                     loadEarlier={hasEarlier ? loadEarlier : undefined}
                     selected={selectedExcerpts}
                     onSelect={setSelectedExcerpts}
+                    renderShareContent={renderShareContent}
                   />
-                )}
-              </ShareFiles>
-            )}
-            <label className="grid gap-1">
-              <span className="text-sm text-text-secondary">{t('taskIssueShare.todo')}</span>
-              <ControlTextarea
-                data-testid="independent-issue-description"
-                aria-label={t('taskIssueShare.todo')}
-                placeholder={t('taskIssueShare.todoPlaceholder')}
-                value={draft.description}
-                onChange={event => set('description', event.target.value)}
-                rows={2}
-                className={`w-full resize-y rounded-lg px-3 py-2 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring ${shareDraft ? 'border-0 bg-muted/40' : 'border border-border bg-background'}`}
-              />
-            </label>
-            <CollapsibleRoot className="group min-w-0">
-              <CollapsibleTrigger
-                data-testid="independent-issue-options"
-                className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
-              >
-                {t('taskIssueShare.issueOptions')}
-              </CollapsibleTrigger>
-              <CollapsiblePanel>
-                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                  {field(
-                    t('independentIssues.status'),
-                    projectId && statuses.length ? (
-                      <SelectRoot
-                        value={normalizeSelectValue(projectStatus)}
-                        onValueChange={selectedValue => {
-                          if (selectedValue !== null) return setProjectStatus(selectedValue)
-                        }}
-                      >
-                        <SelectTrigger
-                          density="compact"
-                          aria-label={t('independentIssues.status')}
-                          data-testid="independent-issue-project-status"
-                          className="w-full"
-                        />
-                        <SelectContent>
-                          {statuses.map(status => (
-                            <SelectItem key={status.id} value={String(status.id)}>
-                              {status.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </SelectRoot>
-                    ) : (
-                      <SelectRoot
-                        value={normalizeSelectValue(draft.status)}
-                        onValueChange={selectedValue => {
-                          if (selectedValue !== null)
-                            return set('status', selectedValue as IndependentIssue['status'])
-                        }}
-                      >
-                        <SelectTrigger
-                          density="compact"
-                          aria-label={t('independentIssues.status')}
-                          data-testid="independent-issue-status"
-                          className="w-full"
-                        />
-                        <SelectContent>
-                          {(['pending', 'in_progress', 'completed'] as const).map(status => (
-                            <SelectItem key={status} value={String(status)}>
-                              {t(`independentIssues.${status}`)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </SelectRoot>
-                    )
-                  )}
-                  {field(
-                    t('independentIssues.priority'),
-                    <SelectRoot
-                      value={normalizeSelectValue(draft.priority)}
-                      onValueChange={selectedValue => {
-                        if (selectedValue !== null)
-                          return set('priority', selectedValue as IndependentIssue['priority'])
-                      }}
-                    >
-                      <SelectTrigger
-                        density="compact"
-                        aria-label={t('independentIssues.priority')}
-                        data-testid="independent-issue-priority"
-                        className="w-full"
-                      />
-                      <SelectContent>
-                        {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
-                          <SelectItem key={priority} value={String(priority)}>
-                            {t(`independentIssues.${priority}`)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </SelectRoot>
-                  )}
-                  {field(
-                    t('independentIssues.due'),
-                    <ControlInput
-                      type="date"
-                      data-testid="independent-issue-due"
-                      className={control}
-                      value={draft.due_at ?? ''}
-                      onChange={event => set('due_at', event.target.value || null)}
-                    />
-                  )}
-                </div>
-              </CollapsiblePanel>
-            </CollapsibleRoot>
-            {!shareDraft && renderExecutionSettings && (
-              <CollapsibleRoot className="group min-w-0 border-t border-border pt-2">
-                <CollapsibleTrigger
-                  data-testid="independent-issue-execution-settings"
-                  className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
-                >
-                  {t('issue_creation.runtime_label')}
-                </CollapsibleTrigger>
-                <CollapsiblePanel>
-                  <div className="grid min-w-0 gap-2 pt-2">
-                    <span className="text-sm text-text-secondary">
-                      {t(
-                        projectId
-                          ? 'issue_creation.project_device_settings'
-                          : 'workbench.runner_personal_default'
-                      )}
-                    </span>
-                    {renderExecutionSettings(projectId, busy)}
-                    <p className="text-xs text-text-secondary">
-                      {t(
-                        projectId
-                          ? 'issue_creation.project_device_settings_hint'
-                          : 'issue_creation.personal_runner_hint'
-                      )}
-                    </p>
-                  </div>
-                </CollapsiblePanel>
-              </CollapsibleRoot>
-            )}
+                ) : (
+                  renderShareContent()
+                ))}
+              {!blankCreation && description}
+              {issue && (
+                <CollapsibleRoot className="group min-w-0">
+                  <CollapsibleTrigger
+                    data-testid="independent-issue-options"
+                    className="text-text-secondary hover:text-text-primary"
+                  >
+                    {issueOptionsLabel}
+                  </CollapsibleTrigger>
+                  <CollapsiblePanel>{issueOptions}</CollapsiblePanel>
+                </CollapsibleRoot>
+              )}
+              {!creating && executionSettings}
+            </div>
           </div>
         </fieldset>
       </div>
       <div
         data-testid="independent-issue-editor-actions"
-        className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-border bg-popover px-5 py-4"
+        className="flex shrink-0 flex-wrap items-center gap-3 border-t border-border bg-popover px-5 py-4"
       >
-        <div className="flex shrink-0 gap-2">
+        {creating && (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <ControlButton
+                  ref={optionsTrigger}
+                  variant="unstyled"
+                  type="button"
+                  disabled={busy}
+                />
+              }
+              data-testid="independent-issue-options"
+              className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
+            >
+              <ChevronUp className="size-4" aria-hidden="true" />
+              {issueOptionsLabel}
+            </PopoverTrigger>
+            <PopoverContent
+              aria-label={issueOptionsLabel}
+              data-testid="independent-issue-options-panel"
+              side="top"
+              align="start"
+              finalFocus={() => optionsTrigger.current}
+              className="w-96 p-3"
+            >
+              <fieldset disabled={busy} className="grid min-w-0 gap-3">
+                {issueOptions}
+                {executionSettings}
+              </fieldset>
+            </PopoverContent>
+          </Popover>
+        )}
+        {creating && (
+          <p
+            role="status"
+            data-testid="task-issue-share-visibility"
+            className="order-first w-full text-right text-xs text-text-secondary md:order-none md:ml-auto md:w-auto"
+          >
+            {creationVisibility}
+          </p>
+        )}
+        <div className={`ml-auto flex shrink-0 gap-2 ${creating ? 'md:ml-0' : ''}`}>
           <ControlButton
             variant="unstyled"
             type="button"

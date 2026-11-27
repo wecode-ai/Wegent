@@ -232,6 +232,37 @@ export function createProjectSpacePickerRegression({
         'true'
       )
       await control.command('press', SEARCH, { key: 'Escape' })
+      await control.command(
+        'clickWhenEnabled',
+        `${boundContext} [data-testid="work-item-open-board-menu"]`,
+        { visible: true, timeoutMs: uiTimeoutMs }
+      )
+      const activeBoard = '[data-tab-kind="board"][aria-selected="true"]'
+      await control.command('waitFor', activeBoard, { visible: true, timeoutMs: uiTimeoutMs })
+      const tabTestId = await control.command('getAttribute', activeBoard, { value: 'data-testid' })
+      assert.match(
+        tabTestId,
+        /^workspace-tab-select-board-/,
+        'Reopening the linked Issue must select an ordinary project board tab'
+      )
+      const tabId = tabTestId.slice('workspace-tab-select-'.length)
+      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const location = new URL(snapshot.location)
+      assert.equal(location.searchParams.get('projectStore'), 'backend')
+      assert.equal(
+        location.searchParams.get('projectId'),
+        String(sharedB.id),
+        'The linked Issue must open its persisted project after restoring the task'
+      )
+      const detailTitle = `[data-testid="workspace-tab-content-${tabId}"][aria-hidden="false"] [data-testid="collaboration-issue-detail"] [data-testid="cloud-todo-detail-title"]`
+      assert.equal(
+        await control.command('getValueWhenReady', detailTitle, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }),
+        targetIssue.title,
+        'The opened project must focus the persisted Issue'
+      )
     },
 
     async cleanup() {

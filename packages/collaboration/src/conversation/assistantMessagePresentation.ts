@@ -461,22 +461,6 @@ function getOrderedRuntimeDisplaySegments(
   return segments;
 }
 
-export function getProcessingPhase(
-  segments: ProcessingSegment[],
-  index: number,
-  hasFinalContent: boolean,
-): "live" | "intermediate" | "final" {
-  const laterSegments = segments.slice(index + 1);
-  if (
-    hasFinalContent &&
-    !laterSegments.some((segment) => segment.kind === "tool")
-  )
-    return "final";
-  if (laterSegments.some((segment) => segment.kind === "narrative"))
-    return "intermediate";
-  return "live";
-}
-
 export function splitProcessingBlocks(
   blocks: ProcessingBlock[],
 ): ProcessingSegment[] {

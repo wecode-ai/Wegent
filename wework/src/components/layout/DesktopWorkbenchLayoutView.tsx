@@ -1,4 +1,4 @@
-import type { PointerEventHandler } from 'react'
+import { useCallback, useMemo, type PointerEventHandler } from 'react'
 import { navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
@@ -32,7 +32,11 @@ import { readSettingsReturnPath } from '@/features/workspace-tabs/settingsReturn
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
 import { routePathname } from './desktopWorkbenchLayoutHelpers'
+import { getWorkbenchSplitGroupMemberships } from './workbenchSplitGroups'
 import type { useDesktopWorkbenchLayoutModel } from './useDesktopWorkbenchLayoutModel'
+
+const openStandIn = () => navigateTo('/stand-in')
+
 export function DesktopWorkbenchLayoutView({
   model,
 }: {
@@ -148,6 +152,17 @@ export function DesktopWorkbenchLayoutView({
     handleSidebarResizeStart,
     toggleRuntimeTaskNotification,
   } = model
+  const splitGroupState = splitGroups.state
+  const sidebarSplitGroupMemberships = useMemo(
+    () => getWorkbenchSplitGroupMemberships(splitGroupState, !standInOpen),
+    [splitGroupState, standInOpen]
+  )
+  const toggleSidebar = useCallback(
+    () => updateSidebarCollapsed(!effectiveSidebarCollapsed),
+    [effectiveSidebarCollapsed, updateSidebarCollapsed]
+  )
+  const expandSidebar = useCallback(() => updateSidebarCollapsed(false), [updateSidebarCollapsed])
+  const openSearch = useCallback(() => setSearchOpen(true), [setSearchOpen])
   const renderDesktopSidebar = ({
     collapsed,
     containerTestId,
@@ -171,8 +186,10 @@ export function DesktopWorkbenchLayoutView({
       runtimeWork={state.runtimeWork}
       runtimeWorkLoad={state.runtimeWorkLoad}
       onRetryRuntimeWork={refreshWorkLists}
-      currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
-      splitGroupMemberships={splitGroups.memberships}
+      currentRuntimeTask={
+        standInOpen || activeLocalHarnessSessionId ? null : state.currentRuntimeTask
+      }
+      splitGroupMemberships={sidebarSplitGroupMemberships}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
@@ -187,7 +204,7 @@ export function DesktopWorkbenchLayoutView({
       activeItem={activeItem}
       taskView={taskBoardOpen ? 'default-work-items' : 'workbench'}
       localHarnessSessions={localHarnessSessions}
-      activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+      activeLocalHarnessSessionId={standInOpen ? null : activeLocalHarnessSessionId}
       collapsed={collapsed}
       containerTestId={containerTestId}
       hideResizeHandle={hideResizeHandle}
@@ -198,13 +215,13 @@ export function DesktopWorkbenchLayoutView({
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
-      onToggleSidebar={onToggleSidebar ?? (() => updateSidebarCollapsed(!collapsed))}
+      onToggleSidebar={onToggleSidebar ?? toggleSidebar}
       onNewChat={startNewChatOutsideHarness}
-      onOpenStandIn={() => navigateTo('/stand-in')}
+      onOpenStandIn={openStandIn}
       onStartStandaloneChat={startStandaloneChatOutsideHarness}
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
-      onOpenSearch={() => setSearchOpen(true)}
+      onOpenSearch={openSearch}
       onToggleMyWork={toggleMyWork}
       onSelectProject={selectProjectOutsideHarness}
       onStartNewProjectChat={startNewProjectChatOutsideHarness}
@@ -220,9 +237,7 @@ export function DesktopWorkbenchLayoutView({
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onRefreshDevices={onRefreshDevices}
-      onOpenStandaloneFolderProject={(mode, intent = 'project') => {
-        void openStandaloneFolderProject(mode, intent)
-      }}
+      onOpenStandaloneFolderProject={openStandaloneFolderProject}
       onUpdateProjectName={onUpdateProjectName}
       onUpdateLocalRuntimeProject={onUpdateLocalRuntimeProject}
       onRemoveProject={onRemoveProject}
@@ -238,7 +253,7 @@ export function DesktopWorkbenchLayoutView({
       projectDevicePluginApi={services.projectDevicePluginApi}
       projectSpaceApis={availableProjectSpaceApis}
       models={projectChat.models}
-      onOpenSettings={options => openSettings(options)}
+      onOpenSettings={openSettings}
       onLogout={onLogout}
     />
   )
@@ -276,7 +291,7 @@ export function DesktopWorkbenchLayoutView({
                 hideResizeHandle: true,
                 onPointerEnter: openSidebarPreview,
                 onPointerLeave: closeSidebarPreview,
-                onToggleSidebar: () => updateSidebarCollapsed(false),
+                onToggleSidebar: expandSidebar,
               })}
             </div>
           </>

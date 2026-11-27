@@ -2,6 +2,12 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DingTalkDelegationControls } from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
+import {
+  defaultDingTalkDelegation,
+  dingTalkDelegationModel,
+  isDingTalkSource,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -57,7 +63,10 @@ export function StandInPrimaryProfile({
   saving: boolean
   loading?: boolean
   error: string | null
-  onSave(settings: PersonalStandInSettings): Promise<void>
+  onSave(
+    settings: PersonalStandInSettings,
+    stayOpen?: boolean
+  ): Promise<PersonalStandInSettings | void>
   onClose(): void
   ref?: Ref<StandInSettingsHandle>
   api?: StandInExecutorApi
@@ -86,6 +95,7 @@ export function StandInPrimaryProfile({
   const separatePrompt = saved.selfLearningEnabled !== undefined
   const original = {
     ...saved,
+    delegation: saved.delegation,
     collaboration: saved.collaboration ?? defaultCollaboration,
     calendar: saved.calendar,
     connections: saved.connections ?? [],
@@ -150,19 +160,55 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot,
     tagDraft.getDirtySnapshot
   )
-  const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
+  const profileDirty = !dequal(
+    { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
+    { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
+  )
+  const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
     draft.selfLearningEnabled === true &&
     draft.preferences === original.preferences
-
+  const ordinarySubmission = dingTalkDelegationModel(original, draft).submission()
+  const savePrimary = (submission: typeof ordinarySubmission) =>
+    onSave({
+      ...settings,
+      primary: {
+        ...submission,
+        ...(preserveLegacyInstructions
+          ? { prompt: saved.prompt, preferences: saved.preferences }
+          : {}),
+        collaboration:
+          saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+            ? draft.collaboration
+            : undefined,
+      },
+    })
+  const changeDelegationPause = async (action: 'pause' | 'resume') => {
+    if (!saved.delegation) return
+    const next = await onSave(
+      {
+        ...settings,
+        primary: { ...saved, delegation: { ...saved.delegation, action } },
+      },
+      true
+    )
+    const delegation = next?.primary?.delegation
+    if (delegation) {
+      setDraft(current => ({
+        ...current,
+        delegation: {
+          ...delegation,
+          templates: current.delegation?.templates ?? delegation.templates,
+        },
+      }))
+    }
+  }
   const role = {
     ...defaultRole,
     ...draft,
   }
-  const navigation = useStandInPanelNavigation(!dequal(original, draft), blocked, () =>
-    setDiscard(true)
-  )
+  const navigation = useStandInPanelNavigation(profileDirty, blocked, () => setDiscard(true))
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const requestLeave = (action: () => void) => {
     if (connectionRef.current)
@@ -319,10 +365,49 @@ export function StandInPrimaryProfile({
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
             disabled={blocked}
+            dingTalkDelegation={original.delegation}
+            renderDingTalkDelegation={provider => (
+              <DingTalkDelegationControls
+                account={provider.availability}
+                saved={original}
+                draft={draft}
+                disabled={blocked || scheduleDirty || connectionDraftDirty}
+                dirty={dirty}
+                onToggleTemplate={(template, enabled) =>
+                  setDraft(current => {
+                    const delegation = current.delegation ?? defaultDingTalkDelegation
+                    return {
+                      ...current,
+                      delegation: {
+                        ...delegation,
+                        templates: { ...delegation.templates, [template]: enabled },
+                      },
+                    }
+                  })
+                }
+                onEnable={() =>
+                  void savePrimary(
+                    dingTalkDelegationModel(original, draft, provider.availability).submission(true)
+                  )
+                }
+                onPause={action => void changeDelegationPause(action)}
+              />
+            )}
             onChange={value =>
               setDraft({
                 ...draft,
-                enabled: original.enabled || connectionChangeEnablesIdentity(original, value),
+                enabled:
+                  original.enabled ||
+                  connectionChangeEnablesIdentity(
+                    {
+                      ...original,
+                      connections: original.connections.filter(row => !isDingTalkSource(row)),
+                    },
+                    {
+                      ...value,
+                      connections: value.connections?.filter(row => !isDingTalkSource(row)),
+                    }
+                  ),
                 collaboration: value.collaboration,
                 calendar: value.calendar,
                 connections: value.connections ?? [],
@@ -429,23 +514,15 @@ export function StandInPrimaryProfile({
           busy={blocked}
           saveLabel={saving ? t('standIn.saving') : loading ? t('standIn.loading') : undefined}
           disabled={blocked}
-          saveDisabled={blocked || !dirty || scheduleDirty || connectionDraftDirty}
-          onCancel={close}
-          onSave={() =>
-            void onSave({
-              ...settings,
-              primary: {
-                ...draft,
-                ...(preserveLegacyInstructions
-                  ? { prompt: saved.prompt, preferences: saved.preferences }
-                  : {}),
-                collaboration:
-                  saved.collaboration || !dequal(draft.collaboration, original.collaboration)
-                    ? draft.collaboration
-                    : undefined,
-              },
-            })
+          saveDisabled={
+            blocked ||
+            !profileDirty ||
+            scheduleDirty ||
+            connectionDraftDirty ||
+            dequal(original, ordinarySubmission)
           }
+          onCancel={close}
+          onSave={() => void savePrimary(ordinarySubmission)}
         >
           {error && (
             <div className="w-full">

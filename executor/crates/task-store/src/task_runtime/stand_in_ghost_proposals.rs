@@ -614,7 +614,7 @@ impl LocalTaskStore {
         id: &str,
         reviewed_version: i64,
     ) -> Result<Value, TaskRuntimeError> {
-        self.apply_ghost_decision(user, device, id, true, Some(reviewed_version))
+        self.apply_ghost_decision(user, device, id, true, Some(reviewed_version), None)
     }
 
     /// Lookup by owner and opaque proposal id before verifying the runtime's current route.
@@ -632,6 +632,7 @@ impl LocalTaskStore {
         id: &str,
         accept: bool,
         undo_version: Option<i64>,
+        backend: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -694,7 +695,14 @@ impl LocalTaskStore {
                 .as_str()
                 .ok_or_else(|| invalid("Missing profile device"))?
                 .to_owned();
-            settings = self.save_personal_stand_in_on(&tx, user, &profile_device, settings)?;
+            settings = self.save_personal_stand_in_on(
+                &tx,
+                user,
+                &profile_device,
+                settings,
+                backend,
+                false,
+            )?;
         }
         tx.execute(
             "UPDATE loop_items SET status=?1,metadata=?2,updated_at=?3 WHERE id=?4",

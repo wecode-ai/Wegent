@@ -52,6 +52,7 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
     };
     let selected = &preferences["wework_notification_preferences"][category];
     let im_only = kind == "issue_participation";
+    let assistant_share = matches!(kind, "assistant_share" | "assistant_share_update");
     Channels {
         in_app: !im_only && selected["in_app"].as_bool().unwrap_or(true),
         system: if collaboration && !im_only {
@@ -59,7 +60,7 @@ fn channels(preferences: &Value, kind: &str) -> Channels {
         } else {
             false
         },
-        im: selected["im"].as_bool().unwrap_or(true),
+        im: !assistant_share && selected["im"].as_bool().unwrap_or(true),
     }
 }
 
@@ -296,7 +297,7 @@ pub async fn direct_human_on(
             actor,
             "issue_dispatch_assignment",
             &format!("新任务：{title}"),
-            "这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
+            "这个事项已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
             payload,
         )
         .await?,
@@ -390,10 +391,31 @@ pub trait LocalEmit: Send + Sync {
     async fn emit(&self, event: &str, room: &str, frame: &Value);
 }
 
+/// A private recipient identifier scoped to the selected IM channel.
+pub struct IssueImRecipient {
+    pub channel_id: i64,
+    pub recipient_id: String,
+}
+
+#[async_trait::async_trait]
+pub trait IssueImRecipientResolver: Send + Sync {
+    async fn resolve(&self, user_id: i64) -> Result<Option<IssueImRecipient>>;
+}
+
 pub async fn deliver(
     mysql: &MysqlService,
     redis: Option<&brz_redis::RedisService>,
     local: &dyn LocalEmit,
+    pending: Pending,
+) {
+    deliver_with_issue_im_recipient(mysql, redis, local, None, pending).await;
+}
+
+pub async fn deliver_with_issue_im_recipient(
+    mysql: &MysqlService,
+    redis: Option<&brz_redis::RedisService>,
+    local: &dyn LocalEmit,
+    issue_im_recipient: Option<&dyn IssueImRecipientResolver>,
     pending: Pending,
 ) {
     let notification = &pending.notification;
@@ -448,7 +470,9 @@ pub async fn deliver(
         let base = wegent_backend_config::env_or_dotenv("FRONTEND_URL")
             .unwrap_or_else(|| "http://localhost:3000".into());
         let links = im_links(notification, &base);
-        if let Err(error) = im::send_im(mysql, redis, user, notification, &links).await {
+        if let Err(error) =
+            im::send_im(mysql, redis, user, notification, &links, issue_im_recipient).await
+        {
             tracing::error!(notification_id=%notification["id"],%error,"Wework IM notification delivery failed");
         }
     }
@@ -544,6 +568,50 @@ mod tests {
             "issue_participation",
         );
         assert!(!disabled.in_app && !disabled.system && !disabled.im);
+    }
+
+    #[tokio::test]
+    async fn issue_without_a_private_session_resolves_only_enabled_issue_recipients() {
+        #[derive(Default)]
+        struct Resolver(std::sync::Mutex<Vec<i64>>);
+        #[async_trait::async_trait]
+        impl IssueImRecipientResolver for Resolver {
+            async fn resolve(&self, user_id: i64) -> Result<Option<IssueImRecipient>> {
+                self.0.lock().unwrap().push(user_id);
+                Ok(None)
+            }
+        }
+
+        struct NoEmit;
+        #[async_trait::async_trait]
+        impl LocalEmit for NoEmit {
+            async fn emit(&self, _: &str, _: &str, _: &Value) {}
+        }
+
+        let unused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mysql = MysqlService::connect_lazy(&format!(
+            "mysql://ci:ci@{}/unused",
+            unused.local_addr().unwrap()
+        ))
+        .unwrap();
+        let resolver = Resolver::default();
+        let opted_out = json!({
+            "wework_notification_preferences":{"collaboration":{"im":false}}
+        });
+        for (user, kind, preferences) in [
+            (10, "issue_shared", &Value::Null),
+            (11, "issue_participation", &Value::Null),
+            (12, "issue_shared", &opted_out),
+            (13, "assignment", &Value::Null),
+        ] {
+            let pending = Pending {
+                notification: json!({"user_id": user, "kind": kind}),
+                channels: channels(preferences, kind),
+                stored: false,
+            };
+            deliver_with_issue_im_recipient(&mysql, None, &NoEmit, Some(&resolver), pending).await;
+        }
+        assert_eq!(*resolver.0.lock().unwrap(), vec![10, 11]);
     }
 
     #[test]

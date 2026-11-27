@@ -25,7 +25,10 @@ use crate::{
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
 };
 
-use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SocketIoTransport};
+use super::{
+    LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SessionGatewayProfile,
+    SocketIoTransport,
+};
 
 mod local_sync;
 mod plugin_route;
@@ -228,16 +231,18 @@ impl LocalBackendConnectionController {
                     transport.clone(),
                     handler.clone(),
                     event_hub.clone(),
+                    Some(Arc::clone(&self.connection_snapshot)),
                 )
                 .with_runtime_event_cursor(Arc::clone(&self.runtime_event_cursor))
             } else {
-                LocalBackendRunner::new_for_app_sidecar(
+                LocalBackendRunner::new_with_default_runtime_work_handler(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
+                    SessionGatewayProfile::AppSidecar,
+                    Some(Arc::clone(&self.connection_snapshot)),
                 )
             }
-            .with_connection_status(Arc::clone(&self.connection_status))
-            .with_connection_snapshot(Arc::clone(&self.connection_snapshot));
+            .with_connection_status(Arc::clone(&self.connection_status));
             let handler = runner
                 .capability_sync_handler
                 .as_ref()

@@ -822,6 +822,14 @@
       "approve": "授权",
       "authorization_failed": "授权失败"
     },
+    "connector_authorize": {
+      "title": "授权 Connector",
+      "description": "将 {{slug}} 连接到你的 Wegent 账号 {{user}}。",
+      "invalid": "授权链接无效或已过期，请从发起授权的应用获取新链接。",
+      "wrong_account": "此链接绑定了另一个 Wegent 账号。请切换账号后继续。",
+      "switch_account": "切换账号",
+      "complete": "授权完成，请返回发起授权的应用继续操作。"
+    },
     "oauth_authorize": {
       "invalid_title": "OAuth 授权链接无效",
       "loading": "正在加载授权请求",

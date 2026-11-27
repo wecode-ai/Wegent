@@ -31,6 +31,7 @@ pub(crate) use wegent_workspace::environment_setup;
 pub(crate) mod git_auth;
 pub(crate) mod git_workspace;
 mod image_validator;
+pub(crate) mod model_gateway;
 pub(crate) use instance_home::{agent_homes, validate_session};
 pub use wegent_mcp_runtime::interactive_mcp;
 pub(crate) use wegent_native_home::instance_home;
@@ -185,6 +186,14 @@ impl AgentProcessEngine {
             planner,
             codex_engine,
         }
+    }
+
+    pub(crate) fn with_gateway_connection(
+        mut self,
+        connection: Option<model_gateway::ConnectionSnapshot>,
+    ) -> Self {
+        self.codex_engine = self.codex_engine.with_gateway_connection(connection);
+        self
     }
 }
 
@@ -567,6 +576,19 @@ impl AgentEngine for AgentProcessEngine {
     }
 }
 
+/// Reload active Codex sessions after publishing a skill-only capability change.
+pub struct CodexSkillConfigurationReloader;
+
+impl wegent_plugin_packages::SkillConfigurationReloader for CodexSkillConfigurationReloader {
+    fn reload<'a>(
+        &'a self,
+        home: &'a std::path::Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
+    {
+        Box::pin(reload_skill_configuration(home))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -661,19 +683,6 @@ mod tests {
                 }
             );
         }
-    }
-}
-
-/// Reload active Codex sessions after publishing a skill-only capability change.
-pub struct CodexSkillConfigurationReloader;
-
-impl wegent_plugin_packages::SkillConfigurationReloader for CodexSkillConfigurationReloader {
-    fn reload<'a>(
-        &'a self,
-        home: &'a std::path::Path,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
-    {
-        Box::pin(reload_skill_configuration(home))
     }
 }
 

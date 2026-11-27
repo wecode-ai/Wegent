@@ -30,6 +30,8 @@ From **Collaboration → My work**, the right-hand **Stand-in** tab lists work b
 
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
+After sending a message, three dots appear while you wait for the assistant's first reply. As soon as reply text arrives, it appears in the usual message bubble and the composer returns to its send button. You can send a follow-up while a subagent continues working in the background.
+
 This presentation applies to primary and role conversations on the **My assistants** page and the embedded primary conversation on the collaboration home. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
 Stand-in identity conversations and collaborative Issue stand-in conversations enable native subagent v2, including resumed conversations. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents. Native permission, source-scope and approval constraints remain unchanged.
@@ -39,6 +41,26 @@ Open **Left sidebar → My assistants**, then select an assistant. AI replies us
 The desktop prompt above the composer offers **Notification settings**, **Don't show again**, and **Dismiss for now**. Notification settings opens the OS notification settings on macOS and Windows and the bell's unified Wework settings. Allow OS notifications and check the system channel under **Stand-in alerts**. On Linux, enable notifications manually in your desktop environment. Opening settings does not establish that permission was granted. Temporary dismissal lasts for the app session; permanent dismissal is account-scoped on this device and hides only the prompt, without disabling notifications. You can always use **Top-right bell → Notification settings → Stand-in alerts**.
 
 The number beside **My assistants** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. A completed stand-in turn generates at most one desktop notification showing its final reply. Background tasks routed through the stand-in deliver their results in the stand-in conversation. Primary notifications use the title **My assistants** and open the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
+
+<a id="assistant-teams"></a>
+
+## Organize assistant teams
+
+Open **My assistants → Teams → Create team**, enter a name, choose a lead and members, and add team duties as needed. A specialist can join multiple teams, with duties configured separately for each team. Use the primary assistant or a specialist on the current device as lead. Other members can run on their configured devices.
+
+Open a saved team from **Teams** to give it work. The lead delegates based on the team roster and duties, and results return to the team conversation. Each team conversation has its own history. Changing the lead opens a conversation under the new lead.
+
+From **Teams**, edit or delete a team. Its assistants remain available individually and in other teams after deletion.
+
+<a id="assistant-sharing"></a>
+
+## Share an assistant or team
+
+Open **My assistants → Sharing → Share an assistant or team**. Choose what to share, search for and select a recipient, then select **Send share**. Select **Allow recipient to copy** to enable **Copy to my assistants** for the recipient under **My assistants → Sharing → Shared with me**. The recipient configures connections, execution devices, and workspaces for their own assistants.
+
+In **Shared with me**, select **Use directly** to start a separate conversation, then select **Open conversation** to return. The owner maintains the configuration, and the executor reads the current version before starting a new turn. Under **Shared by me**, select **Revoke share** to end the recipient’s access. Recipients retain any copies they created.
+
+When two teams include the same source assistant, copying them on the same device reuses the existing assistant copy. When a newer version is available, select **Update team** or **Update to shared version** under **Shared with me** and confirm to apply the new team duties or assistant prompt.
 
 <a id="assistant-role-delegation"></a>
 
@@ -230,7 +252,21 @@ Under **My assistants → Assistant details → Manage assistant → Connections
 
 Open a source to install its plugin or sign in, then choose the receive scope and handling. Sources on remote execution devices require authorization on that device. Existing scopes remain visible and removable when a source is unavailable. Returning to Connections or the role settings home retains the draft; save to apply it, or cancel and confirm discarding it. Press Enter to add a project tag. Unfinished or overlong tags prevent saving and retain the input; leaving or disabling intake requires confirmation before discarding the draft. Scope and handling changes take effect after saving stand-in settings; verifying a mailbox account also requires saving those settings before receiving new mail.
 
-Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
+<a id="dingtalk-delegation"></a>
+
+### DingTalk delegation for the default assistant
+
+Open **My assistants → Default assistant → Assistant details → Manage assistant → Connections → DingTalk**. Confirm the account and organization, then search for and add individual direct or group chats. Groups only process new messages that @mention you. You can choose sources during onboarding. Select **Enable delegation** here to create the first delegation version.
+
+After an interruption longer than 30 minutes or a backlog of over 50 eligible messages in a selected chat, DingTalk delegation skips the backlog and continues handling new messages. Open **Connection and runtime status** to see the affected source, then select **Dismiss** to close the notice.
+
+**Document links**, **Confirmed times and locations**, and **Existing standard procedures** are enabled by default. You can turn off any category. The assistant can use multiple earlier messages when they provide verifiable evidence about the same subject in the same authorized conversation. Document replies return one exact link previously shared in the conversation. Time, location and procedure replies can combine confirmed facts or steps. Before sending, the assistant rechecks the evidence and current delegation. If the evidence is missing, ambiguous or conflicting, the assistant hands the question to you and records the reason in its activity.
+
+Select **Save** after editing a scope or category. Removed sources and disabled categories stop matching replies that are still awaiting submission. Added sources and enabled categories apply to new messages once the version takes effect. Removing every source pauses delegation. Saving keeps existing pauses in effect. Select **Resume delegation** to continue. After switching DingTalk accounts, select the new account's conversations and enable delegation again.
+
+### DingTalk intake for assistants you add
+
+Select DingTalk in the connection sources for an assistant you added. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
 <a id="dingtalk-blacklist"></a>
 
@@ -238,9 +274,11 @@ In these DingTalk source settings, both all-group mentions and all-contact direc
 
 <a id="dingtalk-group-message-scope"></a>
 
-Open **Sidebar → My assistants → select primary or role → Assistant details → Manage assistant → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
+Open **Sidebar → My assistants → select an assistant you added → Assistant details → Manage assistant → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
 
 DingTalk groups set to **All messages** catch up in windows of up to 15 minutes. After a timeout, collection retries from the same starting point with a five-minute window. If that also times out, collection skips backlog older than five minutes and uses one-minute windows for recent messages. If timeouts continue, collection keeps advancing as time passes. Skipped messages remain available in DingTalk.
+
+To investigate a missing group message, search the execution device’s `dsh-core-runtime.log` for `wework-dingtalk-collection` using the group ID and send time. The log records each polling window, the message IDs returned by the API, and connector filter reasons. Search `executor.log` for `DingTalk group intake` and the message ID to check subscription filter reasons or queue status. A `pending` status means the event entered the queue. These diagnostic entries contain only the metadata needed for troubleshooting.
 
 You can manually mention yourself in a connected group to delegate work. You can also select yourself explicitly as a direct-message contact under filtered sources and save, then manually send instructions in your self-chat. The source's handling and approval policies still apply. Selecting all contacts alone does not enable this entry, and your outgoing messages to other contacts are not treated as instructions. Stand-in replies always retain DingTalk's AI-send marker.
 
@@ -262,6 +300,8 @@ Open **My assistants → Assistant details → Manage assistant → Connections 
 All four combinations are supported, including immediate separate conversations and delayed reused conversations. Settings changes do not reorganize existing work or messages. New events can guide the active Codex turn in a reused source conversation. An active turn awaiting native approval can still receive messages while the approval stays pending. If there is no active turn to receive them, events wait for approval. Events requiring a stricter approval policy start a later turn. After a source conversation is archived, new messages (including replies quoting old messages) start a new conversation, which subsequent messages reuse. Old tasks and messages stay archived; redelivered old messages do not create conversations or execute again. To view or restore an old task, use **Recent activity → View all activity → the work → Unarchive**; restoration itself does not start a turn. Automatic dispatch includes only the selected messages, not previously ignored or deferred input. Project Issues keep independent conversations; scheduled work retains each arrangement's existing conversation mode.
 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
+
+Routine progress and successful role-task completion leave background coordination idle. Failures, cancellations, pending questions or approvals, and scheduled follow-ups can still trigger coordination. The coordinator runs silently and shares important findings through the assistant conversation.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
@@ -358,7 +398,7 @@ Publication shares only the content you enter, not private chat or memories. If 
 
 Record a matter and its trigger time in **My assistants → select an assistant → Assistant details → Manage assistant → Connections → Calendar**, with one-time or recurring triggers. At that time, the owning stand-in receives the matter using its current responsibilities, device, model, and working directory. Processing is configured for the whole Calendar connection. Calendar entries save independently and protect unsaved edits when returning or closing. Open the corresponding work from its execution history.
 
-At trigger time, both new and resumed conversations use the currently saved Calendar approval policy. With confirmation required, the owner handles MCP operation approvals. With automatic operation handling allowed, Codex reviews each external MCP call. Resumed work also follows the approval requirements of its original source.
+Ordinary Calendar tasks default to Codex full access, with AI review for high-risk commands and external MCP calls that require review. To handle approvals yourself, enable **Calendar → Processing → Ask me before acting** and save. Each run reads the current policy at trigger time. Resumed source conversations also retain their original permission and approval requirements. Assistant memory consolidation and weekly reviews use their own review policies.
 
 To amend an existing arrangement in chat, the stand-in first reads the saved arrangement, then updates its content, name, trigger, time zone or enabled state in place. Cancellation and recreation are unnecessary. Omitted settings, the arrangement identity and run history are retained. Content-only or name-only edits keep the pending occurrence; changing the trigger, time zone or enabled state recalculates it. Updates still require native confirmation. Rejected confirmation, invalid parameters or a version conflict leave the saved arrangement unchanged; a conflict requires rereading before editing.
 

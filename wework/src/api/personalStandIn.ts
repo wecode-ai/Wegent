@@ -4,6 +4,21 @@ import type {
   RuntimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
 
+export const STAND_IN_DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
+
+export type StandInDelegationTemplate = 'document' | 'schedule' | 'process'
+
+export interface StandInDingTalkDelegation {
+  version: number
+  authorized?: boolean
+  paused: boolean
+  profile?: string
+  accountId?: string
+  accountInvalidated?: boolean
+  templates: Record<StandInDelegationTemplate, boolean>
+  action?: 'enable' | 'pause' | 'resume'
+}
+
 export interface StandInProjectRef {
   id: string
   store: 'local' | 'cloud'
@@ -22,6 +37,9 @@ export interface StandInSourceConnection {
   profile: string
   name: string
   kind: string
+  accountId?: string
+  paused?: boolean
+  delegated?: boolean
   scope?: 'all'
   /** Resources excluded from this account and kind's continuous intake. */
   excludedResources?: { id: string; name: string }[]
@@ -58,6 +76,7 @@ export interface StandInIdentity extends Partial<
   prompt: string
   preferences: string
   taskPermissions?: StandInTaskPermissions
+  delegation?: StandInDingTalkDelegation
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
@@ -90,12 +109,85 @@ export type StandInDelegationRoute = Pick<
   'id' | 'name' | 'prompt' | 'enabled' | 'executionDeviceId'
 >
 
+export interface StandInTeam {
+  id: string
+  name: string
+  leadId: string
+  members: Record<string, string>
+  memberRoutes?: Record<string, Pick<StandInRole, 'executionDeviceId' | 'name'>>
+}
+
+export type StandInShareDefinition =
+  | { kind: 'assistant'; definition: { id: string; name: string; prompt: string } }
+  | { kind: 'team'; definition: Pick<StandInTeam, 'id' | 'name' | 'leadId' | 'members'> }
+
+export interface StandInShareEntry {
+  owner_user_id: number
+  owner_name: string
+  recipient_user_id: number
+  recipient_name: string
+  resource_kind: StandInShareDefinition['kind']
+  source_id: string
+  name: string
+  revision: number
+  local_revision?: number | null
+  allow_copy: boolean
+  direct_enabled: boolean
+  revoked: boolean
+  derived?: boolean
+}
+
+export interface StandInSharePublish {
+  recipient_user_id: number
+  allow_copy: boolean
+  root: StandInShareDefinition
+  assistants?: StandInShareDefinition[]
+  base_revisions?: Record<string, number>
+}
+
+export interface StandInShareApi {
+  list(
+    userId: number,
+    deviceId: string
+  ): Promise<{
+    received: StandInShareEntry[]
+    sent: StandInShareEntry[]
+    publication_revisions: Record<string, number>
+  }>
+  searchUsers(
+    userId: number,
+    deviceId: string,
+    query: string
+  ): Promise<{ users: { id: number; user_name: string }[] }>
+  definition(
+    userId: number,
+    deviceId: string,
+    kind: StandInShareDefinition['kind'],
+    id: string
+  ): Promise<StandInShareDefinition>
+  publish(userId: number, deviceId: string, share: StandInSharePublish): Promise<void>
+  direct(userId: number, deviceId: string, share: StandInShareEntry): Promise<void>
+  revoke(userId: number, deviceId: string, share: StandInShareEntry): Promise<void>
+  copy(
+    userId: number,
+    deviceId: string,
+    share: StandInShareEntry,
+    update?: boolean
+  ): Promise<PersonalStandInSettings>
+}
+
+export type StandInConversationScope =
+  | 'collaboration'
+  | `team:${string}`
+  | `shared:${number}:${StandInShareDefinition['kind']}:${string}`
+
 export interface PersonalStandInSettings {
   userId: number
   executionDeviceId: string
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
+  teams?: StandInTeam[]
   delegationRoutes?: StandInDelegationRoute[]
   lifecycle?: { status: 'stopping' | 'stopped' }
 }
@@ -139,8 +231,14 @@ export function standInPolicy(
 export function standInConversationTaskId(
   userId: number,
   roleId?: string,
-  scope?: 'collaboration'
+  scope?: StandInConversationScope
 ): string {
+  if (scope?.startsWith('shared:')) {
+    return `stand-in-shared-chat-${userId}-${scope.slice(7).replaceAll(':', '-')}`
+  }
+  if (scope?.startsWith('team:')) {
+    return `stand-in-team-chat-${userId}-${scope.slice(5)}-${roleId ?? '@primary'}`
+  }
   return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}${scope ? `-${scope}` : ''}`
 }
 

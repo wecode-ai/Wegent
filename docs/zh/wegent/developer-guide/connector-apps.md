@@ -107,6 +107,23 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 - `/api/connector-runtime/tools`、`/call`：仅接受 Connector 专用 JWT，供 Executor MCP 代理调用。
 - `/api/mcp/connectors/sse`：面向 Chat 和云端编码类 Shell 的动态 MCP 端点，按 task token 解析调用者，列表与调用均检查可见性、授权和白名单。默认不带 `X-Connector-App` 时只暴露 `static` App；`X-Connector-Loading: lazy` 请求当前用户已授权的 lazy 轻量入口。带 App scope 时进一步限定为指定 App。桌面编码任务使用设备本地 `wegent_apps` 代理，不重复挂载云端端点。
 
+## 外部服务预检与授权
+
+外部服务可在调用 Wegent 内容 API 前，用 Connector App 的 slug 检查目标用户的 OAuth 授权。例如，钉钉文档使用 `dingtalk_docs`，管理员发布的 OAuth Connector 使用其配置的 slug。
+
+- `GET /api/external/connector-apps/{slug}/authorization` 返回 `slug` 和 `status`。预检只读 Wegent 保存的授权，不联系上游。
+- `POST /api/external/connector-apps/{slug}/oauth/start` 返回相同字段。当状态为 `authorization_required` 时，响应还包含 `authorize_url` 和 `expires_at`（Unix 秒）。链接有效期为 10 分钟，使用部署的 `FRONTEND_URL`，如有 Web 子路径也应包含在该配置中。
+
+| `status` | 外部服务行为 |
+| --- | --- |
+| `authorized` | 可以继续调用内容 API。包括仍可用 refresh token 续期的连接。 |
+| `authorization_required` | 调用授权接口，将链接展示给目标用户。 |
+| `not_required` | Connector 无需用户 OAuth，可以继续调用内容 API。 |
+
+调用方使用 `X-API-Key`。服务 API Key 通过 `wegent-username` 指定目标用户，个人 API Key 则绑定其所有者。外部应用的后端应从自己的登录身份确定目标用户名。不存在、停用或对用户不可见的 Connector 返回 `404`。使用 Bearer 等非 OAuth 凭据的 Connector 在两个接口均返回 `422`。
+
+用户打开链接后，使用绑定的 Wegent 账号登录并确认授权，再完成上游 OAuth。凭据保存在 Wegent。用户返回后，外部服务重新调用预检，确认 `authorized` 后再请求内容。预检只覆盖 Connector App 的 OAuth 授权，历史个人 MCP URL 和具体文档的访问权限由各自的流程处理。
+
 ## 内置钉钉 Connector Apps
 
 钉钉文档、表格、AI 表格、知识库由钉钉托管固定的 OAuth MCP 地址，用户不需要粘贴个人 URL。后端启动时（`CONNECTOR_BUILTIN_APPS_ENABLED=True`）会补齐缺失的应用定义：

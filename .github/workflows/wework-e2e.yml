@@ -87,6 +87,7 @@ jobs:
                 wework/src/components/chat/*|wework/src/components/layout/*|\
                 wework/src/desktop/tray*.ts|\
                 wework/src/features/notifications/*|wework/src/features/workbench/*|\
+                wework/src/features/reply-predictions/*|\
                 wework/src/features/todo/IssueAssignmentReceipts*|\
                 wework/electron/*|wework/scripts/profile-renderer*|wework/scripts/ai-verify-devtools*|\
                 wework/e2e/desktop/modules/streaming-text-fixture.mjs|\
@@ -95,8 +96,7 @@ jobs:
                 packages/chat-core/*|packages/collaboration/src/conversation/*|\
                 packages/collaboration/src/markdown/*|packages/collaboration/src/controls/*|\
                 packages/collaboration/src/composer/*|\
-                executor/src/runtime_work/*|executor/src/agents/codex/*|\
-                .github/workflows/wework-e2e.yml)
+                executor/src/runtime_work/*|executor/src/agents/codex/*)
                   echo 'renderer_profile=true' >> "$GITHUB_OUTPUT"
                   break
                   ;;
@@ -153,7 +153,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check Wework browser E2E image
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: steps.classify.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
         id: browser-image-check
         env:
           IMAGE: ${{ steps.image.outputs.browser-ref }}
@@ -165,7 +165,7 @@ jobs:
           fi
 
       - name: Check Wework desktop E2E image
-        if: (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+        if: steps.classify.outputs.wework_desktop_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
         id: desktop-image-check
         env:
           IMAGE: ${{ steps.image.outputs.desktop-ref }}
@@ -191,7 +191,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/*/Cargo.toml', 'backend-rs/*/src/**', 'backend-rs/src/task_export_docx/templates/thumbnail.jpeg', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/be-server/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/*/Cargo.toml', 'backend-rs/*/src/**', 'backend-rs/src/task_export_docx/templates/thumbnail.jpeg', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/be-server/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/scripts/resolve-backend-rs-e2e-dependencies.sh', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -863,7 +863,7 @@ jobs:
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
-        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli') || contains(matrix.segments, 'stand-in-self-learning')
+        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli') || contains(matrix.segments, 'stand-in-self-learning') || contains(matrix.segments, 'stand-in-dingtalk-delegation')
         shell: pwsh
         env:
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
@@ -875,6 +875,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
           "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-dingtalk-delegation') {
+            $delegationBinary = Join-Path $directory "delegation-dws.exe"
+            rustc wework/e2e/desktop/fixtures/delegation-dingtalk-cli.rs --edition 2021 -o $delegationBinary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk delegation protocol fixture" }
+            "WEWORK_E2E_DWS_DELEGATION_FIXTURE_BIN=$delegationBinary" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
           if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-cli') {
             $replyBinary = Join-Path $directory "source-story-dws.exe"
             rustc wework/e2e/desktop/fixtures/source-story-dingtalk-cli.rs --edition 2021 -o $replyBinary
@@ -1054,6 +1061,11 @@ jobs:
       - name: Set up real object storage for plugin sync recovery E2E
         if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile') || contains(matrix.segments, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/setup-minio-e2e
+
+      - name: Prepare Chat Shell tokenizers for Responses API gateway E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws')
+        working-directory: ./backend
+        run: uv run --locked bash ../.github/scripts/prepare-chat-shell-tokenizers.sh
 
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
@@ -1369,20 +1381,14 @@ jobs:
             exit 1
           fi
 
-      - name: Download verified Wework desktop build
-        if: env.CACHE_PUBLICATION_REF != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: wework-desktop-core-e2e-build
-          path: .ci-artifacts
-
       - name: Set up ORAS for Wework desktop cache publication
         if: env.CACHE_PUBLICATION_REF != ''
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
         with:
           version: 1.3.1
 
-      - name: Publish PR-scoped Wework desktop build cache
+      - name: Check PR-scoped Wework desktop build cache
+        id: publication
         if: env.CACHE_PUBLICATION_REF != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1393,10 +1399,22 @@ jobs:
           [[ "${CACHE_PUBLICATION_REF#"$prefix"}" =~ ^[a-f0-9]{64}-pr-$CACHE_PR_NUMBER$ ]]
           echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           if ! oras manifest fetch "$CACHE_PUBLICATION_REF" >/dev/null 2>&1; then
-            cd .ci-artifacts
-            oras push --artifact-type application/vnd.wegent.wework-core-e2e-build.v1 \
-              "$CACHE_PUBLICATION_REF" wework-core-e2e-build.tar.zst:application/zstd
+            echo 'required=true' >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Download verified Wework desktop build
+        if: steps.publication.outputs.required == 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Publish PR-scoped Wework desktop build cache
+        if: steps.publication.outputs.required == 'true'
+        working-directory: .ci-artifacts
+        run: |
+          oras push --artifact-type application/vnd.wegent.wework-core-e2e-build.v1 \
+            "$CACHE_PUBLICATION_REF" wework-core-e2e-build.tar.zst:application/zstd
 
   wework-desktop-memory-e2e:
     name: Wework Desktop macOS E2E
@@ -1426,15 +1444,9 @@ jobs:
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
       - name: Enforce renderer performance budgets
-        id: renderer-budgets
         if: needs.changes.outputs.wework_desktop_renderer_profile == 'true'
         timeout-minutes: 8
         run: node wework/scripts/profile-renderer.mjs --check
-
-      - name: Capture renderer workload after a budget failure
-        if: failure() && steps.renderer-budgets.conclusion == 'failure'
-        timeout-minutes: 8
-        run: node wework/scripts/profile-renderer.mjs --capture
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1483,6 +1495,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/*/failure.txt
             wework/test-results/desktop-e2e/*/renderer-threshold-measurements.json
+            wework/test-results/desktop-e2e/*/renderer-turn-long-task-profile.json
             wework/test-results/desktop-e2e/*/scenario-state.json
             wework/test-results/desktop-e2e/*/model-requests.json
             wework/test-results/desktop-e2e/*/*.log

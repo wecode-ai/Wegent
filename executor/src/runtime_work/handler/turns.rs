@@ -1681,7 +1681,7 @@ impl RuntimeWorkRpcHandler {
             task_kind: _,
             local_task_id,
             runtime: _,
-            request,
+            mut request,
             send_payload: _,
             direct_thread_id,
             fork_thread_id,
@@ -1779,6 +1779,25 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
+            if let Err(error) = handler
+                .refresh_shared_conversation_request(&mut request)
+                .await
+            {
+                handler.store.update_task(&turn_local_task_id, |link| {
+                    let active = handler
+                        .active_local_executions
+                        .lock()
+                        .expect("active local execution map lock should not be poisoned");
+                    if active
+                        .get(&turn_local_task_id)
+                        .is_some_and(|control| control.execution_id == execution_id)
+                    {
+                        apply_local_task_failure(link, &error);
+                    }
+                });
+                scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
+                return;
+            }
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) =
                 mpsc::unbounded_channel::<CodexNotification>();
@@ -2027,11 +2046,17 @@ impl RuntimeWorkRpcHandler {
                         .append_connection_event_context(&turn_local_task_id, thread, &mut request)
                         .await;
                 }
+                let resume_goal_only =
+                    request.extra.get(RESUME_GOAL_ONLY_MARKER) == Some(&Value::Bool(true));
+                let gateway_credentials = handler
+                    .model_gateway_credentials(&turn_local_task_id, &mut request, resume_goal_only)
+                    .await?;
                 handler
                     .codex_app_server
                     .run_turn_with_cancel(
                         request.clone(),
                         CodexAppServerTurnOptions {
+                            gateway_credentials,
                             input_admission: handler
                                 .automatic_input_admission(&turn_local_task_id, &request),
                             event_goal,
@@ -2043,11 +2068,7 @@ impl RuntimeWorkRpcHandler {
                             fork_thread_id,
                             fork_thread_path,
                             resume_thread_id,
-                            resume_goal_only: request
-                                .extra
-                                .get(RESUME_GOAL_ONLY_MARKER)
-                                .and_then(Value::as_bool)
-                                == Some(true),
+                            resume_goal_only,
                             initial_thread_goal,
                             notifications: Some(notification_tx),
                             cancellation: Some(cancel_rx),

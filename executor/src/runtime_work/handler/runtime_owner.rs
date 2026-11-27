@@ -90,7 +90,7 @@ impl RuntimeWorkRpcHandler {
         Self::runtime_http_on(&connection, method, path, body).await
     }
 
-    async fn runtime_http_on(
+    pub(super) async fn runtime_http_on(
         connection: &ConnectionConfig,
         method: reqwest::Method,
         path: &str,

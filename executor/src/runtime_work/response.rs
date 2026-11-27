@@ -81,6 +81,8 @@ pub(crate) struct RuntimeTaskLink {
     pub runtime_handle: Value,
     #[serde(skip)]
     pub execution_state: Option<super::lifecycle::NativeExecutionState>,
+    #[serde(skip)]
+    pub gateway_binding: Option<crate::agents::model_gateway::GatewayBinding>,
     pub parent: Option<Value>,
     pub ephemeral: bool,
     pub runtime_project_key: Option<String>,
@@ -139,6 +141,7 @@ impl RuntimeTaskLink {
             completed_at: None,
             runtime_handle: json!({ "runtime": runtime }),
             execution_state: None,
+            gateway_binding: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -187,6 +190,7 @@ impl RuntimeTaskLink {
             completed_at: None,
             runtime_handle,
             execution_state: None,
+            gateway_binding: None,
             parent: Some(parent),
             ephemeral: false,
             runtime_project_key: None,
@@ -320,6 +324,9 @@ impl RuntimeTaskLink {
             execution_state: local_link
                 .as_ref()
                 .and_then(|link| link.execution_state.clone()),
+            gateway_binding: local_link
+                .as_ref()
+                .and_then(|link| link.gateway_binding.clone()),
             parent: local_link.as_ref().and_then(|link| link.parent.clone()),
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
             runtime_project_key: local_link
@@ -374,6 +381,7 @@ impl RuntimeTaskLink {
             completed_at: self.completed_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             execution_state: self.execution_state.clone(),
+            gateway_binding: self.gateway_binding.clone(),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key.clone(),
@@ -505,6 +513,7 @@ impl Default for RuntimeTaskLink {
             completed_at: None,
             runtime_handle: json!({}),
             execution_state: None,
+            gateway_binding: None,
             parent: None,
             ephemeral: false,
             runtime_project_key: None,

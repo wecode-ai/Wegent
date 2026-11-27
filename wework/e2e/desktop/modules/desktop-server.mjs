@@ -629,16 +629,6 @@ class DesktopE2EServer {
     this.followUpRelease = new Promise(resolvePromise => {
       this.releaseFollowUp = resolvePromise
     })
-    this.guidanceScrollStage = 'setup'
-    this.guidanceScrollToolRelease = new Promise(resolvePromise => {
-      this.releaseGuidanceScrollTool = resolvePromise
-    })
-    this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
-      this.releaseGuidanceScrollResponse = resolvePromise
-    })
-    this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
-      this.releaseGuidanceScrollGuidanceArrival = resolvePromise
-    })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
     })
@@ -982,6 +972,7 @@ class DesktopE2EServer {
         'cancellation',
         'send_rejection',
         'guidance_scroll',
+        'guidance_attachment',
         'queue_management',
         'retry',
         'rate_limit',
@@ -1026,6 +1017,18 @@ class DesktopE2EServer {
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+    if (scenario === 'guidance_scroll' || scenario === 'guidance_attachment') {
+      this.guidanceScrollStage = scenario === 'guidance_scroll' ? 'setup' : 'active'
+      this.guidanceScrollToolRelease = new Promise(resolvePromise => {
+        this.releaseGuidanceScrollTool = resolvePromise
+      })
+      this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
+        this.releaseGuidanceScrollResponse = resolvePromise
+      })
+      this.guidanceScrollGuidanceArrival = new Promise(resolvePromise => {
+        this.releaseGuidanceScrollGuidanceArrival = resolvePromise
+      })
+    }
   }
 
   holdScenarioResponse(scenario) {
@@ -3083,8 +3086,8 @@ class DesktopE2EServer {
       assert.fail(`Unexpected desktop E2E model stage: ${this.modelStage}`)
     }
 
-    if (this.scenario === 'guidance_scroll') {
-      this.recordScenarioRequest('guidance_scroll', modelRequest)
+    if (this.scenario === 'guidance_scroll' || this.scenario === 'guidance_attachment') {
+      this.recordScenarioRequest(this.scenario, modelRequest)
       if (this.guidanceScrollStage === 'setup') {
         assert.ok(
           JSON.stringify(body).includes(GUIDANCE_SCROLL_PROMPT),
@@ -3136,14 +3139,16 @@ class DesktopE2EServer {
         return
       }
       if (this.guidanceScrollStage === 'awaiting_guidance') {
-        assert.ok(
-          JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
-          'The active turn did not apply the queued guidance'
-        )
-        assert.ok(
-          JSON.stringify(body).includes(GUIDANCE_ATTACHMENT_CONTENT),
-          'The guidance did not deliver the attached file contents to the model'
-        )
+        if (this.scenario === 'guidance_scroll') {
+          assert.ok(
+            JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
+            'The active turn did not apply the queued guidance'
+          )
+          assert.ok(
+            JSON.stringify(body).includes(GUIDANCE_ATTACHMENT_CONTENT),
+            'The guidance did not deliver the attached file contents to the model'
+          )
+        }
         this.guidanceScrollStage = 'complete'
         this.releaseGuidanceScrollGuidanceArrival()
         await this.guidanceScrollCompletionRelease

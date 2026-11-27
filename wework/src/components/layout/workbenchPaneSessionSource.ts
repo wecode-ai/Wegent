@@ -7,6 +7,7 @@ import { createPaneSessionDiagnostics } from './workbenchPaneSessionDiagnostics'
 import type { SetStateAction } from 'react'
 import type { RuntimeTranscriptLoader } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import {
   getRuntimeConversationMessages,
   getRuntimeConversationSnapshot,
@@ -79,6 +80,7 @@ export function createWorkbenchPaneSessionSource(
   let conversationKey: string | null | undefined
   let unsubscribeConversation: (() => void) | undefined
   let unsubscribeLifecycle: (() => void) | undefined
+  let lifecycleKey: string | undefined
   let unsubscribeSearch: (() => void) | undefined
   let stopWindowActivity: (() => void) | undefined
   let windowActivity: WorkbenchWindowActivity = 'foreground'
@@ -570,6 +572,22 @@ export function createWorkbenchPaneSessionSource(
         state = { ...state, retainedRuntimeTaskLoadTarget: retained }
         current = frame()
       }
+      const address = current.lifecycleAddress
+      const nextLifecycleKey = address ? getRuntimeTaskLifecycleKey(address) : undefined
+      if (nextLifecycleKey !== lifecycleKey) {
+        lifecycleKey = nextLifecycleKey
+        unsubscribeLifecycle?.()
+        unsubscribeLifecycle = address
+          ? lifecycleStore.subscribeTask(address, () => {
+              if (!isActive()) return
+              reconcileGoal(frame())
+              // Publish lifecycle and transcript changes from the same turn together.
+              if (external.presentationActive && presentationActivity() === 'foreground')
+                publishConversation()
+              else publish()
+            })
+          : undefined
+      }
       const nextQueueKey = current.queuedMessageScopeKey
       if (queueKey !== nextQueueKey || queueSend !== current.sendRuntimePaneMessage) {
         queueKey = nextQueueKey
@@ -695,15 +713,6 @@ export function createWorkbenchPaneSessionSource(
             presentStreamingProgress()
           }
         })
-        let revision = lifecycleStore.getTaskRevision(frame().lifecycleAddress)
-        unsubscribeLifecycle = lifecycleStore.subscribe(() => {
-          const current = frame()
-          const nextRevision = lifecycleStore.getTaskRevision(current.lifecycleAddress)
-          if (revision === nextRevision) return
-          revision = nextRevision
-          reconcileGoal(current)
-          publish()
-        })
       }
       reconcile()
       if (changed || resuming) publish()
@@ -731,6 +740,7 @@ export function createWorkbenchPaneSessionSource(
           conversationKey = undefined
           unsubscribeLifecycle?.()
           unsubscribeLifecycle = undefined
+          lifecycleKey = undefined
           unsubscribeSearch?.()
           unsubscribeSearch = undefined
           diagnostics.dispose()

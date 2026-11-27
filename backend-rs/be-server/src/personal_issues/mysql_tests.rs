@@ -783,6 +783,7 @@ async fn verify(mysql: MysqlService) {
     }
     verify_resource_invitations(&state).await;
     verify_shared_attachment_record(&state).await;
+    verify_issue_attachment_without_source(&state).await;
     verify_create_with_optional_project(&state).await;
     verify_shared_due_dates(&state, &mysql).await;
     verify_child_creation(&state).await;
@@ -934,13 +935,15 @@ async fn verify_child_creation(state: &AppState) {
 async fn verify_shared_attachment_record(state: &AppState) {
     let id = share::random_id();
     let attachment_id = share::random_id();
-    let share = share::NewShare {
-        source: serde_json::from_value(json!({
-            "device_id": "test-device",
-            "task_id": "test-shared-attachment",
-            "title": "Shared conversation",
-        }))
-        .unwrap(),
+    let share = share::IssueUpload {
+        source: Some(
+            serde_json::from_value(json!({
+                "device_id": "test-device",
+                "task_id": "test-shared-attachment",
+                "title": "Shared conversation",
+            }))
+            .unwrap(),
+        ),
         files: vec![
             serde_json::from_value(json!({
                 "id": attachment_id,
@@ -1077,6 +1080,56 @@ async fn verify_shared_attachment_record(state: &AppState) {
     assert_eq!(records, vec![(attachment_id,)]);
 }
 
+async fn verify_issue_attachment_without_source(state: &AppState) {
+    let id = share::random_id();
+    let attachment_id = share::random_id();
+    let upload = share::IssueUpload {
+        source: None,
+        files: vec![
+            serde_json::from_value(json!({
+                "id": attachment_id,
+                "filename": "notes.txt",
+                "size": 4,
+                "object_key": format!("issue-share/{attachment_id}"),
+                "sha256": "test-digest",
+            }))
+            .unwrap(),
+        ],
+    };
+    create_issue_record(
+        state,
+        7,
+        input("Issue with files", None, vec![]),
+        &id,
+        None,
+        Some(&upload),
+    )
+    .await
+    .unwrap();
+    assert!(
+        get_issue(state, user(7), &id)
+            .await
+            .unwrap()
+            .metadata
+            .0
+            .share
+            .is_none()
+    );
+    assert_eq!(
+        get_issue(state, user(9), &id).await.unwrap_err().status(),
+        StatusCode::NOT_FOUND
+    );
+    let files: Vec<(String,)> = state
+        .mysql
+        .fetch_all(
+            "SELECT id FROM loop_items WHERE loop_item_id=? AND resource_type='attachment'",
+            (id.as_str(),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(files, vec![(attachment_id,)]);
+}
+
 async fn verify_shared_due_dates(state: &AppState, mysql: &MysqlService) {
     for nullable in [true, false] {
         if !nullable {
@@ -1209,13 +1262,15 @@ async fn verify_shared_due_dates(state: &AppState, mysql: &MysqlService) {
             let id = share::random_id();
             let mut body = input("Shared issue", None, vec![]);
             body.due_at = due_date.map(str::to_owned);
-            let share = share::NewShare {
-                source: serde_json::from_value(json!({
-                    "device_id": "test-device",
-                    "task_id": "test-task",
-                    "title": "Shared conversation",
-                }))
-                .unwrap(),
+            let share = share::IssueUpload {
+                source: Some(
+                    serde_json::from_value(json!({
+                        "device_id": "test-device",
+                        "task_id": "test-task",
+                        "title": "Shared conversation",
+                    }))
+                    .unwrap(),
+                ),
                 files: vec![],
             };
             let project = ProjectInput {

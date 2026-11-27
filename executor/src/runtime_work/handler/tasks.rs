@@ -1564,6 +1564,8 @@ impl RuntimeWorkRpcHandler {
                 delegation["attempt"] = json!(attempt);
             }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            self.refresh_shared_conversation_request(&mut request)
+                .await?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
         // A prepared local request defaults to a new native session, while a
@@ -2029,6 +2031,8 @@ impl RuntimeWorkRpcHandler {
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
         self.refresh_identity_conversation_origin(&mut request, &existing_link)?;
+        self.refresh_shared_conversation_request(&mut request)
+            .await?;
         self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         request.new_session = false;
         if !workspace_path.is_empty() {
@@ -2444,7 +2448,6 @@ impl RuntimeWorkRpcHandler {
             }) != Some(true);
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
-            .map(|value| value.trim().to_owned())
             .unwrap_or_default();
         let attachments = payload
             .get("attachments")
@@ -2457,10 +2460,14 @@ impl RuntimeWorkRpcHandler {
                 "message or attachment is required",
             ));
         }
+        let mut payload = payload;
+        payload["message"] = json!(message);
         log_executor_event(
             "runtime guidance requested",
             &[("local_task_id", local_task_id.clone())],
         );
+        // deliver_guidance materializes remote attachments and records the
+        // user-visible guidance presentation for every direct send.
         self.deliver_guidance(payload, event_operation, owner_input, false, None)
             .await
     }
@@ -2846,8 +2853,17 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         local_task_id: &str,
         thread_id: &str,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
+        let gateway_credentials = crate::agents::model_gateway::credentials(
+            &self.backend_connection,
+            &mut request,
+            link.gateway_binding.as_ref(),
+            false,
+        )
+        .await
+        .map_err(|error| AppIpcError::new("model_route_failed", error))?
+        .map(|(credentials, _)| credentials);
         self.register_thread_event_route(
             thread_id,
             link.local_task_id.clone(),
@@ -2864,6 +2880,7 @@ impl RuntimeWorkRpcHandler {
             client
                 .resume_thread_for_model_action(
                     &request,
+                    gateway_credentials,
                     thread_id,
                     thread_path.as_deref(),
                     |prepared| {
