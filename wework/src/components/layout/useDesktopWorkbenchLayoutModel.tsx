@@ -59,8 +59,8 @@ import {
 } from './workbenchPaneIdentity'
 import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
+import { useCreatePermanentWorktree } from './useCreatePermanentWorktree'
 import {
-  getPermanentWorktreeError,
   isSameRuntimeTask,
   type DesktopWorkbenchLayoutProps,
 } from './desktopWorkbenchLayoutHelpers'
@@ -370,7 +370,6 @@ export function useDesktopWorkbenchLayoutModel({
     [setActiveLocalHarnessSessionId]
   )
   const localHarnessModelApi = services?.localHarnessModelApi
-  const runtimeWorkApi = services?.runtimeWorkApi
   const removeLocalHarnessSession = useCallback(
     (sessionId: string) => {
       const proxyToken = localHarnessSessions.find(
@@ -419,47 +418,10 @@ export function useDesktopWorkbenchLayoutModel({
     },
     [localHarnessSessions, removeLocalHarnessSession]
   )
-  const createPermanentWorktree = useCallback(
-    async ({
-      deviceId,
-      sourcePath,
-      name,
-    }: {
-      deviceId: string
-      sourcePath: string
-      name: string
-    }) => {
-      const scope = layoutSession.captureOwner()
-      if (!runtimeWorkApi) {
-        throw new Error(t('workbench.create_permanent_worktree_unavailable'))
-      }
-      const worktreeId = `permanent-${crypto.randomUUID()}`
-      let prepared
-      try {
-        prepared = await runtimeWorkApi.prepareWorktree({
-          deviceId,
-          sourcePath,
-          worktreeId,
-          permanent: true,
-        })
-      } catch (error) {
-        throw new Error(
-          getPermanentWorktreeError(error, t('workbench.create_permanent_worktree_failed')),
-          { cause: error }
-        )
-      }
-      if (!scope.isCurrent()) return
-      const workspacePath = prepared.path ?? prepared.worktree.path
-      try {
-        await onOpenStandaloneWorkspace(deviceId, workspacePath, name)
-      } catch (error) {
-        await runtimeWorkApi
-          .deleteWorktree({ deviceId, path: workspacePath, preserveSnapshot: false })
-          .catch(() => undefined)
-        throw error
-      }
-    },
-    [layoutSession, onOpenStandaloneWorkspace, runtimeWorkApi, t]
+  const createPermanentWorktree = useCreatePermanentWorktree(
+    services?.runtimeWorkApi,
+    onOpenStandaloneWorkspace,
+    layoutSession.captureOwner
   )
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const openProjectSpaceRuntimeTask = useCallback(

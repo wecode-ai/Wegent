@@ -14,6 +14,12 @@ const runtimeMock = vi.hoisted(() => ({ desktop: false }))
 
 const workbenchMock = vi.hoisted(() => ({
   value: {
+    services: {
+      runtimeWorkApi: {
+        prepareWorktree: vi.fn(),
+        deleteWorktree: vi.fn().mockResolvedValue(undefined),
+      },
+    },
     state: {
       user: { id: 1, user_name: 'alice', preferences: {} },
       projects: [],
@@ -111,6 +117,8 @@ const workbenchMock = vi.hoisted(() => ({
     listGitRepositories: vi.fn(),
     listGitBranches: vi.fn(),
     updateProjectName: vi.fn(),
+    setRuntimeProjectPinned: vi.fn().mockResolvedValue(undefined),
+    setRuntimeProjectAppearance: vi.fn().mockResolvedValue(undefined),
     removeProject: vi.fn(),
     getDeviceHomeDirectory: vi.fn(),
     getProjectWorkspaceRoot: vi.fn(),
@@ -247,6 +255,92 @@ describe('CloudWorkPage', () => {
     expect(screen.queryByTestId('cloud-work-local-version-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-device-section')).toHaveTextContent('cloud-device')
   })
+
+  test.each([
+    {
+      action: 'pin-project',
+      update: workbenchMock.value.setRuntimeProjectPinned,
+      change: { pinned: true },
+    },
+    {
+      action: 'change-project-appearance',
+      update: workbenchMock.value.setRuntimeProjectAppearance,
+      change: { appearance: { color: 'blue' } },
+    },
+  ])('handles $action from the cloud work sidebar', async ({ action, update, change }) => {
+    runtimeMock.desktop = true
+    sidebarMock.renderReal = true
+    const user = userEvent.setup()
+    render(
+      <RuntimeTaskLifecycleProvider store={new RuntimeTaskLifecycleStore(action)}>
+        <CloudWorkPage />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await user.click(screen.getByTestId('project-menu-21'))
+    await user.click(await screen.findByTestId(`${action}-21`))
+
+    expect(update).toHaveBeenCalledExactlyOnceWith({
+      deviceId: 'local-device',
+      projectKey: 'cloud-project',
+      ...change,
+    })
+  })
+
+  test.each(['success', 'failure'] as const)(
+    'creates a permanent cloud worktree from the sidebar and handles registration %s',
+    async registration => {
+      runtimeMock.desktop = true
+      sidebarMock.renderReal = true
+      const user = userEvent.setup()
+      const { prepareWorktree, deleteWorktree } = workbenchMock.value.services.runtimeWorkApi
+      const { openStandaloneWorkspace } = workbenchMock.value
+      const worktreePath = '/workspace/cloud-project-worktree'
+      const registrationError = 'Could not register the worktree project'
+      prepareWorktree.mockResolvedValueOnce({ path: worktreePath })
+      if (registration === 'failure') {
+        openStandaloneWorkspace.mockRejectedValueOnce(new Error(registrationError))
+      }
+      render(
+        <RuntimeTaskLifecycleProvider
+          store={new RuntimeTaskLifecycleStore('cloud-work-permanent-worktree')}
+        >
+          <CloudWorkPage />
+        </RuntimeTaskLifecycleProvider>
+      )
+
+      await user.click(screen.getByTestId('project-menu-21'))
+      await user.click(await screen.findByTestId('create-permanent-worktree-21'))
+      expect(screen.getByTestId('permanent-worktree-name-21')).toHaveValue('Cloud Project_2')
+      await user.click(screen.getByTestId('confirm-create-permanent-worktree-21'))
+
+      expect(prepareWorktree).toHaveBeenCalledExactlyOnceWith({
+        deviceId: 'cloud-device',
+        sourcePath: '/workspace/cloud-project',
+        permanent: true,
+        worktreeId: expect.stringMatching(/^permanent-/),
+      })
+      expect(openStandaloneWorkspace).toHaveBeenCalledExactlyOnceWith(
+        'cloud-device',
+        worktreePath,
+        'Cloud Project_2'
+      )
+      if (registration === 'failure') {
+        expect(await screen.findByText(registrationError)).toBeVisible()
+        expect(deleteWorktree).toHaveBeenCalledExactlyOnceWith({
+          deviceId: 'cloud-device',
+          path: worktreePath,
+          preserveSnapshot: false,
+        })
+        expect(screen.getByTestId('confirm-create-permanent-worktree-21')).toBeEnabled()
+      } else {
+        await waitFor(() =>
+          expect(screen.queryByTestId('permanent-worktree-name-21')).not.toBeInTheDocument()
+        )
+        expect(deleteWorktree).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   test('clones from the cloud work sidebar and recovers from a clone failure', async () => {
     sidebarMock.renderReal = true
