@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import type { Systeminformation } from 'systeminformation'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  parseKernelNames,
+  parseKernelProcesses,
   SystemInformationProcessTable,
   isInternalPowerShell,
   parseStartedAt,
@@ -76,18 +76,22 @@ describe('systeminformation process table', () => {
       params: '',
       path: '/Applications/Xcode.app/Contents/Developer/usr/libexec/git-core/git-remote-https fork https://github.com/sleepdrop/',
     })
-    const readKernelNames = vi.fn(async () => new Map([[42, 'git-remote-http']]))
+    const readKernelProcesses = vi.fn(
+      async () => new Map([[42, { name: 'git-remote-http', startedAt: 1234 }]])
+    )
     const table = new SystemInformationProcessTable(
       async () => processesData([row]),
       'linux',
       8,
-      readKernelNames
+      readKernelProcesses
     )
 
     const result = await table.read()
 
     expect(result.processes[0]?.name).toBe('git-remote-https')
-    expect(readKernelNames).toHaveBeenCalledOnce()
+    expect(result.processes[0]?.identity).toBe('1234')
+    expect(result.processes[0]?.startedAt).toBe(1234)
+    expect(readKernelProcesses).toHaveBeenCalledOnce()
   })
 
   it('keeps heuristic names when the kernel names are unavailable', async () => {
@@ -102,14 +106,8 @@ describe('systeminformation process table', () => {
 
   it('parses kernel names and ignores other lines', () => {
     expect([
-      ...parseKernelNames(
-        '   1 systemd\n 742 git-remote-http\n  42 WeWork Helper  \n\n bad line\n'
-      ),
-    ]).toEqual([
-      [1, 'systemd'],
-      [742, 'git-remote-http'],
-      [42, 'WeWork Helper'],
-    ])
+      ...parseKernelProcesses('   42 Fri Nov  6 08:12:04 2026 WeWork Helper  \n bad line\n'),
+    ]).toEqual([[42, { name: 'WeWork Helper', startedAt: Date.parse('Fri Nov 6 08:12:04 2026') }]])
   })
 
   // The only coverage that runs a real process table; ubuntu CI executes it.

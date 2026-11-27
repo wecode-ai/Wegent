@@ -11,34 +11,40 @@ import {
 
 export type SystemInformationProcessesReader = () => Promise<Systeminformation.ProcessesData>
 
-/** Pid to kernel-reported executable name, or null when it could not be read. */
-export type KernelNamesReader = () => Promise<Map<number, string> | null>
+interface KernelProcess {
+  name: string
+  startedAt: number
+}
+
+export type KernelProcessesReader = () => Promise<Map<number, KernelProcess> | null>
 
 /**
  * `systeminformation` still guesses the executable boundary in a Linux
  * command line, which turns URL tails such as `Wegent.git` into process names.
  * One cheap `ps` call supplies the kernel's `comm` to correct that.
  */
-async function readLinuxKernelNames(): Promise<Map<number, string> | null> {
+async function readLinuxKernelProcesses(): Promise<Map<number, KernelProcess> | null> {
   return new Promise(resolve => {
     execFile(
       'ps',
-      ['-axo', 'pid=,comm='],
+      ['-axo', 'pid=,lstart=,comm='],
       { env: { ...process.env, LC_ALL: 'C' }, maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout) => resolve(error ? null : parseKernelNames(stdout))
+      (error, stdout) => resolve(error ? null : parseKernelProcesses(stdout))
     )
   })
 }
 
-/** Parses `ps -axo pid=,comm=` output. */
-export function parseKernelNames(output: string): Map<number, string> {
-  const names = new Map<number, string>()
+/** Parses `ps -axo pid=,lstart=,comm=` output. */
+export function parseKernelProcesses(output: string): Map<number, KernelProcess> {
+  const processes = new Map<number, KernelProcess>()
   for (const line of output.split('\n')) {
-    // `comm` may contain spaces, so everything after the pid is the name.
-    const match = /^\s*(\d+)\s+(\S.*?)\s*$/.exec(line)
-    if (match) names.set(Number(match[1]), match[2].trim())
+    // lstart is a fixed-width C-locale date; comm can contain spaces.
+    const match = /^\s*(\d+)\s+(\w{3} \w{3}\s+\d+ \d\d:\d\d:\d\d \d{4})\s+(\S.*?)\s*$/.exec(line)
+    if (!match) continue
+    const startedAt = Date.parse(match[2])
+    if (Number.isFinite(startedAt)) processes.set(Number(match[1]), { name: match[3], startedAt })
   }
-  return names
+  return processes
 }
 
 /**
@@ -51,18 +57,23 @@ export class SystemInformationProcessTable implements SystemProcessTable {
     private readonly readProcesses: SystemInformationProcessesReader = readSystemProcesses,
     private readonly platform: NodeJS.Platform = process.platform,
     private readonly cpuCount: number = cpus().length,
-    private readonly readKernelNames: KernelNamesReader = readLinuxKernelNames
+    private readonly readKernelProcesses: KernelProcessesReader = readLinuxKernelProcesses
   ) {}
 
   async read(): Promise<SystemProcessTableResult> {
     try {
       const data = await this.readProcesses()
-      const kernelNames = this.platform === 'linux' ? await this.readKernelNames() : null
+      const kernelProcesses = this.platform === 'linux' ? await this.readKernelProcesses() : null
       const processes = data.list
         .filter(row => Number.isInteger(row.pid) && row.pid > 0)
         .filter(row => !isInternalPowerShell(row) && !isInternalProcessCollector(row))
         .map(row =>
-          toSystemProcessInfo(row, this.platform, this.cpuCount, kernelNames?.get(row.pid) ?? null)
+          toSystemProcessInfo(
+            row,
+            this.platform,
+            this.cpuCount,
+            kernelProcesses?.get(row.pid) ?? null
+          )
         )
       return { processes, degraded: [] }
     } catch (error) {
@@ -78,19 +89,19 @@ export function toSystemProcessInfo(
   row: Systeminformation.ProcessesProcessData,
   platform: NodeJS.Platform = process.platform,
   cpuCount: number = cpus().length,
-  kernelName: string | null = null
+  kernel: KernelProcess | null = null
 ): SystemProcessInfo {
   const command = launchDetail(row, platform)
   return {
     pid: row.pid,
     parentPid: Number.isFinite(row.parentPid) ? row.parentPid : 0,
-    name: kernelName ? resolveProcessName(command ?? '', kernelName) : displayName(row),
+    name: kernel ? resolveProcessName(command ?? '', kernel.name) : displayName(row),
     command,
     cpuPercent: normalizeCpuPercent(row.cpu, platform, cpuCount),
     // `memRss` is KiB on every platform supported by systeminformation.
     memoryBytes: Number.isFinite(row.memRss) ? Math.round(row.memRss * 1024) : null,
-    startedAt: parseStartedAt(row.started),
-    identity: row.started?.trim() || '',
+    startedAt: kernel?.startedAt ?? parseStartedAt(row.started),
+    identity: kernel ? String(kernel.startedAt) : row.started?.trim() || '',
   }
 }
 

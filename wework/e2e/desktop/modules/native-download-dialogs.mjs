@@ -223,11 +223,14 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   }
 }
 
-export async function clickLinuxPointer(button = 1) {
-  await execute('xdotool', ['click', '--clearmodifiers', String(button)], {
-    encoding: 'utf8',
-    timeout: 3_000,
-  })
+export async function clickLinuxPointer(waitForPress) {
+  const options = { encoding: 'utf8', timeout: 3_000 }
+  await execute('xdotool', ['mousedown', '1'], options)
+  try {
+    await waitForPress()
+  } finally {
+    await execute('xdotool', ['mouseup', '1'], options)
+  }
 }
 
 async function captureNativeDiagnostics(pid, resultDir, stepName, targetWindowId = null) {

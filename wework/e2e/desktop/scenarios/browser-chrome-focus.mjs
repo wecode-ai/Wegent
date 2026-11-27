@@ -124,7 +124,15 @@ async function verifySearchOverlay(
     return command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
   }
   const pressAndRelease = point => {
-    if (linuxWindow) return clickLinuxPointer()
+    if (linuxWindow)
+      return clickLinuxPointer(() =>
+        waitForValue(
+          () => read('window.__weworkSearchTriggerMotion.clicks.pointerdown ?? null'),
+          event => event?.trusted && event.target === 'runtime-search-button',
+          'The native press must reach the search trigger before release',
+          5_000
+        )
+      )
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     return clickPoint(command, point)
   }
