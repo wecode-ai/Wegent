@@ -46,7 +46,7 @@ impl RuntimeWorkRpcHandler {
             return Err(delegated_work_account_denied());
         }
         let work = store
-            .take_over_delegated_work(user, &work_id)
+            .take_over_delegated_work(user, &self.device_id, &work_id)
             .map_err(settings_error)?;
         let visible = project_visible_work(&settings, work, messages)
             .ok_or_else(delegated_work_account_denied)?;
@@ -95,7 +95,7 @@ impl RuntimeWorkRpcHandler {
         let mut message = self.visible_delegated_dingtalk_message(store, user, work, record)?;
         if matches!(outcome["status"].as_str(), Some("sent" | "failed")) {
             store
-                .reconcile_delegated_receipt(user, work, record, &outcome)
+                .reconcile_delegated_receipt(user, &self.device_id, work, record, &outcome)
                 .map_err(settings_error)?;
             message = self.visible_delegated_dingtalk_message(store, user, work, record)?;
         }
@@ -111,8 +111,13 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         self.verify_local_stand_in_owner(user)?;
         let message = store
-            .delegated_work_message(user, work, record)
-            .map_err(settings_error)?;
+            .delegated_work_message(user, &self.device_id, work, record)
+            .map_err(|error| match error {
+                crate::task_runtime::TaskRuntimeError::TaskNotFound => {
+                    delegated_work_account_denied()
+                }
+                error => settings_error(error),
+            })?;
         let settings = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
@@ -153,11 +158,11 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         self.verify_local_stand_in_owner(user)?;
         let work_id = work["id"].as_str().unwrap_or_default();
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
         let messages = store
             .stand_in_messages(user, work_id)
+            .map_err(settings_error)?;
+        let settings = store
+            .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
         let visible = project_visible_work(&settings, work.clone(), messages).ok_or_else(|| {
             AppIpcError::new(
@@ -179,7 +184,7 @@ impl RuntimeWorkRpcHandler {
                     .map_err(settings_error)?;
             }
             if message["dispatchStatus"] != "pending"
-                || !work["takenOverAt"].is_null()
+                || !visible.work["takenOverAt"].is_null()
                 || !message["takenOverAt"].is_null()
                 || selected_records.is_some_and(|ids| !ids.iter().any(|id| id == record_id))
             {
@@ -266,9 +271,13 @@ impl RuntimeWorkRpcHandler {
             decision["text"].as_str().unwrap_or_default(),
         )
         .await
-        .map_err(|_| {
-            result(
-                "needs_user",
+        .map_err(|error| {
+            crate::logging::log_executor_event(
+                "DingTalk delegated reply preparation failed",
+                &[("category", error.code)],
+            );
+            technical_failure_result(
+                "reply_prepare_failed",
                 "The DingTalk reply could not be prepared for sending.",
             )
         })?;
@@ -282,8 +291,8 @@ impl RuntimeWorkRpcHandler {
             )
             .await?;
         if decision["contextFingerprint"] != snapshot_fingerprint(&latest) {
-            return Err(result(
-                "needs_user",
+            return Err(technical_failure_result(
+                "conversation_changed_before_send",
                 "The conversation changed after the reply was prepared.",
             ));
         }
@@ -302,8 +311,8 @@ impl RuntimeWorkRpcHandler {
             .delegated_snapshot(store, user, identity, source, message)
             .await
         else {
-            return result(
-                "needs_user",
+            return technical_failure_result(
+                "conversation_unavailable",
                 "The original message could not be verified in this DingTalk conversation.",
             );
         };
@@ -311,8 +320,8 @@ impl RuntimeWorkRpcHandler {
             return owner_intervention_result();
         }
         if identity["model"]["runtime"].is_string() && identity["model"]["runtime"] != "codex" {
-            return result(
-                "needs_user",
+            return technical_failure_result(
+                "model_unavailable",
                 "Select an available Codex model to evaluate this message.",
             );
         }
@@ -326,28 +335,35 @@ impl RuntimeWorkRpcHandler {
         });
         let context = context.to_string();
         if context.len() > 64 * 1024 {
-            return result(
-                "needs_user",
+            return technical_failure_result(
+                "conversation_context_too_large",
                 "There is too much recent conversation history to verify an automatic reply.",
             );
         }
         let prompt = format!("{DECISION_INSTRUCTIONS}\n{context}");
-        let Ok(decision) = self
+        let decision = match self
             .generate_delegation_decision(identity.get("model"), prompt)
             .await
-        else {
-            return result(
-                "needs_user",
-                "The configured model could not evaluate this message.",
-            );
+        {
+            Ok(decision) => decision,
+            Err(error) => {
+                crate::logging::log_executor_event(
+                    "DingTalk delegated decision failed",
+                    &[("category", error.code)],
+                );
+                return technical_failure_result(
+                    "model_decision_failed",
+                    "The configured model could not evaluate this message.",
+                );
+            }
         };
         let Some(reason) = decision["reason"]
             .as_str()
             .map(str::trim)
             .filter(|reason| !reason.is_empty() && reason.len() <= 2000)
         else {
-            return result(
-                "needs_user",
+            return technical_failure_result(
+                "model_response_invalid",
                 "The decision must explain what needs the account owner's attention.",
             );
         };
@@ -363,8 +379,8 @@ impl RuntimeWorkRpcHandler {
             Some("needs_user") => return result("needs_user", reason),
             Some("reply") => {}
             _ => {
-                return result(
-                    "needs_user",
+                return technical_failure_result(
+                    "model_response_invalid",
                     "The model did not provide a supported decision.",
                 )
             }
@@ -382,7 +398,8 @@ impl RuntimeWorkRpcHandler {
             );
         }
         json!({"action":"reply","status":"submitting","reason":reason,"template":reply.template,
-            "evidenceIds":reply.evidence_ids,"contextFingerprint":snapshot_fingerprint(&snapshot),
+            "evidenceIds":reply.evidence_ids,"evidence":reply.evidence,
+            "contextFingerprint":snapshot_fingerprint(&snapshot),
             "policyVersion":identity["delegation"]["version"],"text":reply.text})
     }
 
@@ -422,8 +439,8 @@ impl RuntimeWorkRpcHandler {
             .delegated_snapshot(store, user, &current, current_source, message)
             .await
         else {
-            return Err(result(
-                "needs_user",
+            return Err(technical_failure_result(
+                "conversation_recheck_failed",
                 "The conversation changed or could not be checked before sending.",
             ));
         };
@@ -565,6 +582,15 @@ fn result(action: &str, reason: &str) -> Value {
     json!({"action":action,"status":"complete","reason":reason})
 }
 
+fn technical_failure_result(reason_code: &str, reason: &str) -> Value {
+    json!({
+        "action":"needs_user",
+        "status":"failed",
+        "reason":reason,
+        "reasonCode":reason_code
+    })
+}
+
 fn owner_intervention_result() -> Value {
     json!({
         "action": "skip",
@@ -615,6 +641,7 @@ fn decision_schema() -> Value {
 struct SupportedReply<'a> {
     template: &'a str,
     evidence_ids: Vec<&'a str>,
+    evidence: Vec<Value>,
     text: String,
 }
 
@@ -633,6 +660,7 @@ fn supported_reply<'a>(snapshot: &Value, decision: &'a Value) -> Option<Supporte
     let question_time = timestamp(&target["at"])?;
     let messages = snapshot["messages"].as_array()?;
     let mut evidence_ids = Vec::new();
+    let mut evidence = Vec::new();
     let mut quotes = Vec::new();
     let mut citations = Vec::new();
     let mut verified_link = None;
@@ -669,6 +697,12 @@ fn supported_reply<'a>(snapshot: &Value, decision: &'a Value) -> Option<Supporte
         }
         if !evidence_ids.contains(&message_id) {
             evidence_ids.push(message_id);
+            evidence.push(json!({
+                "messageId":message_id,
+                "senderId":message["senderId"],
+                "at":message["at"],
+                "excerpt":quote
+            }));
         }
     }
     let text = if link.is_some() {
@@ -679,6 +713,7 @@ fn supported_reply<'a>(snapshot: &Value, decision: &'a Value) -> Option<Supporte
     (!text.is_empty() && text.len() <= 2000).then_some(SupportedReply {
         template,
         evidence_ids,
+        evidence,
         text,
     })
 }

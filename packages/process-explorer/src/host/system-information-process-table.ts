@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { cpus } from 'node:os'
 import { processes as readSystemProcesses, type Systeminformation } from 'systeminformation'
 import type { SystemProcessInfo } from '../core/build-snapshot.js'
+import { resolveProcessName } from './process-name.js'
 import {
   describeError,
   type SystemProcessTable,
@@ -8,6 +10,47 @@ import {
 } from './system-process-table.js'
 
 export type SystemInformationProcessesReader = () => Promise<Systeminformation.ProcessesData>
+
+interface LinuxProcessMetadata {
+  name: string
+  startedAt: number
+}
+
+type LinuxProcessMetadataReader = () => Promise<Map<number, LinuxProcessMetadata> | null>
+
+/**
+ * `systeminformation` guesses executable names from command lines and derives
+ * start times from rounded elapsed times. One `ps` call supplies the kernel
+ * name and the absolute start time for a stable process identity.
+ */
+const readLinuxProcessMetadata: LinuxProcessMetadataReader = async () => {
+  return new Promise(resolve => {
+    execFile(
+      'ps',
+      ['-axo', 'pid=,lstart=,comm='],
+      { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' }, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout) => {
+        const processes = error ? null : parseLinuxProcessMetadata(stdout)
+        resolve(processes?.size ? processes : null)
+      }
+    )
+  })
+}
+
+/** Parses `ps -axo pid=,lstart=,comm=` with English UTC timestamps. */
+export function parseLinuxProcessMetadata(output: string): Map<number, LinuxProcessMetadata> {
+  const processes = new Map<number, LinuxProcessMetadata>()
+  for (const line of output.split('\n')) {
+    // `comm` may contain spaces, so everything after the timestamp is the name.
+    const match =
+      /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(\S.*?)\s*$/.exec(line)
+    if (!match) continue
+    const [, pid, timestamp, name] = match
+    const startedAt = Date.parse(`${timestamp} UTC`)
+    if (Number.isFinite(startedAt)) processes.set(Number(pid), { name, startedAt })
+  }
+  return processes
+}
 
 /**
  * Cross-platform process table backed by `systeminformation`. It owns the
@@ -18,17 +61,38 @@ export class SystemInformationProcessTable implements SystemProcessTable {
   constructor(
     private readonly readProcesses: SystemInformationProcessesReader = readSystemProcesses,
     private readonly platform: NodeJS.Platform = process.platform,
-    private readonly cpuCount: number = cpus().length
+    private readonly cpuCount: number = cpus().length,
+    private readonly readLinuxMetadata: LinuxProcessMetadataReader = readLinuxProcessMetadata
   ) {}
 
   async read(): Promise<SystemProcessTableResult> {
     try {
       const data = await this.readProcesses()
+      const linuxMetadata = this.platform === 'linux' ? await this.readLinuxMetadata() : null
       const processes = data.list
         .filter(row => Number.isInteger(row.pid) && row.pid > 0)
         .filter(row => !isInternalPowerShell(row) && !isInternalProcessCollector(row))
-        .map(row => toSystemProcessInfo(row, this.platform, this.cpuCount))
-      return { processes, degraded: [] }
+        // A process missing from the later kernel read has already left the table.
+        .filter(row => !linuxMetadata || linuxMetadata.has(row.pid))
+        .map(row => {
+          const metadata = linuxMetadata?.get(row.pid)
+          const process = toSystemProcessInfo(row, this.platform, this.cpuCount, metadata?.name)
+          return metadata
+            ? { ...process, startedAt: metadata.startedAt, identity: String(metadata.startedAt) }
+            : process
+        })
+      return {
+        processes,
+        degraded:
+          this.platform === 'linux' && !linuxMetadata
+            ? [
+                {
+                  code: 'system-process-table-failed',
+                  detail: 'Linux process metadata unavailable',
+                },
+              ]
+            : [],
+      }
     } catch (error) {
       return {
         processes: [],
@@ -41,13 +105,14 @@ export class SystemInformationProcessTable implements SystemProcessTable {
 export function toSystemProcessInfo(
   row: Systeminformation.ProcessesProcessData,
   platform: NodeJS.Platform = process.platform,
-  cpuCount: number = cpus().length
+  cpuCount: number = cpus().length,
+  kernelName: string | null = null
 ): SystemProcessInfo {
   const command = launchDetail(row, platform)
   return {
     pid: row.pid,
     parentPid: Number.isFinite(row.parentPid) ? row.parentPid : 0,
-    name: displayName(row),
+    name: kernelName ? resolveProcessName(command ?? '', kernelName) : displayName(row),
     command,
     cpuPercent: normalizeCpuPercent(row.cpu, platform, cpuCount),
     // `memRss` is KiB on every platform supported by systeminformation.

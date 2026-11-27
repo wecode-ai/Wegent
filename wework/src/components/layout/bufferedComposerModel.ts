@@ -102,13 +102,14 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
       flushFrameRef.current = null
     }
   }
-  const publishDraft = (nextDraft: string) => {
+  const publishDraft = (nextDraft: string, force = false) => {
     const publications = publishedDraftsRef.current.get(scopeKey) ?? []
     const lastPublished = lastPublishedDraftRef.current
     const alreadyCommitted =
       committedScopeKeyRef.current === scopeKey && committedValueRef.current === nextDraft
     // A late acknowledgement can require publishing the latest draft again.
     if (
+      !force &&
       lastPublished.scopeKey === scopeKey &&
       lastPublished.value === nextDraft &&
       (alreadyCommitted || publications.at(-1)?.value === nextDraft)
@@ -207,9 +208,11 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
     if (clearOnSubmit && submittedDraft.trim()) {
       draftRef.current = ''
       cancelPendingFlush()
-      setDraftState({ scopeKey, sourceValue: '', draft: '' })
+      // Keep the local draft tied to the owner's value until it acknowledges the edit.
+      setDraftState({ ...draftState, draft: '' })
       setComposerValue('', 0)
-      publishDraft('')
+      // The parent may already hold an empty value from before the local edit.
+      publishDraft('', true)
     }
     const restoreSubmittedDraft = () => {
       if (!submittedDraft.trim()) return
@@ -218,7 +221,7 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
       if (draftRef.current) return
       draftRef.current = submittedDraft
       cancelPendingFlush()
-      setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
+      setDraftState({ ...draftState, draft: submittedDraft })
       setComposerValue(submittedDraft, submittedDraft.length)
       publishDraft(submittedDraft)
     }

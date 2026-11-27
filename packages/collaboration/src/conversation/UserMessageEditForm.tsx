@@ -12,6 +12,8 @@ export function UserMessageEditForm({
   transferServices,
   onOpenMentionPlugin,
   initialContent,
+  correction = false,
+  allowEmpty = false,
   submitting,
   onCancel,
   onSubmit,
@@ -20,6 +22,8 @@ export function UserMessageEditForm({
   transferServices?: ComposerTransferServices
   onOpenMentionPlugin?: (reference: PluginReference) => void
   initialContent: string
+  correction?: boolean
+  allowEmpty?: boolean
   submitting: boolean
   onCancel?: () => void
   onSubmit?: (content: string) => Promise<boolean | void> | boolean | void
@@ -28,7 +32,7 @@ export function UserMessageEditForm({
   const [draft, setDraft] = useState(initialContent)
   const textareaRef = useRef<HTMLElement | null>(null)
   const trimmedDraft = draft.trim()
-  const submitDisabled = submitting || trimmedDraft.length === 0
+  const submitDisabled = submitting || (!allowEmpty && trimmedDraft.length === 0)
 
   useFocusRequest(textareaRef)
 
@@ -51,9 +55,9 @@ export function UserMessageEditForm({
         value={draft}
         onChange={setDraft}
         onSubmit={value => {
-          if (!submitting && value.trim()) void onSubmit?.(value.trim())
+          if (!submitting && (allowEmpty || value.trim())) void onSubmit?.(value.trim())
         }}
-        canSend={trimmedDraft.length > 0}
+        canSend={allowEmpty || trimmedDraft.length > 0}
         disabled={submitting}
         placeholder=""
         rows={2}
@@ -84,7 +88,7 @@ export function UserMessageEditForm({
           onClick={submit}
           className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-base font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {t('message_edit.send')}
+          {t(correction ? 'message_edit.send_correction' : 'message_edit.send')}
         </ControlButton>
       </div>
     </div>

@@ -22,6 +22,7 @@ test('keeps delayed notification clicks alive across GC and releases completed n
         const { showRetainedNotification } = await import(${JSON.stringify(moduleUrl)})
         const clicks = []
         const replies = []
+        const failures = []
         const errors = []
         console.error = (...args) => errors.push(args)
         function createNotification(id, terminalEvent) {
@@ -65,8 +66,18 @@ test('keeps delayed notification clicks alive across GC and releases completed n
         assert.deepEqual(replies, ['Keep old behavior'])
         const closed = createNotification('closed', 'close')
         const failed = createNotification('failed', 'failed')
+        function createFailedNotification() {
+          const notification = new EventEmitter()
+          notification.show = () => {}
+          showRetainedNotification(notification, undefined, undefined, error =>
+            failures.push(error)
+          )
+          notification.emit('failed', {}, new Error('native delivery failed'))
+        }
+        createFailedNotification()
         const thrown = createNotification('thrown', 'throw')
         assert.equal(errors.length, 1, 'Native delivery failures must be reported')
+        assert.equal(failures.length, 1, 'Callers must receive native delivery failures')
         await collectGarbage()
         for (const ref of [first, second, closed, failed, thrown, reply]) {
           assert.equal(ref.deref(), undefined, 'A completed notification was retained')

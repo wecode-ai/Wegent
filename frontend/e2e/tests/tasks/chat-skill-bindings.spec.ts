@@ -200,7 +200,8 @@ test('Chat consumes Ghost skills and automatic bindings with legacy shell metada
     await configureToolScenario(request, followUp, [{ responseContent: followUpAnswer }])
     await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
     await page.goto(`/chat?taskId=${ack.task_id}`, { waitUntil: 'domcontentloaded' })
-    const input = page.getByTestId('message-input')
+    // The existing task briefly renders a disabled composer while it loads.
+    const input = page.getByTestId('message-input').and(page.locator('[contenteditable="true"]'))
     await expect(input, 'The existing task composer should be editable').toBeEditable({
       timeout: 15_000,
     })

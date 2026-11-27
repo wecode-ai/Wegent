@@ -135,6 +135,7 @@ const mocks = vi.hoisted(() => ({
   runtimeModels: [] as UnifiedModel[],
   continueInNewConversation: vi.fn(),
   setGlobalModel: vi.fn(),
+  createTemporaryRuntimeTask: vi.fn(),
   globalModelReady: true,
   busySendError: false,
   lifecycleOwnerEpoch: 0,
@@ -388,6 +389,7 @@ vi.mock('@/components/layout/BufferedChatInput', async importOriginal => {
       selectedModelOptions?: ModelOptions
       isModelSelectionReady?: boolean
       onModelSelectorOpenChange?: (open: boolean) => void
+      setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
       contextUsage?: RuntimeContextUsage
       trialPluginName?: string
       showTrialGuide?: (title: string, app: LocalDeviceApp) => void
@@ -406,6 +408,18 @@ vi.mock('@/components/layout/BufferedChatInput', async importOriginal => {
       data-trial-plugin={projectChat?.trialPluginName}
     >
       <CatalogBindingProbe scope={projectChat?.scopeKey} />
+      <button
+        type="button"
+        data-testid="mock-switch-model"
+        onClick={() =>
+          projectChat?.setSelectedModelAndOptions?.(
+            { name: 'side-model', type: 'runtime' },
+            { reasoning: 'high' }
+          )
+        }
+      >
+        Switch model
+      </button>
       <button
         type="button"
         data-testid="mock-model-selector"
@@ -518,7 +532,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
         selectedSkills: [],
         isOptionsLocked: false,
         toggleSkill: vi.fn(),
-        selectedModel: null,
+        selectedModel: mocks.runtimeModels[0] ?? null,
         continueInNewConversation: mocks.continueInNewConversation,
         setSelectedModel: mocks.setGlobalModel,
         setSelectedModelAndOptions: mocks.setGlobalModel,
@@ -554,7 +568,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
         setRuntimeTaskSelectedModelAndOptions: vi.fn(),
         setRuntimeTaskSelectedModelOption: vi.fn(),
       },
-      createTemporaryRuntimeTask: vi.fn(),
+      createTemporaryRuntimeTask: mocks.createTemporaryRuntimeTask,
       createProjectRuntimeTask: mocks.createTask,
       sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
       interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
@@ -689,6 +703,36 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', async () => {
 
 describe('TemporaryChatPanel', () => {
   registerProjectSpaceChatDraftTests(mocks)
+  it('keeps a model change in its unsent temporary chat and uses it to start the thread', async () => {
+    mocks.runtimeModels = [{ name: 'main-model', type: 'runtime' }]
+    render(
+      <>
+        <TemporaryChatPanel currentProject={null} source={address} instanceId="side-one" />
+        <TemporaryChatPanel currentProject={null} source={address} instanceId="side-two" />
+      </>
+    )
+    const [first, second] = screen.getAllByTestId('mock-composer')
+    expect(first).toHaveAttribute('data-selected-model', 'main-model')
+    await userEvent.click(screen.getAllByTestId('mock-switch-model')[0])
+    expect(mocks.setGlobalModel).not.toHaveBeenCalled()
+    expect(first).toHaveAttribute('data-selected-model', 'side-model')
+    expect(second).toHaveAttribute('data-selected-model', 'main-model')
+
+    await userEvent.click(screen.getAllByTestId('mock-send')[0])
+    expect(mocks.createTemporaryRuntimeTask).toHaveBeenCalledExactlyOnceWith(
+      '发送附件',
+      expect.objectContaining({
+        source: address,
+        executionModel: {
+          modelId: 'side-model',
+          modelType: 'runtime',
+          modelOptions: { reasoning: 'high' },
+        },
+      })
+    )
+    expect(first).toHaveAttribute('data-selected-model', 'side-model')
+  })
+
   it.each(['accepted', 'newer-edit', 'edited-back', 'failed', 'rejected'] as const)(
     'submits an immediate buffered native edit transactionally: %s',
     async outcome => {
@@ -1051,6 +1095,7 @@ describe('TemporaryChatPanel', () => {
     mocks.runtimeModels = []
     mocks.continueInNewConversation.mockClear()
     mocks.setGlobalModel.mockClear()
+    mocks.createTemporaryRuntimeTask.mockReset().mockResolvedValue(false)
     mocks.busySendError = false
     mocks.interruptAndSendRuntimePaneMessage.mockClear()
     mocks.resetAttachments.mockReset()

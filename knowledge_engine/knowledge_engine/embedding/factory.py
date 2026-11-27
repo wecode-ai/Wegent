@@ -63,6 +63,7 @@ def _create_embedding_model_from_resolved_values(
                     api_key=api_key,
                     dimensions=dimensions,
                     encoding_format=encoding_format,
+                    supports_batch_input=True,
                 ),
                 additional_input_modalities=normalized_additional_input_modalities,
             )

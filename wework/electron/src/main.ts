@@ -129,6 +129,7 @@ import {
   registerApplicationActivation,
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
+import { createProcessExplorerFixture } from './host/process-explorer-fixture.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -1446,7 +1447,9 @@ async function openProcessExplorerWindow(): Promise<void> {
     backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
-      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
+      // Keep the default throttling: the explorer pauses sampling while
+      // `document.hidden`, which stays false on macOS and Linux when
+      // background throttling is disabled.
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -2653,6 +2656,7 @@ async function configureDesktopRuntime(): Promise<void> {
       runtimeHost: smartAppRuntimeHost,
     })
   }
+  const processExplorerFixture = createProcessExplorerFixture()
   const processExplorerService = createWeworkProcessExplorerService({
     windowLabel: contentsId => dshWindowLabels.get(contentsId) ?? null,
     embeddedBrowserLabel: contentsId => embeddedBrowser?.labelForContentsId(contentsId) ?? null,
@@ -2849,6 +2853,17 @@ async function configureDesktopRuntime(): Promise<void> {
             const target = processExplorerWindow
             if (target && !target.isDestroyed()) target.close()
           },
+          setProcessExplorerWindowHidden: hidden => {
+            const target = processExplorerWindow
+            if (!target || target.isDestroyed()) return
+            if (hidden) target.hide()
+            else {
+              target.show()
+              target.focus()
+            }
+          },
+          spawnProcessExplorerFixture: () => processExplorerFixture.spawn(),
+          stopProcessExplorerFixture: () => processExplorerFixture.stop(),
           dockVisible: () => dockVisible,
           rendererStartupReady,
           rendererStartupFailed: failure => {

@@ -36,6 +36,7 @@ type StandInOnboardingProps = {
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
+  onOpenConversation(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
   configuration: StandInOnboardingConfiguration
@@ -61,6 +62,7 @@ function StandInOnboardingContent({
   bypass = false,
   guideOpen = false,
   onGuideClose,
+  onOpenConversation,
   onExampleSelect,
   onClose,
   children,
@@ -126,7 +128,7 @@ function StandInOnboardingContent({
     else dismiss()
   }
   const dialogRef = useRef<HTMLElement>(null)
-  const complete = async () => {
+  const complete = async (openConversation: boolean) => {
     if (saving) return false
     setSaving(true)
     setCompletionError(undefined)
@@ -139,6 +141,7 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
+      if (openConversation) onOpenConversation()
       resource.update(() => completed)
       onGuideClose?.()
       return true

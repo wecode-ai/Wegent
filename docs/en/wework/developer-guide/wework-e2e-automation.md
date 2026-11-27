@@ -12,6 +12,8 @@ The Wework E2E workflow defaults to `false` so shared CI runner load does not pr
 
 Real macOS desktop tests allow windows larger than the display only when both `VITE_WEWORK_E2E=true` and `WEWORK_E2E_CONTROL_URL` are enabled. This prevents a work area shorter than 1200 from truncating fixed viewports. Native resize commands still wait for the requested actual content dimensions; existing assertions and deadlines remain enforced. The shared `tray-lifecycle` checkpoint verifies a native 1280×1200 resize and restoration in the existing macOS CI job, without another runner or app launch. Ordinary launches retain platform defaults.
 
+The `process-explorer-lifecycle` checkpoint runs in an existing core CI shard. It opens the real process explorer, starts a child process of the application, and verifies that the explorer lists and counts it. It then hides the explorer window and checks that the listed uptime stays frozen across an observation window, shows the window again and checks that sampling resumes, and finally stops the child. The exited child must remain visible as an exited row while the process count returns to its baseline. The window visibility and the row state come from the existing explorer window snapshot capability; the pause check is a negative observation window and never proves that an update completed.
+
 A reconnected controller after restart does not establish that the native startup splash has closed. Before asserting main-window focus, reuse `waitForClosedStartupSplash` to observe its actual closure. Activation during startup retains the product's existing splash routing; repeated activation or a longer focus timeout must not conceal this ordering requirement.
 
 Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks. Task restoration assertions retain the fixture's original display name.
@@ -362,6 +364,15 @@ other platforms retain OS write-denial checks. All platforms still verify explic
 authorized writes, native approval denial of private reads, and no private data
 disclosure. The network probe declares a text response type so PowerShell does not
 enumerate response bytes.
+On Windows, role delegation and Dots enable the unelevated sandbox in their
+isolated Codex configurations. Role delegation verifies actual writes in
+workspace-write mode and write denial after switching the task to read-only.
+The embedded-browser download scenario uses UI Automation to operate the native
+context menu and Save As dialog for the isolated Electron process, then verifies
+the file outcomes for cancel and save. Windows Core scheduling uses five newly
+measured checkpoint durations and shares DingTalk protocol fixture setup. Stand-in
+task preparation and creation reuse the boxed Future boundary to limit nested
+Windows worker stack use.
 The subscription model fixture rejects every upgrade path with HTTP 426 and
 handles `ECONNRESET` throughout the socket lifetime; other socket errors still
 fail. Node regressions cover different paths, repeated resets, and unexpected errors, preventing

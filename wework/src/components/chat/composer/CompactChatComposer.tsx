@@ -274,7 +274,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       selectedModel?.displayName ||
       selectedModel?.name ||
       t('workbench.model_picker_title', '选择模型')
-    const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+    const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'mod+Enter'
     const primaryBusyLabel =
       followUpBehavior === 'guide'
         ? t('workbench.guide_current_turn', '引导当前回复')
@@ -603,7 +603,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                           onSubmit(composerRef.current?.getValue() ?? value, {
                             interruptWhenBusy: true,
                           }),
-                        shortcut: 'Command+Shift+Enter',
+                        shortcut: 'mod+Shift+Enter',
                       },
                     ]}
                   />

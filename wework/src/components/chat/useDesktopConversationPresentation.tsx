@@ -1,4 +1,5 @@
 import type { VirtualMessageMeasurement } from '@wegent/collaboration/conversation'
+import type { TurnFileChangesSummary } from '@wegent/chat-core/runtime'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { useMemo } from 'react'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
@@ -8,11 +9,11 @@ import { composerSkillFilePath, parseComposerMentions } from './composer/compose
 function logVirtualMeasurement(details: VirtualMessageMeasurement) {
   console.info('[Wework] Streaming virtual message measured', details)
 }
-function renderVisualization(
+export function renderDesktopMessageVisualization(
   part: { file: string; mode?: 'wide'; title?: string },
-  message: WorkbenchMessage
+  fileChanges: TurnFileChangesSummary | undefined
 ) {
-  return <CodexInlineVisualizationHost {...part} fileChanges={message.fileChanges} />
+  return <CodexInlineVisualizationHost {...part} fileChanges={fileChanges} />
 }
 
 export type DesktopConversationPresentationProp =
@@ -40,6 +41,6 @@ export function useDesktopConversationPresentation(messages: WorkbenchMessage[] 
     useContentVisibility: !isElectronRuntime(),
     onVirtualMeasurement:
       import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' ? logVirtualMeasurement : undefined,
-    renderVisualization,
+    renderVisualization: renderDesktopMessageVisualization,
   }
 }

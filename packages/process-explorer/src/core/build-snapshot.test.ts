@@ -196,6 +196,40 @@ describe('process snapshot assembly', () => {
     expect([...collectDescendantPids(rows, [1])].sort()).toEqual([2, 3])
   })
 
+  it('names an unnamed utility process by its Chromium sub-type', () => {
+    const snapshot = buildProcessSnapshot({
+      capturedAt: 1,
+      platform: 'darwin',
+      applicationPid: 10,
+      metrics: [metric(12, 'Utility', { name: 'Weibo WeWork Helper', serviceName: '' })],
+      system: [
+        systemRow(12, 10, {
+          command:
+            '/Applications/Weibo WeWork Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en',
+        }),
+      ],
+    })
+    expect(snapshot.processes[0]?.name).toBe('Node Service')
+  })
+
+  it('keeps the service name Electron reports and the name when there is no sub-type', () => {
+    const named = buildProcessSnapshot({
+      capturedAt: 1,
+      platform: 'darwin',
+      applicationPid: 10,
+      metrics: [metric(12, 'Utility', { name: 'Network Service', serviceName: 'Network Service' })],
+      system: [systemRow(12, 10, { command: 'Helper --utility-sub-type=node.mojom.NodeService' })],
+    })
+    expect(named.processes[0]?.name).toBe('Network Service')
+    const unnamed = buildProcessSnapshot({
+      capturedAt: 1,
+      platform: 'darwin',
+      applicationPid: 10,
+      metrics: [metric(12, 'Utility', { name: 'Weibo WeWork Helper', serviceName: '' })],
+    })
+    expect(unnamed.processes[0]?.name).toBe('Weibo WeWork Helper')
+  })
+
   it('passes structured degradations through unchanged', () => {
     const degraded = [{ code: 'system-process-table-failed' as const, detail: 'timeout' }]
     const snapshot = buildProcessSnapshot({
