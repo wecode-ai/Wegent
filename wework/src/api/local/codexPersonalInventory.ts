@@ -89,7 +89,12 @@ export function withPersonalInventoryDetails(
     )
     if (!summary) return item
     const sourcePayload = { ...summary.spec.sourcePayload }
-    for (const key of ['cloudPluginId', 'cloudReleaseId', 'cloudInstalledPluginId']) {
+    for (const key of [
+      'cloudPluginId',
+      'cloudReleaseId',
+      'cloudInstalledPluginId',
+      'cloudAccountMismatch',
+    ]) {
       delete sourcePayload[key]
       if (item.spec.sourcePayload?.[key] !== undefined)
         sourcePayload[key] = item.spec.sourcePayload[key]

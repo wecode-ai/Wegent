@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  applyPluginCloudLinks,
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
   listLocalInstalledPluginsFromDisk,
@@ -12,6 +13,9 @@ import {
 import { resolveLocalPluginInventory } from '@/features/plugins/pluginInventorySources'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
 import { ExpiredPluginInventoryRequest } from './codexInstalledCatalog'
+import { withPersonalInventoryDetails } from './codexPersonalInventory'
+import { toInstalledPluginItem } from '@/components/plugins/installedPluginPresentation'
+import { findPackableCreatedPlugin } from '@/components/plugins/pluginOwnerLocalPackage'
 import {
   clearStoredCloudConnection,
   saveStoredCloudConnection,
@@ -899,12 +903,90 @@ describe('local plugin source isolation', () => {
           item => item.spec.source.pluginKey === 'personal-tool'
         )
         expect(plugin?.spec.sourcePayload?.cloudPluginId).toBe(expected)
+        expect(plugin?.spec.sourcePayload?.cloudAccountMismatch).toBe(
+          backendUrl && expected === undefined ? true : undefined
+        )
         expect(plugin?.spec.installState).toBe('installed')
       } finally {
         clearStoredCloudConnection()
       }
     }
   )
+
+  test('retains foreign publication ownership without linking its IDs or blocking offline edits', async () => {
+    const api = createLocalCodexPluginApi()
+    const original = mocks.request.getMockImplementation()!
+    let links = [accountLink(1, 17)]
+    mocks.bundled = { id: 'wework-personal', path: '/personal' }
+    mocks.request.mockImplementation(async (method, params) =>
+      method === 'executor.plugins.links.list' && !failures.has(method)
+        ? links
+        : original(method, params)
+    )
+    const readSource = async () => {
+      const inventory = await api.listInstalledPlugins({ requireComplete: true, refresh: true })
+      return inventory.items.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')!
+    }
+    const editable = (plugin: Awaited<ReturnType<typeof readSource>>) =>
+      findPackableCreatedPlugin([toInstalledPluginItem(plugin)], ['personal-tool']) !== null
+    try {
+      saveStoredCloudConnection(cloudSession(1))
+      const owner = await readSource()
+      expect(owner.spec.sourcePayload?.cloudPluginId).toBe(17)
+      expect(editable(owner)).toBe(true)
+
+      saveStoredCloudConnection(cloudSession(2))
+      const foreign = await readSource()
+      expect(foreign.spec.sourcePayload).toMatchObject({ cloudAccountMismatch: true })
+      for (const key of ['cloudPluginId', 'cloudReleaseId', 'cloudInstalledPluginId'])
+        expect(foreign.spec.sourcePayload?.[key]).toBeUndefined()
+      expect(editable(foreign)).toBe(false)
+      const [enrichedForeign] = withPersonalInventoryDetails([foreign], [owner])
+      expect(enrichedForeign.spec.sourcePayload?.cloudAccountMismatch).toBe(true)
+      expect(enrichedForeign.spec.sourcePayload?.cloudPluginId).toBeUndefined()
+      expect(editable(enrichedForeign)).toBe(false)
+      const [enrichedOwner] = withPersonalInventoryDetails([owner], [foreign])
+      expect(enrichedOwner.spec.sourcePayload?.cloudAccountMismatch).toBeUndefined()
+      expect(editable(enrichedOwner)).toBe(true)
+      failures.add('executor.plugins.links.list')
+      const partial = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      const retained = partial.installedPlugins.find(
+        plugin => plugin.spec.source.pluginKey === 'personal-tool'
+      )!
+      expect(partial.partial).toBe(true)
+      expect(retained.spec.sourcePayload?.cloudAccountMismatch).toBe(true)
+      expect(editable(retained)).toBe(false)
+      await expect(readSource()).rejects.toThrow('unavailable')
+      failures.clear()
+      // A known fresh ownership projection overrides the retained marker even
+      // when the caller retains unrelated incomplete catalog metadata.
+      const [cleared] = applyPluginCloudLinks([foreign], [], {
+        retainCachedDeviceId: mocks.deviceId,
+        mismatchedAccountPluginNames: new Set(),
+      })
+      expect(cleared.spec.sourcePayload?.cloudAccountMismatch).toBeUndefined()
+      expect(editable(cleared)).toBe(true)
+
+      saveStoredCloudConnection(cloudSession(1))
+      const restored = await readSource()
+      expect(restored.spec.sourcePayload?.cloudAccountMismatch).toBeUndefined()
+      expect(restored.spec.sourcePayload?.cloudPluginId).toBe(17)
+      expect(editable(restored)).toBe(true)
+      clearStoredCloudConnection()
+      const offline = await readSource()
+      expect(offline.spec.sourcePayload?.cloudAccountMismatch).toBeUndefined()
+      expect(offline.spec.sourcePayload?.cloudPluginId).toBeUndefined()
+      expect(editable(offline)).toBe(true)
+
+      saveStoredCloudConnection(cloudSession(2))
+      links = []
+      const unpublished = await readSource()
+      expect(unpublished.spec.sourcePayload?.cloudAccountMismatch).toBeUndefined()
+      expect(editable(unpublished)).toBe(true)
+    } finally {
+      clearStoredCloudConnection()
+    }
+  })
 
   test.each(['account', 'backend', 'signed-out'] as const)(
     'does not reuse a fresh cloud-link projection after switching %s',

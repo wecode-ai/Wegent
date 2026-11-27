@@ -266,7 +266,14 @@ export interface LocalPluginCloudLink {
   accountScope?: { backendUrl: string; userId: number } | null
 }
 
-async function readLocalPluginCloudLinks(marketplacePath: string): Promise<LocalPluginCloudLink[]> {
+interface ScopedLocalPluginCloudLinks {
+  links: LocalPluginCloudLink[]
+  mismatchedAccountPluginNames: ReadonlySet<string>
+}
+
+async function readLocalPluginCloudLinks(
+  marketplacePath: string
+): Promise<ScopedLocalPluginCloudLinks> {
   const cloudScope = readStoredPluginCloudScope()
   const links = await requestLocalExecutor<LocalPluginCloudLink[]>('executor.plugins.links.list', {
     marketplacePath,
@@ -286,7 +293,25 @@ async function readLocalPluginCloudLinks(marketplacePath: string): Promise<Local
         connection.backendUrl.replace(/\/+$/, '') &&
       link.accountScope.userId === connection.user.id
     )
-  return links.filter(link => matchesAccount(link) || (!connection && !link.accountScope))
+  const currentLinks = links.filter(
+    link => matchesAccount(link) || (!connection && !link.accountScope)
+  )
+  const currentNames = new Set(currentLinks.map(link => link.localPluginName))
+  return {
+    links: currentLinks,
+    mismatchedAccountPluginNames: new Set(
+      connection
+        ? links
+            .filter(
+              link =>
+                link.accountScope &&
+                !matchesAccount(link) &&
+                !currentNames.has(link.localPluginName)
+            )
+            .map(link => link.localPluginName)
+        : []
+    ),
+  }
 }
 
 export interface PluginIdentityReference {
@@ -1659,7 +1684,7 @@ async function resolvePersonalPluginSource(item: PluginMarketplaceItem, isCurren
   if (candidates?.length !== 1 || !isLocalMarketplacePath(candidates[0].pluginPath)) {
     throw new Error('Published plugin source is unavailable; refresh and retry')
   }
-  const links = await readLocalPluginCloudLinks(marketplacePath)
+  const { links } = await readLocalPluginCloudLinks(marketplacePath)
   requireCurrentPluginSourceScope(isCurrent)
   const linked = Array.isArray(links)
     ? links.filter(link => link.localPluginName === source.pluginName)
@@ -1964,9 +1989,9 @@ async function readDiskInstalledInventory(
       ? await readLocalPluginCloudLinks(personal.marketplacePath).catch(error => {
           if (options.requireComplete) throw error
           linksFailed = true
-          return [] as LocalPluginCloudLink[]
+          return null
         })
-      : []
+      : null
   if (cloudScope !== readStoredPluginCloudScope()) throw new ExpiredPluginInventoryRequest()
   // Other reads can update the catalog while these disk requests are in flight.
   const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
@@ -1997,9 +2022,10 @@ async function readDiskInstalledInventory(
     if (options.requireComplete) throw error
     if (storeResult.status === 'rejected' && !previous) throw error
   }
-  personalInstalled = applyPluginCloudLinks(personalInstalled, cloudLinks, {
+  personalInstalled = applyPluginCloudLinks(personalInstalled, cloudLinks?.links ?? [], {
     authoritative: Boolean(personal?.marketplacePath) && !options.skipCloudLinks,
     retainCachedDeviceId: linksFailed || options.skipCloudLinks ? deviceId : undefined,
+    mismatchedAccountPluginNames: cloudLinks?.mismatchedAccountPluginNames,
   })
   const storePlugins =
     storeResult.status === 'fulfilled'
@@ -2127,7 +2153,11 @@ function filterPluginItems(
 export function applyPluginCloudLinks(
   installedPlugins: InstalledPlugin[],
   cloudLinks: LocalPluginCloudLink[],
-  options: { authoritative?: boolean; retainCachedDeviceId?: string } = {}
+  options: {
+    authoritative?: boolean
+    retainCachedDeviceId?: string
+    mismatchedAccountPluginNames?: ReadonlySet<string>
+  } = {}
 ): InstalledPlugin[] {
   const previous =
     options.retainCachedDeviceId &&
@@ -2146,6 +2176,7 @@ export function applyPluginCloudLinks(
       (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
       plugin.spec.source.pluginKey
     const link = linksByPluginName.get(pluginName)
+    const accountMismatch = options.mismatchedAccountPluginNames?.has(pluginName) === true
     const payload = { ...sourcePayload }
     const retained = previous.find(
       item =>
@@ -2153,7 +2184,12 @@ export function applyPluginCloudLinks(
         item.spec.source.pluginKey === plugin.spec.source.pluginKey
     )?.spec.sourcePayload
     if (options.authoritative !== false || options.retainCachedDeviceId) {
-      for (const key of ['cloudPluginId', 'cloudReleaseId', 'cloudInstalledPluginId']) {
+      for (const key of [
+        'cloudPluginId',
+        'cloudReleaseId',
+        'cloudInstalledPluginId',
+        'cloudAccountMismatch',
+      ]) {
         if (
           !(
             key === 'cloudInstalledPluginId' &&
@@ -2162,9 +2198,15 @@ export function applyPluginCloudLinks(
           )
         )
           delete payload[key]
-        if (retained?.[key] !== undefined) payload[key] = retained[key]
+        if (!accountMismatch && retained?.[key] !== undefined) payload[key] = retained[key]
       }
     }
+    if (accountMismatch) {
+      for (const key of ['cloudPluginId', 'cloudReleaseId', 'cloudInstalledPluginId'])
+        delete payload[key]
+      payload.cloudAccountMismatch = true
+    } else if (link || options.mismatchedAccountPluginNames !== undefined)
+      delete payload.cloudAccountMismatch
     return {
       ...plugin,
       spec: {
@@ -2610,9 +2652,9 @@ async function loadReadStateSnapshot(
   const cloudLinks = personalMarketplace?.path
     ? await readLocalPluginCloudLinks(personalMarketplace.path).catch(() => {
         partial = linksFailed = true
-        return [] as LocalPluginCloudLink[]
+        return null
       })
-    : []
+    : null
   await verifyInstalledReadCurrent(scope)
   // Codex owns native marketplace membership; owned personal and store packages
   // come from the independent disk sources in the same live read.
@@ -2620,11 +2662,12 @@ async function loadReadStateSnapshot(
   const cloudLinkOptions = {
     authoritative: Boolean(personalMarketplace?.path),
     retainCachedDeviceId: catalogFailed || linksFailed ? deviceId : undefined,
+    mismatchedAccountPluginNames: cloudLinks?.mismatchedAccountPluginNames,
   }
   const installedPlugins = mergeLocalInstalledWithStorePackages(
     applyPluginCloudLinks(
       codexAndPersonalInstallations(installedSources),
-      cloudLinks,
+      cloudLinks?.links ?? [],
       cloudLinkOptions
     ),
     installedSources?.store ?? []
@@ -2640,7 +2683,7 @@ async function loadReadStateSnapshot(
     if (result?.items)
       sourceReads[source] = {
         ...result,
-        items: applyPluginCloudLinks(result.items, cloudLinks, cloudLinkOptions),
+        items: applyPluginCloudLinks(result.items, cloudLinks?.links ?? [], cloudLinkOptions),
       }
   }
   const marketplaceItems = applyLocalCatalogMembership(availableMarketplaceItems, installedPlugins)
