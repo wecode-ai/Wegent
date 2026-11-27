@@ -46,11 +46,13 @@ export function createStandInInstanceSource({
   api,
   userId,
   backendUrl,
+  requireSetupConfirmation = true,
 }: {
   services: WorkbenchServices
   api: StandInExecutorApi | undefined
   userId: number
   backendUrl: string
+  requireSetupConfirmation?: boolean
 }) {
   let snapshot: InstanceSnapshot = { localDeviceId: '', busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -155,7 +157,9 @@ export function createStandInInstanceSource({
       if (binding.status === 'unbound' && !snapshot.setupTarget) {
         publishBinding(binding)
         const setupTarget = await discoverSetupTarget(identity.deviceId, owner)
-        if (current()) publish({ setupTarget, error: null })
+        if (!current()) return
+        publish({ setupTarget, error: null })
+        if (!requireSetupConfirmation) await mutate('setup', {})
         return
       }
       if (

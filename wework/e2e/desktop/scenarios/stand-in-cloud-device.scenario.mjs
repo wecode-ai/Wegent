@@ -386,6 +386,9 @@ export function createDesktopScenario({
       const localDevice = localIdentity.deviceId
       const remoteHome = dirname(cloud.remoteCodexHome)
       await ensureExperimentalFeaturesEnabled(control)
+      await control.command('setAppPreferences', 'body', {
+        value: JSON.stringify({ collaborationExperienceEnabled: true }),
+      })
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId('stand-in-onboarding-setup'))
       const beforeSetup = await binding(control)
@@ -416,6 +419,10 @@ export function createDesktopScenario({
         })
       const initialAssistant = (await readInitialAssistant()).assistant
       assert.equal(initialAssistant.definitions[0].roleId, '@primary')
+      await control.command('setAppPreferences', 'body', {
+        value: JSON.stringify({ collaborationExperienceEnabled: false }),
+      })
+      await control.command('waitFor', testId('stand-in-overview'), { visible: true })
       const executionDevice = testId('personal-assistant-execution-device')
       async function openExecutionSettings() {
         await openStandInDetails(control)

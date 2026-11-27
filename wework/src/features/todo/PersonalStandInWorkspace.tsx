@@ -143,7 +143,8 @@ function AccountStandInWorkspace({
     !!cloud?.isConnected,
     active,
     backendUrl,
-    refreshKey
+    refreshKey,
+    experienceEnabled
   )
   const { binding, setupTarget, localDeviceId, busy } = instance
   const target = binding?.target

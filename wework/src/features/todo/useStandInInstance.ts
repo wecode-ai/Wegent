@@ -12,12 +12,14 @@ export function useStandInInstance(
   connected: boolean,
   active: boolean,
   backendUrl = '',
-  entryRequestKey?: number
+  entryRequestKey?: number,
+  requireSetupConfirmation = true
 ) {
   const api = services.standInApi
   const source = useMemo(
-    () => createStandInInstanceSource({ services, api, userId, backendUrl }),
-    [services, api, userId, backendUrl]
+    () =>
+      createStandInInstanceSource({ services, api, userId, backendUrl, requireSetupConfirmation }),
+    [services, api, userId, backendUrl, requireSetupConfirmation]
   )
   const subscribe = useCallback(
     (listener: () => void) =>
