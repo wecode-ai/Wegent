@@ -155,22 +155,49 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   await execute('xdotool', args, { encoding: 'utf8', timeout: 3_000 })
   if (clickButton !== undefined) {
     try {
-      const { stdout } = await execute(
-        'xdotool',
-        ['getactivewindow', 'getmouselocation', '--shell'],
-        { encoding: 'utf8', timeout: 1_000 }
-      )
+      console.info('[desktop-e2e-native-click]', {
+        ...(await inspectLinuxPointer(windowId)),
+        x,
+        y,
+        clickButton,
+      })
+    } catch (error) {
       console.info('[desktop-e2e-native-click]', {
         windowId,
         x,
         y,
         clickButton,
-        state: stdout.trim(),
+        error: String(error),
       })
-    } catch (error) {
-      console.info('[desktop-e2e-native-click]', { windowId, x, y, clickButton, error: String(error) })
     }
   }
+}
+
+export async function inspectLinuxPointer(windowId) {
+  const [{ stdout: activeWindow }, { stdout: location }] = await Promise.all([
+    execute('xdotool', ['getactivewindow'], { encoding: 'utf8', timeout: 1_000 }),
+    execute('xdotool', ['getmouselocation', '--shell'], { encoding: 'utf8', timeout: 1_000 }),
+  ])
+  return {
+    windowId,
+    activeWindow: activeWindow.trim(),
+    state: location.trim(),
+    capturedAt: new Date().toISOString(),
+  }
+}
+
+export async function pressLinuxPointer(button = 1) {
+  await execute('xdotool', ['mousedown', '--clearmodifiers', String(button)], {
+    encoding: 'utf8',
+    timeout: 3_000,
+  })
+}
+
+export async function releaseLinuxPointer(button = 1) {
+  await execute('xdotool', ['mouseup', '--clearmodifiers', String(button)], {
+    encoding: 'utf8',
+    timeout: 3_000,
+  })
 }
 
 export async function clickLinuxPointer(button = 1) {

@@ -11,7 +11,10 @@ import {
 import {
   activateLinuxMainWindow,
   clickLinuxPointer,
+  inspectLinuxPointer,
   moveLinuxWindowPointer,
+  pressLinuxPointer,
+  releaseLinuxPointer,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -165,13 +168,22 @@ async function verifySearchOverlay(
       const rect = button.getBoundingClientRect()
       return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
     })()`)
+  const waitForSearchFocus = () =>
+    waitForValue(
+      () =>
+        read(`document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`),
+      focused => focused,
+      'Opening search must focus its input',
+      5_000
+    )
   if (linuxWindow) {
+    let pointerSnapshot
     // A native move can reach the host while Chromium still routes the next press to the guest.
     // Observe real motion on the search button before sending the only click.
     try {
       await read(`(() => {
         const abort = new AbortController()
-        const observation = { abort, event: null }
+        const observation = { abort, event: null, presses: [], trigger: document.querySelector('[data-testid="runtime-search-button"]') }
         window.__weworkSearchTriggerMotion = observation
         document.addEventListener('pointermove', event => {
           observation.event = {
@@ -180,6 +192,18 @@ async function verifySearchOverlay(
             onTrigger: event.target instanceof Element && Boolean(event.target.closest('[data-testid="runtime-search-button"]'))
           }
         }, { capture: true, signal: abort.signal })
+        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'click']) {
+          window.addEventListener(type, event => {
+            const target = event.target instanceof Element ? event.target : null
+            observation.presses.push({ type, at: performance.now(), x: event.clientX, y: event.clientY,
+              trusted: event.isTrusted, target: target && (target.dataset.testid || target.localName),
+              buttons: event.buttons, button: event.button, prevented: event.defaultPrevented,
+              triggerConnected: observation.trigger?.isConnected,
+              sameTrigger: target?.closest('[data-testid="runtime-search-button"]') === observation.trigger,
+              onTrigger: Boolean(target?.closest('[data-testid="runtime-search-button"]')) })
+            if (observation.presses.length > 24) observation.presses.shift()
+          }, { capture: true, signal: abort.signal })
+        }
         return true
       })()`)
       let offset = 1
@@ -208,8 +232,60 @@ async function verifySearchOverlay(
         5_000
       )
       console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
-      await pressAndRelease(ready.point)
+      let pressError
+      try {
+        await pressLinuxPointer()
+        await waitForValue(
+          () => read('window.__weworkSearchTriggerMotion.presses'),
+          events =>
+            events.some(
+              event =>
+                event.type === 'pointerdown' &&
+                event.trusted &&
+                event.onTrigger &&
+                event.x === ready.point.x &&
+                event.y === ready.point.y
+            ),
+          'The native press must reach the search trigger before release',
+          1_000
+        )
+      } catch (error) {
+        pressError = error
+        throw error
+      } finally {
+        await releaseLinuxPointer().catch(error => {
+          if (!pressError) throw error
+          console.info('[search-trigger-native-input]', { releaseError: String(error) })
+        })
+      }
+      pointerSnapshot = inspectLinuxPointer(linuxWindow).catch(error => ({ error: String(error) }))
+      await waitForSearchFocus()
     } finally {
+      try {
+        const dom = await read(`(() => {
+          const observation = window.__weworkSearchTriggerMotion
+          const button = document.querySelector('[data-testid="runtime-search-button"]')
+          const input = document.querySelector('[data-testid="workbench-search-input"]')
+          const point = observation?.event
+          const hit = point && document.elementFromPoint(point.x, point.y)
+          const style = button && getComputedStyle(button)
+          return { event: observation?.event, presses: observation?.presses,
+            focused: document.hasFocus(), active: document.activeElement?.getAttribute('data-testid') || document.activeElement?.localName,
+            searchPresent: Boolean(input), searchFocused: Boolean(input && input === document.activeElement),
+            triggerChanged: Boolean(observation && button !== observation.trigger), triggerConnected: observation?.trigger?.isConnected,
+            hit: hit && (hit.dataset.testid || hit.localName), hitOnTrigger: Boolean(hit?.closest('[data-testid="runtime-search-button"]')),
+            trigger: button && { disabled: button.disabled, appRegion: style.webkitAppRegion,
+              pointerEvents: style.pointerEvents, bounds: button.getBoundingClientRect().toJSON() } }
+        })()`)
+        const snapshot = { dom, native: (await pointerSnapshot) ?? null }
+        await writeFile(
+          join(resultDir, 'search-trigger-native-input.json'),
+          JSON.stringify(snapshot, null, 2)
+        )
+        console.info('[search-trigger-native-input]', JSON.stringify(snapshot))
+      } catch (error) {
+        console.info('[search-trigger-native-input]', { captureError: String(error) })
+      }
       await read(`(() => {
         window.__weworkSearchTriggerMotion?.abort.abort()
         delete window.__weworkSearchTriggerMotion
@@ -219,12 +295,7 @@ async function verifySearchOverlay(
   } else {
     await click(trigger)
   }
-  await waitForValue(
-    () => read(`document.activeElement === document.querySelector(${JSON.stringify(searchInput)})`),
-    focused => focused,
-    'Opening search must focus its input',
-    5_000
-  )
+  if (!linuxWindow) await waitForSearchFocus()
   const focus = await inspectDialog?.()
   const overlap = await read(`(() => {
       const close = document.querySelector(${JSON.stringify(searchCloseButton)}).getBoundingClientRect()
