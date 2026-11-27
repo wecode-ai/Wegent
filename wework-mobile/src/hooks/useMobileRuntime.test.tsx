@@ -938,6 +938,30 @@ describe('creating a conversation on the only computer', () => {
     expect(state.error).toBeNull()
   })
 
+  it('preserves a background execution when a later goal send is rejected', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    await act(() => state.openConversation(state.conversations[0]!))
+    const address = state.currentAddress!
+    const key = JSON.stringify([address.deviceId, address.taskId])
+    const goal = deferred<{ accepted: boolean }>()
+    mocks.setGoal.mockReturnValue(goal.promise)
+    mocks.sendMessage.mockRejectedValue(new Error('send failed'))
+    let send!: Promise<boolean>
+    await act(() => {
+      send = state.send('继续', { pursueGoal: true })
+    })
+    const [lifecycleListener] = mocks.lifecycleSubscribe.mock.calls.at(-1)!
+    await act(() => lifecycleListener(address, { name: 'runtime.task.status', payload: {} }))
+    await act(async () => {
+      goal.resolve({ accepted: true })
+      expect(await send).toBe(false)
+    })
+
+    expect(state.taskRunningByKey.get(key)).toBe(true)
+    expect(takeMobileTaskOutcome(address)).toBeNull()
+  })
+
   it('surfaces locally revoked consent from the existing task creation interface', async () => {
     mocks.create.mockRejectedValue(new Error('Local switch is off'))
     await mount()

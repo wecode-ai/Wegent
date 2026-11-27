@@ -720,9 +720,13 @@ export function useMobileRuntime(
         return true
       } catch (cause) {
         if (sendTransition && lifecycle.sendRejected(sendTransition)) {
-          recordMobileTaskOutcome(sendTransition.address, 'runtime.task.failed')
-          lifecycle.executorStopped(sendTransition.address)
-          publishTaskLifecycle()
+          if (sendTransition.previousRunning !== true) {
+            recordMobileTaskOutcome(sendTransition.address, 'runtime.task.failed')
+            if (!sendTransition.hadPreviousRunning) {
+              lifecycle.executorStopped(sendTransition.address)
+            }
+            publishTaskLifecycle()
+          }
         }
         if (
           sendTransition &&
