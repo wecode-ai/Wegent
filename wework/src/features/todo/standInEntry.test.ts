@@ -32,6 +32,27 @@ function resolve(query: string, api = fixture(), devices = ['remote']) {
 }
 
 describe('stand-in entry links', () => {
+  it('preserves an open settings target during inventory refresh and still rejects a removed device', async () => {
+    const api = fixture()
+    const route = '/stand-in?deviceId=remote&profileId=reviewer&settingsRequest=1'
+    const { result, rerender } = renderHook(
+      ({ devices }) => useStandInEntry(route, api, binding, devices, true),
+      { initialProps: { devices: new Set(['remote', 'other']) } }
+    )
+    const authorized = { kind: 'ready', deviceId: 'remote', profileId: 'reviewer' }
+    await waitFor(() => expect(result.current.result).toEqual(authorized))
+    rerender({ devices: new Set(['other', 'remote']) })
+    expect(result.current.result).toEqual(authorized)
+    expect(api.personalGet).toHaveBeenCalledTimes(1)
+
+    rerender({ devices: new Set(['other']) })
+    expect(result.current.result).toBeUndefined()
+    await waitFor(() =>
+      expect(result.current.result).toEqual({ kind: 'error', error: 'forbidden' })
+    )
+    expect(api.personalGet).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the verified settings target mounted while returning to the same tab', async () => {
     const api = fixture()
     const devices = new Set(['remote'])

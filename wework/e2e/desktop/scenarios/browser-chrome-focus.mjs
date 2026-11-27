@@ -10,8 +10,8 @@ import {
 } from '../modules/focus-paint.mjs'
 import {
   activateLinuxMainWindow,
-  clickLinuxPointer,
   moveLinuxWindowPointer,
+  sendLinuxPointerButton,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -119,11 +119,10 @@ async function verifySearchOverlay(
     linuxWindow
       ? moveLinuxWindowPointer(linuxWindow, point)
       : command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-  const pressAndRelease = point => (linuxWindow ? clickLinuxPointer() : clickPoint(command, point))
   const click = async point => {
     if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point, 1)
     await movePointer(point)
-    await pressAndRelease(point)
+    await clickPoint(command, point)
   }
   const pagePath = join(resultDir, 'search-overlay-page.html')
   await writeFile(
@@ -171,15 +170,22 @@ async function verifySearchOverlay(
     try {
       await read(`(() => {
         const abort = new AbortController()
-        const observation = { abort, event: null }
+        const observation = { abort, event: null, down: false, up: false }
         window.__weworkSearchTriggerMotion = observation
+        const onTrigger = event =>
+          event.target instanceof Element && Boolean(event.target.closest('[data-testid="runtime-search-button"]'))
         document.addEventListener('pointermove', event => {
           observation.event = {
             sequence: (observation.event?.sequence ?? 0) + 1,
             x: event.clientX, y: event.clientY, trusted: event.isTrusted,
-            onTrigger: event.target instanceof Element && Boolean(event.target.closest('[data-testid="runtime-search-button"]'))
+            onTrigger: onTrigger(event)
           }
         }, { capture: true, signal: abort.signal })
+        for (const phase of ['down', 'up']) {
+          document.addEventListener('pointer' + phase, event => {
+            if (event.isTrusted && event.button === 0 && onTrigger(event)) observation[phase] = true
+          }, { capture: true, signal: abort.signal })
+        }
         return true
       })()`)
       let offset = 1
@@ -208,7 +214,23 @@ async function verifySearchOverlay(
         5_000
       )
       console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
-      await pressAndRelease(ready.point)
+      try {
+        await sendLinuxPointerButton('down')
+        await waitForValue(
+          () => read('window.__weworkSearchTriggerMotion.down'),
+          Boolean,
+          'Native pointer down must reach the search trigger before release',
+          5_000
+        )
+      } finally {
+        await sendLinuxPointerButton('up')
+      }
+      await waitForValue(
+        () => read('window.__weworkSearchTriggerMotion.up'),
+        Boolean,
+        'Native pointer up must reach the search trigger',
+        5_000
+      )
     } finally {
       await read(`(() => {
         window.__weworkSearchTriggerMotion?.abort.abort()
