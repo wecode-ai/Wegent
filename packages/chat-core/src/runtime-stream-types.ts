@@ -179,6 +179,7 @@ export interface RuntimeSubagentActivityPayload {
 export interface RuntimeSupervisorEventPayload {
   deviceId?: string;
   taskId?: string;
+  task?: import("./runtime-task-api-types").RuntimeTaskSummary;
   supervisor: RuntimeSupervisorState | null;
 }
 

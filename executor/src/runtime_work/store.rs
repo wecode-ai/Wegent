@@ -365,6 +365,7 @@ impl PersistedRuntimeTask {
         if let Some(execution) = execution {
             execution.restore(&mut task);
         }
+        task.restore_legacy_supervisor_review();
         task
     }
 
@@ -408,6 +409,7 @@ impl PersistedRuntimeTask {
         } else if task.status == "archived" {
             task.status = "active".to_owned();
         }
+        task.restore_legacy_supervisor_review();
     }
 }
 

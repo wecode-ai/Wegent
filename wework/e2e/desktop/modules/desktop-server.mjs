@@ -723,6 +723,10 @@ class DesktopE2EServer {
     this.supervisorInitialRelease = new Promise(resolvePromise => {
       this.releaseSupervisorInitial = resolvePromise
     })
+    this.supervisorReviewGates = {
+      initial: Promise.withResolvers(),
+      final: Promise.withResolvers(),
+    }
     this.supervisorCorrectionStarted = new Promise(resolvePromise => {
       this.resolveSupervisorCorrectionStarted = resolvePromise
     })
@@ -1204,6 +1208,10 @@ class DesktopE2EServer {
 
   releaseSupervisorInitialResponse() {
     this.releaseSupervisorInitial()
+  }
+
+  releaseSupervisorReview(stage) {
+    this.supervisorReviewGates[stage].resolve()
   }
 
   awaitSupervisorCorrectionResponseStarted() {
@@ -2066,10 +2074,14 @@ class DesktopE2EServer {
         headers: request.headers,
         pathname: url.pathname,
       })
+      const reviewedCorrection = requestText.includes(SUPERVISOR_CORRECTION_COMPLETION_TEXT)
+      await this.supervisorReviewGates[reviewedCorrection ? 'final' : 'initial'].promise
       json(response, 200, {
         output_text: JSON.stringify({
-          correction: SUPERVISOR_CORRECTION,
-          rationale: 'The completed reply should restate the original constraint.',
+          correction: reviewedCorrection ? null : SUPERVISOR_CORRECTION,
+          rationale: reviewedCorrection
+            ? 'The corrected reply satisfies the constraint.'
+            : 'The completed reply should restate the original constraint.',
         }),
         model: CLOUD_PUBLIC_MODEL_NAME,
         created_at: '2026-08-12T00:00:00Z',
@@ -4490,11 +4502,11 @@ class DesktopE2EServer {
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(
-        createSse([responseCreated(responseId), assistantMessage(SUPERVISOR_COMPLETION_TEXT)])
-      )
+      response.write(createSse([responseCreated(responseId)]))
       await this.supervisorInitialRelease
-      response.end(createSse([responseCompleted(responseId)]))
+      response.end(
+        createSse([assistantMessage(SUPERVISOR_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
       return
     }
 

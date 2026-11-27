@@ -304,6 +304,8 @@ Open the composer's **+** menu in a new Codex conversation or an existing Codex 
 - **Suggest** shows a correction above the composer for you to approve or dismiss.
 - **Auto-correct** steers an active response when a clear deviation is found, or starts a normal follow-up just as if you had sent the instruction from the composer.
 
+With auto-correct enabled, a background task sends its completion notification after the supervisor confirms that its latest response needs no correction. If the supervisor starts a follow-up, the notification waits for that response and its review.
+
 Supervision settings belong to the current task. Select an independent review model and a review frequency of 10 seconds, 30 seconds, 1 minute, or 5 minutes. Wework remembers the most recently saved review model and frequency on the current device and restores them when supervision is configured for a new task. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task.
 
 After supervision starts, the right-side **Environment** panel shows its status and the next scheduled review time. Select **Review now** to inspect the current progress immediately. The action is temporarily disabled while a review is already running so the task cannot start concurrent supervisor checks.

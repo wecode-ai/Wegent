@@ -2594,6 +2594,58 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
   })
 
+  test('reports auto-supervised completion after the final turn review, even after reload', () => {
+    const running = (turnId: string, revision: string) =>
+      task({
+        running: true,
+        snapshotRevision: revision,
+        executionState: {
+          revision,
+          phase: 'running',
+          turnId,
+          latestTurnId: turnId,
+          outcome: null,
+        },
+      })
+    const awaitingReview = (turnId: string, revision: string) =>
+      task({
+        snapshotRevision: revision,
+        executionState: {
+          revision,
+          phase: 'idle',
+          turnId: null,
+          latestTurnId: turnId,
+          outcome: 'succeeded',
+        },
+        supervisorCompletionPending: true,
+      })
+    const store = new RuntimeTaskLifecycleStore('supervisor-completion')
+    store.syncRuntimeTask(address, running('first', '1'))
+    store.syncRuntimeTask(address, awaitingReview('first', '2'))
+    expect(store.getSnapshot().unreadTaskKeys.size).toBe(0)
+
+    store.syncRuntimeTask(address, running('correction', '3'))
+    const correction = awaitingReview('correction', '4')
+    store.syncRuntimeTask(address, correction)
+    expect(store.getSnapshot().unreadTaskKeys.size).toBe(0)
+
+    const restored = new RuntimeTaskLifecycleStore('supervisor-completion')
+    restored.syncRuntimeTask(address, correction)
+    restored.syncRuntimeTask(address, {
+      ...awaitingReview('first', '2'),
+      supervisorCompletionPending: false,
+    })
+    expect(restored.getSnapshot().unreadTaskKeys.size).toBe(0)
+
+    const reviewed = { ...correction, snapshotRevision: '5', supervisorCompletionPending: false }
+    restored.syncRuntimeTask(address, reviewed)
+    expect(restored.getSnapshot().unreadTaskKeys.size).toBe(1)
+
+    restored.markRead(address)
+    restored.syncRuntimeTask(address, reviewed)
+    expect(restored.getSnapshot().unreadTaskKeys.size).toBe(0)
+  })
+
   test('does not let a stale active executor snapshot overwrite Goal completion', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))

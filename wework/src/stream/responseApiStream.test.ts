@@ -232,6 +232,28 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('carries the task snapshot on supervisor review updates', () => {
+    const onRuntimeSupervisorUpdated = vi.fn()
+    const task = {
+      taskId: 'task-1',
+      snapshotRevision: '3',
+      supervisorCompletionPending: false,
+    }
+
+    emitResponseApiEvent(
+      { onRuntimeSupervisorUpdated },
+      'runtime.supervisor.updated',
+      { taskId: 'task-1', data: { task } },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeSupervisorUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      supervisor: null,
+      task,
+    })
+  })
+
   test('carries a generated supervisor user message on response start', () => {
     const onChatStart = vi.fn()
 

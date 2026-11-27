@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::runtime_work::response::{RuntimeSupervisorState, RuntimeSupervisorSuggestion};
+use crate::runtime_work::response::{
+    local_task_json, RuntimeSupervisorCompletionReview, RuntimeSupervisorState,
+    RuntimeSupervisorSuggestion,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -201,6 +204,8 @@ impl RuntimeWorkRpcHandler {
             .supervisor
             .clone()
             .ok_or_else(|| "supervisor is disabled".to_owned())?;
+        let completion_id = link.supervisor_completion_id();
+        let snapshot_at = now_ms();
         let parent_thread_id = runtime_session_id_from_link(&link)
             .ok_or_else(|| "runtime task session is not ready".to_owned())?;
         let thread = self
@@ -210,54 +215,45 @@ impl RuntimeWorkRpcHandler {
                 CodexTranscriptDirection::Descending,
             )
             .await?;
-        let current_configuration = self
-            .local_task_link(local_task_id)
-            .and_then(|task| task.supervisor);
-        if !current_configuration.as_ref().is_some_and(|current| {
-            current.mode == supervisor.mode
-                && current.instructions == supervisor.instructions
-                && current.model_selection == supervisor.model_selection
-                && current.interval_seconds == supervisor.interval_seconds
-        }) {
-            return Ok(());
-        }
-        let Some(visible_ai_progress) =
-            visible_ai_progress(transcript_messages(&thread, &self.device_id))?
-        else {
-            self.store.update_task(local_task_id, |task| {
-                let Some(current) = task.supervisor.as_mut() else {
-                    return;
-                };
-                current.last_evaluated_at = Some(now_ms());
-                current.last_content_hash = Some(empty_content_hash());
-                current.last_error = None;
-                current.status = "active".to_owned();
-            });
-            self.emit_supervisor_updated(local_task_id);
+        let messages = transcript_messages(&thread, &self.device_id);
+        validate_supervisor_completion_transcript(completion_id.as_deref(), &thread, &messages)?;
+        let Some(visible_ai_progress) = visible_ai_progress(messages)? else {
+            if completion_id.is_some() {
+                return Err("completed turn has no visible output for supervision".to_owned());
+            }
+            if self.record_supervisor_evaluation(&link, snapshot_at, empty_content_hash(), None) {
+                self.emit_supervisor_updated(local_task_id);
+            }
             return Ok(());
         };
         let content_hash = content_hash(&visible_ai_progress);
-        if should_skip_unchanged_content(&supervisor, &content_hash, force) {
-            self.store.update_task(local_task_id, |task| {
-                let Some(current) = task.supervisor.as_mut() else {
-                    return;
-                };
-                current.last_evaluated_at = Some(now_ms());
-                current.last_error = None;
-                current.status = "active".to_owned();
-            });
-            self.emit_supervisor_updated(local_task_id);
+        let needs_completion_review = completion_id
+            .as_deref()
+            .is_some_and(|id| supervisor.reviewed_completion(id).is_none());
+        if should_skip_unchanged_content(
+            &supervisor,
+            &content_hash,
+            force || needs_completion_review,
+        ) {
+            if self.record_supervisor_evaluation(&link, snapshot_at, content_hash, None) {
+                self.emit_supervisor_updated(local_task_id);
+            }
             return Ok(());
         }
-        let snapshot_at = now_ms();
-        self.store.update_task(local_task_id, |task| {
-            let Some(current) = task.supervisor.as_mut() else {
-                return;
-            };
-            current.status = "checking".to_owned();
-            current.last_error = None;
-            task.updated_at = now_ms();
-        });
+        let mut reviewing = false;
+        self.store
+            .update_task_without_snapshot(local_task_id, |task| {
+                let Some(current) = matching_supervisor(task, &link) else {
+                    return;
+                };
+                current.status = "checking".to_owned();
+                current.last_error = None;
+                task.updated_at = now_ms();
+                reviewing = true;
+            });
+        if !reviewing {
+            return Ok(());
+        }
         self.emit_supervisor_updated(local_task_id);
         let visible_progress = json!({
             "task": {
@@ -283,43 +279,29 @@ impl RuntimeWorkRpcHandler {
                 supervisor_prompt(&supervisor, &visible_progress),
             )
             .await?;
-        let evaluation = parse_supervisor_evaluation(&content)?;
-        let Some(current_supervisor) = self
-            .local_task_link(local_task_id)
-            .and_then(|task| task.supervisor)
-        else {
-            return Ok(());
-        };
-        if current_supervisor.mode != supervisor.mode
-            || current_supervisor.instructions != supervisor.instructions
-            || current_supervisor.model_selection != supervisor.model_selection
-            || current_supervisor.interval_seconds != supervisor.interval_seconds
-        {
-            return Ok(());
-        }
-        self.store.update_task(local_task_id, |task| {
-            let Some(current) = task.supervisor.as_mut() else {
-                return;
-            };
-            current.last_evaluated_at = Some(snapshot_at);
-            current.last_content_hash = Some(content_hash.clone());
-            current.last_error = None;
-            current.status = "active".to_owned();
-        });
-        let Some(correction) = evaluation
+        let evaluation = parse_supervisor_evaluation(&content, completion_id.is_some())?;
+        let correction = evaluation
             .correction
             .as_deref()
             .map(str::trim)
-            .filter(|correction| !correction.is_empty())
-        else {
+            .filter(|correction| !correction.is_empty());
+        if !self.record_supervisor_evaluation(
+            &link,
+            snapshot_at,
+            content_hash,
+            Some(correction.is_none()),
+        ) {
+            return Ok(());
+        }
+        let Some(correction) = correction else {
             self.emit_supervisor_updated(local_task_id);
             return Ok(());
         };
-        if recently_sent_same_correction(&current_supervisor, correction, now_ms()) {
+        if recently_sent_same_correction(&supervisor, correction, now_ms()) {
             self.emit_supervisor_updated(local_task_id);
             return Ok(());
         }
-        match current_supervisor.mode.as_str() {
+        match supervisor.mode.as_str() {
             "auto" => {
                 self.send_supervisor_correction(local_task_id, &link, correction)
                     .await?;
@@ -339,6 +321,27 @@ impl RuntimeWorkRpcHandler {
             mode => return Err(format!("unsupported supervisor mode: {mode}")),
         }
         Ok(())
+    }
+
+    fn record_supervisor_evaluation(
+        &self,
+        evaluated: &RuntimeTaskLink,
+        snapshot_at: i64,
+        content_hash: String,
+        approval: Option<bool>,
+    ) -> bool {
+        let mut recorded = false;
+        self.store
+            .update_task_without_snapshot(&evaluated.local_task_id, |task| {
+                recorded = apply_supervisor_evaluation(
+                    task,
+                    evaluated,
+                    snapshot_at,
+                    content_hash,
+                    approval,
+                );
+            });
+        recorded
     }
 
     pub(super) fn configure_supervisor_model(
@@ -627,14 +630,11 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn emit_supervisor_updated(&self, local_task_id: &str) {
-        let Some(link) = self.local_task_link(local_task_id) else {
+        let Some(link) = self.store.get_task_summary(local_task_id) else {
             return;
         };
-        let mut request = ExecutionRequest {
-            task_id: local_task_id.to_owned(),
-            subtask_id: format!("supervisor-state-{}", now_ms()),
-            ..ExecutionRequest::default()
-        };
+        let mut request = runtime_event_request_from_link(&link);
+        request.subtask_id = format!("supervisor-state-{}", now_ms());
         request.device_id = Some(self.device_id.clone());
         emit_response_event(
             &self.event_tx,
@@ -642,9 +642,75 @@ impl RuntimeWorkRpcHandler {
             "runtime.supervisor.updated",
             local_task_id,
             &request,
-            json!({"supervisor": link.supervisor}),
+            json!({"supervisor": link.supervisor.clone(), "task": local_task_json(link)}),
         );
     }
+}
+
+fn matching_supervisor<'a>(
+    task: &'a mut RuntimeTaskLink,
+    evaluated: &RuntimeTaskLink,
+) -> Option<&'a mut RuntimeSupervisorState> {
+    let original = evaluated.supervisor.as_ref()?;
+    if task.thread_id != evaluated.thread_id
+        || evaluated
+            .supervisor_completion_id()
+            .is_some_and(|completion_id| task.supervisor_completion_id() != Some(completion_id))
+    {
+        return None;
+    }
+    task.supervisor.as_mut().filter(|current| {
+        current.mode == original.mode
+            && current.instructions == original.instructions
+            && current.model_selection == original.model_selection
+            && current.interval_seconds == original.interval_seconds
+    })
+}
+
+fn validate_supervisor_completion_transcript(
+    completion_id: Option<&str>,
+    thread: &Value,
+    messages: &[Value],
+) -> Result<(), String> {
+    if let Some(turn_id) = completion_id.and_then(|id| id.strip_prefix("turn:")) {
+        let completed_turn_visible = thread["turns"].as_array().is_some_and(|turns| {
+            turns
+                .iter()
+                .any(|turn| turn["id"] == turn_id && turn["status"] == "completed")
+        });
+        let latest_reply_matches = messages
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "assistant")
+            .is_some_and(|message| message["turnId"] == turn_id);
+        if !completed_turn_visible || !latest_reply_matches {
+            return Err("completed turn is not ready for supervision".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn apply_supervisor_evaluation(
+    task: &mut RuntimeTaskLink,
+    evaluated: &RuntimeTaskLink,
+    snapshot_at: i64,
+    content_hash: String,
+    approval: Option<bool>,
+) -> bool {
+    let Some(supervisor) = matching_supervisor(task, evaluated) else {
+        return false;
+    };
+    supervisor.last_evaluated_at = Some(snapshot_at);
+    supervisor.last_content_hash = Some(content_hash);
+    supervisor.last_error = None;
+    supervisor.status = "active".to_owned();
+    if let Some((completion_id, approved)) = evaluated.supervisor_completion_id().zip(approval) {
+        supervisor.completion_review = Some(RuntimeSupervisorCompletionReview::Reviewed {
+            completion_id,
+            approved,
+        });
+    }
+    true
 }
 
 fn supervisor_correction_request(
@@ -721,6 +787,7 @@ pub(super) fn configured_supervisor(
         last_evaluated_at: None,
         last_content_hash: None,
         last_error: None,
+        completion_review: None,
         suggestions: existing
             .map(|supervisor| supervisor.suggestions)
             .unwrap_or_default(),
@@ -736,7 +803,10 @@ struct SupervisorEvaluation {
     rationale: String,
 }
 
-fn parse_supervisor_evaluation(content: &str) -> Result<SupervisorEvaluation, String> {
+fn parse_supervisor_evaluation(
+    content: &str,
+    final_review: bool,
+) -> Result<SupervisorEvaluation, String> {
     let trimmed = content.trim();
     let json_text = trimmed
         .strip_prefix("```json")
@@ -745,8 +815,21 @@ fn parse_supervisor_evaluation(content: &str) -> Result<SupervisorEvaluation, St
         .strip_suffix("```")
         .unwrap_or(trimmed)
         .trim();
-    serde_json::from_str(json_text)
-        .map_err(|error| format!("invalid supervisor evaluation: {error}"))
+    let value: Value = serde_json::from_str(json_text)
+        .map_err(|error| format!("invalid supervisor evaluation: {error}"))?;
+    if final_review
+        && !value.get("correction").is_some_and(|decision| {
+            decision.is_null()
+                || decision
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty())
+        })
+    {
+        return Err(
+            "invalid supervisor evaluation: final review requires a correction decision".to_owned(),
+        );
+    }
+    serde_json::from_value(value).map_err(|error| format!("invalid supervisor evaluation: {error}"))
 }
 
 fn supervisor_system_prompt() -> String {
@@ -859,6 +942,15 @@ fn supervisor_needs_scheduled_check(link: &RuntimeTaskLink, active: bool, now: i
     };
     let interval_elapsed = now.saturating_sub(last_evaluated_at)
         >= i64::try_from(supervisor.interval_seconds).unwrap_or(i64::MAX) * 1_000;
+    if let Some(completion_id) = link.supervisor_completion_id().filter(|_| !active) {
+        if supervisor.last_error.is_some() {
+            return interval_elapsed
+                || link
+                    .completed_at
+                    .is_some_and(|completed_at| completed_at > last_evaluated_at);
+        }
+        return supervisor.reviewed_completion(&completion_id).is_none();
+    }
     if !active
         && link
             .completed_at
@@ -1065,6 +1157,7 @@ mod tests {
                 last_evaluated_at: Some(100),
                 last_content_hash: Some("old".to_owned()),
                 last_error: None,
+                completion_review: None,
                 suggestions: Vec::new(),
             }),
             ..RuntimeTaskLink::default()
@@ -1085,6 +1178,7 @@ mod tests {
                 last_evaluated_at: Some(1_000),
                 last_content_hash: None,
                 last_error: Some("model unavailable".to_owned()),
+                completion_review: None,
                 suggestions: Vec::new(),
             }),
             ..RuntimeTaskLink::default()
@@ -1107,6 +1201,7 @@ mod tests {
                 last_evaluated_at: Some(1_000),
                 last_content_hash: None,
                 last_error: Some("transcript was not ready".to_owned()),
+                completion_review: None,
                 suggestions: Vec::new(),
             }),
             ..RuntimeTaskLink::default()
@@ -1128,6 +1223,7 @@ mod tests {
                 last_evaluated_at: Some(1_000),
                 last_content_hash: None,
                 last_error: Some("transcript was not ready".to_owned()),
+                completion_review: None,
                 suggestions: Vec::new(),
             }),
             ..RuntimeTaskLink::default()
@@ -1147,6 +1243,7 @@ mod tests {
             last_evaluated_at: Some(100),
             last_content_hash: Some("hash".to_owned()),
             last_error: None,
+            completion_review: None,
             suggestions: vec![RuntimeSupervisorSuggestion {
                 id: "suggestion-1".to_owned(),
                 message: "Use Japanese".to_owned(),
@@ -1163,5 +1260,211 @@ mod tests {
             "Use Japanese",
             2_000
         ));
+    }
+
+    fn completed_supervised_task() -> RuntimeTaskLink {
+        let supervisor = serde_json::from_value(json!({
+            "mode": "auto",
+            "status": "active",
+            "instructions": "",
+            "lastEvaluatedAt": 100,
+            "lastContentHash": "unchanged",
+            "suggestions": [],
+            "completionReview": null,
+        }))
+        .unwrap();
+        RuntimeTaskLink {
+            local_task_id: "task".to_owned(),
+            thread_id: Some("thread".to_owned()),
+            status: "done".to_owned(),
+            completed_at: Some(200),
+            runtime_handle: json!({"lastTurnId": "first"}),
+            supervisor: Some(supervisor),
+            ..RuntimeTaskLink::default()
+        }
+    }
+
+    #[test]
+    fn only_an_affirmative_review_of_the_current_completion_releases_the_notification() {
+        let mut task = completed_supervised_task();
+        let first = task.clone();
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            true
+        );
+        assert!(supervisor_needs_scheduled_check(&task, false, 200));
+
+        assert!(apply_supervisor_evaluation(
+            &mut task,
+            &first,
+            300,
+            "unchanged".to_owned(),
+            Some(false),
+        ));
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            true
+        );
+        assert!(!supervisor_needs_scheduled_check(&task, false, 301));
+
+        task.runtime_handle["lastTurnId"] = json!("second");
+        task.completed_at = Some(400);
+        assert!(!apply_supervisor_evaluation(
+            &mut task,
+            &first,
+            410,
+            "unchanged".to_owned(),
+            Some(true),
+        ));
+        assert!(supervisor_needs_scheduled_check(&task, false, 410));
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            true
+        );
+        let second = task.clone();
+        assert!(apply_supervisor_evaluation(
+            &mut task,
+            &second,
+            420,
+            "unchanged".to_owned(),
+            Some(true),
+        ));
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            false
+        );
+        assert!(!supervisor_needs_scheduled_check(&task, false, 421));
+    }
+
+    #[test]
+    fn active_turn_review_and_supervisor_errors_leave_final_completion_pending() {
+        let mut task = completed_supervised_task();
+        let mut active = task.clone();
+        active.running = true;
+        assert!(apply_supervisor_evaluation(
+            &mut task,
+            &active,
+            300,
+            "unchanged".to_owned(),
+            Some(true),
+        ));
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            true
+        );
+        assert!(supervisor_needs_scheduled_check(&task, false, 301));
+
+        let supervisor = task.supervisor.as_mut().unwrap();
+        supervisor.last_error = Some("model unavailable".to_owned());
+        supervisor.last_content_hash = None;
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            true
+        );
+        assert!(!supervisor_needs_scheduled_check(&task, false, 30_299));
+        assert!(supervisor_needs_scheduled_check(&task, false, 30_300));
+    }
+
+    #[test]
+    fn suggested_supervision_and_non_successful_execution_do_not_gate_notifications() {
+        let mut task = completed_supervised_task();
+        for status in ["failed", "cancelled", "running"] {
+            task.status = status.to_owned();
+            assert_eq!(
+                local_task_json(task.clone())["supervisorCompletionPending"],
+                false
+            );
+        }
+        task.status = "done".to_owned();
+        task.supervisor.as_mut().unwrap().mode = "suggest".to_owned();
+        assert_eq!(local_task_json(task)["supervisorCompletionPending"], false);
+    }
+
+    #[test]
+    fn final_review_requires_the_completed_turn_and_an_explicit_decision() {
+        let thread = json!({"turns": [{"id": "first", "status": "completed"}]});
+        let messages = [json!({"role": "assistant", "turnId": "first"})];
+        assert!(
+            validate_supervisor_completion_transcript(Some("turn:first"), &thread, &messages)
+                .is_ok()
+        );
+        assert!(
+            validate_supervisor_completion_transcript(Some("turn:first"), &thread, &[]).is_err()
+        );
+        assert!(
+            validate_supervisor_completion_transcript(Some("turn:second"), &thread, &messages)
+                .is_err()
+        );
+        assert!(parse_supervisor_evaluation(r#"{"rationale":"Looks good"}"#, true).is_err());
+        assert!(parse_supervisor_evaluation(r#"{"rationale":"Looks good"}"#, false).is_ok());
+        assert!(parse_supervisor_evaluation(r#"{"correction":" "}"#, true).is_err());
+        assert!(parse_supervisor_evaluation(r#"{"correction":null}"#, true)
+            .unwrap()
+            .correction
+            .is_none());
+    }
+
+    #[test]
+    fn restoring_a_preexisting_checked_completion_does_not_reopen_supervision() {
+        let mut task = completed_supervised_task();
+        let mut supervisor = serde_json::to_value(task.supervisor.take().unwrap()).unwrap();
+        supervisor
+            .as_object_mut()
+            .unwrap()
+            .remove("completionReview");
+        supervisor["lastEvaluatedAt"] = json!(200);
+        task.supervisor = Some(serde_json::from_value(supervisor).unwrap());
+        task.restore_legacy_supervisor_review();
+        assert!(!supervisor_needs_scheduled_check(&task, false, 200));
+        assert_eq!(
+            local_task_json(task.clone())["supervisorCompletionPending"],
+            false
+        );
+
+        task.runtime_handle["lastTurnId"] = json!("second");
+        assert!(supervisor_needs_scheduled_check(&task, false, 200));
+        assert_eq!(local_task_json(task)["supervisorCompletionPending"], true);
+    }
+
+    #[test]
+    fn review_update_publishes_and_persists_the_new_task_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let index_path = directory.path().join("index.json");
+        let (events, mut receiver) = broadcast::channel(16);
+        let mut handler = RuntimeWorkRpcHandler::with_event_sender("device", "/bin/false", events);
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        handler.store.upsert_task(completed_supervised_task());
+        let task = handler.store.get_task("task").unwrap();
+        let before: u64 = task.snapshot_revision.as_deref().unwrap().parse().unwrap();
+
+        assert!(handler.record_supervisor_evaluation(
+            &task,
+            300,
+            "reviewed".to_owned(),
+            Some(true)
+        ));
+        handler.emit_supervisor_updated("task");
+
+        let event = receiver.try_recv().unwrap();
+        assert_eq!(event["event"], "runtime.supervisor.updated");
+        let snapshot = &event["payload"]["data"]["task"];
+        assert_eq!(snapshot["supervisorCompletionPending"], false);
+        let after: u64 = snapshot["snapshotRevision"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(after > before);
+
+        let restored = RuntimeWorkStore::new(index_path).get_task("task").unwrap();
+        assert_eq!(restored.status, "done");
+        assert_eq!(
+            restored.snapshot_revision.as_deref(),
+            snapshot["snapshotRevision"].as_str()
+        );
+        assert_eq!(
+            local_task_json(restored)["supervisorCompletionPending"],
+            false
+        );
     }
 }
