@@ -8,6 +8,9 @@ const CONTENTS = {
   windowLabel: 'process-explorer',
   testIds: ['process-explorer-window', 'process-explorer-row-42'],
   text: 'CPU 1.5% Uptime 10s',
+  visibility: 'visible',
+  summary: 'CPU 1.5% · Memory 120 MB · 3 processes',
+  rows: [{ pid: 42, exited: false, uptime: '10s' }],
   layout: { viewportWidth: 720, tableClientWidth: 700, tableScrollWidth: 700 },
 }
 

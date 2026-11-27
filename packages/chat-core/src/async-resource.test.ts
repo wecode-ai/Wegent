@@ -338,6 +338,37 @@ test('revalidates a changed external version while retaining the matching cache'
   currentVersion()
 })
 
+test('suspends automatic refresh while refreshEnabled is false and resumes after a reload', async () => {
+  vi.useFakeTimers()
+  try {
+    let enabled = false
+    const load = vi.fn().mockResolvedValue('value')
+    const resource = createAsyncResource<string>('hidden', load, {
+      refreshIntervalMs: 3000,
+      refreshIntervalMode: 'after-settle',
+      refreshEnabled: () => enabled,
+    })
+    const stop = resource.subscribe(vi.fn())
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+
+    enabled = true
+    await resource.reload()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(load).toHaveBeenCalledTimes(3)
+
+    // Hiding before the scheduled refresh fires cancels that automatic read.
+    enabled = false
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(load).toHaveBeenCalledTimes(3)
+    expect(vi.getTimerCount()).toBe(0)
+    stop()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 test('a local receipt restarts after-settle polling when it supersedes an unfinished read', async () => {
   vi.useFakeTimers()
   try {

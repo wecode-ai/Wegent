@@ -125,6 +125,7 @@
     "always_on_top": "置顶",
     "always_on_top_active": "取消置顶",
     "resize_column_hint": "拖动调整列宽，双击恢复默认",
+    "exited": "已退出",
     "copy_launch_details": "复制启动详情",
     "copied": "已复制",
     "summary_memory": "内存 {{memory}}",
