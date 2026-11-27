@@ -242,7 +242,7 @@ export function personalNativeMatrix({
       }
     }
     await control.command('navigate', 'body', {
-      value: '/stand-in?deviceId=' + encodeURIComponent(deviceId),
+      value: '/stand-in?view=messages',
     })
     await control.command(
       'clickWhenEnabled',
