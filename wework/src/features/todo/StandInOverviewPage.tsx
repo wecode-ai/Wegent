@@ -491,27 +491,24 @@ export function StandInOverviewPage({
     (resolvedProposal.proposal.roleId ?? undefined) === roleId
       ? resolvedProposal
       : null
-  const proposalCard =
-    currentProposal && saved ? (
-      <StandInProposalCard
-        proposal={currentProposal}
-        projects={props.projects}
-        current={saved}
-        busy={resolving}
-        onResolve={applyProposal}
-        api={active ? api : undefined}
-        deviceId={deviceId}
-      />
-    ) : currentResult ? (
-      <StandInProposalCard
-        proposal={currentResult.proposal}
-        projects={props.projects}
-        current={currentResult.previous}
-        result={currentResult.result}
-        busy={false}
-        onResolve={applyProposal}
-      />
-    ) : null
+  const visibleProposal =
+    currentProposal && saved
+      ? { proposal: currentProposal, current: saved }
+      : currentResult && {
+          proposal: currentResult.proposal,
+          current: currentResult.previous,
+          result: currentResult.result,
+        }
+  const proposalCard = visibleProposal && (
+    <StandInProposalCard
+      {...visibleProposal}
+      projects={props.projects}
+      busy={resolving}
+      onResolve={applyProposal}
+      api={active ? api : undefined}
+      deviceId={deviceId}
+    />
+  )
   const proposalFailure = proposalFailureMessage && (
     <p role="alert" className="mb-3 text-sm text-error">
       {proposalFailureMessage}
