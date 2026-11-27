@@ -283,10 +283,7 @@ async function readLocalPluginCloudLinks(marketplacePath: string): Promise<Local
         connection.backendUrl.replace(/\/+$/, '') &&
       link.accountScope.userId === connection.user.id
     )
-  const scopedNames = new Set(links.filter(matchesAccount).map(link => link.localPluginName))
-  return links.filter(
-    link => matchesAccount(link) || (!link.accountScope && !scopedNames.has(link.localPluginName))
-  )
+  return links.filter(link => matchesAccount(link) || (!connection && !link.accountScope))
 }
 
 export interface PluginIdentityReference {

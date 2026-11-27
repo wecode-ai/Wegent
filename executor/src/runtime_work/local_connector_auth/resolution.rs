@@ -22,11 +22,11 @@ pub(super) fn resolve_request(
             }
         }
         let client = CodexAppServerClient::new(crate::agents::resolve_codex_binary());
-        let installed = client
-            .request("plugin/installed", json!({"cwds": []}))
+        let configuration = client
+            .request("config/read", json!({"includeLayers": false}))
             .await
             .map_err(|_| unavailable("Cannot read the active Codex plugin installation"))?;
-        resolve_installed_request(payload, &installed, &crate::agents::wework_codex_home())
+        resolve_registered_request(payload, &configuration, &crate::agents::wework_codex_home())
     })
 }
 
@@ -48,46 +48,53 @@ fn request_identity(payload: &Value) -> Result<(String, Option<String>), AppIpcE
     Ok((plugin_key, marketplace))
 }
 
-pub(super) fn resolve_installed_request(
+pub(super) fn resolve_registered_request(
     payload: &Value,
-    installed: &Value,
+    configuration: &Value,
     codex_home: &Path,
 ) -> Result<(PathBuf, LocalAuthSpec), AppIpcError> {
     let (plugin_key, marketplace) = request_identity(payload)?;
-    let marketplaces = installed["marketplaces"]
-        .as_array()
-        .ok_or_else(|| unavailable("Invalid Codex plugin installation inventory"))?;
-    let mut matches = marketplaces
-        .iter()
-        .filter(|market| {
-            marketplace
+    let mut selected = None;
+    for (id, entry) in configuration["config"]["plugins"]
+        .as_object()
+        .into_iter()
+        .flatten()
+    {
+        let Some((name, market)) = id.rsplit_once('@') else {
+            continue;
+        };
+        if name != plugin_key
+            || !entry.is_object()
+            || !native_cache_segment(market)
+            || marketplace
                 .as_ref()
-                .map_or(true, |id| market["name"] == *id)
-        })
-        .flat_map(|market| {
-            market["plugins"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(move |plugin| (market, plugin))
-        })
-        .filter(|(_, plugin)| plugin["name"] == plugin_key && plugin["installed"] == true);
-    let (market, plugin) = matches
-        .next()
-        .ok_or_else(|| unavailable("The requested plugin is not currently installed"))?;
-    if matches.next().is_some() {
-        return Err(unavailable(
-            "The plugin installation is ambiguous; select its marketplace",
-        ));
+                .is_some_and(|requested| market != requested)
+        {
+            continue;
+        }
+        let Some(root) = crate::local::plugin_cache::read_active_codex_plugin_root(
+            codex_home,
+            market,
+            &plugin_key,
+        )
+        .map_err(|_| unavailable("Cannot read the active Codex plugin installation"))?
+        else {
+            continue;
+        };
+        if selected.replace((root, market)).is_some() {
+            return Err(unavailable(
+                "The plugin installation is ambiguous; select its marketplace",
+            ));
+        }
     }
-    let source = json!({"marketplaceId": market["name"]});
-    let root = super::super::connection_cli::dependency_root(plugin, &source, codex_home)?;
+    let (root, market) =
+        selected.ok_or_else(|| unavailable("The requested plugin is not currently installed"))?;
     selected_auth(
         &root,
         &plugin_key,
         payload,
-        "installed_inventory",
-        market["name"].as_str(),
+        "installed_configuration",
+        Some(market),
     )
 }
 

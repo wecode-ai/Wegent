@@ -271,6 +271,20 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         'clickWhenEnabled',
         '[role="menuitem"][data-testid^="plugin-detail-sync-account-"]'
       )
+      await until(
+        async () => JSON.parse(await readFile(source.registryPath, 'utf8')).cloudLinks,
+        links =>
+          links.some(
+            link =>
+              link.localPluginName === name &&
+              link.cloudPluginId === Number(listing.id) &&
+              link.accountScope?.userId === listing.ownerUserId &&
+              link.accountScope?.backendUrl.replace(/\/+$/, '') ===
+                cloud.backendUrl.replace(/\/+$/, '')
+          ),
+        'Sync to current account did not repair the author source account scope'
+      )
+      await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
       await refreshPluginInventory(control)
       source = await snapshotPersonalSource(control, listing)
       assert.deepEqual(source.files, originalFiles, 'Account relinking changed the author source')

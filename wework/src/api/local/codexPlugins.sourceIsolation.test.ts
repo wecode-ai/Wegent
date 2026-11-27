@@ -840,6 +840,7 @@ describe('local plugin source isolation', () => {
     ['https://another.example', 1, undefined, false],
     ['https://plugins.example', 2, undefined, false],
     ['https://plugins.example', 1, 9, true],
+    [undefined, undefined, undefined, true],
   ])(
     'isolates personal links for backend %s and account %s',
     async (backendUrl, userId, expected, legacyAfter) => {
@@ -859,7 +860,7 @@ describe('local plugin source isolation', () => {
                 localPluginName: 'personal-tool',
                 cloudPluginId: 9,
                 cloudReleaseId: 8,
-                accountScope: { backendUrl, userId },
+                ...(backendUrl && userId ? { accountScope: { backendUrl, userId } } : {}),
               },
               ...(legacyAfter
                 ? [{ localPluginName: 'personal-tool', cloudPluginId: 99, cloudReleaseId: 98 }]

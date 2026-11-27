@@ -10,6 +10,7 @@ import {
   createLocalCodexPluginApi,
   peekLocalCodexPluginsReadState,
 } from './codexPlugins'
+import { verifyReconciledPluginInventory } from '@/features/plugins/pluginRefreshReconciliation'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), personalPath: '' }))
 
@@ -105,6 +106,51 @@ beforeEach(() => {
 })
 
 describe('installed plugin detail identity', () => {
+  test.each([true, false])(
+    'keeps native author enabled state separate from cloud intent %s',
+    cloudEnabled => {
+      const plugin = toWegentStoreInstalledPlugin(
+        {
+          packageId: '75-tianhe-direct-1.0.0',
+          name: membership.name,
+          marketplace: personal.name,
+          version: '1.0.0',
+          enabled: cloudEnabled,
+          pluginPath: '/executor/store/package',
+          installedPluginId: 75,
+          materialization: 'author_source',
+          authorSource: {
+            source_path: '/executor/personal/plugins/tianhe-direct',
+            installed: true,
+            enabled: !cloudEnabled,
+            version: '1.1.0',
+          },
+        },
+        '/executor/store',
+        key => key
+      )
+      const cloud = managedPersonalPackage()
+      cloud.metadata.labels = { id: 75 }
+      cloud.spec.sourcePayload = null
+      cloud.spec.enabled = cloudEnabled
+
+      expect(plugin.spec.enabled).toBe(!cloudEnabled)
+      expect(plugin.spec.version).toBe('1.1.0')
+      expect(plugin.status.state).toBe(cloudEnabled ? 'disabled' : 'enabled')
+      expect(plugin.spec.sourcePayload?.cloudEnabled).toBe(cloudEnabled)
+      expect(() => verifyReconciledPluginInventory([cloud], [plugin])).not.toThrow()
+
+      plugin.spec.sourcePayload!.cloudEnabled = !cloudEnabled
+      expect(() => verifyReconciledPluginInventory([cloud], [plugin])).toThrow(
+        'Managed plugin installation was not confirmed on this device'
+      )
+      delete plugin.spec.sourcePayload!.cloudEnabled
+      expect(() => verifyReconciledPluginInventory([cloud], [plugin])).toThrow(
+        'Managed plugin installation was not confirmed on this device'
+      )
+    }
+  )
+
   test('keeps managed personal packages market-owned when expanding detail', async () => {
     const plugin = managedPersonalPackage()
     const detailed = await createLocalCodexPluginApi().readInstalledPluginDetail(plugin)

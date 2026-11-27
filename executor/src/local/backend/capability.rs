@@ -23,6 +23,51 @@ use crate::{
 
 use super::LocalBackendConfig;
 
+pub(super) async fn probe_account_capabilities(
+    backend_url: &str,
+    auth_token: &str,
+    instance: &str,
+) -> Result<(Value, i64), String> {
+    let response = crate::agents::backend_url::backend_http_client()
+        .map_err(|_| "plugin_local_http_unavailable".to_owned())?
+        .post(format!(
+            "{}/api/plugins/local-sync",
+            backend_url.trim_end_matches('/')
+        ))
+        .bearer_auth(auth_token)
+        .json(&json!({"protocolVersion":1,"instanceId":instance,"probeOnly":true}))
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|_| "plugin_local_http_unavailable".to_owned())?;
+    let status = response.status();
+    if status.as_u16() == 404 {
+        return Err("plugin_local_sync_unsupported".to_owned());
+    }
+    let capabilities = response
+        .json::<Value>()
+        .await
+        .map_err(|_| "plugin_local_invalid_response".to_owned())?;
+    if !status.is_success() {
+        return Err(capabilities["detail"]
+            .as_str()
+            .unwrap_or("plugin_local_http_failed")
+            .to_owned());
+    }
+    let account = authenticated_account_id(&capabilities).map_err(str::to_owned)?;
+    Ok((capabilities, account))
+}
+
+fn authenticated_account_id(capabilities: &Value) -> Result<i64, &'static str> {
+    if capabilities["protocolVersion"] != 1 || capabilities["contractRevision"] != 3 {
+        return Err("plugin_local_sync_unsupported");
+    }
+    capabilities["accountId"]
+        .as_i64()
+        .filter(|id| *id > 0)
+        .ok_or("plugin_local_invalid_response")
+}
+
 pub trait CapabilityReportProvider: Send + Sync + 'static {
     fn build_report(&self) -> Value;
 }

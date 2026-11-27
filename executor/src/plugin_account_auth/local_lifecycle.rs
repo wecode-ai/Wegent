@@ -178,7 +178,6 @@ fn installed_id_at_in_scope(
         let runtime_matches =
             !package_matches && registered_runtime(entry, codex_plugins).as_ref() == Some(&root);
         let author_matches = !package_matches
-            && !runtime_matches
             && author_source_matches(
                 path,
                 shared_plugins,
@@ -189,6 +188,9 @@ fn installed_id_at_in_scope(
                 slug,
             )?;
         if !package_matches && !runtime_matches && !author_matches {
+            continue;
+        }
+        if author_matches && entry["enabled"] != true {
             continue;
         }
         if entry["managed"] != true {
@@ -254,6 +256,10 @@ fn author_source_matches(
     });
     if source["installed"] != true || !owns_root {
         return Ok(false);
+    }
+    // A disabled account link cannot publish credentials; ownership still permits local auth.
+    if entry["enabled"] != true {
+        return Ok(true);
     }
     let capabilities = manifest
         .parent()
@@ -407,6 +413,7 @@ mod tests {
         .unwrap();
         entry["name"] = json!("mail");
         entry["marketplace"] = json!("wework-personal");
+        entry["version"] = json!("0.1.10");
         entry["cloud_plugin_id"] = json!(7);
         entry["materialization"] = json!("author_source");
         entry["account_scope"] = scope.clone();
@@ -421,6 +428,22 @@ mod tests {
                 Ok(Some(42))
             );
         }
+        entry["enabled"] = json!(false);
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            for revoking in [false, true] {
+                assert_eq!(
+                    installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", revoking),
+                    Ok(None)
+                );
+            }
+        }
+        assert_eq!(
+            installed_id_at(&manifest, &shared, &codex_plugins, &trusted, "mail", false),
+            Err(AuthError("plugin_auth_invalid_package"))
+        );
+        entry["enabled"] = json!(true);
+        write_entry(&entry);
         let package = super::super::PreparedPackage {
             installed_plugin_id: 42,
             connector_slug: "mail".into(),
@@ -520,6 +543,24 @@ mod tests {
             ),
             Err(AuthError("plugin_auth_definition_mismatch"))
         );
+        entry["enabled"] = json!(false);
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            for revoking in [false, true] {
+                assert_eq!(
+                    installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", revoking),
+                    Ok(None)
+                );
+            }
+        }
+        entry["enabled"] = json!(true);
+        write_entry(&entry);
+        for root in [&source, &runtime] {
+            assert_eq!(
+                installed_id_at(&manifest, &shared, &codex_plugins, root, "mail", false),
+                Err(AuthError("plugin_auth_definition_mismatch"))
+            );
+        }
         entry["cloud_plugin_id"] = json!(8);
         write_entry(&entry);
         assert_eq!(

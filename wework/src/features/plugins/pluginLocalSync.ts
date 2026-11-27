@@ -252,7 +252,9 @@ export function createLocalFirstPluginApi(
     if (response.result?.scope !== 'plugin_delta') completed.clear()
     for (const item of response.result?.plugins ?? []) {
       if (item.status === 'synced') completed.set(String(item.id), item)
-      else if (item.status === 'removed') completed.delete(String(item.id))
+      else if (item.status === 'removed' || item.status === 'source_preserved') {
+        completed.delete(String(item.id))
+      }
     }
     return response
   }

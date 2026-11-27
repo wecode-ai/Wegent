@@ -524,11 +524,8 @@ fn normalize_ok_status() {
     assert_eq!(result.get("rawStatus").and_then(Value::as_str), Some("ok"));
 }
 
-fn active_plugin_inventory(version: &str) -> Value {
-    json!({"marketplaces":[{"name":"wework-personal","plugins":[{
-        "id":"demo@wework-personal","name":"demo","installed":true,
-        "enabled":true,"localVersion":version
-    }]}]})
+fn active_plugin_configuration() -> Value {
+    json!({"config":{"plugins":{"demo@wework-personal":{"enabled":true}}}})
 }
 
 fn write_auth_plugin(root: &Path, auth: bool) {
@@ -557,14 +554,17 @@ fn resolve_plugin_root_uses_current_installation_including_downgrades() {
     let payload =
         json!({"pluginKey":"demo","marketplaceId":"wework-personal","connectorSlug":"account"});
     for current in ["0.1.10", "0.1.9"] {
-        let (root, spec) = resolution::resolve_installed_request(
+        let (root, spec) = resolution::resolve_registered_request(
             &payload,
-            &active_plugin_inventory(current),
+            &active_plugin_configuration(),
             home.path(),
         )
         .unwrap();
         assert_eq!(root, cache.join(current).canonicalize().unwrap());
         assert_eq!(spec.connector_slug, "account");
+        if current == "0.1.10" {
+            fs::remove_dir_all(cache.join(current)).unwrap();
+        }
     }
 }
 
@@ -576,9 +576,9 @@ fn current_installation_without_auth_cannot_use_a_retained_package() {
     write_auth_plugin(&cache.join("0.1.10"), false);
     let payload =
         json!({"pluginKey":"demo","marketplaceId":"wework-personal","connectorSlug":"account"});
-    let result = resolution::resolve_installed_request(
+    let result = resolution::resolve_registered_request(
         &payload,
-        &active_plugin_inventory("0.1.10"),
+        &active_plugin_configuration(),
         home.path(),
     );
     assert_eq!(result.unwrap_err().code, "local_auth_missing");
@@ -587,16 +587,13 @@ fn current_installation_without_auth_cannot_use_a_retained_package() {
 #[test]
 fn current_local_source_and_disabled_installation_remain_manageable() {
     let home = tempfile::tempdir().unwrap();
-    let source = home.path().join("author-source");
+    let source = home.path().join("plugins/cache/wework-personal/demo/local");
     write_auth_plugin(&source, true);
-    let mut inventory = active_plugin_inventory("0.1.10");
-    let plugin = &mut inventory["marketplaces"][0]["plugins"][0];
-    plugin["enabled"] = json!(false);
-    plugin["localVersion"] = Value::Null;
-    plugin["source"] = json!({"type":"local","path":source});
+    let mut configuration = active_plugin_configuration();
+    configuration["config"]["plugins"]["demo@wework-personal"]["enabled"] = json!(false);
     let payload = json!({"pluginKey":"demo","marketplaceId":"wework-personal"});
     let (root, _) =
-        resolution::resolve_installed_request(&payload, &inventory, home.path()).unwrap();
+        resolution::resolve_registered_request(&payload, &configuration, home.path()).unwrap();
     assert_eq!(root, source.canonicalize().unwrap());
     let mut manifest: Value =
         serde_json::from_slice(&fs::read(source.join(".codex-plugin/plugin.json")).unwrap())
@@ -607,25 +604,33 @@ fn current_local_source_and_disabled_installation_remain_manageable() {
         manifest.to_string(),
     )
     .unwrap();
-    let mut displayed = inventory.clone();
-    displayed["marketplaces"][0]["plugins"][0]["name"] = json!("demo-tool");
-    assert!(resolution::resolve_installed_request(
+    let mut displayed =
+        json!({"config":{"plugins":{"demo-tool@wework-personal":{"enabled":false}}}});
+    let displayed_cache = home.path().join("plugins/cache/wework-personal/demo-tool");
+    fs::create_dir_all(&displayed_cache).unwrap();
+    fs::rename(&source, displayed_cache.join("local")).unwrap();
+    assert!(resolution::resolve_registered_request(
         &json!({"pluginKey":"demo-tool"}),
         &displayed,
         home.path()
     )
     .is_ok());
-    inventory["marketplaces"][0]["plugins"][0]["installed"] = json!(false);
-    assert!(resolution::resolve_installed_request(&payload, &inventory, home.path()).is_err());
+    displayed["config"]["plugins"] = json!({});
+    assert!(resolution::resolve_registered_request(
+        &json!({"pluginKey":"demo-tool"}),
+        &displayed,
+        home.path()
+    )
+    .is_err());
 }
 
 #[test]
 fn reject_unsafe_plugin_key() {
     for key in ["../escape", "/tmp/evil"] {
         let payload = json!({"pluginKey":key,"marketplaceId":"wework-personal"});
-        let result = resolution::resolve_installed_request(
+        let result = resolution::resolve_registered_request(
             &payload,
-            &active_plugin_inventory("0.1.10"),
+            &active_plugin_configuration(),
             Path::new("/unused"),
         );
         assert_eq!(result.unwrap_err().code, "bad_request");

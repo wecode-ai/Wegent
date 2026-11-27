@@ -166,7 +166,7 @@ async fn verify_personal_source_completion(context: &Context<'_>) -> anyhow::Res
     context
         .mysql
         .execute(
-            "INSERT INTO plugins (id,slug,name,owner_user_id,visibility,keywords_json,interface_json) VALUES (991001,'source-completion','source-completion',81001,'personal',JSON_ARRAY(),JSON_OBJECT())",
+            "INSERT INTO plugins (id,slug,name,owner_user_id,visibility,keywords_json,interface_json,created_at,updated_at) VALUES (991001,'source-completion','source-completion',81001,'personal',JSON_ARRAY(),JSON_OBJECT(),NOW(),NOW())",
             (),
         )
         .await?;

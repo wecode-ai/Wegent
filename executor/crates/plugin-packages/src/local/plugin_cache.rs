@@ -32,30 +32,14 @@ pub(super) fn preferred_native_version(candidate: &str, selected: &str) -> bool 
     if candidate == "local" {
         return true;
     }
-    match (
-        comparable_native_version(candidate),
-        comparable_native_version(selected),
-    ) {
-        (Some(candidate_version), Some(selected_version)) => candidate_version
-            .cmp(&selected_version)
-            .then_with(|| candidate.cmp(selected))
-            .is_gt(),
-        (Some(_), None) => true,
-        (None, Some(_)) => false,
-        (None, None) => candidate > selected,
-    }
+    compare_native_versions(candidate, selected).is_gt()
 }
 
-fn comparable_native_version(value: &str) -> Option<semver::Version> {
-    let version = value.strip_prefix('v').unwrap_or(value);
-    let core_end = version.find(['-', '+']).unwrap_or(version.len());
-    let (core, suffix) = version.split_at(core_end);
-    let normalized = if core.split('.').count() == 2 {
-        format!("{core}.0{suffix}")
-    } else {
-        version.to_owned()
-    };
-    semver::Version::parse(&normalized).ok()
+fn compare_native_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    match (semver::Version::parse(left), semver::Version::parse(right)) {
+        (Ok(left), Ok(right)) => left.cmp(&right),
+        _ => left.cmp(right),
+    }
 }
 
 pub fn read_codex_marketplace_cache(
@@ -78,7 +62,7 @@ pub fn read_codex_marketplace_cache(
                 continue;
             }
             let package = if kind.is_dir() {
-                selected_codex_package(&entry.path(), &name)?
+                selected_codex_package(&entry.path(), marketplace, &name)?
             } else {
                 None
             };
@@ -99,8 +83,24 @@ pub fn read_codex_plugin_cache(
     else {
         return Ok(None);
     };
-    selected_codex_package(&directory, name)
+    selected_codex_package(&directory, marketplace, name)
         .map_err(|error| format!("Failed to read Codex plugin cache: {error}"))
+}
+
+/// Resolve Codex's active directory after the caller verifies configuration membership.
+/// Package validation must not select a different, inactive version on failure.
+pub fn read_active_codex_plugin_root(
+    codex_home: &Path,
+    marketplace: &str,
+    name: &str,
+) -> Result<Option<PathBuf>, String> {
+    let Some(directory) =
+        native_cache_directory(codex_home, &["plugins", "cache", marketplace, name])?
+    else {
+        return Ok(None);
+    };
+    selected_codex_plugin_root(&directory)
+        .map_err(|error| format!("Failed to read active Codex plugin root: {error}"))
 }
 
 fn native_cache_directory(codex_home: &Path, segments: &[&str]) -> Result<Option<PathBuf>, String> {
@@ -123,8 +123,8 @@ fn native_cache_directory(codex_home: &Path, segments: &[&str]) -> Result<Option
     Ok(Some(directory))
 }
 
-fn selected_codex_package(path: &Path, name: &str) -> io::Result<Option<CachedCodexPlugin>> {
-    let mut selected: Option<(String, PathBuf)> = None;
+fn selected_codex_plugin_root(path: &Path) -> io::Result<Option<PathBuf>> {
+    let mut versions = Vec::new();
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let Ok(version) = entry.file_name().into_string() else {
@@ -133,14 +133,23 @@ fn selected_codex_package(path: &Path, name: &str) -> io::Result<Option<CachedCo
         if !entry.file_type()?.is_dir() || !native_cache_segment(&version) {
             continue;
         }
-        if selected.as_ref().map_or(true, |(current, _)| {
-            preferred_native_version(&version, current)
-        }) {
-            selected = Some((version, entry.path()));
-        }
+        versions.push((version, entry.path()));
     }
-    Ok(selected.and_then(|(_, root)| {
-        let root = root.canonicalize().ok()?;
+    // Match Codex 0.171's core-plugin-common installed selector, including custom versions.
+    versions.sort_unstable_by(|(left, _), (right, _)| compare_native_versions(left, right));
+    let selected = versions
+        .iter()
+        .find(|(version, _)| version == "local")
+        .or_else(|| versions.last());
+    selected.map(|(_, root)| root.canonicalize()).transpose()
+}
+
+fn selected_codex_package(
+    path: &Path,
+    marketplace: &str,
+    name: &str,
+) -> io::Result<Option<CachedCodexPlugin>> {
+    Ok(selected_codex_plugin_root(path)?.and_then(|root| {
         let path = [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]
             .into_iter()
             .map(|relative| root.join(relative))
@@ -149,8 +158,14 @@ fn selected_codex_package(path: &Path, name: &str) -> io::Result<Option<CachedCo
             return None;
         }
         let manifest = read_json_file(&path, 1024 * 1024).ok()?;
-        // Keep the installation identity even if its package is unavailable or invalid.
-        (manifest["name"] == name).then_some(CachedCodexPlugin { root, manifest })
+        let matches = manifest["name"].as_str().is_some_and(|manifest_name| {
+            if marketplace == "wework-personal" {
+                super::capabilities::personal_manifest_name_matches_slug(manifest_name, name)
+            } else {
+                manifest_name == name
+            }
+        });
+        matches.then_some(CachedCodexPlugin { root, manifest })
     }))
 }
 
@@ -239,21 +254,88 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cache_version_preference_is_total_for_supported_and_custom_versions() {
-        let ordered = [
-            "1-custom", "2-custom", "9.0", "9.0.0", "10.0", "10.0.0", "local",
-        ];
-        for (index, candidate) in ordered.iter().enumerate() {
-            for (other_index, selected) in ordered.iter().enumerate() {
+    fn cache_version_preference_matches_codex_native_ordering() {
+        for (candidate, selected, preferred) in [
+            ("0.1.10", "0.1.9", true),
+            ("10.0.0", "10.0.0-beta.1", true),
+            ("v10.0", "v9.0", false),
+            ("10.0", "9.0", false),
+            ("10.0", "10.0-beta.1", false),
+            ("10.0.0", "custom", false),
+            ("local", "99.0.0", true),
+            ("99.0.0", "local", false),
+            ("0.1.10", "0.1.10", false),
+        ] {
+            assert_eq!(
+                preferred_native_version(candidate, selected),
+                preferred,
+                "{candidate} compared with {selected}"
+            );
+        }
+    }
+
+    #[test]
+    fn active_root_and_preview_share_native_selection_without_package_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        let cache = home.path().join("plugins/cache/test-market/demo");
+        for version in ["0.1.9", "0.1.10"] {
+            let root = cache.join(version);
+            fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+            fs::write(root.join(".codex-plugin/plugin.json"), r#"{"name":"demo"}"#).unwrap();
+        }
+        fs::create_dir_all(cache.join("ignored version")).unwrap();
+        fs::write(cache.join("999.0.0"), "not a version directory").unwrap();
+        let active = read_active_codex_plugin_root(home.path(), "test-market", "demo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(active, cache.join("0.1.10").canonicalize().unwrap());
+        assert_eq!(
+            read_codex_plugin_cache(home.path(), "test-market", "demo")
+                .unwrap()
+                .unwrap()
+                .root,
+            active
+        );
+
+        fs::create_dir(cache.join("local")).unwrap();
+
+        assert_eq!(
+            read_active_codex_plugin_root(home.path(), "test-market", "demo").unwrap(),
+            Some(cache.join("local").canonicalize().unwrap())
+        );
+        assert!(read_codex_plugin_cache(home.path(), "test-market", "demo")
+            .unwrap()
+            .is_none());
+
+        for marketplace in ["wework-personal", "test-market"] {
+            let root = home
+                .path()
+                .join("plugins/cache")
+                .join(marketplace)
+                .join("demo-tool/1.0.0");
+            fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+            for (name, accepted) in [
+                ("Demo Tool", marketplace == "wework-personal"),
+                ("other-tool", false),
+            ] {
+                fs::write(
+                    root.join(".codex-plugin/plugin.json"),
+                    serde_json::json!({"name":name}).to_string(),
+                )
+                .unwrap();
                 assert_eq!(
-                    preferred_native_version(candidate, selected),
-                    index > other_index,
-                    "{candidate} compared with {selected}"
+                    read_codex_plugin_cache(home.path(), marketplace, "demo-tool")
+                        .unwrap()
+                        .is_some(),
+                    accepted
+                );
+                assert_eq!(
+                    read_codex_marketplace_cache(home.path(), marketplace).unwrap()["demo-tool"]
+                        .is_some(),
+                    accepted
                 );
             }
         }
-        assert!(preferred_native_version("v10.0", "v9.0"));
-        assert!(preferred_native_version("10.0", "10.0-beta.1"));
     }
 
     #[test]

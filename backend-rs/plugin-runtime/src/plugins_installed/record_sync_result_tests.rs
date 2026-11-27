@@ -373,6 +373,129 @@ fn installation_row(
     }
 }
 
+#[tokio::test]
+async fn source_confirmations_recover_blocked_updates_and_survive_only_unchanged_owned_omissions() {
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as Cell};
+
+    for (state, status, owned, desired, actual, expected) in [
+        ("failed", Some("source_preserved"), true, 42, 17, "source"),
+        (
+            "failed",
+            Some("source_preserved"),
+            false,
+            42,
+            17,
+            "rejected",
+        ),
+        ("failed", Some("synced"), true, 42, 17, "unchanged"),
+        ("source", None, true, 42, 0, "unchanged"),
+        ("source", None, false, 42, 0, "pending"),
+        ("source", None, true, 41, 0, "pending"),
+        ("pending", None, true, 42, 0, "pending"),
+    ] {
+        let fixture = MysqlRows::start_results(move |sql| {
+            if sql.contains("FROM plugins WHERE") {
+                let row = vec![("id", Cell::I64(9))];
+                return (row.clone(), if owned { vec![row] } else { vec![] });
+            }
+            assert!(sql.contains("FROM plugin_device_installations"));
+            let row = vec![
+                ("plugin_device_installations_id", Cell::I64(1)),
+                (
+                    "plugin_device_installations_installed_kind_id",
+                    Cell::I64(2),
+                ),
+                ("plugin_device_installations_user_id", Cell::I64(7)),
+                (
+                    "plugin_device_installations_device_id",
+                    Cell::Text("device".into()),
+                ),
+                (
+                    "plugin_device_installations_desired_release_id",
+                    Cell::I64(desired),
+                ),
+                (
+                    "plugin_device_installations_actual_release_id",
+                    Cell::I64(actual),
+                ),
+                (
+                    "plugin_device_installations_state",
+                    Cell::Text(state.into()),
+                ),
+                (
+                    "plugin_device_installations_error_code",
+                    Cell::Text(String::new()),
+                ),
+                (
+                    "plugin_device_installations_error_message",
+                    Cell::Text(String::new()),
+                ),
+                (
+                    "plugin_device_installations_attempt_count",
+                    Cell::I64(if state == "failed" { 3 } else { 0 }),
+                ),
+                ("plugin_device_installations_last_sync_at", Cell::DateTime),
+                ("plugin_device_installations_updated_at", Cell::DateTime),
+            ];
+            (row.clone(), vec![row])
+        })
+        .await;
+        let installed = InstalledKindRow {
+            id: 2,
+            user_id: 7,
+            kind: "InstalledPlugin".into(),
+            name: "source".into(),
+            namespace: "default".into(),
+            json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(json!({
+                "spec":{"pluginId":9,"releaseId":42}
+            }))),
+            is_active: true,
+            created_at: NaiveDateTime::default(),
+            updated_at: NaiveDateTime::default(),
+        };
+        let result = SyncResult::from_ack("device", &json!({"success":true}));
+        let item = status.map(|status| {
+            SyncItem::from_value(&json!({
+                "id":2,"status":status,
+                "source":{"installed":true,"enabled":false,"version":"draft"}
+            }))
+        });
+        let mut flush = PendingFlush::default();
+        let outcome = record_installation_result(
+            &mut &fixture.mysql,
+            7,
+            "device",
+            &installed,
+            42,
+            &result,
+            item,
+            &mut flush,
+            false,
+        )
+        .await;
+        if expected == "rejected" {
+            assert!(outcome.is_err());
+            assert!(flush.writes.is_empty());
+            continue;
+        }
+        outcome.unwrap();
+        if expected == "unchanged" {
+            assert!(flush.writes.is_empty());
+            continue;
+        }
+        let [PendingWrite::Update { assigns, .. }] = flush.writes.as_slice() else {
+            panic!("Expected one device state update");
+        };
+        if state != expected {
+            assert!(assigns.contains(&format!("state='{expected}'")));
+        }
+        if expected == "source" {
+            assert!(assigns.contains(&"actual_release_id=0".into()));
+            assert!(assigns.contains(&"attempt_count=0".into()));
+        }
+    }
+}
+
 #[test]
 fn an_already_failed_removed_row_only_advances_its_retry_clock() {
     let now = NaiveDateTime::parse_from_str("2026-11-05 11:37:52.244784", "%Y-%m-%d %H:%M:%S%.6f")

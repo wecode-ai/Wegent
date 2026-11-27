@@ -370,7 +370,7 @@ export function toWegentStoreInstalledPlugin(
       id: plugin.packageId,
       name: plugin.name,
       installed: authorSource?.installed ?? true,
-      enabled: plugin.enabled,
+      enabled: authorSource?.enabled ?? plugin.enabled,
       localVersion: authorSource ? authorSource.version : (plugin.version ?? undefined),
       source: {
         source: 'local',
@@ -406,6 +406,7 @@ export function toWegentStoreInstalledPlugin(
           materialization: 'author_source',
           authorSource,
           cloudPackageVersion: plugin.version ?? null,
+          cloudEnabled: plugin.enabled,
         }),
       },
     },

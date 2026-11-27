@@ -752,6 +752,10 @@ impl GlobalCapabilityStore {
             }
             fields["runtime"] = Value::Object(runtime);
             ensure_root_object(&mut entry).extend(fields.as_object().unwrap().clone());
+            // This path publishes the cloud runtime, not the independent author source.
+            for field in ["materialization", "author_source"] {
+                entry.as_object_mut().unwrap().remove(field);
+            }
             // The sync payload is authoritative for component states: when it
             // clears them, drop the stale clone so recovery and dual-runtime
             // rewrites never resurrect outdated toggles.

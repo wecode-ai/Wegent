@@ -26,7 +26,11 @@ export function verifyReconciledPluginInventory(
   }
   for (const [id, plugin] of desired) {
     const local = actual.get(id)
-    if (!local || local.spec.enabled !== plugin.spec.enabled) {
+    const enabled =
+      local?.spec.sourcePayload?.materialization === 'author_source'
+        ? local.spec.sourcePayload.cloudEnabled
+        : local?.spec.enabled
+    if (!local || enabled !== plugin.spec.enabled) {
       throw new Error('Managed plugin installation was not confirmed on this device')
     }
   }

@@ -604,23 +604,37 @@ class PluginDeviceInstallationService:
         release_id = installed.json.get("spec", {}).get("releaseId")
         if not isinstance(release_id, int):
             return
-        row = self._device_row(db, installed.id, result.device_id)
-        if row and self._auto_update_blocked(row, desired_release_id=release_id):
-            return
-        if item_result and item_result.status == "source_preserved":
+        source_preserved = (
+            item_result is not None and item_result.status == "source_preserved"
+        )
+        if item_result is not None and source_preserved:
             if item_result.source is None or not owns_personal_plugin(
                 db, installed, user_id
             ):
                 raise ValueError("INVALID_PERSONAL_SOURCE_RECEIPT")
+        row = self._device_row(db, installed.id, result.device_id)
+        if (
+            row
+            and not source_preserved
+            and self._auto_update_blocked(row, desired_release_id=release_id)
+        ):
+            return
         state, error_message = self._device_install_state(result, item_result)
         if (
             item_result is None
             and result.success
             and row
-            and row.state == "installed"
-            and row.actual_release_id == release_id
+            and (
+                (row.state == "installed" and row.actual_release_id == release_id)
+                or (
+                    row.state == "source"
+                    and row.desired_release_id == release_id
+                    and row.actual_release_id == 0
+                    and owns_personal_plugin(db, installed, user_id)
+                )
+            )
         ):
-            # Device omitted an already-materialized plugin; keep the confirmed state.
+            # Omission cannot invalidate an unchanged, confirmed device state.
             return
         if not row:
             row = PluginDeviceInstallation(

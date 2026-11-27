@@ -200,6 +200,34 @@ async fn cloud_update_cannot_reclaim_an_identical_published_author_directory() {
 }
 
 #[tokio::test]
+async fn ordinary_cloud_runtime_clears_stale_author_source_metadata() {
+    let installation = PersonalInstallation::new().await;
+    let mut manifest = installation.store.manifest.load().unwrap();
+    let key = "demo@wework-personal";
+    manifest["plugins"][key]["materialization"] = json!("author_source");
+    manifest["plugins"][key]["author_source"] = json!({"installed":false,"enabled":false});
+    let entry = &manifest["plugins"][key];
+    let spec = checked_spec(key, entry).unwrap();
+    let package = PathBuf::from(entry["store_path"].as_str().unwrap());
+
+    installation
+        .store
+        .install_plugin_runtime_metadata(&spec, &package, &mut manifest)
+        .unwrap();
+
+    let entry = &manifest["plugins"][key];
+    assert!(entry.get("materialization").is_none());
+    assert!(entry.get("author_source").is_none());
+    assert!(Path::new(entry["runtime"]["codex_link"].as_str().unwrap()).is_dir());
+    installation.store.manifest.save(manifest).unwrap();
+    let recovered = installation
+        .store
+        .reconcile_managed_plugin_runtimes()
+        .unwrap();
+    assert!(recovered.failed.is_empty(), "{recovered:?}");
+}
+
+#[tokio::test]
 async fn owner_account_sync_preserves_the_independently_installed_author_version() {
     for versioned in [false, true] {
         let installation = PersonalInstallation::new().await;

@@ -686,10 +686,11 @@ def test_mixed_batch_keeps_all_device_watermarks_with_autoflush_disabled(
 
 
 @pytest.mark.parametrize("ownership", ["author", "recipient", "workspace"])
+@pytest.mark.parametrize("previous_state", ["installed", "failed"])
 def test_personal_source_receipt_preserves_truthful_device_state(
-    test_db, test_user, ownership
+    test_db, test_user, ownership, previous_state
 ):
-    installed = _installed(test_db, test_user.id, "author-source")
+    installed = _installed(test_db, test_user.id, "author-source", release=42)
     plugin = Plugin(
         slug="author-source",
         name="author-source",
@@ -704,7 +705,9 @@ def test_personal_source_receipt_preserves_truthful_device_state(
     test_db.flush()
     installed.json = {"spec": {**installed.json["spec"], "pluginId": plugin.id}}
     test_db.commit()
-    row = _device_row(test_db, installed, state="installed", actual=17)
+    row = _device_row(test_db, installed, state=previous_state, actual=17)
+    row.attempt_count = 3 if previous_state == "failed" else 0
+    test_db.commit()
     payload = _payload(test_db, installed)
     assert payload["plugins"][0].get("personal_source_owner", False) is (
         ownership == "author"
@@ -728,14 +731,22 @@ def test_personal_source_receipt_preserves_truthful_device_state(
             )
         test_db.rollback()
         test_db.refresh(row)
-        assert row.state == "installed"
+        assert row.state == previous_state
         assert row.actual_release_id == 17
         return
+    if previous_state == "failed":
+        service.record_device_sync_result(
+            test_db, user_id=test_user.id, result=_result(payload)
+        )
+        test_db.refresh(row)
+        assert row.state == "failed"
+        assert row.actual_release_id == 17
+        assert row.attempt_count == 3
     service.record_device_sync_result(test_db, user_id=test_user.id, result=result)
     test_db.refresh(row)
     assert row.state == "source"
     assert row.actual_release_id == 0
-    assert row.desired_release_id == 17
+    assert row.desired_release_id == 42
     assert not row.error_code
     assert row.attempt_count == 0
     assert (
@@ -750,3 +761,30 @@ def test_personal_source_receipt_preserves_truthful_device_state(
     )
     test_db.refresh(row)
     assert row.state == "source"
+    omitted = _result(payload)
+    omitted.plugins = []
+    service.record_device_sync_result(test_db, user_id=test_user.id, result=omitted)
+    test_db.refresh(row)
+    assert row.state == "source"
+    assert row.actual_release_id == 0
+    assert row.desired_release_id == 42
+
+    for change in ["owner", "visibility", "release"]:
+        row.state = "source"
+        row.desired_release_id = 42
+        plugin.owner_user_id = 0 if change == "owner" else test_user.id
+        plugin.visibility = "workspace" if change == "visibility" else "personal"
+        installed.json = {
+            "spec": {
+                **installed.json["spec"],
+                "releaseId": 43 if change == "release" else 42,
+            }
+        }
+        test_db.commit()
+        omitted = _result(_payload(test_db, installed))
+        omitted.plugins = []
+        service.record_device_sync_result(test_db, user_id=test_user.id, result=omitted)
+        test_db.refresh(row)
+        assert row.state == "pending"
+        assert row.actual_release_id == 0
+        assert row.desired_release_id == (43 if change == "release" else 42)

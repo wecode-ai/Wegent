@@ -30,12 +30,14 @@ interface PersonalPluginCloudScope {
 
 type LocalPluginSource = InstalledPlugin | LocalPluginInstallSource
 type AccountApi = ReturnType<typeof createDefaultPluginApi>
+type PersonalPluginSyncListing = Pick<PluginMarketplaceItem, 'id' | 'name'>
 
 interface BackgroundInstall {
   cancelled: boolean
   isCurrent(): boolean
   settled?: Promise<void>
   completed?: boolean
+  listingId?: number
 }
 
 const pending = new Map<string, BackgroundInstall>()
@@ -168,10 +170,13 @@ async function personalReleasePlan(
   local: LocalCodexPluginApi,
   plugin: InstalledPlugin,
   slug: string,
-  requireCurrent: () => void
+  requireCurrent: () => void,
+  selectedListing?: PersonalPluginSyncListing
 ): Promise<PersonalReleasePlan> {
   let listing = await readOwnedPersonalPluginRelease(api, slug)
   requireCurrent()
+  if (selectedListing && (!listing || Number(listing.id) !== Number(selectedListing.id)))
+    throw new Error('Selected personal plugin cloud identity was not confirmed')
   const linkedId = linkedCloudPluginId(plugin)
   if (linkedId !== null && listing && linkedId !== Number(listing.id))
     throw new Error('Personal plugin is linked to a different cloud source')
@@ -186,7 +191,11 @@ async function personalReleasePlan(
       if (error instanceof ApiError && error.errorCode === 'PRIVATE_PLUGIN_REINSTALL_REQUIRED') {
         const detail = error.detail as { pluginId?: unknown } | undefined
         const pluginId = Number(detail?.pluginId)
-        if (Number.isSafeInteger(pluginId) && pluginId > 0)
+        if (
+          Number.isSafeInteger(pluginId) &&
+          pluginId > 0 &&
+          (!selectedListing || pluginId === Number(selectedListing.id))
+        )
           return { restoreDeleted: true, pluginId }
       }
       if (!(error instanceof ApiError) || error.errorCode !== 'PRIVATE_FIRST_INSTALL_CONFLICT')
@@ -199,6 +208,8 @@ async function personalReleasePlan(
   const releaseId = listing.latestReleaseId
   if (!Number.isSafeInteger(pluginId) || pluginId <= 0 || !releaseId)
     throw new Error('Personal plugin cloud release identity is unavailable')
+  if (selectedListing && pluginId !== Number(selectedListing.id))
+    throw new Error('Selected personal plugin cloud identity changed')
   return {
     restoreDeleted: false,
     pluginId,
@@ -213,7 +224,8 @@ async function syncPersonalInstall(
   local: LocalCodexPluginApi,
   source: LocalPluginSource,
   pluginKey: string,
-  job: BackgroundInstall
+  job: BackgroundInstall,
+  selectedListing?: PersonalPluginSyncListing
 ) {
   const requireCurrent = () => {
     if (job.cancelled || !job.isCurrent()) {
@@ -221,14 +233,31 @@ async function syncPersonalInstall(
     }
   }
   requireCurrent()
-  const slug = createdPluginSlugFromKey(pluginKey)
+  const sourceSlug = createdPluginSlugFromKey(pluginKey)
   const plugin = 'spec' in source ? source : await findImportedInstall(local, source)
   if (!plugin) {
     requireCurrent()
     throw new Error('Installed personal plugin source is unavailable')
   }
   requireCurrent()
-  const plan = await personalReleasePlan(api, local, plugin, slug, requireCurrent)
+  if (selectedListing) {
+    const selectedId = Number(selectedListing.id)
+    const linkedId = linkedCloudPluginId(plugin)
+    if (
+      !Number.isSafeInteger(selectedId) ||
+      selectedId <= 0 ||
+      (linkedId !== null ? linkedId !== selectedId : sourceSlug !== selectedListing.name)
+    )
+      throw new Error('Local personal plugin does not match the selected cloud source')
+  }
+  const plan = await personalReleasePlan(
+    api,
+    local,
+    plugin,
+    selectedListing?.name ?? sourceSlug,
+    requireCurrent,
+    selectedListing
+  )
   requireCurrent()
   if (plan.restoreDeleted) {
     const response = await api.installMarketplacePluginForAccount(plan.pluginId, undefined, true)
@@ -280,7 +309,7 @@ export function capturePersonalPluginCloudInstall(
   if (!session || session.apiBaseUrl !== apiBaseUrl || session.user.id !== userId) return undefined
   const scopeIsCurrent = capturePersonalPluginInstallScope()
 
-  const run = async (source: LocalPluginSource) => {
+  const run = async (source: LocalPluginSource, selectedListing?: PersonalPluginSyncListing) => {
     const pluginKey = sourceKey(source)
     const device = getKnownLocalExecutorDeviceId()
     if (!pluginKey || !device) return false
@@ -290,9 +319,14 @@ export function capturePersonalPluginCloudInstall(
     const previous = pending.get(key)
     if (previous && !previous.cancelled && previous.isCurrent()) {
       await previous.settled
-      return previous.completed === true && !previous.cancelled && isCurrent()
+      if (previous.completed !== true || previous.cancelled || !isCurrent()) return false
+      if (!selectedListing || previous.listingId === Number(selectedListing.id)) return true
     }
-    const job: BackgroundInstall = { cancelled: false, isCurrent }
+    const job: BackgroundInstall = {
+      cancelled: false,
+      isCurrent,
+      listingId: selectedListing ? Number(selectedListing.id) : undefined,
+    }
     const attempt = beginOperation('plugin.install_request')
     pending.set(key, job)
     try {
@@ -306,7 +340,8 @@ export function capturePersonalPluginCloudInstall(
         local,
         source,
         pluginKey,
-        job
+        job,
+        selectedListing
       )
       await job.settled
       if (job.cancelled || !isCurrent()) {
@@ -329,8 +364,8 @@ export function capturePersonalPluginCloudInstall(
     }
   }
 
-  return (source: LocalPluginSource) => {
-    return run(source).catch(error => {
+  return (source: LocalPluginSource, selectedListing?: PersonalPluginSyncListing) => {
+    return run(source, selectedListing).catch(error => {
       console.warn('[Wework] Background personal plugin install failed', {
         error: error instanceof ApiError ? error.errorCode || error.status : 'local-or-transport',
       })
@@ -371,7 +406,7 @@ export async function syncPersonalPluginToCurrentAccount({
   })
   let completed: boolean
   try {
-    completed = await sync(plugin.raw)
+    completed = await sync(plugin.raw, { id: listing.id, name: listing.name })
   } finally {
     operations.finishInstall(listing.id)
   }

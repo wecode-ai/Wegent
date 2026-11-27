@@ -640,6 +640,7 @@ async fn record_installation_result<Q: MysqlQuery>(
         .await?;
     if let Some(row) = &row
         && !confirmed_local
+        && !source_preserved
         && auto_update_blocked(row, release_id)
     {
         return Ok(());
@@ -647,11 +648,19 @@ async fn record_installation_result<Q: MysqlQuery>(
     let (state, error_message) = device_install_state(result, item.as_ref());
     if item.is_none()
         && result.success
-        && row
-            .as_ref()
-            .is_some_and(|row| row.state == "installed" && row.actual_release_id == release_id)
+        && let Some(row) = &row
     {
-        return Ok(());
+        if row.state == "installed" && row.actual_release_id == release_id {
+            return Ok(());
+        }
+        if row.state == "source"
+            && row.desired_release_id == release_id
+            && row.actual_release_id == 0
+            && super::personal_source::owned_install(session, user_id, &installed.json.0.to_value())
+                .await?
+        {
+            return Ok(());
+        }
     }
     let Some(row) = row else {
         // `PluginDeviceInstallation(...)` plus `db.add`; the INSERT waits for

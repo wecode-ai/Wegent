@@ -479,19 +479,13 @@ impl LocalBackendConnectionController {
         let instance = tokio::task::spawn_blocking(move || instance_id(&identity_root))
             .await
             .map_err(|_| error("plugin_local_journal_unavailable"))??;
-        let capabilities = post(
-            &connection,
-            "/api/plugins/local-sync",
-            &json!({"protocolVersion":1,"instanceId":instance,"probeOnly":true}),
+        let (capabilities, account) = super::super::capability::probe_account_capabilities(
+            &connection.backend_url,
+            &connection.auth_token,
+            &instance,
         )
-        .await?;
-        if capabilities["protocolVersion"] != 1 || capabilities["contractRevision"] != 3 {
-            return Err(error("plugin_local_sync_unsupported"));
-        }
-        let account = capabilities["accountId"]
-            .as_i64()
-            .filter(|id| *id > 0)
-            .ok_or_else(|| error("plugin_local_invalid_response"))?;
+        .await
+        .map_err(|code| error(&code))?;
         handler
             .bind_account_scope(&connection.backend_url, account)
             .map_err(|_| error("plugin_route_profile_mismatch"))?;

@@ -345,8 +345,12 @@ where
 
     pub(super) fn capability_sync_handler(&self) -> EventHandler {
         let capability_sync_handler = self.capability_sync_handler.clone();
+        let config = self.client.config.clone();
+        let verified_scope = Arc::new(tokio::sync::OnceCell::new());
         Arc::new(move |payload| {
             let capability_sync_handler = capability_sync_handler.clone();
+            let config = config.clone();
+            let verified_scope = verified_scope.clone();
             Box::pin(async move {
                 let started_at = Instant::now();
                 write_executor_log_line(&format_executor_log(
@@ -361,7 +365,24 @@ where
                     )],
                 ));
                 let response = match capability_sync_handler {
-                    Some(handler) => handler.handle_sync_capabilities(payload).await,
+                    Some(handler) => {
+                        let binding = verified_scope
+                            .get_or_try_init(|| async {
+                                let (_, account) = capability::probe_account_capabilities(
+                                    &config.backend_url,
+                                    &config.auth_token,
+                                    &config.runtime_instance_id,
+                                )
+                                .await?;
+                                handler.bind_account_scope(&config.backend_url, account)?;
+                                Ok::<_, String>(account)
+                            })
+                            .await;
+                        match binding {
+                            Ok(_) => handler.handle_sync_capabilities(payload).await,
+                            Err(error) => json!({"success":false,"error":error}),
+                        }
+                    }
                     None => json!({
                         "success": false,
                         "error": "Capability sync handler is not available",

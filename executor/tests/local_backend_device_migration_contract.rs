@@ -142,11 +142,17 @@ async fn capability_sync_event_returns_ack_and_heartbeat_uses_reporter() {
         "mcps": [],
         "last_sync_at": "2026-06-26T00:00:00Z"
     }));
-    let client = LocalBackendClient::with_capability_reporter(
-        local_backend_config(),
-        transport.clone(),
-        reporter,
-    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut config = local_backend_config();
+    config.backend_url = serve_one_http_response(
+        json!({"protocolVersion":1,"contractRevision":3,"accountId":42})
+            .to_string()
+            .into_bytes(),
+        requests.clone(),
+    )
+    .await;
+    let backend_url = config.backend_url.clone();
+    let client = LocalBackendClient::with_capability_reporter(config, transport.clone(), reporter);
     let runner =
         LocalBackendRunner::from_client_and_runner(client.clone(), RecordingTaskRunner::default())
             .with_capability_sync_handler(sync.clone());
@@ -161,6 +167,7 @@ async fn capability_sync_event_returns_ack_and_heartbeat_uses_reporter() {
     .await
     .unwrap();
     assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(*sync.scopes.lock().unwrap(), vec![(backend_url, 42)]);
     assert_eq!(
         sync.payloads(),
         vec![json!({
@@ -170,6 +177,37 @@ async fn capability_sync_event_returns_ack_and_heartbeat_uses_reporter() {
             "mcps": []
         })]
     );
+    let repeated =
+        transport.handler("device:sync_capabilities").unwrap()(sync.payloads()[0].clone())
+            .await
+            .unwrap();
+    assert_eq!(repeated["success"], true, "{repeated}");
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(sync.scopes.lock().unwrap().len(), 1);
+
+    let rejected_transport = RecordingTransport::default();
+    let mut rejected_config = local_backend_config();
+    rejected_config.backend_url = serve_one_http_response(
+        json!({"protocolVersion":1,"contractRevision":3,"accountId":0})
+            .to_string()
+            .into_bytes(),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .await;
+    let rejected = LocalBackendRunner::from_client_and_runner(
+        LocalBackendClient::new(rejected_config, rejected_transport.clone()),
+        RecordingTaskRunner::default(),
+    )
+    .with_capability_sync_handler(sync.clone());
+    rejected.register_handlers();
+    let ack = rejected_transport
+        .handler("device:sync_capabilities")
+        .unwrap()(json!({"accountId":42,"mode":"replace","plugins":[]}))
+    .await
+    .unwrap();
+    assert_eq!(ack["success"], false, "{ack}");
+    assert_eq!(sync.payloads().len(), 2);
+    assert_eq!(sync.scopes.lock().unwrap().len(), 1);
 
     assert!(client.send_heartbeat(Duration::from_secs(1)).await.unwrap());
     let calls = transport.calls();
@@ -192,7 +230,14 @@ async fn default_local_backend_runner_wires_capability_sync_and_code_server_sess
     );
     let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
     let transport = RecordingTransport::default();
-    let config = local_backend_config();
+    let mut config = local_backend_config();
+    config.backend_url = serve_one_http_response(
+        json!({"protocolVersion":1,"contractRevision":3,"accountId":42})
+            .to_string()
+            .into_bytes(),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .await;
     let session_dir = config.local_workspace_root.join("code-session");
     let runner = LocalBackendRunner::new(config, transport.clone());
     runner.register_handlers();
@@ -1449,6 +1494,7 @@ impl LocalTaskController for FailingCancelTaskController {
 #[derive(Clone, Default)]
 struct RecordingCapabilitySync {
     payloads: Arc<Mutex<Vec<Value>>>,
+    scopes: Arc<Mutex<Vec<(String, i64)>>>,
 }
 
 impl RecordingCapabilitySync {
@@ -1458,6 +1504,13 @@ impl RecordingCapabilitySync {
 }
 
 impl CapabilitySyncRpcHandler for RecordingCapabilitySync {
+    fn bind_account_scope(&self, backend_url: &str, user_id: i64) -> Result<(), String> {
+        self.scopes
+            .lock()
+            .unwrap()
+            .push((backend_url.to_owned(), user_id));
+        Ok(())
+    }
     fn handle_sync_capabilities<'a>(
         &'a self,
         payload: Value,
