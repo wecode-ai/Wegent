@@ -1,5 +1,5 @@
 {
-  "description": "Checkpoint costs use the upper quartile with linear interpolation, rounded up. Recent passing observations replace older costs where at least three samples are available. Runner and worker counts are unchanged.",
+  "description": "Checkpoint costs use the upper quartile with linear interpolation, rounded up. Recent passing observations replace older costs where at least three samples are available. Runner and worker counts are unchanged. The latest Core shard 5 observation records elevated costs for three concurrent long checkpoints.",
   "run": "https://github.com/wecode-ai/Wegent/actions/runs/41664748816",
   "headSha": "d2464703681da8542657ff5e02c0464ac29c148c",
   "coreShard10Observation": "https://github.com/wecode-ai/Wegent/actions/runs/44477794083/job/135408742636",
@@ -54,6 +54,7 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/45967329511",
     "https://github.com/wecode-ai/Wegent/actions/runs/45970098321"
   ],
+  "coreShard5ContentionObservation": "https://github.com/wecode-ai/Wegent/actions/runs/45981366618/job/140446724236",
   "scopes": {
     "core": {
       "application-menu": 61,
@@ -131,9 +132,9 @@
       "coordination-runtime": 137,
       "core-dsh-plugin-management": 98,
       "core-task-flow": 499,
-      "desktop-device-identity": 252,
+      "desktop-device-identity": 418,
       "device-artifact-declaration": 118,
-      "dots-closed-loops": 411,
+      "dots-closed-loops": 479,
       "drawing-attachment": 40,
       "dsh-owner-capture": 74,
       "embedded-browser": 237,
@@ -189,7 +190,7 @@
       "project-create-people": 175,
       "project-member-overrides": 183,
       "project-space-tool-discovery": 144,
-      "python-runtime": 267,
+      "python-runtime": 463,
       "question-discussion": 161,
       "quota-recovery": 125,
       "release-package-startup": 47,
