@@ -105,9 +105,11 @@ export function usePluginDetailSelection({
       : []
     return matches.length === 1 ? matches[0] : null
   }, [localIdentity, pluginMarketplaceState.items, selectedMarketplacePluginId])
+  // Progressive catalog reads can temporarily omit the selected source's row.
+  // Keep its identity until the user changes selection or the scope changes.
   const selectedLocalIdentity = selectedMarketplacePlugin
     ? localSourceIdentity(selectedMarketplacePlugin)
-    : undefined
+    : localIdentity
   if (localSelection.key !== selectionKey || localSelection.identity !== selectedLocalIdentity) {
     setLocalSelection({ key: selectionKey, identity: selectedLocalIdentity })
   }

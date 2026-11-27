@@ -144,6 +144,15 @@ export async function verifyDingTalkDelivery(
 
   await mailbox.releaseMatchingReceipt()
   await clickInView(verify)
+  await storyUntil(
+    () => readChecks(pendingId),
+    checks =>
+      checks.length === automaticChecks.length + 2 &&
+      checks.at(-1).profile === DINGTALK_DELEGATION_IDS.profile &&
+      checks.at(-1).matching === true,
+    timeout,
+    'The second UI verification must query the matching recorded channel task'
+  )
   await control.command('waitFor', receipt, { text: `accepted-${pendingId}` })
   await control.command('waitFor', `${detail} ${delivery}`, { text: labels.sent })
   await control.command('waitFor', detail, { text: labels.takeover })

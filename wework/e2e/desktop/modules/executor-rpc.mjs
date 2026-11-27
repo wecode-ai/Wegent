@@ -2,6 +2,25 @@ import { fetchLocalRuntime } from './runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
+/** Keep native RPC failure details available without resubmitting a request. */
+export class ExecutorRpcError extends assert.AssertionError {
+  constructor(method, response, payload) {
+    super({
+      actual: response.ok ? payload.ok : response.ok,
+      expected: true,
+      operator: 'strictEqual',
+      message: response.ok
+        ? `${method} failed: ${payload.error?.message}`
+        : `${method} returned HTTP ${response.status}: ${payload.error?.message}`,
+    })
+    this.rpcMethod = method
+    this.httpStatus = response.status
+    this.rpcOk = payload.ok
+    this.rpcCode = payload.error?.code
+    this.rpcMessage = payload.error?.message
+  }
+}
+
 export async function requestExecutor(control, method, params, timeoutMs, { origin } = {}) {
   const runtimeOrigin = origin ?? (await control.command('getLocationOrigin', 'body'))
   const requestId = `desktop-e2e-${method}-${randomUUID()}`
@@ -30,12 +49,7 @@ export async function requestExecutor(control, method, params, timeoutMs, { orig
     })
     throw new Error(`${method} failed during ${stage} (${requestId})`, { cause })
   }
-  assert.equal(
-    response.ok,
-    true,
-    `${method} returned HTTP ${response.status}: ${payload.error?.message}`
-  )
-  assert.equal(payload.ok, true, `${method} failed: ${payload.error?.message}`)
+  if (!response.ok || payload.ok !== true) throw new ExecutorRpcError(method, response, payload)
   return payload.result
 }
 

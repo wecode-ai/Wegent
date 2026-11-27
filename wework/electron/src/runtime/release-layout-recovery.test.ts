@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { recoverReleaseLayout } from './release-layout-recovery.js'
 import { releaseBridgeUserData } from './release-handoff.js'
 import { usesLegacyReleaseLayout } from './legacy-release-layout.mjs'
@@ -19,11 +19,17 @@ vi.mock('./release-parent-process.js', () => ({
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
 
 const homes: string[] = []
+let pendingLayoutSetup: Promise<unknown> | undefined
 afterEach(async () => {
-  for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true })
+  try {
+    await pendingLayoutSetup
+  } finally {
+    pendingLayoutSetup = undefined
+    for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true })
+  }
 })
 
-async function fixture(version = '0.6.3') {
+async function fixture(version = '0.6.3', marker?: string) {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'release-layout-')))
   homes.push(home)
   const desktop = join(home, '.wegent/workbench/wework/default')
@@ -54,7 +60,12 @@ async function fixture(version = '0.6.3') {
   await store.save(target)
   await atomicReleaseWrite(join(store.root, 'active'), source.id)
   await store.activate(target, 'before-update')
-  return { home, desktop, store, source, target, environment: { HOME: home } }
+  let activation: Awaited<ReturnType<ReleaseStore['activation']>> = null
+  if (marker) {
+    activation = (await store.activation())!
+    await atomicReleaseWrite(join(store.root, marker), activation.token)
+  }
+  return { home, desktop, store, source, target, activation, environment: { HOME: home } }
 }
 
 test.each(['0.6.3', '0.5.13-beta.8'])(
@@ -96,21 +107,27 @@ test('recovers an owned unstarted activation even when the source does not need 
   expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
 })
 
-test.each(
+describe.each(
   ['0.6.3', '0.5.13-beta.8'].flatMap(version =>
     ['attempted', 'data-opened', 'healthy', 'failed'].map(marker => [version, marker])
   )
-)('never cancels a %s activation with a matching %s marker', async (version, marker) => {
-  const { store, source, target, environment } = await fixture(version)
-  const activation = (await store.activation())!
-  await atomicReleaseWrite(join(store.root, marker), activation.token)
+)('started activation %s with %s marker', (version, marker) => {
+  let layout: Awaited<ReturnType<typeof fixture>>
+  beforeEach(async () => {
+    const preparing = fixture(version, marker)
+    pendingLayoutSetup = preparing
+    layout = await preparing
+  })
 
-  await expect(
-    recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
-  ).rejects.toThrow('supervised recovery')
-  expect(await store.activation()).toEqual(activation)
-  expect((await store.active())?.id).toBe(target.id)
-  expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
+  test(`never cancels a ${version} activation with a matching ${marker} marker`, async () => {
+    const { store, source, target, environment, activation } = layout
+    await expect(
+      recoverReleaseLayout(store, source.profileRoot, source.dataSchema, environment)
+    ).rejects.toThrow('supervised recovery')
+    expect(await store.activation()).toEqual(activation)
+    expect((await store.active())?.id).toBe(target.id)
+    expect(await readFile(join(source.profileRoot, 'live-data'), 'utf8')).toBe('latest source data')
+  })
 })
 
 test('never touches an explicit userData override', async () => {

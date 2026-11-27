@@ -29,3 +29,32 @@ test('does not resubmit an executor RPC after its control response is lost', asy
   )
   assert.equal(control.runtimeRequests(), 1)
 })
+
+test('retains the native pending-registration error metadata without retrying the RPC', async () => {
+  const control = controlWithResponses([
+    JSON.stringify({
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          code: 'cloud_unavailable',
+          message: 'Wait for this Runtime to register with the backend',
+        },
+      }),
+    }),
+  ])
+  await assert.rejects(
+    requestExecutor(control, 'runtime.stand_in.device_identity', {}, 1000),
+    error => {
+      assert.ok(error instanceof assert.AssertionError)
+      assert.equal(error.rpcMethod, 'runtime.stand_in.device_identity')
+      assert.equal(error.httpStatus, 500)
+      assert.equal(error.rpcCode, 'cloud_unavailable')
+      assert.equal(error.rpcMessage, 'Wait for this Runtime to register with the backend')
+      assert.match(error.message, /returned HTTP 500/)
+      return true
+    }
+  )
+  assert.equal(control.runtimeRequests(), 1)
+})

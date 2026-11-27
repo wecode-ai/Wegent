@@ -324,7 +324,16 @@ async fn executor_download_enforces_declared_and_streamed_size_without_fallback(
 
 #[tokio::test]
 async fn canonical_executor_read_rejections_remain_explicit() {
-    for (upstream, expected) in [(400, 400), (403, 403), (404, 404), (413, 413), (500, 502)] {
+    for (upstream, expected) in [
+        (400, 400),
+        (403, 403),
+        (404, 404),
+        (413, 413),
+        (500, 502),
+        (502, 502),
+        (503, 503),
+        (504, 503),
+    ] {
         let response = http_response(upstream, "Content-Length: 0\r\n", "").await;
         assert_eq!(
             files::bounded_body(response, 5)
@@ -334,5 +343,176 @@ async fn canonical_executor_read_rejections_remain_explicit() {
                 .as_u16(),
             expected
         );
+    }
+}
+
+#[test]
+fn manager_artifact_query_includes_executor_and_namespace() {
+    let source = models::Source {
+        executor_name: "executor-original".into(),
+        executor_namespace: "original-namespace".into(),
+        workspace_root: "/workspace/repo".into(),
+        workspace_binding_id: "b".repeat(64),
+    };
+    let query = models::ArtifactQuery::new(&source, 42, 7);
+    assert_eq!(
+        serde_json::to_value(source::ManagerArtifactQuery::new(&source, &query)).unwrap(),
+        json!({
+            "binding_id": "b".repeat(64),
+            "task_id": "42",
+            "subtask_id": "7",
+            "executor_name": "executor-original",
+            "executor_namespace": "original-namespace",
+        })
+    );
+
+    let mut without_ns = source.clone();
+    without_ns.executor_namespace.clear();
+    let mut file_query = models::ArtifactQuery::new(&without_ns, 42, 7);
+    file_query.root_path = Some("/workspace/repo".into());
+    file_query.path = Some("outputs/report.md".into());
+    file_query.offset = Some(0);
+    assert_eq!(
+        serde_json::to_value(source::ManagerArtifactQuery::new(&without_ns, &file_query)).unwrap(),
+        json!({
+            "binding_id": "b".repeat(64),
+            "task_id": "42",
+            "subtask_id": "7",
+            "executor_name": "executor-original",
+            "root_path": "/workspace/repo",
+            "path": "outputs/report.md",
+            "offset": 0,
+        })
+    );
+}
+
+async fn spawn_mock_manager(
+    status: u16,
+    headers: &'static str,
+    body: &'static str,
+) -> (std::net::SocketAddr, tokio::sync::oneshot::Receiver<String>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut buffer = [0; 2048];
+            let count = socket.read(&mut buffer).await.unwrap();
+            if count == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..count]);
+        }
+        let request_text = String::from_utf8_lossy(&request);
+        let first_line = request_text.lines().next().unwrap_or_default().to_owned();
+        let _ = tx.send(first_line);
+        let response = format!(
+            "HTTP/1.1 {status} Test\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}",
+            body.len()
+        );
+        let _ = socket.write_all(response.as_bytes()).await;
+    });
+    (address, rx)
+}
+
+#[tokio::test]
+async fn workspace_root_and_executor_file_proxy_via_executor_manager() {
+    let mysql =
+        brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap();
+    let state = DeviceArtifactState {
+        task_store: std::sync::Arc::new(wegent_task_store::task_store::DefaultTaskStore::new(
+            mysql.clone(),
+        )),
+        mysql,
+        redis: None,
+        socketio_rpc: None,
+        auth: config(),
+        attachment_http: brz_http::Client::builder().build().unwrap(),
+    };
+    let source = models::Source {
+        executor_name: "executor-original".into(),
+        executor_namespace: "wegent-pod".into(),
+        workspace_root: "/workspace/42".into(),
+        workspace_binding_id: "b".repeat(64),
+    };
+    let query = models::ArtifactQuery::new(&source, 42, 7);
+
+    let (addr, rx) = spawn_mock_manager(
+        200,
+        "Content-Type: application/json\r\n",
+        r#"{"workspace_root":"/workspace/42"}"#,
+    )
+    .await;
+    let manager_url = format!("http://{addr}");
+    let root = source::workspace_root_via_manager(&state, &manager_url, &source, &query)
+        .await
+        .unwrap();
+    assert_eq!(root, "/workspace/42");
+    let request_line = rx.await.unwrap();
+    assert!(
+        request_line.starts_with("GET /executor-manager/executor/workspace/artifact?"),
+        "unexpected request line: {request_line}"
+    );
+    assert!(request_line.contains("task_id=42"));
+    assert!(request_line.contains("subtask_id=7"));
+    assert!(request_line.contains("executor_name=executor-original"));
+    assert!(request_line.contains("executor_namespace=wegent-pod"));
+    assert!(!request_line.contains("root_path="));
+
+    for (upstream, expected) in [
+        (404, StatusCode::CONFLICT),
+        (413, StatusCode::CONFLICT),
+        (502, StatusCode::SERVICE_UNAVAILABLE),
+        (503, StatusCode::SERVICE_UNAVAILABLE),
+        (504, StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        let (addr, _rx) = spawn_mock_manager(upstream, "", "").await;
+        let manager_url = format!("http://{addr}");
+        let err = source::workspace_root_via_manager(&state, &manager_url, &source, &query)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status(), expected, "workspace_root upstream {upstream}");
+    }
+
+    let (addr, rx) = spawn_mock_manager(200, "Content-Type: text/markdown\r\n", "# Report\n").await;
+    let manager_url = format!("http://{addr}");
+    let bytes =
+        files::executor_file_via_manager(&state, &manager_url, &source, 42, 7, "outputs/report.md")
+            .await
+            .unwrap();
+    assert_eq!(bytes, b"# Report\n");
+    let file_request_line = rx.await.unwrap();
+    assert!(
+        file_request_line.starts_with("GET /executor-manager/executor/workspace/artifact?"),
+        "unexpected request line: {file_request_line}"
+    );
+    assert!(file_request_line.contains("executor_name=executor-original"));
+    assert!(file_request_line.contains("executor_namespace=wegent-pod"));
+    assert!(file_request_line.contains("root_path=%2Fworkspace%2F42"));
+    assert!(file_request_line.contains("path=outputs%2Freport.md"));
+
+    for (upstream, expected) in [
+        (404, StatusCode::NOT_FOUND),
+        (413, StatusCode::PAYLOAD_TOO_LARGE),
+        (502, StatusCode::BAD_GATEWAY),
+        (503, StatusCode::SERVICE_UNAVAILABLE),
+        (504, StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        let (addr, _rx) = spawn_mock_manager(upstream, "", "").await;
+        let manager_url = format!("http://{addr}");
+        let err = files::executor_file_via_manager(
+            &state,
+            &manager_url,
+            &source,
+            42,
+            7,
+            "outputs/report.md",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status(), expected, "executor_file upstream {upstream}");
     }
 }

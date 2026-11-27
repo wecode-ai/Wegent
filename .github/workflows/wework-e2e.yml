@@ -310,7 +310,7 @@ jobs:
 
       # Check native display readiness before large artifact transfers.
       - name: Verify desktop E2E runner helpers
-        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs wework/e2e/desktop/desktop-cpu-benchmark.test.mjs
+        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs wework/e2e/desktop/desktop-cpu-benchmark.test.mjs .github/scripts/wework-cpu-hardware-key.test.mjs
 
       - name: Build shared real object storage for desktop E2E
         if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-package-integrity-recovery')

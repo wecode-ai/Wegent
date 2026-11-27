@@ -12,7 +12,7 @@ import { useStandInConversationModel } from '@/features/todo/useStandInConversat
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 import { I18nextProvider } from 'react-i18next'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import { setComposerValue } from '@/test/composer'
@@ -1065,7 +1065,11 @@ describe('TemporaryChatPanel', () => {
     view.rerender(panel(false))
     expect(mocks.focusListener).toBeUndefined()
   })
-  beforeEach(() => {
+  let pendingModelBody: Promise<void> | undefined
+
+  beforeEach(async () => {
+    // A timed-out finish hook must not let the next case reset state or mount.
+    await pendingModelBody
     mocks.markRead.mockClear()
     mocks.windowFocused = true
     mocks.cancelRuntimePaneTask.mockClear()
@@ -2019,6 +2023,26 @@ describe('TemporaryChatPanel', () => {
       assistantTransport = false,
     }) => {
       const user = userEvent.setup({ skipHover: true })
+      // Follow-up text is fixture data; preserve typing's insertion into the current draft.
+      async function fillFollowupDraft(text: string) {
+        const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+        await user.click(editor)
+        const previousValue = editor.value
+        const selection = editor.ownerDocument.getSelection()
+        const range = selection?.getRangeAt(0)
+        expect(range).toBeDefined()
+        const prefix = range!.cloneRange()
+        prefix.selectNodeContents(editor)
+        prefix.setEnd(range!.startContainer, range!.startOffset)
+        const start = prefix.toString().length
+        prefix.setEnd(range!.endContainer, range!.endOffset)
+        const end = prefix.toString().length
+        const expectedValue = previousValue.slice(0, start) + text + previousValue.slice(end)
+        await user.paste(text)
+        expect(editor, JSON.stringify({ previousValue, start, end, text })).toHaveValue(
+          expectedValue
+        )
+      }
       const assistantSend = vi.fn(async () => ({ sent: true }))
       mocks.realComposer = true
       mocks.busy = busy
@@ -2185,12 +2209,6 @@ describe('TemporaryChatPanel', () => {
         ]
       mocks.createTask.mockResolvedValue(taskAddress)
       const i18n = createInstance()
-      await i18n.init({
-        lng: 'en',
-        resources: { en: { common: enCommon } },
-        defaultNS: 'common',
-        interpolation: { escapeValue: false },
-      })
       function Conversation() {
         const controls = useStandInConversationModel(services, profile)
         return (
@@ -2219,8 +2237,22 @@ describe('TemporaryChatPanel', () => {
           </I18nextProvider>
         )
       }
+      let completeBody!: () => void
+      const bodyFinished = new Promise<void>(resolve => {
+        completeBody = resolve
+      })
+      pendingModelBody = bodyFinished
+      // A timeout does not cancel user-event. Join the body before the next case mounts.
+      onTestFinished(() => bodyFinished)
+      let view: ReturnType<typeof render> | undefined
       try {
-        const view = render(<Conversation />)
+        await i18n.init({
+          lng: 'en',
+          resources: { en: { common: enCommon } },
+          defaultNS: 'common',
+          interpolation: { escapeValue: false },
+        })
+        view = render(<Conversation />)
         await waitFor(() => expect(services.standInApi.catalog).toHaveBeenCalled())
         if (profileModelOnly) {
           const recover = await screen.findByTestId('stand-in-conversation-new-session')
@@ -2410,7 +2442,7 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          await user.type(screen.getByTestId('chat-message-input'), 'Continue recovered session')
+          await fillFollowupDraft('Continue recovered session')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
@@ -2456,7 +2488,7 @@ describe('TemporaryChatPanel', () => {
             derived: { isRunning: false, isTurnActive: false },
           }
           view.rerender(<Conversation />)
-          await user.type(screen.getByTestId('chat-message-input'), 'Continue here')
+          await fillFollowupDraft('Continue here')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).not.toHaveProperty(
@@ -2467,7 +2499,7 @@ describe('TemporaryChatPanel', () => {
           if (advanced) await user.click(advanced)
           await user.click(await screen.findByTestId(`model-option-${official.name}`))
           await user.click(screen.getByTestId('model-switch-warning-confirm-button'))
-          await user.type(screen.getByTestId('chat-message-input'), 'Use ChatGPT again')
+          await fillFollowupDraft('Use ChatGPT again')
           await user.click(screen.getByTestId('send-message-button'))
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3))
           expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toMatchObject({
@@ -2491,9 +2523,14 @@ describe('TemporaryChatPanel', () => {
           expect(mocks.continueInNewConversation).not.toHaveBeenCalled()
           expect(mocks.setGlobalModel).not.toHaveBeenCalled()
         }
-        view.unmount()
       } finally {
-        await act(async () => providerReads.forEach(release => release()))
+        try {
+          view?.unmount()
+          await act(async () => providerReads.forEach(release => release()))
+        } finally {
+          completeBody()
+          pendingModelBody = undefined
+        }
       }
     }
   )
