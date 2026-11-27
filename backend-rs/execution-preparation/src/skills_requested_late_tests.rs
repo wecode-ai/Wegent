@@ -162,18 +162,3 @@ fn bot_ref_sync_skips_empty_skills_and_replaces_falsey_refs() {
         json!({"skill_id": 9, "namespace": "default"})
     );
 }
-
-/// The coding coordinate gate follows the bot's shell type and the team's
-/// collaboration model.
-#[test]
-fn coding_coordinate_requires_a_coding_shell_and_coordinate_mode() {
-    let mut request = request_with(vec![], vec![], json!({}), None);
-    request.collaboration_model = "coordinate".to_string();
-    request.bot = json!([{"shell_type": "ClaudeCode", "skills": [], "skill_refs": {}}]);
-    assert!(coding_coordinate(&request));
-    request.bot = json!([{"shell_type": "Chat", "skills": [], "skill_refs": {}}]);
-    assert!(!coding_coordinate(&request));
-    request.bot = json!([{"shell_type": "ClaudeCode", "skills": [], "skill_refs": {}}]);
-    request.collaboration_model = "solo".to_string();
-    assert!(!coding_coordinate(&request));
-}

@@ -472,19 +472,8 @@ async fn local_task(
         message_id,
         local_task_id,
         subtask_id,
-    );
-    let outcome = if let Some(redis) = &state.redis {
-        completion::with_delivery_lock(
-            redis,
-            subtask_id,
-            completion::Delivery::Device(stream),
-            || "Device delivery lock unavailable".to_owned(),
-            work,
-        )
-        .await
-    } else {
-        work.await
-    };
+    )
+    .await;
     match outcome {
         Ok(()) => json!({"success": true}),
         Err(error) => {
