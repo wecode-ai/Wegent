@@ -36,21 +36,30 @@ export async function bindStoppedStandIn(control, userId, deviceId, timeoutMs, c
 }
 
 export async function assertStandInAccountDevice(userId, deviceId, timeoutMs, cloud) {
-  const request = path =>
+  const request = (path, signal = AbortSignal.timeout(timeoutMs)) =>
     fetchJson(`${cloud.backendUrl}/api${path}`, {
       headers: { Authorization: `Bearer ${cloud.authToken}` },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     })
   const user = await request('/users/me')
   assert.equal(user.id, userId, 'The fixture session must own the selected assistant')
-  await until(
-    () => request('/v1/personal-assistant'),
-    ({ assistant }) =>
-      assistant?.definitions?.find(entry => entry.roleId === '@primary')?.bot?.spec
-        ?.execution_policy?.environment_id === deviceId,
-    `The account primary assistant must select execution device ${deviceId}`,
-    timeoutMs
-  )
+  const message = `The account primary assistant must select execution device ${deviceId}`
+  const deadline = performance.now() + timeoutMs
+  const signal = AbortSignal.timeout(timeoutMs)
+  try {
+    await until(
+      () => request('/v1/personal-assistant', signal),
+      ({ assistant }) =>
+        performance.now() < deadline &&
+        assistant?.definitions?.find(entry => entry.roleId === '@primary')?.bot?.spec
+          ?.execution_policy?.environment_id === deviceId,
+      message,
+      timeoutMs
+    )
+  } catch (cause) {
+    if (signal.aborted || performance.now() >= deadline) throw new Error(message, { cause })
+    throw cause
+  }
 }
 
 export async function chooseStandInExecutionDevice(control, deviceId, timeoutMs, waitForSaved) {

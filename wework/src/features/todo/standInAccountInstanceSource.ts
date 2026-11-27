@@ -145,7 +145,6 @@ export function createAccountStandInInstanceSource({
   let activation = 0
   let lifetime = 0
   let refreshAfterMutation = false
-  let stopping = false
   let setupSelection:
     | { target: StandInBindingTarget; configuredDevice?: string; entry?: StandInEntry }
     | undefined
@@ -297,6 +296,17 @@ export function createAccountStandInInstanceSource({
       )
     }
   }
+  const confirmStoppedProfile = async (
+    target: StandInBindingTarget,
+    profile: PersonalStandInSettings
+  ) => {
+    const stopped = await api!.lifecycle(target.userId, target.deviceId, 'stop', profile.version)
+    if (stopped.lifecycle?.status !== 'stopped')
+      throw Object.assign(new Error('Stand-in cancellation is incomplete'), {
+        code: 'stand_in_stop_incomplete',
+      })
+    return stopped
+  }
   const read = async (preserveMutationError = true) => {
     const owner = observation
     if (!owner?.active || !listeners.size || snapshot.busy) return
@@ -434,6 +444,20 @@ export function createAccountStandInInstanceSource({
       verifiedProfile = { target, profile }
       const lifecycleStatus = profile.lifecycle?.status
       if (lifecycleStatus === 'stopped') {
+        if (localPending !== undefined || sharedPending) {
+          if ((sharedPending?.expectedVersion ?? 0) > profile.version) {
+            publishBinding({ version: ++version, status: 'stopping', target })
+            return
+          }
+          try {
+            profile = await confirmStoppedProfile(target, profile)
+          } catch (cause) {
+            if (current()) publishReadFailure(target, true, cause)
+            return
+          }
+          if (!current()) return
+          verifiedProfile = { target, profile }
+        }
         publishBinding({ version: ++version, status: 'stopped', target })
         publish({ stoppedProfile: profile, error: accountError ?? mutationError })
         if (pendingStop && current() && (sharedPending?.expectedVersion ?? 0) <= profile.version)
@@ -532,6 +556,7 @@ export function createAccountStandInInstanceSource({
     operation: 'setup' | 'stop' | 'bind' | 'migrate' | 'initialize',
     input: {
       version?: number
+      onStopAccepted?(accepted: boolean): void
       initializeTarget?(): Promise<void>
       target?: StandInBindingTarget
       roleId?: string
@@ -546,7 +571,6 @@ export function createAccountStandInInstanceSource({
     const revision = lifetime
     readRevision++
     activation++
-    stopping = operation === 'stop'
     publish({ busy: true, error: null })
     let finishSetup: (() => void) | undefined
     try {
@@ -708,6 +732,7 @@ export function createAccountStandInInstanceSource({
         }
         assertObserved(revision, localDeviceId)
         publishBinding({ version: ++version, status: 'stopping', target })
+        input.onStopAccepted?.(true)
         let stopped: PersonalStandInSettings
         if (remoteStop && sharedPending) {
           // An unreachable target may have no verified version. Record its
@@ -725,15 +750,7 @@ export function createAccountStandInInstanceSource({
             refreshAfterMutation = true
             throw Object.assign(new Error('Stop request changed'), { code: 'version_conflict' })
           }
-          stopped =
-            confirmedProfile.lifecycle?.status === 'stopped'
-              ? confirmedProfile
-              : await api.lifecycle(
-                  target.userId,
-                  target.deviceId,
-                  'stop',
-                  sharedPending.expectedVersion
-                )
+          stopped = await confirmStoppedProfile(target, confirmedProfile)
         } else {
           stopped = await api.lifecycle(target.userId, target.deviceId, 'stop')
         }
@@ -768,14 +785,17 @@ export function createAccountStandInInstanceSource({
       if (operation === 'initialize') role = 'initialized'
       if (operation === 'migrate') {
         const source = binding?.target
+        const secondaryRole = input.roleId && input.roleId !== '@primary'
         if (!source) throw new StandInMigrationError('not_stopped')
         if (source.deviceId === target.deviceId) throw new StandInMigrationError('same_device')
         if (binding.status !== 'stopped') {
-          if (!input.initializeTarget) throw new StandInMigrationError('not_stopped')
           // A direct device switch never cancels the old device. When the source
           // cannot be migrated, the explicit recovery action selects a fresh destination.
-          if (binding.status === 'stopping') role = 'initialized'
-          else {
+          const canRecover = !secondaryRole && input.initializeTarget
+          if (binding.status === 'stopping') {
+            if (!canRecover) throw new StandInMigrationError('not_stopped')
+            role = 'initialized'
+          } else {
             try {
               const profile = await api.personalGet(source.userId, source.deviceId, {
                 deviceSettingsOnly: true,
@@ -783,7 +803,11 @@ export function createAccountStandInInstanceSource({
               if (profile.lifecycle?.status !== 'stopped')
                 throw new StandInMigrationError('not_stopped')
             } catch (cause) {
-              if (!isStandInDeviceUnreachable(cause) && !requiresStandInUpgrade(cause)) throw cause
+              if (
+                !canRecover ||
+                (!isStandInDeviceUnreachable(cause) && !requiresStandInUpgrade(cause))
+              )
+                throw cause
               role = 'initialized'
             }
           }
@@ -801,11 +825,16 @@ export function createAccountStandInInstanceSource({
               assertOwnership: () => assertObserved(revision, localDeviceId),
             })
           } catch (cause) {
-            if (!(cause instanceof StandInMigrationSourceUnavailable) || !input.initializeTarget)
+            if (
+              secondaryRole ||
+              !(cause instanceof StandInMigrationSourceUnavailable) ||
+              !input.initializeTarget
+            )
               throw cause
             role = 'initialized'
           }
         }
+        if (secondaryRole) return role
       }
       assertObserved(revision, localDeviceId)
       await updateCloudPrimaryDevice(target.deviceId)
@@ -820,11 +849,12 @@ export function createAccountStandInInstanceSource({
         deviceId: target.deviceId,
       }
       let status = verifiedStatus(target)
+      let accessDenied = false
       try {
         // Observe the target before the account marker. The Executor checks this
         // version atomically, so a stop completed between the marker read and
         // start cannot be unintentionally reversed.
-        const profile = await api.personalGet(target.userId, target.deviceId, {
+        let profile = await api.personalGet(target.userId, target.deviceId, {
           deviceSettingsOnly: true,
         })
         assertObserved(revision, localDeviceId)
@@ -850,9 +880,19 @@ export function createAccountStandInInstanceSource({
             (sharedPending?.expectedVersion ?? 0) > profile.version
           )
             return role
+          profile = await confirmStoppedProfile(target, profile)
+          assertObserved(revision, localDeviceId)
+          verifiedProfile = { target, profile }
           await clearStopIntent(localDeviceId, target, localPending, sharedPending)
           assertObserved(revision, localDeviceId)
-          if (sharedStopIntent(await loadStopAccount(), target.deviceId)) return role
+          const afterClear = await loadStopAccount()
+          assertObserved(revision, localDeviceId)
+          if (afterClear && configuredPrimaryStandInDevice(afterClear) !== target.deviceId) {
+            observation?.publishAccount?.(afterClear)
+            pinnedSelection = undefined
+            throw Object.assign(new Error('version conflict'), { code: 'version_conflict' })
+          }
+          if (sharedStopIntent(afterClear, target.deviceId)) return role
           status = 'stopped'
         }
         const started = await api.lifecycle(
@@ -866,22 +906,26 @@ export function createAccountStandInInstanceSource({
         verifiedProfile = { target, profile: started }
         status = 'active'
         if (observed(revision, localDeviceId)) return role
+      } catch (cause) {
+        accessDenied = accountAccessDeniedOrMissing(cause)
+        throw cause
       } finally {
-        if (observed(revision, localDeviceId)) {
+        if (!accessDenied && observed(revision, localDeviceId)) {
           publishBinding({ version: ++version, status, target })
           if (status === 'stopped') publish({ stoppedProfile: profileFor(target) })
         }
       }
     } catch (cause) {
-      if (
-        cause &&
-        typeof cause === 'object' &&
-        'code' in cause &&
-        (cause.code === 'version_conflict' || cause.code === 'stand_in_stop_incomplete')
-      )
+      const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined
+      if (code === 'version_conflict' || code === 'stand_in_stop_incomplete')
         refreshAfterMutation = true
-      if (observed(revision, localDeviceId))
-        publish({ error: { cause, fallback: 'save_settings_failed' } })
+      if (accountAccessDeniedOrMissing(cause) || code === 'version_conflict')
+        input.onStopAccepted?.(false)
+      if (observed(revision, localDeviceId)) {
+        if (accountAccessDeniedOrMissing(cause))
+          invalidateAccountBinding(cause, 'save_settings_failed')
+        else publish({ error: { cause, fallback: 'save_settings_failed' } })
+      } else input.onStopAccepted?.(false)
       if (operation === 'migrate' || operation === 'bind' || operation === 'initialize') throw cause
     } finally {
       if (finishSetup) {
@@ -889,7 +933,6 @@ export function createAccountStandInInstanceSource({
         finishSetup()
       }
       if (observed(revision, localDeviceId)) {
-        stopping = false
         const setupScopeChanged =
           operation === 'setup' &&
           (owner.entry !== observation?.entry ||
@@ -933,7 +976,7 @@ export function createAccountStandInInstanceSource({
       if (changed) {
         readRevision++
         if (owner.active && !snapshot.busy) void read()
-        else if (owner.active && (stopStateChanged || (stopping && configuredDeviceChanged)))
+        else if (owner.active && (stopStateChanged || configuredDeviceChanged))
           refreshAfterMutation = true
       }
       return () => {
@@ -945,18 +988,21 @@ export function createAccountStandInInstanceSource({
           activation++
           observation = undefined
           refreshAfterMutation = false
-          stopping = false
           publish({ busy: false })
         })
       }
     },
     stop: async (targetOrVersion?: StandInBindingTarget | number, expectedVersion?: number) => {
-      await mutate(
-        'stop',
-        typeof targetOrVersion === 'number'
+      let accepted = false
+      await mutate('stop', {
+        ...(typeof targetOrVersion === 'number'
           ? { version: targetOrVersion }
-          : { target: targetOrVersion, version: expectedVersion }
-      )
+          : { target: targetOrVersion, version: expectedVersion }),
+        onStopAccepted: value => {
+          accepted = value
+        },
+      })
+      return accepted
     },
     setup: async () => {
       const target = snapshot.setupTarget

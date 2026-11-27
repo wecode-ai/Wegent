@@ -10,6 +10,7 @@ import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import { bindStoppedStandIn } from './stand-in-instance-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
@@ -19,6 +20,8 @@ export const PEER_CLOUD_PROMPT = 'PEER_CLIENT_CLOUD_PRIMARY_EXECUTION'
 export const PEER_CLOUD_COMPLETE = 'PEER_CLIENT_CLOUD_PRIMARY_COMPLETE'
 export const PEER_FALLBACK_PROMPT = 'PEER_CLIENT_FOREIGN_DESKTOP_FALLBACK_EXECUTION'
 export const PEER_FALLBACK_COMPLETE = 'PEER_CLIENT_FOREIGN_DESKTOP_FALLBACK_COMPLETE'
+export const OFFLINE_SWITCH_PROMPT = 'OFFLINE_SELECTED_ASSISTANT_SWITCH_LOCAL'
+export const OFFLINE_SWITCH_COMPLETE = 'OFFLINE_SELECTED_ASSISTANT_LOCAL_TURN_COMPLETE'
 const testId = id => `[data-testid=${JSON.stringify(id)}]`
 
 /** Own a second real desktop installation for the cloud-device checkpoint. */
@@ -125,6 +128,8 @@ export function createStandInCloudPeerClient({
         localPrimaryThreadId,
       }
     ) {
+      const primaryTaskId = `stand-in-chat-${userId}-primary`
+      const primaryConversation = testId('stand-in-conversation')
       async function verifySavedLocalBinding(control, localDevice) {
         await setPrimaryDevice(localDevice)
         await rpc(control, 'runtime.stand_in.personal.lifecycle', {
@@ -142,15 +147,29 @@ export function createStandInCloudPeerClient({
         ]) {
           await setPrimaryDevice(foreignDesktopDevice)
           await reloadMainWindow(control)
-          await control.command('waitFor', testId('stand-in-overview'))
+          await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+          // This reply was persisted only on the local Executor while the selected
+          // cloud device was offline. Reopening it verifies the effective source.
+          await control.command('waitFor', primaryConversation, {
+            text: OFFLINE_SWITCH_COMPLETE,
+            timeoutMs: uiTimeoutMs,
+          })
+          await control.command(
+            'waitFor',
+            `${primaryConversation} [data-testid="chat-message-input"]`,
+            {
+              enabled: true,
+              timeoutMs: uiTimeoutMs,
+            }
+          )
           assert.equal(await readPrimaryDevice(), foreignDesktopDevice)
         }
         await setPrimaryDevice(localDevice)
       }
 
-      async function verifyPeerCloudTurn(taskId, prompt, completion) {
+      async function verifyDeviceTurn(request, taskId, prompt, completion, owner) {
         const transcript = await until(
-          () => remoteRpc('runtime.tasks.transcript', { taskId, limit: 20, refresh: true }),
+          () => request('runtime.tasks.transcript', { taskId, limit: 20, refresh: true }),
           value => {
             const user = value.messages?.find(
               message => message.role === 'user' && message.content === prompt
@@ -165,17 +184,25 @@ export function createStandInCloudPeerClient({
               )
             )
           },
-          `Cloud Executor must persist the new request and response in the same turn: ${prompt}`,
+          `${owner} must persist the new request and response in the same turn: ${prompt}`,
           modelResponseTimeoutMs
         )
         const finished = await until(
-          () => remoteRpc('runtime.tasks.get', { taskId }),
+          () => request('runtime.tasks.get', { taskId }),
           result => result.task?.status === 'done' && result.task.running === false,
-          `Cloud Executor must finish the new turn: ${prompt}`,
+          `${owner} must finish the new turn: ${prompt}`,
           modelResponseTimeoutMs
         )
-        assert.ok(transcript.threadId, 'The cloud transcript must expose a native thread')
+        assert.ok(transcript.threadId, `${owner} transcript must expose a native thread`)
         assert.equal(finished.task.threadId, transcript.threadId)
+        const turnId = transcript.messages.find(
+          message => message.role === 'user' && message.content === prompt
+        ).turnId
+        return { turnId, threadId: transcript.threadId }
+      }
+
+      async function verifyPeerCloudTurn(taskId, prompt, completion) {
+        const turn = await verifyDeviceTurn(remoteRpc, taskId, prompt, completion, 'Cloud Executor')
         const peerLocalTasks = await rpc(peerControl, 'runtime.tasks.list', {})
         assert.equal(peerLocalTasks.coverage.authorized_index_complete, true)
         assert.equal(
@@ -183,10 +210,7 @@ export function createStandInCloudPeerClient({
           undefined,
           'Cloud @primary chat must not execute on the second client local Executor'
         )
-        const turnId = transcript.messages.find(
-          message => message.role === 'user' && message.content === prompt
-        ).turnId
-        return { turnId, threadId: transcript.threadId }
+        return turn
       }
 
       assert.ok(preparedApp, 'Multi-client stand-in E2E requires prepared desktop launch metadata')
@@ -241,6 +265,29 @@ export function createStandInCloudPeerClient({
         await stopProcessGroup(cloud.remoteExecutor)
         await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
         await observeDevice(control, CLOUD_DEVICE_ID, '离线')
+        await reloadMainWindow(control)
+        assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
+        await bindStoppedStandIn(control, userId, localDevice, uiTimeoutMs, cloud)
+        await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+        await control.command('waitFor', primaryConversation)
+        await sendChat(control, primaryConversation, OFFLINE_SWITCH_PROMPT)
+        await control.command('waitFor', primaryConversation, {
+          text: OFFLINE_SWITCH_COMPLETE,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const offlineTurn = await verifyDeviceTurn(
+          (method, params) => rpc(control, method, params),
+          primaryTaskId,
+          OFFLINE_SWITCH_PROMPT,
+          OFFLINE_SWITCH_COMPLETE,
+          'Local Executor'
+        )
+        assert.equal(offlineTurn.threadId, localPrimaryThreadId)
+        assert.equal(await readPrimaryDevice(), localDevice)
+
+        // Return to the offline device before exercising the shared pending stop.
+        await setPrimaryDevice(CLOUD_DEVICE_ID)
+        await reloadMainWindow(control)
         await control.command('clickWhenEnabled', testId('stand-in-instance-stop'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -303,7 +350,6 @@ export function createStandInCloudPeerClient({
             await peerControl.command('waitFor', testId('stand-in-conversation'))
           })(),
         ])
-        const primaryTaskId = `stand-in-chat-${userId}-primary`
         await sendChat(peerControl, testId('stand-in-conversation'), PEER_CLOUD_PROMPT)
         await peerControl.command('waitFor', testId('stand-in-conversation'), {
           text: PEER_CLOUD_COMPLETE,

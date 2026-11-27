@@ -457,7 +457,7 @@ test('a catalog refresh during initialization adopts the committed remote accoun
 test.each(['missing', 'denied'])(
   'an explicit remote link with a %s device cannot initialize on a different target',
   async reason => {
-    const { initialize } = setup(null, blank, undefined, {
+    const { initialize, personalGet } = setup(null, blank, undefined, {
       initialEntry: peerEntry,
       devices: reason === 'missing' ? [] : [peer],
       deviceCatalogStatus: reason === 'missing' ? 'empty' : 'available',
@@ -467,6 +467,8 @@ test.each(['missing', 'denied'])(
       },
     })
     expect(await screen.findByTestId('personal-assistant-account-retry')).toBeVisible()
+    const peerReads = personalGet.mock.calls.filter(([, device]) => device === peer.device_id)
+    expect(peerReads).toEqual(reason === 'missing' ? [] : [[7, peer.device_id]])
     expect(initialize).not.toHaveBeenCalled()
     expect(screen.queryByText('primary')).toBeNull()
   }

@@ -976,10 +976,18 @@ it('switches primary execution device directly without stopping and allows switc
   ).toBe(false)
   expect(result.current.binding?.target?.deviceId).toBe('cloud-2')
 
-  // A failed local persistence operation cannot create a falsely recorded stop intent.
+  // A failed cloud marker write cannot create a falsely recorded stop intent.
   const persistenceFailure = new Error('Stop marker storage unavailable')
-  binding.mockRejectedValueOnce(persistenceFailure)
-  await act(() => result.current.stop())
+  updateStopIntent.mockRejectedValueOnce(persistenceFailure)
+  await act(async () => expect(await result.current.stop()).toBe(false))
+  expect(updateStopIntent).toHaveBeenLastCalledWith(
+    'cloud-2',
+    'mark',
+    expect.any(String),
+    null,
+    runningCloud.version
+  )
+  expect(latestAccount.stopIntents ?? []).toEqual([])
   expect(result.current.errorCause).toBe(persistenceFailure)
   expect(result.current.binding?.status).toBe('active')
   expect(
@@ -987,7 +995,7 @@ it('switches primary execution device directly without stopping and allows switc
   ).toBe(false)
 
   // Offline stop failure keeps cloud-2 in stopping, while allowing switching to localId.
-  await act(() => result.current.stop())
+  await act(async () => expect(await result.current.stop()).toBe(true))
   expect(result.current.binding?.status).toBe('stopping')
 
   expect(result.current.binding?.target?.deviceId).toBe('cloud-2')
@@ -1031,6 +1039,7 @@ it('switches primary execution device directly without stopping and allows switc
   expect(lifecycle).toHaveBeenLastCalledWith(1, localId, 'stop')
   expect(latestAccount.stopIntents).toContainEqual(localIntent)
   getAccount.mockImplementation(async () => latestAccount)
+  lifecycle.mockResolvedValueOnce(stoppedLocal)
   act(() => result.current.reload())
   await waitFor(() => expect(latestAccount.stopIntents).not.toContainEqual(localIntent))
 
@@ -1207,7 +1216,7 @@ it('shares offline stopping state across clients, guards stale stops, and recove
   // Another client switches @primary to cloud-2 before stop is confirmed on this client.
   const staleStopTarget = firstMount.result.current.binding!.target!
   latestAccount = makeAccount('cloud-2', 'rev-2')
-  await act(() => firstMount.result.current.stop(staleStopTarget))
+  await act(async () => expect(await firstMount.result.current.stop(staleStopTarget)).toBe(false))
   expect(lifecycle).not.toHaveBeenCalled()
   await waitFor(() => expect(firstMount.result.current.binding?.target?.deviceId).toBe('cloud-2'))
 
@@ -1308,6 +1317,7 @@ it('shares offline stopping state across clients, guards stale stops, and recove
   // A verified remote stop remains stopped even if cleanup failed; reload retries the account cleanup.
   failClear = false
   personalGet.mockResolvedValueOnce(stoppedProfile)
+  lifecycle.mockResolvedValueOnce(stoppedProfile)
   act(() => afterReload.result.current.reload())
   await waitFor(() => expect(latestAccount.stopIntents).toEqual([]))
   expect(afterReload.result.current.binding?.status).toBe('stopped')
@@ -1388,7 +1398,7 @@ it('shares offline stopping state across clients, guards stale stops, and recove
       finishStop = resolve
     })
   )
-  let stopping!: Promise<void>
+  let stopping!: Promise<boolean>
   act(() => {
     stopping = conflictMount.result.current.stop()
   })
@@ -1550,4 +1560,275 @@ it('recovers an unavailable legacy source without reattaching the native binding
   ])
   expect(configure).toHaveBeenCalledOnce()
   expect(result.current.binding).toEqual(stoppingBinding)
+})
+
+it.each(['retry', 'read'] as const)(
+  'retains a stop marker when the stopped version changes before %s verifies it',
+  async mode => {
+    const stopped: PersonalStandInSettings = {
+      userId: 1,
+      executionDeviceId: 'cloud-1',
+      version: 5,
+      roles: [],
+      lifecycle: { status: 'stopped' },
+    }
+    let latest = makeAccount('cloud-1')
+    const pending = { deviceId: 'cloud-1', requestId: 'pending', expectedVersion: 5 }
+    if (mode === 'read')
+      latest = {
+        ...latest,
+        stopIntents: [pending],
+        stopIntentGenerations: { 'cloud-1': pending.requestId },
+      }
+    const personalGet = vi.fn<StandInExecutorApi['personalGet']>().mockResolvedValue(stopped)
+    const conflict = Object.assign(new Error('Version changed'), { code: 'version_conflict' })
+    const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>().mockImplementation(async () => {
+      personalGet.mockResolvedValue({ ...stopped, version: 6, lifecycle: undefined })
+      throw conflict
+    })
+    const updateStopIntent = vi.fn(
+      async (deviceId, operation, requestId, _expected, expectedVersion) => {
+        if (operation === 'mark')
+          latest = {
+            ...latest,
+            stopIntents: [{ deviceId, requestId, expectedVersion }],
+            stopIntentGenerations: { [deviceId]: requestId },
+          }
+        return latest
+      }
+    )
+    const services = {
+      standInApi: { personalGet, lifecycle, binding: makeBindingStore() },
+      personalAssistantAccountApi: { get: async () => latest, updateStopIntent },
+      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+    } as unknown as WorkbenchServices
+    const source = createStandInInstanceSource({
+      services,
+      api: services.standInApi,
+      userId: 1,
+      backendUrl: account.backendUrl,
+      accountMode: true,
+      accountNavigationOnly: true,
+    })
+    const unsubscribe = source.subscribe(
+      { account: latest, active: true, connected: true, devices: [cloudDevice('cloud-1')] },
+      () => {}
+    )
+    try {
+      if (mode === 'retry') {
+        await waitFor(() => expect(source.getSnapshot().binding?.status).toBe('stopped'))
+        expect(await source.stop()).toBe(false)
+      }
+      await waitFor(() => expect(source.getSnapshot().binding?.status).toBe('stopping'))
+      expect(source.getSnapshot().error?.cause).toBe(conflict)
+      expect(lifecycle).toHaveBeenCalledExactlyOnceWith(1, 'cloud-1', 'stop', stopped.version)
+      expect(latest.stopIntents).toHaveLength(1)
+      expect(updateStopIntent.mock.calls.some(([, operation]) => operation === 'clear')).toBe(false)
+    } finally {
+      unsubscribe()
+    }
+  }
+)
+
+it('invalidates a denied destination and reconciles a newer device choice received during bind', async () => {
+  let latest = makeAccount('cloud-1')
+  const available = [cloudDevice('cloud-1'), cloudDevice('cloud-2')]
+  const profile = (deviceId: string): PersonalStandInSettings => ({
+    userId: 1,
+    executionDeviceId: deviceId,
+    version: 1,
+    roles: [],
+  })
+  const deny = new ApiError('Account access revoked', 403)
+  const getAccount = vi.fn(async () => latest)
+  const started = Promise.withResolvers<void>()
+  const finishStart = Promise.withResolvers<PersonalStandInSettings>()
+  const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>()
+  lifecycle.mockImplementation(async () => {
+    started.resolve()
+    return finishStart.promise
+  })
+  const services = {
+    standInApi: {
+      personalGet: async (_user: number, device: string) => profile(device),
+      lifecycle,
+      binding: makeBindingStore(),
+    },
+    personalAssistantAccountApi: {
+      get: getAccount,
+      updateDefinitions: async (
+        _revision: string,
+        definitions: Array<{ roleId: string; executionDeviceId?: string }>
+      ) => {
+        latest = makeAccount(
+          definitions.find(d => d.roleId === '@primary')?.executionDeviceId,
+          'bind-revision'
+        )
+        return latest
+      },
+    },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const source = createStandInInstanceSource({
+    services,
+    api: services.standInApi,
+    userId: 1,
+    backendUrl: account.backendUrl,
+    accountMode: true,
+    accountNavigationOnly: true,
+  })
+  const subscribe = () =>
+    source.subscribe(
+      {
+        account: latest,
+        readAccount: () => latest,
+        publishAccount: next => {
+          latest = next
+        },
+        active: true,
+        connected: true,
+        devices: available,
+      },
+      () => {}
+    )
+  let unsubscribe = subscribe()
+  let binding: Promise<void> | undefined
+  try {
+    await waitFor(() => expect(source.getSnapshot().binding?.target?.deviceId).toBe('cloud-1'))
+    getAccount.mockRejectedValueOnce(deny)
+    await expect(source.bind({ ...account, deviceId: 'cloud-2' })).rejects.toBe(deny)
+    expect(source.getSnapshot().binding).toBeUndefined()
+    expect(source.getSnapshot().error?.cause).toBe(deny)
+    expect(lifecycle).not.toHaveBeenCalled()
+    source.reload()
+    await waitFor(() => expect(source.getSnapshot().binding?.target?.deviceId).toBe('cloud-2'))
+    binding = source.bind({ ...account, deviceId: 'cloud-1' })
+    await started.promise
+    // The peer's selection arrives after the start was dispatched but before it completes.
+    latest = makeAccount('cloud-2', 'peer-revision')
+    unsubscribe()
+    unsubscribe = subscribe()
+    finishStart.resolve(profile('cloud-1'))
+    await binding
+    await waitFor(() => expect(source.getSnapshot().binding?.target?.deviceId).toBe('cloud-2'))
+    expect(source.getSnapshot().binding?.status).toBe('active')
+    expect(lifecycle).toHaveBeenCalledExactlyOnceWith(1, 'cloud-1', 'start', 1)
+  } finally {
+    finishStart.resolve(profile('cloud-1'))
+    await binding
+    unsubscribe()
+  }
+})
+
+it('does not start a stopped destination after the owner leaves during marker reload', async () => {
+  const available = [cloudDevice('cloud-1'), cloudDevice('cloud-2')]
+  const profile: PersonalStandInSettings = {
+    userId: 1,
+    executionDeviceId: 'cloud-2',
+    version: 2,
+    roles: [],
+    lifecycle: { status: 'stopped' },
+  }
+  const active: PersonalStandInSettings = {
+    ...profile,
+    executionDeviceId: 'cloud-1',
+    lifecycle: undefined,
+  }
+  const pending = { deviceId: 'cloud-2', requestId: 'pending', expectedVersion: 1 }
+  let latest: PersonalAssistantAccount = {
+    ...makeAccount('cloud-1'),
+    stopIntents: [pending],
+    stopIntentGenerations: { 'cloud-2': pending.requestId },
+  }
+  const reloadStarted = Promise.withResolvers<void>()
+  const reload = Promise.withResolvers<PersonalAssistantAccount>()
+  const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>().mockResolvedValue(profile)
+  const services = {
+    standInApi: {
+      personalGet: async (_user: number, device: string) =>
+        device === 'cloud-2' ? profile : active,
+      lifecycle,
+      binding: makeBindingStore(),
+    },
+    personalAssistantAccountApi: {
+      get: async () => {
+        if (latest.stopIntents?.length === 0) {
+          reloadStarted.resolve()
+          return reload.promise
+        }
+        return latest
+      },
+      updateDefinitions: async () => {
+        latest = {
+          ...makeAccount('cloud-2'),
+          stopIntents: [pending],
+          stopIntentGenerations: { 'cloud-2': pending.requestId },
+        }
+        return latest
+      },
+      updateStopIntent: async () => {
+        latest = { ...latest, stopIntents: [] }
+        return latest
+      },
+    },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const source = createStandInInstanceSource({
+    services,
+    api: services.standInApi,
+    userId: 1,
+    backendUrl: account.backendUrl,
+    accountMode: true,
+    accountNavigationOnly: true,
+  })
+  const unsubscribe = source.subscribe(
+    {
+      account: latest,
+      readAccount: () => latest,
+      publishAccount: next => {
+        latest = next
+      },
+      active: true,
+      connected: true,
+      devices: available,
+    },
+    () => {}
+  )
+  let binding: Promise<void> | undefined
+  try {
+    await waitFor(() => expect(source.getSnapshot().binding?.target?.deviceId).toBe('cloud-1'))
+    binding = source.bind({ ...account, deviceId: 'cloud-2' })
+    await reloadStarted.promise
+    unsubscribe()
+    await Promise.resolve()
+    reload.resolve(latest)
+    await expect(binding).rejects.toMatchObject({ name: 'AbortError' })
+    expect(lifecycle).toHaveBeenCalledExactlyOnceWith(1, 'cloud-2', 'stop', 2)
+  } finally {
+    reload.resolve(latest)
+    await binding?.catch(() => {})
+    unsubscribe()
+  }
+})
+
+it('reselects a reachable setup target when the selected device goes offline', async () => {
+  const personalGet = vi.fn<StandInExecutorApi['personalGet']>().mockResolvedValue({
+    userId: 1,
+    executionDeviceId: 'local',
+    version: 0,
+    roles: [],
+  })
+  const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>()
+  const services = {
+    standInApi: { binding: makeBindingStore(), personalGet, lifecycle },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const { result, rerender } = renderHook(
+    ({ available }) => useStandInInstance(services, 1, available, true, true, account.backendUrl),
+    { initialProps: { available: [cloudDevice('cloud-1')] } }
+  )
+  await waitFor(() => expect(result.current.setupTarget?.deviceId).toBe('cloud-1'))
+  rerender({ available: [cloudDevice('cloud-1', 'offline')] })
+  await waitFor(() => expect(result.current.setupTarget?.deviceId).toBe('local'))
+  expect(lifecycle).not.toHaveBeenCalled()
 })

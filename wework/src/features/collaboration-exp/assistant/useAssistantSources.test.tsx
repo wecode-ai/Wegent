@@ -14,7 +14,7 @@ const userId = 7
 const localDeviceId = 'electron-local'
 const reference = { name: 'assistant', namespace: 'default' }
 
-function account(deviceId: string): PersonalAssistantAccount {
+function account(deviceId?: string): PersonalAssistantAccount {
   return {
     defaultTeamRef: reference,
     revision: 'current',
@@ -28,7 +28,11 @@ function account(deviceId: string): PersonalAssistantAccount {
         },
         bot: {
           metadata: reference,
-          spec: { execution_policy: { mode: 'fixed', environment_id: deviceId } },
+          spec: {
+            execution_policy: deviceId
+              ? { mode: 'fixed', environment_id: deviceId }
+              : { mode: 'user_select' },
+          },
         },
         ghost: { spec: { systemPrompt: '' } },
       },
@@ -137,6 +141,80 @@ test('a cloud outage never substitutes the native binding for a known remote sou
   expect(binding).not.toHaveBeenCalled()
 })
 
+test('an unconfigured account does not select an execution device or retain the old source', async () => {
+  const selected = 'cloud-1'
+  const { result, get, personalGet, binding } = setup(
+    () => Promise.resolve(account()),
+    [cloudDevice(selected)]
+  )
+  await waitFor(() => expect(result.current.error).toBeTruthy())
+  expect(result.current.deviceId).toBeUndefined()
+  expect(result.current.inboxReady).toBe(false)
+  expect(personalGet).not.toHaveBeenCalled()
+  expect(binding).not.toHaveBeenCalled()
+
+  get.mockResolvedValueOnce(account(selected))
+  act(() => result.current.refresh())
+  await waitFor(() => expect(result.current.inboxReady).toBe(true))
+  expect(result.current.deviceId).toBe(selected)
+
+  get.mockResolvedValueOnce(account())
+  act(() => result.current.refresh())
+  await waitFor(() => expect(result.current.error).toBeTruthy())
+  expect(result.current.deviceId).toBeUndefined()
+  expect(result.current.inboxReady).toBe(false)
+  expect(personalGet.mock.calls).toEqual([[userId, selected]])
+  expect(binding).not.toHaveBeenCalled()
+})
+
+test.each([
+  ['cloud-1', 'cloud-1'],
+  ['electron-foreign', localDeviceId],
+])('blocks stopped sources on the effective device for %s', async (configured, effective) => {
+  const selected = account(configured)
+  const unrelated = { deviceId: 'cloud-2', requestId: 'other-stop' }
+  const { result, get, personalGet } = setup(
+    () => Promise.resolve({ ...selected, stopIntents: [unrelated] }),
+    [cloudDevice('cloud-1'), cloudDevice('cloud-2')]
+  )
+  await waitFor(() => expect(result.current.inboxReady).toBe(true))
+  expect(result.current.deviceId).toBe(effective)
+
+  get.mockResolvedValueOnce({
+    ...selected,
+    stopIntents: [unrelated, { deviceId: effective, requestId: 'selected-stop' }],
+  })
+  act(() => result.current.refresh())
+  await waitFor(() => expect(result.current.deviceId).toBeUndefined())
+  expect(result.current.inboxReady).toBe(false)
+
+  // The shared intent is cleared only after the Executor has stopped the profile.
+  get.mockResolvedValueOnce(selected)
+  personalGet.mockImplementation(async (ownerId, deviceId) => ({
+    userId: ownerId,
+    executionDeviceId: deviceId,
+    version: 2,
+    roles: [],
+    lifecycle: { status: 'stopped' },
+  }))
+  await act(async () => result.current.refresh())
+  expect(personalGet).toHaveBeenLastCalledWith(userId, effective)
+  expect(result.current.deviceId).toBeUndefined()
+  expect(result.current.error).toBeTruthy()
+  expect(result.current.inboxReady).toBe(false)
+
+  get.mockResolvedValueOnce(selected)
+  personalGet.mockImplementation(async (ownerId, deviceId) => ({
+    userId: ownerId,
+    executionDeviceId: deviceId,
+    version: 3,
+    roles: [],
+  }))
+  act(() => result.current.refresh())
+  await waitFor(() => expect(result.current.inboxReady).toBe(true))
+  expect(result.current.deviceId).toBe(effective)
+})
+
 test('catalog updates keep the verified inbox visible until a new source is resolved', async () => {
   const first = cloudDevice('cloud-1')
   const second = cloudDevice('cloud-2')
@@ -177,7 +255,7 @@ test('settings changes on another device re-resolve the primary without redundan
     await waitFor(() => expect(result.current.inboxReady).toBe(true))
     expect(proposal).toHaveBeenCalledTimes(1)
     const changed = { userId, executionDeviceId: second.device_id, version: 1, roles: [] }
-    act(() => publishPersonalStandIn({ ...changed, userId: userId + 1 }))
+    await act(async () => publishPersonalStandIn({ ...changed, userId: userId + 1 }))
     expect(get).toHaveBeenCalledTimes(1)
     expect(proposal).toHaveBeenCalledTimes(1)
 

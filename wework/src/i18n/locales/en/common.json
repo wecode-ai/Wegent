@@ -6840,6 +6840,7 @@
     },
     "migration": {
       "destination_ready": "The destination is using the cloud assistant. The source profile and history are retained.",
+      "copy_complete": "The assistant profile was copied and remains paused. Resume the destination device before configuring it.",
       "offer": "Choose an assistant profile and a destination device.",
       "profile": "Profile to migrate",
       "not_stopped": "The source device has not confirmed that the stand-in and its work have stopped. Check the device and try migrating again.",
@@ -6848,7 +6849,7 @@
       "action": "Migrate to this device",
       "keep_local": "Not now",
       "title": "Migrate to “{{device}}”?",
-      "description": "Wework will stop the stand-in on the source device and cancel its work, then copy the selected profile’s responsibilities, model settings, tags and visible memories. Migrating the default assistant updates its execution device after the copy succeeds. The imported profile stays paused, and the source profile and conversation history are retained. If the source device is unreachable or cannot confirm the stop, Wework will use the cloud assistant on the destination device.",
+      "description": "Wework will stop the stand-in on the source device and cancel its work, then copy the selected profile’s responsibilities, model settings, tags and visible memories. Migrating the default assistant updates its execution device after the copy succeeds. The imported profile stays paused, and the source profile and conversation history are retained. When migrating the default assistant, if the source device is unreachable or cannot confirm the stop, Wework will use the cloud assistant on the destination device.",
       "changed": "The old profile changed. Review both profiles before retrying; the source is never resumed automatically.",
       "conflict": "A migrated cloud copy has different settings. Review or remove that copy before retrying. Local settings were not overwritten.",
       "same_device": "Choose a different cloud device."

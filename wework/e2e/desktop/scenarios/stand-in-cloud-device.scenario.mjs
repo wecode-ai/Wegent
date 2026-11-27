@@ -22,6 +22,8 @@ import {
   PEER_CLOUD_COMPLETE,
   PEER_FALLBACK_PROMPT,
   PEER_FALLBACK_COMPLETE,
+  OFFLINE_SWITCH_PROMPT,
+  OFFLINE_SWITCH_COMPLETE,
 } from '../modules/stand-in-cloud-peer-client.mjs'
 import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, fetchJson } from '../modules/shared.mjs'
 import {
@@ -255,7 +257,25 @@ export function createDesktopScenario({
       CLOUD_DEVICE_ID
     )
     await verifyDefinitionBackupSettingsEntry(control)
-    await stop(control)
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ collaborationExperienceEnabled: true }),
+    })
+    await control.command('navigate', 'body', { value: '/stand-in' })
+    await control.command('waitFor', testId('collaboration-exp-assistant-input'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('clickWhenEnabled', testId('stand-in-instance-stop'), {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
+    await control.command('waitFor', testId('stand-in-instance-stopped'))
+    assert.equal(
+      (await remoteRpc('runtime.stand_in.personal.get', { userId: USER })).lifecycle.status,
+      'stopped'
+    )
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ collaborationExperienceEnabled: false }),
+    })
   }
 
   async function verifyRegularBinding(control, localDevice) {
@@ -413,10 +433,12 @@ export function createDesktopScenario({
       const reopened = input.includes(REOPEN_PROMPT)
       const peerFallback = input.includes(PEER_FALLBACK_PROMPT)
       const peerCloud = input.includes(PEER_CLOUD_PROMPT)
+      const offlineSwitch = input.includes(OFFLINE_SWITCH_PROMPT)
       if (
         !reopened &&
         !peerFallback &&
         !peerCloud &&
+        !offlineSwitch &&
         !input.includes(PROMPT) &&
         !input.includes(LOCAL_PROMPT) &&
         !input.includes(HOLD)
@@ -425,7 +447,7 @@ export function createDesktopScenario({
       modelRequests++
       const id = `cloud-stand-in-${modelRequests}`
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      if (!reopened && !peerFallback && !peerCloud && input.includes(HOLD)) {
+      if (!reopened && !peerFallback && !peerCloud && !offlineSwitch && input.includes(HOLD)) {
         heldResponse = res
         heldRequestSeen = true
         res.on('close', () => {
@@ -441,11 +463,13 @@ export function createDesktopScenario({
                 ? PEER_FALLBACK_COMPLETE
                 : peerCloud
                   ? PEER_CLOUD_COMPLETE
-                  : reopened
-                    ? REOPEN_COMPLETE
-                    : input.includes(LOCAL_PROMPT)
-                      ? LOCAL_COMPLETE
-                      : COMPLETE
+                  : offlineSwitch
+                    ? OFFLINE_SWITCH_COMPLETE
+                    : reopened
+                      ? REOPEN_COMPLETE
+                      : input.includes(LOCAL_PROMPT)
+                        ? LOCAL_COMPLETE
+                        : COMPLETE
             ),
             responseCompleted(id),
           ])
@@ -574,7 +598,7 @@ export function createDesktopScenario({
         await stop(control)
       }
       await bind(control, USER, localDevice)
-      await createRole(control, 'Account-local history')
+      await createRole(control, 'Account-local history', localDevice)
       const initial = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       const historyRole = initial.roles.find(row => row.name === 'Account-local history')
       assert.ok(historyRole)
@@ -614,6 +638,7 @@ export function createDesktopScenario({
       await stop(control)
       const stoppedAccount = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       const beforeMigration = readProfile(remoteHome)
+      assert.equal(beforeMigration.lifecycle?.status, 'stopped', 'Migration target starts stopped')
       await control.command('waitFor', testId('stand-in-migration'))
       await control.command('select', testId('stand-in-migration-role'), { value: localRole.id })
       await control.command('select', testId('stand-in-migration-device'), {
@@ -621,6 +646,15 @@ export function createDesktopScenario({
       })
       await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
       await control.command('clickWhenEnabled', testId('stand-in-migrate-cancel'))
+      await control.command('waitFor', testId('stand-in-migrate-confirm'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await readPrimaryDevice(),
+        localDevice,
+        'Cancelling migration must preserve the account primary device'
+      )
       assert.deepEqual(
         readProfile(remoteHome),
         beforeMigration,
@@ -632,9 +666,14 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', testId('stand-in-role-name'))
-      assert.equal(await control.command('getValue', testId('stand-in-role-name')), LOCAL_NAME)
-      assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
+      await control.command('waitFor', testId('stand-in-instance-stopped'))
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+      assert.equal(readProfile(remoteHome).lifecycle?.status, 'stopped')
+      assert.equal(
+        await readPrimaryDevice(),
+        localDevice,
+        'Copying a secondary role must preserve the account primary device'
+      )
       const migrated = readProfile(remoteHome).roles.find(row => row.name === LOCAL_NAME)
       assert.ok(
         migrated,
@@ -644,6 +683,7 @@ export function createDesktopScenario({
         definition => definition.roleId === migrated.id
       )
       assert.equal(migratedDefinition?.bot.metadata.displayName, LOCAL_NAME)
+      assert.equal(migratedDefinition?.bot.spec.execution_policy.environment_id, CLOUD_DEVICE_ID)
       assert.equal(migrated.enabled, false, 'Migration must not enable unconfigured device grants')
       assert.equal(migrated.workspace, undefined)
       assert.equal(migrated.connections, undefined)
@@ -667,8 +707,7 @@ export function createDesktopScenario({
         'stopped',
         'The old stopped profile on the source device must remain stopped after migration'
       )
-      await control.command('clickWhenEnabled', testId('stand-in-close'))
-      await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
+      await bind(control, USER, CLOUD_DEVICE_ID)
       await createRole(control, CLOUD_NAME, CLOUD_DEVICE_ID)
       const role = readProfile(remoteHome).roles.find(row => row.name === CLOUD_NAME)
       assert.ok(role, 'The bound real cloud Executor must persist the role')
@@ -691,12 +730,7 @@ export function createDesktopScenario({
         undefined,
         'Remote conversations must not run on the local Executor'
       )
-      await control.command('fill', `${remoteChat} [data-testid="chat-message-input"]`, {
-        value: HOLD,
-      })
-      await control.command('press', `${remoteChat} [data-testid="chat-message-input"]`, {
-        key: 'Enter',
-      })
+      await sendChat(control, remoteChat, HOLD)
       await until(
         () => heldRequestSeen,
         Boolean,
@@ -773,6 +807,39 @@ export function createDesktopScenario({
         ),
         'Stopping and switching devices must retain local memories'
       )
+      // A peer can select the stopped cloud primary while this local role remains active.
+      const linkedRoleRoute =
+        '/stand-in?' +
+        new URLSearchParams({
+          userId: String(USER),
+          deviceId: localDevice,
+          profileId: historyRole.id,
+        }).toString()
+      const linkedRoleDefinition = (await readInitialAssistant()).assistant.definitions.find(
+        definition => definition.roleId === historyRole.id
+      )
+      assert.equal(linkedRoleDefinition?.bot.spec.execution_policy.environment_id, localDevice)
+      await setPrimaryDevice(CLOUD_DEVICE_ID)
+      try {
+        await reloadMainWindow(control)
+        await control.command('waitFor', testId('stand-in-instance-stopped'))
+        await control.command('navigate', 'body', { value: linkedRoleRoute })
+        await control.command('waitFor', localChat, {
+          text: LOCAL_COMPLETE,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', `${localChat} [data-testid="chat-message-input"]`, {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
+        assert.equal(readProfile(remoteHome).lifecycle?.status, 'stopped')
+      } finally {
+        await setPrimaryDevice(localDevice)
+        await control.command('navigate', 'body', { value: '/stand-in' })
+        await reloadMainWindow(control)
+        await control.command('waitFor', testId('stand-in-overview'))
+      }
       await cloud.stopRemoteDockerExecutorAndWaitOffline()
       await observeDevice(control, REMOTE_DOCKER_DEVICE_ID, '离线')
       assert.equal(
@@ -814,6 +881,7 @@ export function createDesktopScenario({
           modelRequests,
           realTurnCancelled: true,
           offlineBindingRetained: true,
+          offlineSelectionSwitchVerified: true,
           offlineStoppingReloadVerified: true,
           offlineStoppingPeerVerified: true,
           simultaneousClientsVerified: true,

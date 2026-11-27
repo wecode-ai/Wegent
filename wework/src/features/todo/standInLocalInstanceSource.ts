@@ -6,6 +6,7 @@ import {
 } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
+import { ApiError } from '@/api/http'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { availableStandInDevices } from './standInDevices'
 import { resolveStandInEntry, type StandInEntry, type StandInEntryError } from './standInEntry'
@@ -197,6 +198,14 @@ export function createLocalStandInInstanceSource({
     if (!observed(revision, deviceId))
       throw new DOMException('Stand-in instance owner changed', 'AbortError')
   }
+  const canUseSetupTarget = (
+    target: StandInBindingTarget,
+    deviceId: string,
+    owner: InstanceObservation
+  ) =>
+    target.deviceId === deviceId ||
+    (owner.connected &&
+      availableStandInDevices(owner.devices).some(device => device.device_id === target.deviceId))
   const discoverSetupTarget = async (deviceId: string, owner: InstanceObservation) => {
     const owned = await api!.personalGet(userId, deviceId)
     const available = owner.connected ? availableStandInDevices(owner.devices) : []
@@ -238,11 +247,7 @@ export function createLocalStandInInstanceSource({
       observed(revision, deviceId) &&
       observation?.active &&
       activation === epoch &&
-      (target.deviceId === deviceId ||
-        (observation.connected &&
-          availableStandInDevices(observation.devices).some(
-            device => device.device_id === target.deviceId
-          )))
+      canUseSetupTarget(target, deviceId, observation)
     if (!mayBind()) return { binding: unbound }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)
@@ -336,7 +341,10 @@ export function createLocalStandInInstanceSource({
           await mutate('setup', {})
           return
         }
-        if (snapshot.setupTarget) return
+        if (snapshot.setupTarget) {
+          if (canUseSetupTarget(snapshot.setupTarget, identity.deviceId, owner)) return
+          publish({ setupTarget: undefined })
+        }
         const setupTarget = await discoverSetupTarget(identity.deviceId, owner)
         if (!current()) return
         publish({ setupTarget, entryFailure: undefined, error: null })
@@ -380,6 +388,7 @@ export function createLocalStandInInstanceSource({
     operation: 'setup' | 'stop' | 'bind' | 'migrate' | 'initialize',
     input: {
       version?: number
+      onStopAccepted?(accepted: boolean): void
       target?: StandInBindingTarget
       roleId?: string
       primaryName?: string
@@ -415,6 +424,8 @@ export function createLocalStandInInstanceSource({
       const ownsSource = source && isStandInBindingOwner(source.userId, userId)
       const target = input.target
       if (operation === 'stop' && (!ownsSource || binding.status === 'stopped')) return
+      if (operation === 'stop' && input.version !== undefined && input.version !== binding.version)
+        throw Object.assign(new Error('version conflict'), { code: 'version_conflict' })
       if (operation === 'bind' && binding.status !== 'stopped') return
       if (operation === 'migrate' || operation === 'initialize') {
         if (
@@ -478,6 +489,7 @@ export function createLocalStandInInstanceSource({
         current = await api.binding(localDeviceId, 'beginStop', input.version ?? binding.version)
         assertObserved(revision, localDeviceId)
         publishBinding(current)
+        input.onStopAccepted?.(true)
         let stopped
         try {
           stopped = await raceWithTimeout(
@@ -547,6 +559,12 @@ export function createLocalStandInInstanceSource({
     } catch (cause) {
       if (observed(revision, localDeviceId) && !(cause instanceof StandInMigrationError))
         publish({ error: { cause, fallback: 'save_settings_failed' } })
+      if (
+        !observed(revision, localDeviceId) ||
+        (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) ||
+        (cause && typeof cause === 'object' && 'code' in cause && cause.code === 'version_conflict')
+      )
+        input.onStopAccepted?.(false)
       if (operation === 'migrate' || operation === 'initialize') throw cause
     } finally {
       if (finishSetup) {
@@ -605,14 +623,19 @@ export function createLocalStandInInstanceSource({
             fallback: 'save_settings_failed',
           },
         })
-        return
+        return false
       }
+      let accepted = false
       await mutate('stop', {
+        onStopAccepted: value => {
+          accepted = value
+        },
         version:
           typeof targetOrVersion === 'number'
             ? targetOrVersion
             : (expectedVersion ?? binding?.version),
       })
+      return accepted
     },
     setup: async () => {
       const target = snapshot.setupTarget

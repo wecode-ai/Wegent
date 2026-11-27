@@ -9,6 +9,7 @@ import {
   type StandInProposal,
 } from '@/api/standIn'
 import {
+  configuredPrimaryStandInDevice,
   getStandInAccountStopIntent,
   resolvePrimaryStandInDevice,
 } from '@/features/todo/standInInstanceSource'
@@ -137,6 +138,10 @@ export function createAssistantSourcesModel(
       let ownerId = userId
       let deviceId: string
       if (account) {
+        if (!configuredPrimaryStandInDevice(account)) {
+          clearSource()
+          throw Object.assign(new Error(), { code: 'executor_unavailable' })
+        }
         deviceId = await resolvePrimaryStandInDevice({
           api,
           account,
@@ -145,7 +150,7 @@ export function createAssistantSourcesModel(
           devices,
           connected,
         })
-        if (configuredTarget && getStandInAccountStopIntent(account, deviceId, devices)) {
+        if (getStandInAccountStopIntent(account, deviceId, devices)) {
           throw Object.assign(new Error(), { code: 'permission_denied' })
         }
       } else if (accountFailure) {
@@ -201,7 +206,7 @@ export function createAssistantSourcesModel(
       if (!current()) return
       if (settings.userId !== ownerId || settings.executionDeviceId !== deviceId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
-      if ((configuredTarget || accountFailure) && settings.lifecycle?.status) {
+      if (settings.lifecycle?.status) {
         throw Object.assign(new Error(), { code: 'permission_denied' })
       }
       const previous = snapshot.source

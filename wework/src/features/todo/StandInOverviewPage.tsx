@@ -79,6 +79,7 @@ export function StandInOverviewPage({
   entryRequestKey,
   entryRoute = '/stand-in',
   primaryDeviceId,
+  linkedRole,
   roleLocations,
   account,
   onBindDevice,
@@ -101,6 +102,7 @@ export function StandInOverviewPage({
   entryRequestKey?: number
   entryRoute?: string
   primaryDeviceId?: string
+  linkedRole?: string
   roleLocations?: StandInRoleLocation[]
   account?: PersonalAssistantAccount
   onBindDevice?(roleId: string, device: string): Promise<void>
@@ -276,6 +278,10 @@ export function StandInOverviewPage({
   const proposalSaveError = sameOwner ? view.proposalSaveError : null
   const resolving = sameOwner && view.resolving
   const openProfile = (target: NonNullable<typeof profile>, trigger?: HTMLElement) => {
+    if (linkedRole && target === 'primary' && primaryDeviceId) {
+      onSelectLocation?.(primaryDeviceId)
+      return
+    }
     rememberProfileTrigger(trigger)
     setProfile(target)
   }
@@ -395,7 +401,7 @@ export function StandInOverviewPage({
           ? (roleLocations?.find(entry => entry.role.id === id)?.deviceId ??
             roles.find(role => role.id === id)?.executionDeviceId)
           : primaryDeviceId)
-      if (target && target !== deviceId && onSelectLocation) {
+      if (target && (target !== deviceId || linkedRole) && onSelectLocation) {
         onSelectLocation(target, id)
         return
       }
@@ -600,7 +606,19 @@ export function StandInOverviewPage({
           />
         )
       : undefined
-  const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
+  const linkedConversationAvailable =
+    !linkedRole ||
+    (!conversationScope &&
+      roleId === linkedRole &&
+      conversationDevice === props.initialDeviceId &&
+      saved?.executionDeviceId === props.initialDeviceId &&
+      saved?.userId === props.userId &&
+      !saved?.lifecycle?.status)
+  const conversationAvailable =
+    api &&
+    deviceId &&
+    linkedConversationAvailable &&
+    (state.saved || (!state.loading && !state.error))
   const content = (resumeSetup?: ReactNode) => (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
@@ -624,7 +642,7 @@ export function StandInOverviewPage({
               })
             }
           />
-          {api && saved && (
+          {!linkedRole && api && saved && (
             <StandInTeamAndShareControls
               key={teamOwner}
               active={active}
@@ -710,7 +728,10 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {api && conversationDevice && (team || shared || roleId || !resumeSetup) ? (
+            {api &&
+            conversationDevice &&
+            linkedConversationAvailable &&
+            (team || shared || roleId || !resumeSetup) ? (
               <StandInConversation
                 delegationPanelOpen={delegationPanelOpen}
                 sidebarTasks={
@@ -1033,9 +1054,11 @@ export function StandInOverviewPage({
                     ref={panelRef}
                     initialProfileId={roleId}
                     initialDeviceId={
-                      profile === 'create'
-                        ? (localDeviceId ?? deviceId)
-                        : (role?.executionDeviceId ?? deviceId)
+                      linkedRole
+                        ? props.initialDeviceId
+                        : profile === 'create'
+                          ? (localDeviceId ?? deviceId)
+                          : (role?.executionDeviceId ?? deviceId)
                     }
                     initialCreate={profile === 'create'}
                     onDeleted={() => {
@@ -1051,7 +1074,8 @@ export function StandInOverviewPage({
                       if (value.executionDeviceId && value.executionDeviceId !== deviceId) {
                         if (onSelectLocation) onSelectLocation(value.executionDeviceId, value.id)
                         else state.setDeviceId(value.executionDeviceId)
-                      } else reload()
+                      } else if (linkedRole && deviceId) onSelectLocation?.(deviceId, value.id)
+                      else reload()
                       setProfile(null)
                     }}
                   />
@@ -1092,6 +1116,10 @@ export function StandInOverviewPage({
       onGuideClose={() => setGuideOpen(false)}
       onExampleSelect={text =>
         leavePanel(() => {
+          if (linkedRole && primaryDeviceId) {
+            onSelectLocation?.(primaryDeviceId)
+            return
+          }
           setRoleId(undefined)
           setDetailsAnchor(null)
           setProfile(null)

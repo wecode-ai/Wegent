@@ -36,13 +36,15 @@ async function readDeviceMatch(
   api: Pick<StandInExecutorApi, 'personalGet'>,
   binding: BindingIdentity,
   deviceId: string,
-  profileId: string | undefined
+  profileId: string | undefined,
+  requireActive = false
 ): Promise<DeviceMatch> {
   const profile = await api.personalGet(binding.userId, deviceId)
   if (profile.userId !== binding.userId || profile.executionDeviceId !== deviceId)
     throw Object.assign(new Error('Stand-in profile does not match its owner or device'), {
       code: 'permission_denied',
     })
+  if (requireActive && profile.lifecycle?.status) return undefined
   let match =
     (!profileId || profileId === '@primary') && deviceId === binding.deviceId
       ? '@primary'
@@ -89,7 +91,13 @@ export async function resolveStandInEntry(
   entry: StandInIdentityEntry,
   binding: BindingIdentity,
   authorizedDeviceIds: ReadonlySet<string>,
-  { unbound = false } = {}
+  {
+    unbound = false,
+    verifyIndependentDevice,
+  }: {
+    unbound?: boolean
+    verifyIndependentDevice?: (deviceId: string, profileId: string) => Promise<boolean>
+  } = {}
 ): Promise<StandInEntryResult> {
   const { userId, deviceId, profileId } = entry
   const fail = (error: StandInEntryError) => ({ kind: 'error', error }) as const
@@ -102,6 +110,16 @@ export async function resolveStandInEntry(
   if (profileId === '@primary' && deviceId && deviceId !== binding.deviceId) return fail('conflict')
 
   try {
+    // A stopped primary does not prevent work on a separate, verified active device.
+    // Such a route must identify exactly one secondary role and must never discover a fallback.
+    if (verifyIndependentDevice) {
+      if (!deviceId || !profileId || profileId === '@primary' || deviceId === binding.deviceId)
+        return fail('not_found')
+      const match = await readDeviceMatch(api, binding, deviceId, profileId, true)
+      if (match === ambiguous) return fail('ambiguous')
+      if (!match || !(await verifyIndependentDevice(deviceId, profileId))) return fail('not_found')
+      return ready(match.deviceId, match.profileId)
+    }
     const namedDevice = profileId === '@primary' ? binding.deviceId : deviceId
     if (namedDevice) {
       const match = await readDeviceMatch(api, binding, namedDevice, profileId)
