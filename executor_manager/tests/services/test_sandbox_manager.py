@@ -1738,6 +1738,51 @@ class TestSandboxManager:
             if condition == "removed":
                 mock_redis_client.hset.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_create_execution_dispatches_if_request_is_cancelled_during_unlock(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        unlocking = asyncio.Event()
+        dispatch = asyncio.Event()
+        original_release = manager._release_task_lifecycle_lease
+
+        async def release(lease):
+            unlocking.set()
+            try:
+                await asyncio.Future()
+            finally:
+                await original_release(lease)
+
+        async def run(sandbox, execution, timeout):
+            dispatch.set()
+
+        mocker.patch.object(
+            manager, "_release_task_lifecycle_lease", side_effect=release
+        )
+        mocker.patch.object(manager, "_run_execution", side_effect=run)
+        submission = asyncio.create_task(
+            manager.create_execution(
+                sandbox_id="12345", prompt="Test prompt", metadata={"subtask_id": 1}
+            )
+        )
+        try:
+            await asyncio.wait_for(unlocking.wait(), timeout=1)
+        finally:
+            submission.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await submission
+
+        await asyncio.wait_for(dispatch.wait(), timeout=1)
+
     # ----- get_execution Tests -----
 
     @pytest.mark.asyncio

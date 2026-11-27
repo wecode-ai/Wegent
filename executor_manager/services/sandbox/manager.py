@@ -1436,36 +1436,40 @@ class SandboxManager(metaclass=SingletonMeta):
         if subtask_id is None:
             return None, "subtask_id is required in metadata"
 
-        async with self._lock_current_sandbox(sandbox) as (current, error):
-            if current is None:
-                return None, error
-            if not current.is_active():
-                return (
-                    None,
-                    f"Sandbox {sandbox_id} is not active (status: {current.status.value})",
+        submitted: Optional[Tuple[Sandbox, Execution]] = None
+        try:
+            async with self._lock_current_sandbox(sandbox) as (current, error):
+                if current is None:
+                    return None, error
+                if not current.is_active():
+                    return (
+                        None,
+                        f"Sandbox {sandbox_id} is not active (status: {current.status.value})",
+                    )
+                execution = Execution.create(
+                    sandbox_id=current.sandbox_id,
+                    prompt=prompt,
+                    metadata=exec_metadata,
                 )
-            execution = Execution.create(
-                sandbox_id=current.sandbox_id,
-                prompt=prompt,
-                metadata=exec_metadata,
-            )
-            current.add_execution(execution)
-            if not self._repository.save_sandbox(current):
-                raise SandboxExecutionStorageError(
-                    f"Could not refresh Sandbox {sandbox_id}"
-                )
-            # The sandbox save already refreshed the session TTL and activity index.
-            if not self._repository.save_execution(
-                execution, refresh_session_ttl=False
-            ):
-                raise SandboxExecutionStorageError(
-                    f"Could not record execution for Sandbox {sandbox_id}"
-                )
-
-        # Start execution asynchronously using ExecutionRunner
-        asyncio.create_task(self._run_execution(current, execution, timeout))
-
-        return execution, None
+                current.add_execution(execution)
+                if not self._repository.save_sandbox(current):
+                    raise SandboxExecutionStorageError(
+                        f"Could not refresh Sandbox {sandbox_id}"
+                    )
+                # The sandbox save already refreshed TTL and activity.
+                if not self._repository.save_execution(
+                    execution, refresh_session_ttl=False
+                ):
+                    raise SandboxExecutionStorageError(
+                        f"Could not record execution for Sandbox {sandbox_id}"
+                    )
+                submitted = (current, execution)
+                return execution, None
+        finally:
+            # A saved submission must be dispatched even if unlock is cancelled.
+            if submitted is not None:
+                current, execution = submitted
+                asyncio.create_task(self._run_execution(current, execution, timeout))
 
     async def _run_execution(
         self, sandbox: Sandbox, execution: Execution, timeout: int
