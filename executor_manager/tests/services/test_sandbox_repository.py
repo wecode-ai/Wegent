@@ -109,7 +109,9 @@ def test_conditional_delete_preserves_a_replacement(
 
     assert repository.delete_sandbox_if_current("12345", sample_sandbox) is False
     pipe.watch.assert_called_once_with("wegent-sandbox-session:12345")
-    if not replace_after_read:
+    if replace_after_read:
+        pipe.execute.assert_called_once()
+    else:
         pipe.delete.assert_not_called()
         pipe.zrem.assert_not_called()
 

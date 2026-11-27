@@ -422,6 +422,7 @@ async def _proxy_sandbox_execute(
             sandbox_id=sandbox_id,
             prompt=task_prompt,
             timeout=timeout,
+            expected_runtime=sandbox,
             metadata={
                 "subtask_id": subtask_id,
                 "workspace_ref": workspace_ref,

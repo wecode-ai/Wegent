@@ -33,6 +33,7 @@ async def test_keep_alive_reports_retryable_coordination_failure(
         )
 
     assert exc_info.value.status_code == status_code
+    manager.keep_alive.assert_awaited_once_with("123", 60)
 
 
 @pytest.mark.asyncio

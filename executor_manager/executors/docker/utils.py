@@ -235,7 +235,9 @@ def count_running_containers(label_selector: str = None) -> dict:
         return {"status": "failed", "error_msg": f"Error: {error_msg}", "count": 0}
 
 
-def get_running_task_details(label_selector: str = None) -> dict:
+def get_running_task_details(
+    label_selector: str | None = None, *, include_stopped: bool = False
+) -> dict:
     """
     Get detailed information about running tasks from Docker containers.
 
@@ -251,6 +253,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
     try:
         # Base command with owner filter
         cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
+        if include_stopped:
+            cmd.extend(["--all", "--no-trunc"])
 
         # Add additional label selector if provided
         if label_selector:
@@ -258,10 +262,11 @@ def get_running_task_details(label_selector: str = None) -> dict:
 
         # Format to get task_id, subtask_id, subtask_next_id and container name
         # Using go template formatting to get multiple fields
+        template = '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}'
         cmd.extend(
             [
                 "--format",
-                '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}',
+                template + "|{{.ID}}" if include_stopped else template,
             ]
         )
 
@@ -291,6 +296,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
                     "subtask_next_id": subtask_next_id,
                     "task_type": task_type,
                 }
+                if include_stopped:
+                    container_info["container_id"] = parts[5] if len(parts) > 5 else ""
 
                 containers.append(container_info)
 

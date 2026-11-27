@@ -15,7 +15,44 @@ from shared.status import TaskStatus
 
 
 class TestDockerExecutor:
-    """Test cases for DockerExecutor"""
+    """Test cases for DockerExecutor."""
+
+    @pytest.mark.parametrize("owns_lease", [False, True])
+    def test_delete_by_task_id_checks_lease_after_resolving_container(
+        self, executor, mocker, owns_lease
+    ):
+        target = "a" * 64
+        lookup = mocker.patch.object(
+            docker_executor_module,
+            "get_running_task_details",
+            return_value={
+                "status": "success",
+                "containers": [
+                    {"container_name": "old-container", "container_id": target}
+                ],
+            },
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": "success"},
+        )
+
+        def can_delete():
+            lookup.assert_called_once_with(
+                label_selector="task_id=12345", include_stopped=True
+            )
+            return owns_lease
+
+        result = executor.delete_executor_by_task_id("12345", can_delete=can_delete)
+
+        lookup.assert_called_once()
+        if owns_lease:
+            assert result["status"] == "success"
+            delete.assert_called_once_with(target)
+        else:
+            assert result["status"] == "failed"
+            delete.assert_not_called()
 
     def test_workspace_mount_and_runtime_root_agree(
         self, executor, monkeypatch, tmp_path

@@ -10,7 +10,7 @@ Uses unified ExecutionRequest from shared.models.execution.
 
 import abc
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union
 
 from shared.models.execution import ExecutionRequest
 
@@ -56,7 +56,9 @@ class Executor(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def delete_executor(self, pod_name: str) -> Dict[str, Any]:
+    def delete_executor(
+        self, pod_name: str, *, can_delete: Callable[[], bool] | None = None
+    ) -> Dict[str, Any]:
         pass
 
     @abc.abstractmethod
@@ -145,7 +147,9 @@ class Executor(abc.ABC):
         """
         return None
 
-    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+    def delete_executor_by_task_id(
+        self, task_id: str, *, can_delete: Callable[[], bool] | None = None
+    ) -> Dict[str, Any]:
         """Delete executor by task_id label (fallback method).
 
         This is used when the executor name is not known or the executor

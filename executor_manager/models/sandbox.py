@@ -230,6 +230,8 @@ class Sandbox:
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     executions: List[Execution] = field(default_factory=list)
+    cleanup_archive: str | None = None
+    cleanup_container_removed: bool = False
 
     # Default timeout in seconds (30 minutes)
     DEFAULT_TIMEOUT = 1800
