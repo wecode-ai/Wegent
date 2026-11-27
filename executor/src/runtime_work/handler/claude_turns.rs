@@ -467,20 +467,12 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let request = &sink.request;
-        let Some(settlement) = super::turns::TurnSettlement::from_outcome(Ok(&outcome)) else {
+        let Some(settlement) = TurnSettlement::from_outcome(Ok(&outcome)) else {
             return;
         };
-        self.persist_shell_assistant_message(
-            id,
-            request,
-            settlement.content.as_deref().unwrap_or_default(),
-            blocks,
-            settlement.status,
-            settlement
-                .reason
-                .as_deref()
-                .filter(|_| settlement.content.is_none()),
-        );
+        self.store.update_task_without_snapshot(id, |link| {
+            settlement.project_assistant_message(link, request, blocks);
+        });
         if self.settle_personal_pipeline(id, request, &outcome) {
             self.finish_local_task_execution(id, sink.execution_id);
             return;
@@ -527,50 +519,6 @@ impl RuntimeWorkRpcHandler {
             request,
             data,
         );
-    }
-
-    pub(super) fn persist_shell_assistant_message(
-        &self,
-        local_task_id: &str,
-        request: &ExecutionRequest,
-        content: &str,
-        blocks: Vec<Value>,
-        status: &str,
-        error: Option<&str>,
-    ) {
-        let timestamp = now_ms();
-        let mut message = json!({
-            "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
-            "taskId": local_task_id,
-            "role": "assistant",
-            "content": content,
-            "status": status,
-            "runtimeStatus": status,
-            "subtaskId": request.subtask_id,
-            "turnId": request.subtask_id,
-            "createdAt": timestamp,
-            "completedAt": timestamp,
-        });
-        if !blocks.is_empty() {
-            message["blocks"] = Value::Array(blocks);
-        }
-        if let Some(error) = error {
-            message["error"] = Value::String(error.to_owned());
-        }
-        self.store.update_task(local_task_id, |link| {
-            if link.runtime == "codex" && !link.has_platform_history() {
-                if let Some(thread) = &link.thread_id {
-                    append_completed_transcript_messages(
-                        &mut link.runtime_handle,
-                        thread,
-                        vec![message.clone()],
-                    );
-                }
-            } else {
-                append_runtime_handle_message(&mut link.runtime_handle, message.clone());
-            }
-            link.updated_at = timestamp;
-        });
     }
 
     fn complete_claude_goal(&self, local_task_id: &str) -> Option<Value> {

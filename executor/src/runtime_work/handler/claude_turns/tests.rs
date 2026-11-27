@@ -410,7 +410,20 @@ async fn claude_completed_and_follow_up_turns_survive_store_restart() {
         "Task".into(),
         "claude_code",
     ));
-    for (turn, status) in [("first", "done"), ("second", "cancelled")] {
+    for (turn, outcome) in [
+        (
+            "first",
+            ExecutionOutcome::Completed {
+                content: "answer first".into(),
+            },
+        ),
+        (
+            "second",
+            ExecutionOutcome::Cancelled {
+                message: "Stopped".into(),
+            },
+        ),
+    ] {
         let request = ExecutionRequest {
             task_id: "claude-1".into(),
             subtask_id: turn.into(),
@@ -418,8 +431,11 @@ async fn claude_completed_and_follow_up_turns_survive_store_restart() {
         };
         handler.prepare_claude_send("claude-1", "/tmp/project", &request,
             &json!({"message": format!("request {turn}"), "clientUserMessageId": format!("user-{turn}")}));
-        handler.persist_shell_assistant_message("claude-1", &request, &format!("answer {turn}"),
-            vec![json!({"id": format!("tool-{turn}"), "type":"tool", "tool_name":"pwd", "tool_output":"/tmp/project", "status":"done"})], status, None);
+        let settlement = TurnSettlement::from_outcome(Ok(&outcome)).unwrap();
+        handler.store.update_task("claude-1", |link| {
+            settlement.project_assistant_message(link, &request,
+                vec![json!({"id": format!("tool-{turn}"), "type":"tool", "tool_name":"pwd", "tool_output":"/tmp/project", "status":"done"})]);
+        });
     }
     handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
     let response = handler

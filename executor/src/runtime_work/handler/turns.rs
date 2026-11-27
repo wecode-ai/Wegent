@@ -27,67 +27,6 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub(super) struct TurnSettlement {
-    pub status: &'static str,
-    run_status: AutomationRunStatus,
-    pub content: Option<String>,
-    pub reason: Option<String>,
-}
-
-impl TurnSettlement {
-    pub(super) fn from_outcome(outcome: Result<&ExecutionOutcome, &str>) -> Option<Self> {
-        let (status, run_status, content, reason) = match outcome {
-            Ok(ExecutionOutcome::Completed { content }) => (
-                "done",
-                AutomationRunStatus::Succeeded,
-                Some(content.clone()),
-                None,
-            ),
-            Ok(ExecutionOutcome::WaitingForUserInput { stop_reason }) => (
-                "done",
-                AutomationRunStatus::NeedsAttention,
-                Some(String::new()),
-                Some(stop_reason.clone()),
-            ),
-            Ok(ExecutionOutcome::Failed { message }) => (
-                "failed",
-                AutomationRunStatus::Failed,
-                None,
-                Some(message.clone()),
-            ),
-            Err(message) => (
-                "failed",
-                AutomationRunStatus::Failed,
-                None,
-                Some(message.to_owned()),
-            ),
-            Ok(ExecutionOutcome::Cancelled { message }) => (
-                "cancelled",
-                AutomationRunStatus::Cancelled,
-                None,
-                Some(message.clone()),
-            ),
-            Ok(ExecutionOutcome::Running) => return None,
-        };
-        Some(Self {
-            status,
-            run_status,
-            content,
-            reason,
-        })
-    }
-
-    pub(super) fn deliver(
-        self,
-        handler: &RuntimeWorkRpcHandler,
-        task: &str,
-        request: &ExecutionRequest,
-    ) {
-        handler.finish_automation_run(task, request, self.run_status, self.reason.clone());
-        handler.finish_queue_run(task, request, self.run_status, self.reason, self.content);
-    }
-}
-
 fn personal_runtime_scope(request: &ExecutionRequest, runtime_handle: &Value) -> bool {
     let is_empty_origin = |origin: &Value| {
         origin.is_null() || origin.as_object().is_some_and(|object| object.is_empty())

@@ -399,10 +399,12 @@ impl RuntimeWorkRpcHandler {
                     if handler.finish_local_task_execution(&control, generation)
                         && matches!(session, Ok(Some(_)))
                     {
-                        if let Some(settlement) =
-                            super::turns::TurnSettlement::from_outcome(Ok(&outcome))
-                        {
-                            handler.store.update_task(&control, |link| {
+                        if let Some(settlement) = TurnSettlement::from_outcome(Ok(&outcome)) {
+                            let blocks = transcript
+                                .lock()
+                                .expect("turn transcript poisoned")
+                                .blocks();
+                            let updated = handler.store.update_task(&control, |link| {
                                 super::execution_control::settle_local_execution_link(
                                     link,
                                     None,
@@ -415,22 +417,9 @@ impl RuntimeWorkRpcHandler {
                                     link.interaction_status =
                                         Some(INTERACTION_AWAITING_USER_REPLY.into());
                                 }
+                                settlement.project_assistant_message(link, &request, blocks);
                             });
-                            handler.persist_shell_assistant_message(
-                                &control,
-                                &request,
-                                settlement.content.as_deref().unwrap_or_default(),
-                                transcript
-                                    .lock()
-                                    .expect("turn transcript poisoned")
-                                    .blocks(),
-                                settlement.status,
-                                settlement
-                                    .reason
-                                    .as_deref()
-                                    .filter(|_| settlement.content.is_none()),
-                            );
-                            if let Some(link) = handler.local_task_link(&control) {
+                            if let Some(link) = updated {
                                 if link.runtime == "codex" {
                                     handler.publish_native_execution(&control, &request, link);
                                 } else {

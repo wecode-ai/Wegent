@@ -240,6 +240,8 @@ mod transcript_overlays;
 mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
+mod turn_settlement;
+use turn_settlement::TurnSettlement;
 mod turns;
 mod workspace_read;
 mod workspaces;
