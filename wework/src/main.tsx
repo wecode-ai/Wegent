@@ -7,6 +7,7 @@ import '@xyflow/react/dist/style.css'
 import '@wegent/collaboration/styles.css'
 import './styles/globals.css'
 import App from './App.tsx'
+import { canonicalizeBrowserLocation } from './appLocation'
 import { FeedbackDialogHost } from '@/features/feedback/FeedbackDialogHost'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 import { WorkbenchErrorPage } from '@/components/common/WorkbenchErrorPage'
@@ -82,6 +83,7 @@ const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiag
 
 async function mountApp(container: HTMLElement, context: Context | null): Promise<() => void> {
   logRendererStartupStep('react-mount', 'started')
+  canonicalizeBrowserLocation()
   const root = createRoot(container)
   root.render(
     <StrictMode>

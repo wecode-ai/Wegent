@@ -703,6 +703,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', async () => {
 
 describe('TemporaryChatPanel', () => {
   registerProjectSpaceChatDraftTests(mocks)
+
   it('keeps a model change in its unsent temporary chat and uses it to start the thread', async () => {
     mocks.runtimeModels = [{ name: 'main-model', type: 'runtime' }]
     render(
@@ -731,6 +732,22 @@ describe('TemporaryChatPanel', () => {
       })
     )
     expect(first).toHaveAttribute('data-selected-model', 'side-model')
+  })
+
+  it('restores a private edit when the pane closes before the buffered write', () => {
+    mocks.realComposer = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    const pane = <TransactionalDraftPanel scope="closed-before-draft-flush" />
+    const view = render(pane)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = 'Unsent project discussion'
+    })
+
+    view.unmount()
+    render(pane)
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('Unsent project discussion')
   })
 
   it.each(['accepted', 'newer-edit', 'edited-back', 'failed', 'rejected'] as const)(

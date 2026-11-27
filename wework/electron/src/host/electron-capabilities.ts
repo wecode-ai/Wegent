@@ -1260,7 +1260,15 @@ export function createElectronCapabilityRouter(
   router.register('notification.acknowledgeReply', params =>
     acknowledgeNotificationReply(stringParam(params, 'id'), stringParam(params, 'accountKey'))
   )
-  router.register('preferences.get', () => preferences.read())
+  router.register('preferences.get', async params => {
+    const snapshot = await preferences.readSnapshot()
+    if (params.requireReadable === true && !snapshot.readable)
+      throw new HostCapabilityError(
+        'preferences_unreadable',
+        'Application preferences are unreadable'
+      )
+    return snapshot.preferences
+  })
   const updatePreferences = async (
     preferencePatch: Record<string, unknown>,
     expectedTelemetryConsentRevision?: number

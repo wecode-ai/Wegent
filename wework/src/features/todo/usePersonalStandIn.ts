@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   createPersonalStandInSettingsResource,
@@ -7,7 +8,7 @@ import {
 
 export type PersonalStandInObservation = NonNullable<
   Parameters<ReturnType<typeof createPersonalStandInSettingsResource>['subscribe']>[1]
->
+> & { active?: boolean }
 
 /** Load and save on the selected Executor without sharing drafts across account or device owners. */
 export function usePersonalStandIn(
@@ -51,7 +52,10 @@ export function usePersonalStandIn(
       }),
     [resource, initialRole, onSavingChange]
   )
-  const state = useSyncExternalStore(subscribe, resource.getSnapshot)
+  const state = useSyncExternalStore(
+    observation?.active === false ? subscribeIdleResource : subscribe,
+    resource.getSnapshot
+  )
   const setDeviceId = useCallback(
     (deviceId: string) => {
       if (resource.isActive()) setSelection(current => ({ ...current, deviceId }))
