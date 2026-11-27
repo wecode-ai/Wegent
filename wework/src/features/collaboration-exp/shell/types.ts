@@ -10,18 +10,12 @@ export interface ExperiencePane {
   minWidth?: number
   defaultWidth?: number
   onBack?: () => void
-  backVisibility?: 'always' | 'collapsed-parent'
   returnFocusRef?: RefObject<HTMLElement | null>
   scroll?: boolean
 }
 
 export interface ExperiencePanesProps {
   panes: readonly ExperiencePane[]
-  navigation?: ReactNode
-  navigationTitle?: ReactNode
-  navigationActions?: ReactNode
-  navigationWidth?: number
-  mobileNavigation?: ReactNode
   onBack?: (paneId: string) => void
   className?: string
 }

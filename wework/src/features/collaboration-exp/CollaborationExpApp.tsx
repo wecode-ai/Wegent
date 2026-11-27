@@ -18,13 +18,7 @@ import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Circle, Ellipsis, FolderKanban, Lock, Paperclip } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
-import {
-  AssistantConversationPane,
-  AssistantHome,
-  AssistantHomeToolbar,
-  AssistantTeamRelay,
-  type AssistantHomePanel,
-} from './assistant'
+import { AssistantTeamRelay } from './assistant'
 import { CreateExperienceIssue } from './CreateExperienceIssue'
 import { useExperienceIssue } from './data/useExperienceIssue'
 import { useExperienceSources } from './data/useExperienceSources'
@@ -32,14 +26,9 @@ import { useExperienceTasks } from './data/useExperienceTasks'
 import { useExperienceTimeline } from './data/useExperienceTimeline'
 import { buildCollaborationExpRoute } from './integration/deepLinks'
 import { projectScopeOf, selectProjectScopes, selectTaskRows } from './model'
-import type {
-  ExperiencePrivateConversation,
-  ExperienceProjectScope,
-  ExperienceTaskRow,
-} from './model/types'
+import type { ExperienceProjectScope, ExperienceTaskRow } from './model/types'
 import { PrivateDiscussionPane } from './private'
-import { ExperienceNavigation, ExperiencePanes, type ExperiencePane } from './shell'
-import { ExperienceAccount } from './shell/ExperienceAccount'
+import { ExperiencePanes, type ExperiencePane } from './shell'
 import './shell/ExperienceTheme.css'
 import { ExperienceThemeProvider } from './shell/ExperienceThemeProvider'
 import type { ProjectDrilldownView } from './tasks/ProjectDrilldown'
@@ -52,6 +41,16 @@ import { ExperienceIssueDetails } from './timeline/ExperienceIssueDetails'
 import { ExperienceIssueSummary } from './timeline/ExperienceIssueSummary'
 import { TaskTimeline, type TimelineAttachmentSelection } from './timeline/TaskTimeline'
 import type { TimelineFilter } from './timeline/TimelineFilters'
+
+const closedIssueRoute = {
+  issueId: null,
+  discussion: null,
+  nodeId: null,
+  commentId: null,
+  focusRequest: null,
+  inspector: null,
+  timelineFilter: null,
+}
 
 export default function CollaborationExpApp({
   active = true,
@@ -78,10 +77,6 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
   const translate = useMemo(() => createCollaborationTranslator(locale), [locale])
   const sources = useExperienceSources(services, state.user, cloud.isConnected, locale)
   const params = useMemo(() => new URLSearchParams(search), [search])
-  const view =
-    params.get('view') === 'tasks' || (params.get('view') !== 'assistant' && params.has('issueId'))
-      ? 'tasks'
-      : 'assistant'
   const projectId = params.get('projectId')
   const projectStore = params.get('projectStore')
   const issueId = params.get('issueId')
@@ -101,7 +96,6 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     filters.relevance
   )
   const [detailRevision, setDetailRevision] = useState(0)
-  const [assistantPanel, setAssistantPanel] = useState<AssistantHomePanel>(null)
   const [createProjectOpen, setCreateProjectOpen] = useState(false)
   const [createIssueOpen, setCreateIssueOpen] = useState(false)
   const projectCreateTargets = useMemo(
@@ -117,7 +111,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     source,
     projectId,
     issueId,
-    active && view === 'tasks',
+    active,
     tasks.revision + detailRevision
   )
   const stream = useExperienceTimeline(
@@ -125,11 +119,11 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     detail.data,
     viewer,
     state.runtimeWork,
-    active && view === 'tasks',
+    active,
     detailRevision
   )
   const readInput = { projects: tasks.projects, viewer, runtimeWork: state.runtimeWork }
-  const assistantProjects = detail.data
+  const projectData = detail.data
     ? [
         ...tasks.projects,
         {
@@ -140,10 +134,6 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
         },
       ]
     : tasks.projects
-  const assistantConversations = selectTaskRows(
-    { ...readInput, projects: assistantProjects },
-    { relevance: 'all' }
-  ).flatMap(row => row.conversations.items)
   const projects = selectProjectScopes(readInput)
   const rows = selectTaskRows(readInput, {
     ...filters,
@@ -169,6 +159,9 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     projectView === 'overview' || projectView === 'plan' || projectView === 'settings'
       ? projectView
       : null
+  const taskMode = params.get('taskMode')
+  const listMode =
+    taskMode === 'projects' || (taskMode === null && projectMode) ? 'projects' : 'tasks'
   const planViewParam = params.get('planView')
   const planView: CollaborationView = [
     'board',
@@ -224,44 +217,17 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
   const selectIssue = (project: ExperienceProjectScope, id: string) => {
     setAttachment(null)
     navigate({
+      ...closedIssueRoute,
       view: 'tasks',
       projectId: project.id,
       projectStore: project.store,
       issueId: id,
-      nodeId: null,
-      discussion: null,
-      commentId: null,
-      focusRequest: null,
-      inspector: null,
-      timelineFilter: null,
-      assistantDeviceId: null,
-      assistantTaskId: null,
-    })
-  }
-  const openConversation = (conversation: ExperiencePrivateConversation) => {
-    setAttachment(null)
-    if (conversation.issueSource) {
-      navigate({
-        view: 'tasks',
-        ...conversation.issueSource,
-        discussion: conversation.key,
-        nodeId: null,
-        commentId: null,
-        focusRequest: null,
-        assistantDeviceId: null,
-        assistantTaskId: null,
-      })
-      return
-    }
-    navigate({
-      view: 'assistant',
-      assistantDeviceId: conversation.address.deviceId,
-      assistantTaskId: conversation.address.taskId,
     })
   }
   const changeFilters = (next: TaskFilterValue) => {
     const scope = projects.find(project => project.key === next.projectKey)
     navigate({
+      ...closedIssueRoute,
       relevance: next.relevance,
       search: next.search || null,
       status: next.status || null,
@@ -269,11 +235,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
       projectId: scope?.id ?? null,
       projectStore: scope?.store ?? null,
       projectView: null,
-      issueId: null,
-      nodeId: null,
-      discussion: null,
-      commentId: null,
-      focusRequest: null,
+      taskMode: listMode === 'projects' ? 'projects' : null,
     })
   }
   const refresh = () => {
@@ -281,103 +243,73 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
     setDetailRevision(value => value + 1)
   }
   const closeDiscussion = () => navigate({ discussion: null, nodeId: null })
-  const changeView = (next: 'assistant' | 'tasks') => {
-    setAssistantPanel(null)
+  const closeIssue = () => navigate(closedIssueRoute)
+  const closeProject = () =>
     navigate({
-      view: next,
-      issueId: null,
+      ...closedIssueRoute,
+      taskMode: listMode === 'projects' ? 'projects' : null,
       projectView: null,
-      discussion: null,
-      nodeId: null,
-      commentId: null,
-      focusRequest: null,
-      inspector: null,
-      timelineFilter: null,
-      assistantDeviceId: null,
-      assistantTaskId: null,
     })
-  }
   const openProject = (project: ExperienceProjectScope) =>
     navigate({
+      ...closedIssueRoute,
       view: 'tasks',
+      taskMode: listMode,
       projectId: project.id,
       projectStore: project.store,
-      projectScope: project.key,
       projectView: 'overview',
-      issueId: null,
-      discussion: null,
-      nodeId: null,
-      commentId: null,
-      focusRequest: null,
-      inspector: null,
     })
-  const account = <ExperienceAccount name={state.user?.user_name} />
-  const navigation = (
-    <ExperienceNavigation activeView={view} onViewChange={changeView} footer={account} />
-  )
   const panes: ExperiencePane[] = [
     {
-      id: view,
-      title: t(view === 'assistant' ? 'assistant.pageTitle' : 'tasks.title'),
-      header: view === 'tasks' ? null : undefined,
-      actions:
-        view === 'assistant' ? (
-          <AssistantHomeToolbar panel={assistantPanel} onPanelChange={setAssistantPanel} />
-        ) : undefined,
+      id: 'tasks',
+      title: t('tasks.title'),
+      header: null,
       scroll: false,
-      minWidth: view === 'tasks' ? 240 : 280,
-      defaultWidth: view === 'tasks' ? 300 : 900,
-      content:
-        view === 'tasks' ? (
-          <TaskListView
-            rows={rows}
-            onCreate={() => setCreateIssueOpen(true)}
-            projectData={assistantProjects}
-            onCreateProject={() => setCreateProjectOpen(true)}
-            mode={params.get('taskMode') === 'projects' ? 'projects' : 'tasks'}
-            onModeChange={next => navigate({ taskMode: next === 'projects' ? next : null })}
-            projects={projects}
-            statuses={statuses}
-            filters={filters}
-            selectedKey={
-              detail.data
-                ? JSON.stringify([
-                    detail.data.project.project_store,
-                    detail.data.project.id,
-                    detail.data.issue.id,
-                  ])
-                : null
+      minWidth: 240,
+      defaultWidth: 300,
+      content: (
+        <TaskListView
+          scrollOwner={JSON.stringify([cloud.apiBaseUrl, viewer])}
+          rows={rows}
+          onCreate={() => setCreateIssueOpen(true)}
+          projectData={projectData}
+          onCreateProject={() => setCreateProjectOpen(true)}
+          mode={listMode}
+          onModeChange={next => {
+            if (next !== listMode) {
+              navigate({ taskMode: next === 'projects' || projectMode ? next : null })
             }
-            loading={tasks.loading}
-            loadMoreReady={tasks.loadMoreReady}
-            error={
-              tasks.errors.length || tasks.relatedError || tasks.subscriptionError
-                ? t('tasks.loadFailed')
-                : null
-            }
-            hasMore={tasks.hasMore}
-            onFiltersChange={changeFilters}
-            onSelect={(row: ExperienceTaskRow) => selectIssue(row.project, row.id)}
-            onOpenProject={openProject}
-            onRetry={refresh}
-            onLoadMore={() => void tasks.loadMore()}
-          />
-        ) : state.user ? (
-          <AssistantHome
-            panel={assistantPanel}
-            onPanelChange={setAssistantPanel}
-            active={active}
-            projects={assistantProjects}
-            conversations={assistantConversations}
-            onOpenIssue={selectIssue}
-            onOpenConversation={openConversation}
-          />
-        ) : (
-          <p className="p-5">{t('unavailable')}</p>
-        ),
+          }}
+          projects={projects}
+          statuses={statuses}
+          filters={filters}
+          selectedKey={
+            detail.data
+              ? JSON.stringify([
+                  detail.data.project.project_store,
+                  detail.data.project.id,
+                  detail.data.issue.id,
+                ])
+              : null
+          }
+          loading={tasks.loading}
+          loadMoreReady={tasks.loadMoreReady}
+          error={
+            tasks.errors.length || tasks.relatedError || tasks.subscriptionError
+              ? t('tasks.loadFailed')
+              : null
+          }
+          hasMore={tasks.hasMore}
+          onFiltersChange={changeFilters}
+          onSelect={(row: ExperienceTaskRow) => selectIssue(row.project, row.id)}
+          onOpenProject={openProject}
+          onRetry={refresh}
+          onLoadMore={() => void tasks.loadMore()}
+        />
+      ),
     },
   ]
-  if (view === 'tasks' && !issueId && !projectMode)
+  if (!issueId && !projectMode)
     panes.push({
       id: 'task-home',
       title: t('tasks.home.console'),
@@ -386,11 +318,11 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
       minWidth: 360,
       defaultWidth: 360,
       content:
-        params.get('taskMode') === 'projects' ? (
+        listMode === 'projects' ? (
           <ProjectHome
             projects={projects}
             rows={rows}
-            projectData={assistantProjects}
+            projectData={projectData}
             onOpenProject={openProject}
             onCreate={() => setCreateProjectOpen(true)}
           />
@@ -400,39 +332,21 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             onCreate={() => setCreateIssueOpen(true)}
             team={
               state.user ? (
-                <AssistantTeamRelay compact active={active} projects={assistantProjects} />
+                <AssistantTeamRelay compact active={active} projects={projectData} />
               ) : null
             }
             onSelect={row => selectIssue(row.project, row.id)}
           />
         ),
     })
-  const assistantDeviceId = params.get('assistantDeviceId')
-  const assistantTaskId = params.get('assistantTaskId')
-  if (view === 'assistant' && assistantDeviceId && assistantTaskId)
-    panes.push({
-      id: 'assistant-conversation',
-      title: t('private.title'),
-      scroll: false,
-      minWidth: 320,
-      defaultWidth: 560,
-      onBack: () => navigate({ assistantDeviceId: null, assistantTaskId: null }),
-      content: (
-        <AssistantConversationPane
-          active={active}
-          address={{ deviceId: assistantDeviceId, taskId: assistantTaskId }}
-        />
-      ),
-    })
-  if (view === 'tasks' && selectedProject && source && projectMode)
+  if (selectedProject && source && projectMode)
     panes.push({
       id: 'project',
       title: selectedProject.name,
       scroll: false,
       minWidth: 320,
       defaultWidth: 680,
-      backVisibility: 'collapsed-parent',
-      onBack: () => navigate({ projectView: null, issueId: null, nodeId: null, discussion: null }),
+      onBack: closeProject,
       content: (
         <ProjectExperience
           project={selectedProject}
@@ -443,18 +357,34 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
           onViewChange={next => navigate({ projectView: next })}
           onPlanViewChange={next => navigate({ projectView: 'plan', planView: next })}
           onOpenIssue={id => selectIssue(projectScopeOf(selectedProject), id)}
-          onBack={() => navigate({ projectView: null })}
+          onBack={closeProject}
         />
       ),
     })
-  if (view === 'tasks' && issueId)
+  if (projectMode && projectId && !selectedProject && !issueId)
+    panes.push({
+      id: 'project',
+      title: t('tasks.project'),
+      minWidth: 320,
+      defaultWidth: 680,
+      onBack: closeProject,
+      content: (
+        <p
+          className="p-5"
+          role={tasks.loading ? 'status' : 'alert'}
+          data-testid="collaboration-exp-project-status"
+        >
+          {t(tasks.loading ? 'loading' : 'tasks.projectUnavailable')}
+        </p>
+      ),
+    })
+  if (issueId)
     panes.push({
       id: 'timeline',
       title: detail.data?.issue.title ?? t('timeline.title'),
       scroll: false,
       minWidth: 360,
       defaultWidth: 620,
-      backVisibility: 'collapsed-parent',
       actions: detail.data ? (
         <>
           <Circle
@@ -505,7 +435,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
           </ControlButton>
         </>
       ) : undefined,
-      onBack: () => navigate({ issueId: null, discussion: null, nodeId: null }),
+      onBack: closeIssue,
       content:
         detail.data && source ? (
           <TaskTimeline
@@ -579,7 +509,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
         ),
     })
   const discussionData = detail.data
-  if (view === 'tasks' && discussionData && source && params.get('discussion'))
+  if (discussionData && source && params.get('discussion'))
     panes.push({
       id: 'discussion',
       title: t(
@@ -616,7 +546,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
           <p className="p-5 text-sm text-text-secondary">{t('timeline.discussionUnknown')}</p>
         ),
     })
-  if (view === 'tasks' && detail.data && source && params.get('inspector') === 'details')
+  if (detail.data && source && params.get('inspector') === 'details')
     panes.push({
       id: 'issue-details',
       title: t('timeline.details'),
@@ -665,20 +595,8 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
         className="collaboration-exp-app h-full min-h-0 min-w-0 overflow-hidden bg-background text-text-primary"
         data-testid="collaboration-exp-app"
       >
-        <ExperiencePanes
-          panes={panes}
-          navigation={navigation}
-          navigationTitle={t('title')}
-          mobileNavigation={
-            <ExperienceNavigation
-              mobile
-              activeView={view}
-              footer={account}
-              onViewChange={changeView}
-            />
-          }
-        />
-        {active && view === 'tasks' && detail.data && params.get('inspector') === 'summary' ? (
+        <ExperiencePanes panes={panes} />
+        {active && detail.data && params.get('inspector') === 'summary' ? (
           <ExperienceIssueSummary
             key={identity}
             data={detail.data}
@@ -691,7 +609,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
           <CreateExperienceIssue
             active={active}
             sources={sources}
-            projects={assistantProjects}
+            projects={projectData}
             onClose={() => setCreateIssueOpen(false)}
             onCreated={(project, issue) => {
               setCreateIssueOpen(false)

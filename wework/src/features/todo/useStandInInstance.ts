@@ -12,13 +12,14 @@ export function useStandInInstance(
   connected: boolean,
   active: boolean,
   backendUrl = '',
-  initialDeviceId?: string,
-  entryRequestKey?: number
+  entryRequestKey?: number,
+  requireSetupConfirmation = true
 ) {
   const api = services.standInApi
   const source = useMemo(
-    () => createStandInInstanceSource({ services, api, userId, backendUrl, initialDeviceId }),
-    [services, api, userId, backendUrl, initialDeviceId]
+    () =>
+      createStandInInstanceSource({ services, api, userId, backendUrl, requireSetupConfirmation }),
+    [services, api, userId, backendUrl, requireSetupConfirmation]
   )
   const subscribe = useCallback(
     (listener: () => void) =>
@@ -32,6 +33,7 @@ export function useStandInInstance(
       ? getStandInErrorMessage(snapshot.error.cause, snapshot.error.fallback)
       : null,
     errorCause: snapshot.error?.cause,
+    setup: source.setup,
     stop: source.stop,
     bind: source.bind,
     migrate: source.migrate,

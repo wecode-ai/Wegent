@@ -6,6 +6,8 @@ sidebar_position: 12
 
 In the Chinese interface, the **My assistants** entry is labeled **我的助理**.
 
+Select **My assistants** in the Wework sidebar. With the [Collaboration experience preview](./collaboration-experience.md) on, it opens the new assistant center. Turn the preview off to use the original page and its stop control. Existing assistant configuration, sources, and work history carry across.
+
 ## Ongoing Issue collaboration
 
 Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.
