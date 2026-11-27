@@ -691,7 +691,7 @@ impl RuntimeWorkRpcHandler {
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
             let connection = self.backend_connection_snapshot()?;
-            let mut saved = store
+            store
                 .save_verified_personal_settings(
                     user,
                     &self.device_id,
@@ -705,14 +705,14 @@ impl RuntimeWorkRpcHandler {
                         copy_team_prompt: payload["copyTeamPrompt"].as_bool(),
                     },
                 )
-                .map_err(settings_error)?;
-            saved["teamCopyVersion"] = json!(1);
-            Ok(saved)
+                .map_err(settings_error)
         } else {
             let mut settings = store
                 .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
-            settings["teamCopyVersion"] = json!(1);
+            if payload["checkTeamCopy"] == true {
+                settings["teamCopyVersion"] = json!(1);
+            }
             settings["teamImportVersion"] = json!(1);
             if let Some(role_id) = payload["exportTeamRoleId"].as_str() {
                 // A stopped installation-local identity can migrate to its connected account.

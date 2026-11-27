@@ -1053,10 +1053,17 @@ export function createStandInExecutorApi(
           code: 'stand_in_team_import_unsupported',
         })
       }
-      if (change?.copyTeam && !settings.teamCopyVersion) {
-        throw Object.assign(new Error('The target Executor cannot copy an assistant Team'), {
-          code: 'stand_in_team_copy_unsupported',
-        })
+      if (change?.copyTeam) {
+        const capabilities = await request<PersonalStandInSettings>(
+          'runtime.stand_in.personal.get',
+          { userId, checkTeamCopy: true },
+          deviceId
+        )
+        if (!capabilities.teamCopyVersion) {
+          throw Object.assign(new Error('The target Executor cannot copy an assistant Team'), {
+            code: 'stand_in_team_copy_unsupported',
+          })
+        }
       }
       delete configuration.teamCopyVersion
       const saved = await request<PersonalStandInSettings>(
