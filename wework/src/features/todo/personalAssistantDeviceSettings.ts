@@ -29,9 +29,14 @@ function definitionBackupPrefix(backendUrl: string, userId: number) {
 
 export function collectPersonalAssistantDefinitionBackups(backendUrl: string, userId: number) {
   const prefix = definitionBackupPrefix(backendUrl, userId)
-  return Object.entries(localStorage)
-    .filter(([key]) => key.startsWith(prefix))
-    .map(([, value]) => JSON.parse(value) as unknown)
+  const backups: unknown[] = []
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key === null || !key.startsWith(prefix)) continue
+    const value = localStorage.getItem(key)
+    if (value !== null) backups.push(JSON.parse(value) as unknown)
+  }
+  return backups
 }
 
 async function preserveConflictingDefinitions(
