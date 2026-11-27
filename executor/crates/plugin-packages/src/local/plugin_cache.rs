@@ -25,6 +25,7 @@ pub fn native_cache_segment(value: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || b"-_.+".contains(&ch))
 }
 
+/// Native pairwise preference; custom versions do not make this a sorting order.
 pub(super) fn preferred_native_version(candidate: &str, selected: &str) -> bool {
     if candidate == selected || selected == "local" {
         return false;
@@ -32,14 +33,80 @@ pub(super) fn preferred_native_version(candidate: &str, selected: &str) -> bool 
     if candidate == "local" {
         return true;
     }
-    compare_native_versions(candidate, selected).is_gt()
+    compare_native_version_pair(candidate, selected).is_gt()
 }
 
-fn compare_native_versions(left: &str, right: &str) -> std::cmp::Ordering {
+fn compare_native_version_pair(left: &str, right: &str) -> std::cmp::Ordering {
     match (semver::Version::parse(left), semver::Version::parse(right)) {
         (Ok(left), Ok(right)) => left.cmp(&right),
         _ => left.cmp(right),
     }
+}
+
+fn native_semver_ranks(names: &[&str]) -> (Vec<usize>, Vec<(usize, semver::Version)>) {
+    let mut parsed: Vec<_> = names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| {
+            semver::Version::parse(name)
+                .ok()
+                .map(|version| (index, version))
+        })
+        .collect();
+    parsed.sort_unstable_by(|left, right| left.1.cmp(&right.1));
+    let mut prefix_ends = vec![0; names.len()];
+    let mut start = 0;
+    while start < parsed.len() {
+        let mut end = start + 1;
+        while end < parsed.len() && parsed[end].1 == parsed[start].1 {
+            end += 1;
+        }
+        for (index, _) in &parsed[start..end] {
+            prefix_ends[*index] = end;
+        }
+        start = end;
+    }
+    (prefix_ends, parsed)
+}
+
+/// Select only when native pair comparisons have an unambiguous finite-set order.
+pub(super) fn select_native_version<'a>(
+    versions: impl IntoIterator<Item = &'a str>,
+) -> io::Result<Option<&'a str>> {
+    let mut names: Vec<_> = versions.into_iter().collect();
+    names.sort_unstable();
+    names.dedup();
+    if let Ok(index) = names.binary_search(&"local") {
+        return Ok(Some(names[index]));
+    }
+    let ambiguous = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Native Codex cache version order is ambiguous; preserving all versions",
+        )
+    };
+    let (prefix_ends, parsed) = native_semver_ranks(&names);
+    let (mut seen, mut prefix_end) = (0, 0);
+    for &end in &prefix_ends {
+        if end > 0 {
+            seen += 1;
+            prefix_end = prefix_end.max(end);
+        } else if seen != prefix_end {
+            // Every opaque name must cut the SemVer chain at a complete prefix.
+            return Err(ambiguous());
+        }
+    }
+    let Some(last) = names.len().checked_sub(1) else {
+        return Ok(None);
+    };
+    if prefix_ends[last] == 0 {
+        return Ok(Some(names[last]));
+    }
+    let (index, maximum) = parsed.last().expect("The final name is a SemVer");
+    if parsed.len() > 1 && parsed[parsed.len() - 2].1 == *maximum {
+        return Err(ambiguous());
+    }
+    Ok(Some(names[*index]))
 }
 
 pub fn read_codex_marketplace_cache(
@@ -135,12 +202,8 @@ fn selected_codex_plugin_root(path: &Path) -> io::Result<Option<PathBuf>> {
         }
         versions.push((version, entry.path()));
     }
-    // Match Codex 0.171's core-plugin-common installed selector, including custom versions.
-    versions.sort_unstable_by(|(left, _), (right, _)| compare_native_versions(left, right));
-    let selected = versions
-        .iter()
-        .find(|(version, _)| version == "local")
-        .or_else(|| versions.last());
+    let active = select_native_version(versions.iter().map(|(version, _)| version.as_str()))?;
+    let selected = active.and_then(|active| versions.iter().find(|(version, _)| version == active));
     selected.map(|(_, root)| root.canonicalize()).transpose()
 }
 
@@ -275,6 +338,40 @@ mod tests {
     }
 
     #[test]
+    fn native_selection_rejects_cycles_and_preserves_consistent_native_preferences() {
+        for versions in [
+            ["2.0.0", "10.0.0", "11-custom"],
+            ["2.0.0", "11-custom", "10.0.0"],
+            ["10.0.0", "2.0.0", "11-custom"],
+            ["10.0.0", "11-custom", "2.0.0"],
+            ["11-custom", "2.0.0", "10.0.0"],
+            ["11-custom", "10.0.0", "2.0.0"],
+        ] {
+            assert_eq!(
+                select_native_version(versions).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+        for (versions, expected) in [
+            (vec!["2.0.0", "10.0.0"], "10.0.0"),
+            (vec!["2.0.0", "10.0.0", "z-custom"], "z-custom"),
+            (vec!["2.0.0", "10.0.0", "0-custom"], "10.0.0"),
+            (vec!["v10.0", "v9.0"], "v9.0"),
+            (vec!["1.0.0+001", "1.0.0+01"], "1.0.0+001"),
+            (vec!["2.0.0", "10.0.0", "11-custom", "local"], "local"),
+        ] {
+            assert_eq!(
+                select_native_version(versions.iter().copied()).unwrap(),
+                Some(expected)
+            );
+            assert_eq!(
+                select_native_version(versions.iter().rev().copied()).unwrap(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
     fn active_root_and_preview_share_native_selection_without_package_fallback() {
         let home = tempfile::tempdir().unwrap();
         let cache = home.path().join("plugins/cache/test-market/demo");
@@ -306,6 +403,14 @@ mod tests {
         assert!(read_codex_plugin_cache(home.path(), "test-market", "demo")
             .unwrap()
             .is_none());
+
+        let ambiguous = home.path().join("plugins/cache/ambiguous-market/demo");
+        for version in ["2.0.0", "10.0.0", "11-custom"] {
+            fs::create_dir_all(ambiguous.join(version)).unwrap();
+        }
+        assert!(read_active_codex_plugin_root(home.path(), "ambiguous-market", "demo").is_err());
+        assert!(read_codex_plugin_cache(home.path(), "ambiguous-market", "demo").is_err());
+        assert!(read_codex_marketplace_cache(home.path(), "ambiguous-market").is_err());
 
         for marketplace in ["wework-personal", "test-market"] {
             let root = home

@@ -566,6 +566,26 @@ fn resolve_plugin_root_uses_current_installation_including_downgrades() {
             fs::remove_dir_all(cache.join(current)).unwrap();
         }
     }
+    let mut configuration = active_plugin_configuration();
+    configuration["config"]["plugins"]["demo@other-market"] = json!({"enabled": true});
+    write_auth_plugin(
+        &home.path().join("plugins/cache/other-market/demo/local"),
+        true,
+    );
+    assert_eq!(
+        resolution::resolve_registered_request(&payload, &configuration, home.path())
+            .unwrap()
+            .0,
+        cache.join("0.1.9").canonicalize().unwrap()
+    );
+    assert!(resolution::resolve_registered_request(
+        &json!({"pluginKey":"demo"}),
+        &configuration,
+        home.path()
+    )
+    .unwrap_err()
+    .message
+    .contains("ambiguous"));
 }
 
 #[test]

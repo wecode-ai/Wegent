@@ -790,10 +790,7 @@ export async function verifyRecipientUninstallDoesNotRemoveOwner({
     'The stale-ID uninstall violated the existing idempotent response contract'
   )
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
-  // Remove only this recipient's own membership. The shared Home retains author source.
-  await pluginApi(recipientCloud, `/plugins/installed/${recipientId}`, 'DELETE')
-  assert.equal(await accountPlugin(recipientCloud, plugin.name), undefined)
-  await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
+  // Exercise the real UI while the recipient still has its own membership.
   await uninstallPersonalPluginInUi(control, plugin, { refresh: true })
   await waitForSnapshot(
     control,

@@ -54,39 +54,35 @@ pub(super) fn resolve_registered_request(
     codex_home: &Path,
 ) -> Result<(PathBuf, LocalAuthSpec), AppIpcError> {
     let (plugin_key, marketplace) = request_identity(payload)?;
-    let mut selected = None;
-    for (id, entry) in configuration["config"]["plugins"]
-        .as_object()
-        .into_iter()
-        .flatten()
-    {
-        let Some((name, market)) = id.rsplit_once('@') else {
-            continue;
-        };
-        if name != plugin_key
-            || !entry.is_object()
-            || !native_cache_segment(market)
-            || marketplace
-                .as_ref()
-                .is_some_and(|requested| market != requested)
-        {
-            continue;
-        }
-        let Some(root) = crate::local::plugin_cache::read_active_codex_plugin_root(
+    let entries = configuration["config"]["plugins"].as_object();
+    let selected = if let Some(market) = marketplace.as_deref() {
+        configured_root(
+            entries.and_then(|entries| entries.get(&format!("{plugin_key}@{market}"))),
             codex_home,
-            market,
             &plugin_key,
-        )
-        .map_err(|_| unavailable("Cannot read the active Codex plugin installation"))?
-        else {
-            continue;
-        };
-        if selected.replace((root, market)).is_some() {
-            return Err(unavailable(
-                "The plugin installation is ambiguous; select its marketplace",
-            ));
+            market,
+        )?
+        .map(|root| (root, market))
+    } else {
+        let mut selected = None;
+        for (id, entry) in entries.into_iter().flatten() {
+            let Some((name, market)) = id.rsplit_once('@') else {
+                continue;
+            };
+            if name != plugin_key || !native_cache_segment(market) {
+                continue;
+            }
+            let Some(root) = configured_root(Some(entry), codex_home, &plugin_key, market)? else {
+                continue;
+            };
+            if selected.replace((root, market)).is_some() {
+                return Err(unavailable(
+                    "The plugin installation is ambiguous; select its marketplace",
+                ));
+            }
         }
-    }
+        selected
+    };
     let (root, market) =
         selected.ok_or_else(|| unavailable("The requested plugin is not currently installed"))?;
     selected_auth(
@@ -96,6 +92,19 @@ pub(super) fn resolve_registered_request(
         "installed_configuration",
         Some(market),
     )
+}
+
+fn configured_root(
+    entry: Option<&Value>,
+    home: &Path,
+    plugin: &str,
+    marketplace: &str,
+) -> Result<Option<PathBuf>, AppIpcError> {
+    if !entry.is_some_and(Value::is_object) {
+        return Ok(None);
+    }
+    crate::local::plugin_cache::read_active_codex_plugin_root(home, marketplace, plugin)
+        .map_err(|message| unavailable(&message))
 }
 
 fn selected_auth(

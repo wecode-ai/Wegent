@@ -28,6 +28,26 @@ const mocks = vi.hoisted(() => ({
   runtimeInstanceId: 'runtime-a',
   bundled: null as { id: string; path: string } | null,
 }))
+
+const cloudSession = (userId: number, backendUrl = 'https://plugins.example') => ({
+  backendUrl,
+  apiBaseUrl: `${backendUrl}/api`,
+  socketBaseUrl: backendUrl,
+  socketPath: '/socket.io',
+  user: { id: userId, user_name: 'author', email: 'author@example.com' },
+  connectedAt: '2026-11-27T00:00:00.000Z',
+})
+
+const accountLink = (
+  userId: number,
+  cloudPluginId: number,
+  backendUrl = 'https://plugins.example'
+) => ({
+  localPluginName: 'personal-tool',
+  cloudPluginId,
+  cloudReleaseId: cloudPluginId + 100,
+  accountScope: { backendUrl, userId },
+})
 vi.mock('@/api/local/runtimeAuthStatus', () => ({
   getLocalCodexAuthStatus: vi.fn().mockResolvedValue({ sha256: 'test-account' }),
 }))
@@ -710,7 +730,9 @@ describe('local plugin source isolation', () => {
     expect(durable).not.toContain('installedSources')
     expect(durable).not.toContain('installedPartial')
     expect(durable).not.toContain('installedReadGeneration')
-    expect(JSON.parse(durable!).entries['|all|all-kinds'].state.catalogPartial).toBe(false)
+    expect(
+      JSON.parse(durable!).entries[JSON.stringify(['|all|all-kinds', null])].state.catalogPartial
+    ).toBe(false)
   })
 
   test('publishes a fresh personal disk install over an older Codex personal cache', async () => {
@@ -881,6 +903,140 @@ describe('local plugin source isolation', () => {
       } finally {
         clearStoredCloudConnection()
       }
+    }
+  )
+
+  test.each(['account', 'backend', 'signed-out'] as const)(
+    'does not reuse a fresh cloud-link projection after switching %s',
+    async change => {
+      const api = createLocalCodexPluginApi()
+      const original = mocks.request.getMockImplementation()!
+      const backend = change === 'backend' ? 'https://another.example' : 'https://plugins.example'
+      const nextUser = change === 'account' ? 2 : 1
+      mocks.request.mockImplementation(async (method, params) =>
+        method === 'executor.plugins.links.list'
+          ? [
+              accountLink(1, 17),
+              ...(change === 'signed-out' ? [] : [accountLink(nextUser, 42, backend)]),
+            ]
+          : original(method, params)
+      )
+      saveStoredCloudConnection(cloudSession(1))
+      const first = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      expect(
+        first.installedPlugins.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')
+          ?.spec.sourcePayload?.cloudPluginId
+      ).toBe(17)
+      if (change === 'signed-out') clearStoredCloudConnection()
+      else saveStoredCloudConnection(cloudSession(nextUser, backend))
+      expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+      const next = await api.readState({ mergeAllMarketplaces: true })
+      expect(
+        next.installedPlugins.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')?.spec
+          .sourcePayload?.cloudPluginId
+      ).toBe(change === 'signed-out' ? undefined : 42)
+      expect((await api.readState({ mergeAllMarketplaces: true })).installedPlugins).toEqual(
+        next.installedPlugins
+      )
+      clearStoredCloudConnection()
+    }
+  )
+
+  test.each(['account', 'backend', 'unscoped-local', 'unscoped-session'] as const)(
+    'rejects a cold catalog snapshot from a different %s scope',
+    async change => {
+      saveStoredCloudConnection(cloudSession(1))
+      await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true, refresh: true })
+      const key = 'wework.plugins.codexCatalog.v1'
+      const durable = JSON.parse(localStorage.getItem(key)!)
+      if (change.startsWith('unscoped')) {
+        for (const entry of Object.values(durable.entries) as Array<{
+          state: { cloudScope?: string }
+        }>)
+          delete entry.state.cloudScope
+        if (change === 'unscoped-session') {
+          localStorage.removeItem(key)
+          sessionStorage.setItem(key, JSON.stringify(durable))
+        } else localStorage.setItem(key, JSON.stringify(durable))
+      } else {
+        saveStoredCloudConnection(
+          cloudSession(
+            change === 'account' ? 2 : 1,
+            change === 'backend' ? 'https://another.example' : undefined
+          )
+        )
+      }
+      vi.resetModules()
+      const cold = await import('./codexPlugins')
+      try {
+        expect(cold.peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+        const fresh = await cold
+          .createLocalCodexPluginApi()
+          .readState({ mergeAllMarketplaces: true })
+        expect(
+          fresh.installedPlugins.some(plugin => plugin.spec.source.pluginKey === 'personal-tool')
+        ).toBe(true)
+        const saved = JSON.parse(localStorage.getItem(key)!)
+        const expectedScope = JSON.stringify([
+          change === 'backend' ? 'https://another.example' : 'https://plugins.example',
+          change === 'account' ? 2 : 1,
+        ])
+        expect(
+          Object.values(saved.entries).some(
+            entry =>
+              (entry as { state: { cloudScope?: string } }).state.cloudScope === expectedScope
+          )
+        ).toBe(true)
+      } finally {
+        cold.clearLocalCodexPluginsReadStateCache()
+        clearStoredCloudConnection()
+      }
+    }
+  )
+
+  test.each(['catalog', 'disk'] as const)(
+    'cannot publish an old account %s read after another account finishes',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      const original = mocks.request.getMockImplementation()!
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      let delayed = false
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.links.list') {
+          if (!delayed) {
+            delayed = true
+            started.resolve()
+            await release.promise
+          }
+          return [accountLink(1, 17), accountLink(2, 42)]
+        }
+        return original(method, params)
+      })
+      saveStoredCloudConnection(cloudSession(1))
+      const old =
+        source === 'catalog'
+          ? api.readState({ mergeAllMarketplaces: true, refresh: true })
+          : readLocalInstalledInventoryFromDisk()
+      const rejected = expect(old).rejects.toBeInstanceOf(ExpiredPluginInventoryRequest)
+      await started.promise
+      saveStoredCloudConnection(cloudSession(2))
+      try {
+        const current = await api.readState({ mergeAllMarketplaces: true })
+        expect(
+          current.installedPlugins.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')
+            ?.spec.sourcePayload?.cloudPluginId
+        ).toBe(42)
+      } finally {
+        release.resolve()
+        await rejected
+      }
+      const peeked = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
+      expect(
+        peeked?.installedPlugins.find(plugin => plugin.spec.source.pluginKey === 'personal-tool')
+          ?.spec.sourcePayload?.cloudPluginId
+      ).toBe(42)
+      clearStoredCloudConnection()
     }
   )
 
@@ -1486,7 +1642,7 @@ describe('local plugin source isolation', () => {
         const key = 'wework.plugins.codexCatalog.v1'
         const durable = JSON.parse(localStorage.getItem(key)!)
         durable.version = 1
-        delete durable.entries['|all|all-kinds'].state.catalogPartial
+        delete durable.entries[JSON.stringify(['|all|all-kinds', null])].state.catalogPartial
         localStorage.setItem(key, JSON.stringify(durable))
       }
       vi.resetModules()
