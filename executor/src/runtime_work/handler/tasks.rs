@@ -549,6 +549,10 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if payload["origin"]["dispatchRole"] == "member" {
+            request.system_prompt =
+                crate::task_runtime::collaboration_member_system_prompt(&request.system_prompt);
+        }
         let deferred_environment = project_preparation::configure(&mut request, &payload)?;
         if deferred_environment {
             payload_workspace_path = None;
