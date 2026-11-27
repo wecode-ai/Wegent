@@ -177,16 +177,25 @@ async function createScenario(request: APIRequestContext, page: Page) {
       expect(deleted.status(), `${path}: ${await deleted.text()}`).toBe(204)
     }
     for (const path of cleanup) {
-      const deleted = await request.delete(
-        `${PROVIDER_NATIVE_API_URL}/api/v1/namespaces/default/${path}`,
-        {
-          headers: authHeaders(token),
-        }
-      )
-      expect(deleted.ok(), await deleted.text()).toBe(true)
+      const resource = '/api/v1/namespaces/default/' + path
+      const bot = path.startsWith('bots/')
+        ? await apiRequest<{ spec: { ghostRef: { name: string; namespace?: string } } }>(
+            request,
+            resource
+          )
+        : undefined
+      const removed = await client.delete(resource)
+      expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+      if (bot) {
+        const { name, namespace = 'default' } = bot.spec.ghostRef
+        const ghost = await client.delete(`/api/v1/namespaces/${namespace}/ghosts/${name}`)
+        expect(ghost.status, JSON.stringify(ghost.data)).toBe(200)
+      }
     }
-    for (const id of skillCleanup)
-      expect((await client.delete(`/api/v1/kinds/skills/${id}`)).status).toBe(204)
+    for (const id of skillCleanup) {
+      const removed = await client.delete(`/api/v1/kinds/skills/${id}`)
+      expect(removed.status, JSON.stringify(removed.data)).toBe(204)
+    }
     await deleteIssueDispatchMockModel(request, model)
   }
   return {
