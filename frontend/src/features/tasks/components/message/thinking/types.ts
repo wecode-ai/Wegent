@@ -370,6 +370,7 @@ export function isPromptOptimizationBlock(block: MessageBlock): block is PromptO
 export interface ToolPair {
   toolUseId: string
   toolName: string
+  isBackground?: boolean
   displayName?: string // Optional display name that overrides toolName
   status: ToolStatus
   toolUse: ThinkingStep // tool_use type step

@@ -1,4 +1,5 @@
 {
+  "background_command_elapsed": "Background · {{minutes}}m {{seconds}}s",
   "title": "Chat",
   "scroll_to_bottom": "Scroll to bottom",
   "placeholder": {

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { memo, useState, useMemo } from 'react'
+import { memo, useEffect, useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Loader2, Pencil, FileText, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolBlockProps, ToolRendererProps } from '../types'
@@ -41,8 +41,9 @@ function getToolInputPreview(
   // Handle different tool types
   switch (toolName) {
     case 'Bash': {
-      const command = typeof input === 'object' ? (input.command as string) : input
-      if (command) {
+      const command =
+        typeof input === 'object' ? (tool.isBackground ? input.description : input.command) : input
+      if (typeof command === 'string' && command) {
         return truncateText(command, maxLength)
       }
       break
@@ -212,6 +213,26 @@ function isActiveTool(tool: ToolRendererProps['tool']): boolean {
   )
 }
 
+function BackgroundElapsed({ startTime }: { startTime: number }) {
+  const { t } = useTranslation('chat')
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const seconds = Math.max(0, Math.floor((now - startTime) / 1000))
+  return (
+    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+      {t('background_command_elapsed', {
+        minutes: Math.floor(seconds / 60),
+        seconds: seconds % 60,
+      })}
+    </span>
+  )
+}
+
 /**
  * ToolBlock Component
  *
@@ -230,6 +251,8 @@ export const ToolBlock = memo(function ToolBlock({
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const isCancelled = taskStatus === 'CANCELLED'
+  const isBackgroundFinished =
+    tool.isBackground && (taskStatus === 'COMPLETED' || taskStatus === 'FAILED')
 
   // Get tool icon component
   const ToolIcon = getToolIcon(tool.toolName)
@@ -237,12 +260,12 @@ export const ToolBlock = memo(function ToolBlock({
   // Check if any tool is running (for spinner animation)
   // For merged tools, check if any of them is still running
   const isRunning = useMemo(() => {
-    if (isCancelled) return false
+    if (isCancelled || isBackgroundFinished) return false
     if (count > 1 && mergedTools.length > 0) {
       return mergedTools.some(isActiveTool)
     }
     return isActiveTool(tool)
-  }, [tool, count, mergedTools, isCancelled])
+  }, [tool, count, mergedTools, isCancelled, isBackgroundFinished])
 
   // Check if any tool has error status
   const hasError = useMemo(() => {
@@ -271,6 +294,7 @@ export const ToolBlock = memo(function ToolBlock({
   const hasOutput = tool.toolResult?.details?.output || tool.toolResult?.details?.content
   const hasContent = hasInput || hasOutput
   const isExpandable = hasContent
+  const backgroundStart = tool.isBackground && isRunning ? tool.startTime : undefined
 
   // Build display text: tool name + input preview (or count if merged)
   // When count > 1, show "Tool Name x count" format without input preview
@@ -318,6 +342,7 @@ export const ToolBlock = memo(function ToolBlock({
         <span className="text-xs text-[#666] dark:text-[#aaa] truncate max-w-[400px]">
           {displayText}
         </span>
+        {backgroundStart !== undefined && <BackgroundElapsed startTime={backgroundStart} />}
 
         {/* Count badge when merged (count > 1) with status indicator */}
         {count > 1 && (

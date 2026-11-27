@@ -405,6 +405,7 @@ export const taskApis = {
     const sessionToken = getToken()
     const response = await fetch(`/api/tasks/share/public?${query}`, {
       method: 'GET',
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),

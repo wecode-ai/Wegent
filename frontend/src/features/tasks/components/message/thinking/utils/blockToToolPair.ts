@@ -59,6 +59,8 @@ export function blockToToolPair(block: ToolBlock): ToolPair {
   return {
     toolUseId: block.tool_use_id || block.id,
     toolName: normalizedToolName,
+    isBackground: block.tool_input?.background === true,
+    startTime: block.timestamp,
     displayName: block.display_name,
     status: normalizeToolStatus(block.status),
     toolUse: normalizeStepDetails(rawToolUseStep),

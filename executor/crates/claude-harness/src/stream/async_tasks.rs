@@ -91,6 +91,10 @@ fn terminal_status(status: &str) -> Option<&'static str> {
     }
 }
 
+pub(crate) fn claude_notification_is_error(value: &Value) -> Option<bool> {
+    terminal_status(value["status"].as_str()?).map(|status| status != "completed")
+}
+
 fn result_subagent_error(value: &Value) -> Option<String> {
     let stats = value.get("subagent_stats")?;
     let system_killed = stats["killed"]["system"].as_u64().unwrap_or(0);
@@ -133,10 +137,10 @@ pub fn extract_claude_subagent_update(value: &Value) -> Option<ClaudeSubagentUpd
             })
         }
         "task_notification" => {
-            let status = match value.get("status").and_then(Value::as_str)? {
-                "completed" | "succeeded" | "success" => "done",
-                "failed" | "error" | "cancelled" | "canceled" | "stopped" => "error",
-                _ => return None,
+            let status = if claude_notification_is_error(value)? {
+                "error"
+            } else {
+                "done"
             };
             Some(ClaudeSubagentUpdate {
                 tool_use_id,

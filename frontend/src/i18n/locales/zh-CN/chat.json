@@ -1,4 +1,5 @@
 {
+  "background_command_elapsed": "后台运行 · {{minutes}} 分 {{seconds}} 秒",
   "title": "聊天",
   "scroll_to_bottom": "滚动到底部",
   "placeholder": {
