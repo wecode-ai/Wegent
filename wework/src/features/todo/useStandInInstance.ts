@@ -3,6 +3,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createStandInInstanceSource } from './standInInstanceSource'
+import type { StandInEntry } from './standInEntry'
+import type { StandInExecutorApi } from '@/api/standIn'
 
 /** An instance has one durable binding; failed cancellation never unlocks rebinding. */
 export function useStandInInstance(
@@ -15,11 +17,13 @@ export function useStandInInstance(
   {
     entryRequestKey,
     requireSetupConfirmation = true,
-    legacyEntryDeviceId,
+    entry,
+    entryApi,
   }: {
     entryRequestKey?: number
     requireSetupConfirmation?: boolean
-    legacyEntryDeviceId?: string
+    entry?: StandInEntry
+    entryApi?: Pick<StandInExecutorApi, 'personalGet'>
   } = {}
 ) {
   const api = services.standInApi
@@ -30,15 +34,13 @@ export function useStandInInstance(
   )
   const subscribe = useCallback(
     (listener: () => void) =>
-      source.subscribe(
-        { devices, connected, active, entryRequestKey, legacyEntryDeviceId },
-        listener
-      ),
-    [source, devices, connected, active, entryRequestKey, legacyEntryDeviceId]
+      source.subscribe({ devices, connected, active, entryRequestKey, entry, entryApi }, listener),
+    [source, devices, connected, active, entryRequestKey, entry, entryApi]
   )
   const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
   return {
     ...snapshot,
+    entryError: snapshot.entryFailure?.entry === entry ? snapshot.entryFailure?.error : undefined,
     error: snapshot.error
       ? getStandInErrorMessage(snapshot.error.cause, snapshot.error.fallback)
       : null,

@@ -34,6 +34,7 @@ import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
 import { personalAssistantDeviceSettings } from './personalAssistantDeviceSettings'
 import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
 import { availableStandInDevices } from './standInDevices'
+import { parseStandInEntry, type StandInEntryError } from './standInEntry'
 import { StandInActivation } from './StandInActivation'
 import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
@@ -148,6 +149,14 @@ function AccountStandInWorkspace({
     setSelection({ route: contentRoute, view })
   const userId = Number(user.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
+  const requestedEntry = useMemo(() => parseStandInEntry(contentRoute), [contentRoute])
+  const cloudAssistantServices = useMemo(
+    () =>
+      readAccount && publishAccount
+        ? personalAssistantDeviceSettings(services, readAccount, publishAccount)
+        : services,
+    [services, readAccount, publishAccount]
+  )
   const instance = useStandInInstance(
     services,
     userId,
@@ -158,8 +167,8 @@ function AccountStandInWorkspace({
     {
       entryRequestKey: refreshKey,
       requireSetupConfirmation: experienceEnabled,
-      legacyEntryDeviceId:
-        !experienceEnabled && query.size === 1 ? (query.get('deviceId') ?? undefined) : undefined,
+      entry: requestedEntry,
+      entryApi: cloudAssistantServices.standInApi,
     }
   )
   const { binding, setupTarget, localDeviceId, busy } = instance
@@ -169,13 +178,6 @@ function AccountStandInWorkspace({
   const deviceId = target?.deviceId
   const account = ownerId === userId ? connectedAccount : undefined
   const boundDeviceOffline = findWorkbenchDevice(devices, deviceId)?.status === 'offline'
-  const cloudAssistantServices = useMemo(
-    () =>
-      readAccount && publishAccount
-        ? personalAssistantDeviceSettings(services, readAccount, publishAccount)
-        : services,
-    [services, readAccount, publishAccount]
-  )
   const assistantServices = ownerId === userId ? cloudAssistantServices : services
   const bindingScope = visibleTarget
     ? JSON.stringify([visibleTarget.userId, visibleTarget.deviceId])
@@ -215,22 +217,21 @@ function AccountStandInWorkspace({
     active && !embedded,
     entryRequestKey
   )
-  const entryError =
-    entry.kind === 'error'
-      ? entry.error
-      : entry.kind === 'home'
-        ? undefined
-        : !ownerAvailable || (entry.userId && binding && entry.userId !== String(ownerId))
-          ? 'forbidden'
-          : !binding && instance.error
-            ? 'lookup_failed'
-            : binding && binding.status !== 'active'
-              ? 'not_found'
-              : entry.kind === 'conversation' && !experienceEnabled
-                ? 'unsupported'
-                : result?.kind === 'error'
-                  ? result.error
-                  : undefined
+  let entryError: StandInEntryError | undefined
+  if (entry.kind === 'error') entryError = entry.error
+  else if (entry.kind !== 'home') {
+    const resolvingUnboundIdentity =
+      binding?.status === 'unbound' && !experienceEnabled && entry.kind === 'identity'
+    if (!ownerAvailable || (entry.userId && binding && entry.userId !== String(ownerId)))
+      entryError = 'forbidden'
+    else if (instance.entryError) entryError = instance.entryError
+    else if (instance.error && (!binding || binding.status === 'unbound'))
+      entryError = 'lookup_failed'
+    else if (binding && binding.status !== 'active' && !resolvingUnboundIdentity)
+      entryError = 'not_found'
+    else if (entry.kind === 'conversation' && !experienceEnabled) entryError = 'unsupported'
+    else if (result?.kind === 'error') entryError = result.error
+  }
   const entryLoading =
     entry.kind !== 'home' && (!binding || (entry.kind === 'identity' && result?.kind !== 'ready'))
   const verifiedRole = result?.kind === 'ready' ? result : undefined
@@ -572,6 +573,7 @@ function AccountStandInWorkspace({
             <AssistantWorkspace
               active={active}
               binding={target}
+              services={assistantServices}
               conversation={entry.kind === 'conversation' ? entry : undefined}
               projects={projects}
               localDeviceId={localDeviceId}

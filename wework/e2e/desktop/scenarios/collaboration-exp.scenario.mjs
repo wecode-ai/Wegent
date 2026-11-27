@@ -19,6 +19,10 @@ import {
   verifyCollaborationExpPrivateMessage,
 } from '../modules/collaboration-exp-issue-flows.mjs'
 import { verifyCollaborationExpViewports } from '../modules/collaboration-exp-viewport-flows.mjs'
+import {
+  verifyAssistantEntrySingleton,
+  verifyAssistantPreferenceGate,
+} from '../modules/collaboration-exp-assistant-entry.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { finishStandInOnboarding } from '../modules/stand-in-instance-flows.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
@@ -43,6 +47,7 @@ const testId = id => `${APP} [data-testid=${JSON.stringify(id)}]`
 export const COLLABORATION_EXP_USER_STORIES = [
   'default-off-preserves-baseline-and-makes-no-targeted-business-requests',
   'deliberate-beta-toggle-and-fixed-tab-survive-reload',
+  'assistant-waits-for-preferences-and-keeps-one-instance-across-retry-reload-and-navigation',
   'local-and-cloud-issues-keep-their-canonical-source',
   'project-notifications-and-deep-links-reuse-one-experiment-tab',
   'assistant-tasks-project-timeline-private-discussion-work-in-three-viewports',
@@ -66,6 +71,7 @@ export function createDesktopScenario({
   captureScreenshot: captureSurface,
   restartDesktopApp,
   resultDir,
+  electronUserDataDirectory,
 }) {
   // Full viewport evidence includes portalled dialogs as well as the native conversation composer.
   const captureScreenshot = (control, name) =>
@@ -642,6 +648,10 @@ export function createDesktopScenario({
           click,
         })
 
+        await verifyAssistantPreferenceGate(
+          control,
+          join(electronUserDataDirectory, 'app-preferences.json')
+        )
         await control.command('navigate', 'body', { value: '/collaboration-exp?view=assistant' })
         const onboardingModel = '[data-testid="stand-in-onboarding-model"]'
         await control.command('waitFor', onboardingModel, { visible: true })
@@ -649,6 +659,9 @@ export function createDesktopScenario({
         assert.ok(new URL(redirected).pathname.endsWith('/stand-in'))
         await selectE2EModel(control, undefined, undefined, onboardingModel)
         await finishStandInOnboarding(control)
+        await verifyAssistantEntrySingleton(control, () =>
+          rpc('runtime.stand_in.binding', { operation: 'get' })
+        )
 
         await control.command('navigate', 'body', { value: '/' })
         await click(control, `${ACTIVE} [data-testid="personal-stand-in-button"]`)

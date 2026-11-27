@@ -88,15 +88,17 @@ export async function resolveStandInEntry(
   api: Pick<StandInExecutorApi, 'personalGet'>,
   entry: StandInIdentityEntry,
   binding: BindingIdentity,
-  authorizedDeviceIds: ReadonlySet<string>
+  authorizedDeviceIds: ReadonlySet<string>,
+  { unbound = false } = {}
 ): Promise<StandInEntryResult> {
   const { userId, deviceId, profileId } = entry
   const fail = (error: StandInEntryError) => ({ kind: 'error', error }) as const
   const ready = (deviceId: string, profileId: string) =>
     ({ kind: 'ready', deviceId, profileId }) as const
   if (userId && userId !== String(binding.userId)) return fail('forbidden')
-  if (deviceId && deviceId !== binding.deviceId && !authorizedDeviceIds.has(deviceId))
+  if (deviceId && (unbound || deviceId !== binding.deviceId) && !authorizedDeviceIds.has(deviceId))
     return fail('forbidden')
+  if (unbound && !deviceId && profileId === '@primary') return fail('missing_identity')
   if (profileId === '@primary' && deviceId && deviceId !== binding.deviceId) return fail('conflict')
 
   try {

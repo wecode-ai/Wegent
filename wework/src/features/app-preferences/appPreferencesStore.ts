@@ -3,7 +3,7 @@ import {
   APP_PREFERENCES_CHANGED_EVENT,
   defaultAppPreferences,
   emitAppPreferencesChanged,
-  getAppPreferences,
+  getReadableAppPreferences,
   mergeAppPreferences,
 } from '@/desktop/appPreferences'
 import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
@@ -37,7 +37,7 @@ export function createAppPreferencesStore(ownsLanguage = false) {
   async function readPreferences() {
     const requestGeneration = ++generation
     try {
-      const preferences = await getAppPreferences()
+      const preferences = await getReadableAppPreferences()
       if (requestGeneration === generation) {
         publish({ preferences, loaded: true, loadStatus: 'ready', retry })
       }

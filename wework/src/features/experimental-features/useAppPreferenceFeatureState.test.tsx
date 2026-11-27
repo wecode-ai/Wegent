@@ -10,7 +10,7 @@ const read = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/runtime-environment', () => ({ isElectronRuntime: () => false }))
 vi.mock('@/desktop/appPreferences', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/appPreferences')>()),
-  getAppPreferences: read,
+  getReadableAppPreferences: read,
 }))
 beforeEach(() => {
   read

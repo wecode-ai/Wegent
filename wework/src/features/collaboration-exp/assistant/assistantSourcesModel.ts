@@ -18,6 +18,7 @@ export interface AssistantSourceData {
   proposals: StandInProposal[]
   proposalsReady: boolean
 }
+const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
 interface SourceSnapshot {
   source?: AssistantSourceData
   failure?: { cause: unknown }
@@ -162,6 +163,7 @@ export function createAssistantSourcesModel(
       listeners.add(listener)
       includeProposals = proposals
       if (listeners.size === 1) {
+        if (e2e) performance.mark('wework:assistant-source-subscribe')
         unsubscribe = subscribePersonalStandIn(settings => {
           const source = snapshot.source
           if (
@@ -176,6 +178,7 @@ export function createAssistantSourcesModel(
       return () => {
         listeners.delete(listener)
         if (!listeners.size) {
+          if (e2e) performance.mark('wework:assistant-source-unsubscribe')
           sourceRevision++
           proposalRevision++
           clearTimeout(timer)

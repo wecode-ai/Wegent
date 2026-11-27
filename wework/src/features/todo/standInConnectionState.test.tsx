@@ -11,6 +11,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
+import { parseStandInEntry } from './standInEntry'
+import { newStandInRole } from '@/api/personalStandIn'
 
 const devices: DeviceInfo[] = []
 const account = { userId: 1, backendUrl: 'https://current.example/api' }
@@ -66,48 +68,72 @@ it.each([true, false])(
 )
 
 it.each([
-  ['local', 'local'],
-  ['unknown', 'cloud'],
-])('initializes a legacy device-only entry for %s on %s', async (requested, expected) => {
-  const settings: PersonalStandInSettings = {
-    version: 0,
-    executionDeviceId: 'local',
-    userId: account.userId,
-    roles: [],
-  }
-  const binding = vi
-    .fn<StandInExecutorApi['binding']>()
-    .mockResolvedValueOnce({ status: 'unbound', version: 0, target: null })
-    .mockImplementationOnce(async (_id, _action, _version, target) => ({
-      status: 'active',
-      version: 1,
-      target: target ?? null,
+  ['deviceId=local', 'local', undefined],
+  ['deviceId=cloud&profileId=%40primary&settingsRequest=1', 'cloud', undefined],
+  ['deviceId=other', undefined, 'forbidden'],
+  ['deviceId=cloud&userId=2&settingsRequest=1', undefined, 'forbidden'],
+  ['deviceId=cloud&profileId=missing&settingsRequest=1', undefined, 'not_found'],
+  ['deviceId=cloud&profileId=reviewer&settingsRequest=1', 'cloud', undefined],
+  ['deviceId=cloud', undefined, 'ambiguous'],
+])(
+  'resolves legacy link %s before binding an unbound assistant',
+  async (query, expected, error) => {
+    const settings: PersonalStandInSettings = {
+      version: 0,
+      executionDeviceId: 'local',
+      userId: account.userId,
+      roles: [],
+    }
+    const binding = vi
+      .fn<StandInExecutorApi['binding']>()
+      .mockResolvedValueOnce({ status: 'unbound', version: 0, target: null })
+      .mockImplementationOnce(async (_id, _action, _version, target) => ({
+        status: 'active',
+        version: 1,
+        target: target ?? null,
+      }))
+    const lifecycle = vi.fn(async () => settings)
+    const personalGet = vi.fn(async (_userId: number, deviceId: string) => ({
+      ...settings,
+      executionDeviceId: deviceId,
+      roles: deviceId === 'cloud' ? [newStandInRole(deviceId, 'reviewer')] : [],
     }))
-  const services = {
-    standInApi: { binding, lifecycle: async () => settings, personalGet: async () => settings },
-    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
-  } as unknown as WorkbenchServices
-  const cloudDevices: DeviceInfo[] = [
-    {
-      id: 2,
-      device_id: 'cloud',
-      name: 'Cloud',
-      device_type: 'cloud',
-      bind_shell: 'claudecode',
-      status: 'online',
-      is_default: true,
-    },
-  ]
-  const { result } = renderHook(() =>
-    useStandInInstance(services, account.userId, cloudDevices, true, true, account.backendUrl, {
-      requireSetupConfirmation: false,
-      legacyEntryDeviceId: requested,
-    })
-  )
+    const services = {
+      standInApi: { binding, lifecycle, personalGet },
+      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+    } as unknown as WorkbenchServices
+    const cloudDevices: DeviceInfo[] = [
+      {
+        id: 2,
+        device_id: 'cloud',
+        name: 'Cloud',
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+        status: 'online',
+        is_default: true,
+      },
+    ]
+    const entry = parseStandInEntry(`/stand-in?${query}`)
+    const { result } = renderHook(() =>
+      useStandInInstance(services, account.userId, cloudDevices, true, true, account.backendUrl, {
+        requireSetupConfirmation: false,
+        entry,
+      })
+    )
 
-  await waitFor(() => expect(result.current.binding?.status).toBe('active'))
-  expect(result.current.binding?.target).toEqual({ ...account, deviceId: expected })
-})
+    if (error) {
+      await waitFor(() => expect(result.current.entryError).toBe(error))
+      expect(result.current.binding?.status).toBe('unbound')
+      expect(binding.mock.calls).toEqual([['local']])
+      expect(lifecycle).not.toHaveBeenCalled()
+      if (error === 'forbidden') expect(personalGet).not.toHaveBeenCalled()
+    } else {
+      await waitFor(() => expect(result.current.binding?.status).toBe('active'))
+      expect(result.current.binding?.target).toEqual({ ...account, deviceId: expected })
+      expect(lifecycle).toHaveBeenCalledExactlyOnceWith(account.userId, expected, 'start')
+    }
+  }
+)
 
 it('keeps old inbox items hidden while the same owner and device load on a new connection', async () => {
   const item: StandInInboxWork = {

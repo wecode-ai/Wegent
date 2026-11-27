@@ -7,6 +7,7 @@ import { usePersonalStandIn } from '@/features/todo/usePersonalStandIn'
 import { useCollaborationMarkdownServices } from '@/features/todo/useCollaborationMarkdownServices'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -28,6 +29,7 @@ import '../shell/ExperienceTheme.css'
 interface AssistantWorkspaceProps {
   active: boolean
   binding: StandInBindingTarget
+  services: WorkbenchServices
   conversation?: { deviceId: string; taskId: string }
   projects: CollaborationProject[]
   localDeviceId: string
@@ -39,7 +41,7 @@ interface AssistantWorkspaceProps {
 /** The main assistant entry uses the same work, proposals and conversations as the experience. */
 export default function AssistantWorkspace(props: AssistantWorkspaceProps) {
   const markdown = useCollaborationMarkdownServices()
-  const { services } = useWorkbench()
+  const { services } = props
   const api = services.standInApi
   const onboarding = usePersonalStandIn(
     services,

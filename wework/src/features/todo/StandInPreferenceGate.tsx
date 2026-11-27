@@ -42,7 +42,11 @@ export function StandInPreferenceGate({
     )
   }
   return (
-    <div className="m-auto p-5 text-sm text-text-secondary" role="status">
+    <div
+      className="m-auto p-5 text-sm text-text-secondary"
+      role="status"
+      data-testid="stand-in-preference-loading"
+    >
       {t('standIn.preference_loading')}
     </div>
   )

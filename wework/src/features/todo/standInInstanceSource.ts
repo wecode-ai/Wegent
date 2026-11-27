@@ -8,12 +8,14 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { availableStandInDevices } from './standInDevices'
+import { resolveStandInEntry, type StandInEntry, type StandInEntryError } from './standInEntry'
 import { migrateStandIn, StandInMigrationError } from './migrateStandIn'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 
 interface InstanceSnapshot {
   binding?: StandInInstanceBinding
   setupTarget?: StandInBindingTarget
+  entryFailure?: { entry: StandInEntry; error: StandInEntryError }
   stoppedProfile?: PersonalStandInSettings
   localDeviceId: string
   busy: boolean
@@ -24,7 +26,8 @@ interface InstanceObservation {
   connected: boolean
   active: boolean
   entryRequestKey?: number
-  legacyEntryDeviceId?: string
+  entry?: StandInEntry
+  entryApi?: Pick<StandInExecutorApi, 'personalGet'>
 }
 export const hasSavedStandIn = (settings: PersonalStandInSettings) =>
   Boolean(
@@ -68,7 +71,7 @@ export function createStandInInstanceSource({
   const publishBinding = (binding: StandInInstanceBinding) =>
     publish({
       binding,
-      ...(binding.status !== 'unbound' ? { setupTarget: undefined } : {}),
+      ...(binding.status !== 'unbound' ? { setupTarget: undefined, entryFailure: undefined } : {}),
       ...(binding.status !== 'stopped' ||
       binding.version !== snapshot.binding?.version ||
       !sameTarget(snapshot.binding?.target, binding.target) ||
@@ -88,17 +91,32 @@ export function createStandInInstanceSource({
     const owned = await api!.personalGet(userId, deviceId)
     const available = owner.connected ? availableStandInDevices(owner.devices) : []
     const preferred = available.find(device => device.is_default) ?? available[0]
-    const target = {
-      userId,
-      backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
-      deviceId:
-        hasSavedStandIn(owned) ||
-        (!requireSetupConfirmation && owner.legacyEntryDeviceId === deviceId)
-          ? deviceId
-          : (preferred?.device_id ?? deviceId),
-    }
-    return target
+    return setupBindingTarget(
+      hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)
+    )
   }
+  const setupBindingTarget = (deviceId: string): StandInBindingTarget => ({
+    userId,
+    backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
+    deviceId,
+  })
+  const resolveSetupEntry = (
+    deviceId: string,
+    owner: InstanceObservation,
+    entry: Extract<StandInEntry, { kind: 'identity' }>
+  ) =>
+    resolveStandInEntry(
+      owner.entryApi ?? api!,
+      entry,
+      { userId, deviceId: entry.deviceId ?? deviceId },
+      new Set([
+        deviceId,
+        ...(owner.connected
+          ? availableStandInDevices(owner.devices).map(device => device.device_id)
+          : []),
+      ]),
+      { unbound: true }
+    )
   const initialize = async (
     deviceId: string,
     unbound: StandInInstanceBinding,
@@ -107,7 +125,14 @@ export function createStandInInstanceSource({
     revision: number
   ) => {
     const mayBind = () =>
-      observed(revision, deviceId) && observation?.active && activation === epoch
+      observed(revision, deviceId) &&
+      observation?.active &&
+      activation === epoch &&
+      (target.deviceId === deviceId ||
+        (observation.connected &&
+          availableStandInDevices(observation.devices).some(
+            device => device.device_id === target.deviceId
+          )))
     if (!mayBind()) return { binding: unbound }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)
@@ -159,11 +184,26 @@ export function createStandInInstanceSource({
         })
       const binding = await api.binding(identity.deviceId)
       if (!current()) return
-      if (binding.status === 'unbound' && !snapshot.setupTarget) {
+      if (binding.status === 'unbound') {
         publishBinding(binding)
+        const entry = owner.entry
+        if (entry && entry.kind !== 'home') {
+          publish({ setupTarget: undefined, entryFailure: undefined, error: null })
+          if (requireSetupConfirmation || entry.kind !== 'identity') return
+          const resolved = await resolveSetupEntry(identity.deviceId, owner, entry)
+          if (!current()) return
+          if (resolved.kind === 'error') {
+            publish({ entryFailure: { entry, error: resolved.error } })
+            return
+          }
+          publish({ setupTarget: setupBindingTarget(resolved.deviceId) })
+          await mutate('setup', {})
+          return
+        }
+        if (snapshot.setupTarget) return
         const setupTarget = await discoverSetupTarget(identity.deviceId, owner)
         if (!current()) return
-        publish({ setupTarget, error: null })
+        publish({ setupTarget, entryFailure: undefined, error: null })
         if (!requireSetupConfirmation) await mutate('setup', {})
         return
       }
@@ -280,7 +320,15 @@ export function createStandInInstanceSource({
         publish({ error: { cause, fallback: 'save_settings_failed' } })
       if (operation === 'migrate') throw cause
     } finally {
-      if (observed(revision, localDeviceId)) publish({ busy: false })
+      if (observed(revision, localDeviceId)) {
+        const setupScopeChanged =
+          operation === 'setup' &&
+          (owner.entry !== observation?.entry ||
+            owner.connected !== observation?.connected ||
+            owner.devices !== observation?.devices)
+        publish({ busy: false, ...(setupScopeChanged ? { setupTarget: undefined } : {}) })
+        if (setupScopeChanged) void read()
+      }
     }
   }
   return {
@@ -294,9 +342,11 @@ export function createStandInInstanceSource({
         previous.active !== owner.active ||
         previous.connected !== owner.connected ||
         previous.devices !== owner.devices ||
-        previous.legacyEntryDeviceId !== owner.legacyEntryDeviceId ||
+        previous.entry !== owner.entry ||
+        previous.entryApi !== owner.entryApi ||
         previous.entryRequestKey !== owner.entryRequestKey
-      if (!previous || previous.active !== owner.active) activation++
+      if (!previous || previous.active !== owner.active || previous.entry !== owner.entry)
+        activation++
       if (changed) {
         readRevision++
         if (owner.active && !snapshot.busy) void read()
