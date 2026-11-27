@@ -70,7 +70,7 @@ The process-level protocol regression in `executor/tests/codex_app_server_contra
 
 ## Start a session
 
-During builds, `prepare-codex-binary.mjs` downloads the locked version through native Node HTTP/HTTPS streams, follows redirects, and removes failed temporary files. Archives are extracted for use only after integrity verification. The download stream does not depend on the Undici parser used by Node's built-in Fetch, avoiding parser crashes that terminate the build process.
+During builds, `prepare-codex-binary.mjs` downloads the locked version with Undici streams, follows redirects, enforces connect, response-header, and response-body timeouts, and honors the `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables. Failed retries remove temporary files; archives are extracted for use only after integrity verification.
 
 ```bash
 pnpm --filter wework ai:verify start
