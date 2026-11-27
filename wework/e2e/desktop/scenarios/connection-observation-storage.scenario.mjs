@@ -159,8 +159,16 @@ export function createDesktopScenario(options) {
         await rpc(control, 'runtime.connections.observers.stop', lease)
       }
       const rows = await waitForValue(
-        snapshot,
-        rows => rows.every(row => row.section !== 'observations'),
+        () => {
+          try {
+            return snapshot()
+          } catch (error) {
+            // The scheduler can own the database while reclaiming retired observations.
+            if (error?.code !== 'ERR_SQLITE_ERROR' || (error.errcode & 0xff) !== 5) throw error
+            return null
+          }
+        },
+        rows => rows?.every(row => row.section !== 'observations'),
         'Retired observation histories were not reclaimed by the real scheduler',
         60_000
       )
