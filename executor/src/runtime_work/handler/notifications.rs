@@ -587,7 +587,7 @@ impl RuntimeWorkRpcHandler {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
                 clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
-            clear_runtime_handle_messages(&mut link.runtime_handle);
+            clear_runtime_handle_messages(link);
             if changed {
                 link.updated_at = now_ms();
             }
@@ -679,7 +679,7 @@ impl RuntimeWorkRpcHandler {
 
         self.store.update_task(&local_task_id, |link| {
             link.thread_id = Some(thread_id.to_owned());
-            clear_runtime_handle_messages(&mut link.runtime_handle);
+            clear_runtime_handle_messages(link);
             link.updated_at = now_ms();
         });
         self.replay_codex_notifications(pending_replay);

@@ -639,7 +639,20 @@ impl RuntimeWorkRpcHandler {
                 .map_err(settings_error)?;
             settings["teamImportVersion"] = json!(1);
             if let Some(role_id) = payload["exportTeamRoleId"].as_str() {
-                self.verify_local_stand_in_owner(user)?;
+                // A stopped installation-local identity can migrate to its connected account.
+                let stopped_local_source =
+                    user == 0 && settings["lifecycle"]["status"] == "stopped" && {
+                        let binding = store
+                            .stand_in_binding("get", -1, Value::Null)
+                            .map_err(settings_error)?;
+                        binding["status"] == "stopped"
+                            && binding["target"]["userId"] == 0
+                            && binding["target"]["deviceId"].as_str()
+                                == Some(self.device_id.as_str())
+                    };
+                if !stopped_local_source {
+                    self.verify_local_stand_in_owner(user)?;
+                }
                 settings["portableTeam"] = store
                     .portable_personal_team(user, &self.device_id, role_id)
                     .map_err(settings_error)?;

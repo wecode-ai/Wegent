@@ -22,7 +22,7 @@ import {
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { openWorkspaceAgentConfiguration } from '../modules/workspace-agent-setup.mjs'
-import { verifyLocalSettingsProjectVersion } from '../modules/collaboration-settings-ux.mjs'
+import { verifyAgentDialogKeyboard, verifyLocalSettingsProjectVersion } from '../modules/collaboration-settings-ux.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'local-model:desktop-e2e-responses'
@@ -152,6 +152,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     timeoutMs
   )
   await openWorkspaceAgentConfiguration(control, CONTENT, 'wework-local-workspace')
+  await verifyAgentDialogKeyboard(control, scoped, `project-agent-edit-${agentId}`)
   await control.command('clickWhenEnabled', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
   await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {

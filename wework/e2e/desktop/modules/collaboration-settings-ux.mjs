@@ -121,12 +121,9 @@ async function assertKeyboardFocus(control, id) {
   )
 }
 
-async function verifyAgentDialogKeyboard(control, scoped) {
+export async function verifyAgentDialogKeyboard(control, scoped, editId) {
   const find = id => scoped('[data-testid="' + id + '"]')
-  await control.command('click', find('collaboration-project-settings-agents'))
-  const ids = JSON.parse(await control.command('snapshot', scoped('').trim())).testIds
-  const editId = ids.find(id => id.startsWith('project-agent-edit-'))
-  assert.ok(editId, 'The scenario must have an editable project Agent')
+  await control.command('waitFor', find(editId), { visible: true })
   await control.command('focusMainWindow', 'body')
   await control.command('nativePress', find(editId), { key: 'Enter' })
   const editor = '[data-testid="cloud-project-chat-agent-editor"][role="dialog"]'
@@ -349,7 +346,6 @@ export async function verifyLocalSettingsProjectVersion(control, { scoped, proje
   }
   const find = id => scoped(`[data-testid="${id}"]`)
   await selectCollaborationProjectView(control, scoped('').trim(), 'manage')
-  await verifyAgentDialogKeyboard(control, scoped)
   await verifyGroupInlineMaintenance(control, scoped)
   // The owning scenario just created a group. The first tag save must use that new Project version.
   await addProjectTag(control, scoped, 'settings-group-version')

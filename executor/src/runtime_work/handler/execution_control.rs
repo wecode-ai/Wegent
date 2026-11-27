@@ -57,7 +57,7 @@ pub(super) fn settle_local_execution_link(
     );
     apply_local_execution_state(link, false, None);
     if link.thread_id.is_some() {
-        clear_runtime_handle_messages(&mut link.runtime_handle);
+        clear_runtime_handle_messages(link);
     }
 }
 
@@ -97,7 +97,7 @@ fn complete_local_execution_link(
     }
     apply_local_execution_state(link, status == "running", None);
     if link.thread_id.is_some() {
-        clear_runtime_handle_messages(&mut link.runtime_handle);
+        clear_runtime_handle_messages(link);
     }
 }
 

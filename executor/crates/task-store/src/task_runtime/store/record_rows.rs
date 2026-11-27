@@ -357,7 +357,8 @@ pub(super) fn enrich_comment_actor(
                 "SELECT created_by_user_id, \
                     NULLIF(JSON_EXTRACT(metadata,'$.visibility'),'null') \
                  FROM loop_items \
-                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
+                 WHERE id=?1 AND resource_type='chat_agent' AND (cloud_project_id=?2 OR EXISTS (
+                    SELECT 1 FROM project_team_bindings WHERE project_id=?2 AND team_ref=?1))",
                 params![comment.sender_id, comment.project_id],
                 |row| {
                     Ok((

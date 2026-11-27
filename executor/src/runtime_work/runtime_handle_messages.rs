@@ -157,8 +157,12 @@ pub(crate) fn append_completed_transcript_messages(
     }
 }
 
-pub(crate) fn clear_runtime_handle_messages(runtime_handle: &mut Value) {
-    if let Some(object) = runtime_handle.as_object_mut() {
+pub(crate) fn clear_runtime_handle_messages(link: &mut RuntimeTaskLink) {
+    // Platform sessions read their history from this handle across native thread bindings.
+    if link.has_platform_history() {
+        return;
+    }
+    if let Some(object) = link.runtime_handle.as_object_mut() {
         object.remove("messages");
     }
 }
@@ -439,6 +443,27 @@ mod tests {
             "native-turn"
         );
         assert_ne!(handle["userMessagePresentations"][0]["ensureVisible"], true);
+    }
+
+    #[test]
+    fn binding_a_native_thread_retains_the_platform_transcript() {
+        let messages = json!([{"id":"platform-answer","role":"assistant"}]);
+        let mut link = RuntimeTaskLink {
+            execution_backend: Some(crate::runtime_work::response::ExecutionBackend {
+                task_id: Some("42".to_owned()),
+                url: "https://example.test/api".to_owned(),
+                owner: 1,
+                device: "local".to_owned(),
+            }),
+            runtime_handle: json!({"messages": messages}),
+            ..RuntimeTaskLink::default()
+        };
+        clear_runtime_handle_messages(&mut link);
+        assert_eq!(link.runtime_handle["messages"], messages);
+
+        link.execution_backend = None;
+        clear_runtime_handle_messages(&mut link);
+        assert!(link.runtime_handle.get("messages").is_none());
     }
 
     #[test]

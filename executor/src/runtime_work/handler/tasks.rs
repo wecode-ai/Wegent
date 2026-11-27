@@ -3343,7 +3343,7 @@ impl RuntimeWorkRpcHandler {
             if !preserve_identity_thread {
                 link.thread_id = (!thread_id.is_empty()).then(|| thread_id.to_owned());
             }
-            clear_runtime_handle_messages(&mut link.runtime_handle);
+            clear_runtime_handle_messages(link);
             if let Some(presentation) = presentation.clone() {
                 append_runtime_handle_user_message_presentation(
                     &mut link.runtime_handle,
