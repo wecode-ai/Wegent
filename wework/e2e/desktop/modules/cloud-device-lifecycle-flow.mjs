@@ -146,7 +146,7 @@ async function verifyWorkspaceReminderActions(control, cloud, createProject) {
   await control.command('click', CANCEL_RESTART)
   await control.command('fill', '[data-testid="workspace-file-search-input"]', { value: marker })
   await control.command('clickWhenEnabled', `button[data-type="item"][aria-label="${marker}"]`)
-  await control.command('waitFor', '[data-testid="workspace-file-preview"]', {
+  await control.command('waitFor', '[data-testid="workspace-file-editor-content"]', {
     text: markerContent,
   })
   assert.equal(
