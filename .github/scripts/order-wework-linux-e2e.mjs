@@ -35,6 +35,9 @@ export function balanceLinuxCoreMatrix(
   const checkpoints = (entry) =>
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
+  const reuseCore9 = (entry) =>
+    scope === 'core' && runnerScale > 1 && entry.id === 'core-9' &&
+    checkpoints(entry)[0] === 'human-interactions-hidden'
   const pinnedCheckpoint = (entry) => {
     if (scope === 'cloud') {
       // Keep the longest Cloud checkpoint off runners starting other stacks.
@@ -51,7 +54,7 @@ export function balanceLinuxCoreMatrix(
   )
   include.push(...coreRunnerSlots(include, taskCount, runnerScale, scope))
   // Keep the dedicated latency benchmarks on their original runners.
-  const receivers = include.filter((entry) => !pinnedCheckpoint(entry))
+  const receivers = include.filter((entry) => !pinnedCheckpoint(entry) || reuseCore9(entry))
   if (!receivers.length)
     return { ...matrix, include }
   if (new Set(before).size !== before.length)
@@ -73,8 +76,10 @@ export function balanceLinuxCoreMatrix(
   )
   const assignments = receivers.map((entry) => ({
     entry,
-    checkpoints: [],
-    workers: Array(measurements.workers).fill(0),
+    checkpoints: reuseCore9(entry) ? ['human-interactions-hidden'] : [],
+    workers: Array(measurements.workers).fill(
+      reuseCore9(entry) ? seconds['human-interactions-hidden'] ?? 180 : 0,
+    ),
   }))
   // Exclusive checkpoints precede the worker queue and occupy the whole runner.
   // Add their duration to every worker, retaining the same runtime isolation.

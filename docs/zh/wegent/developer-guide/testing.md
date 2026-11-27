@@ -326,7 +326,8 @@ macOS 渲染性能门禁按受影响的源码和性能测试输入触发，全�
 `pnpm --filter wework profile:renderer --capture` 采集 trace。
 
 Linux 桌面 E2E 分片从共享镜像获取原生测试工具。
-Linux Core 在运行同分片的并行检查点之前独占运行 `core-task-flow`。需要原生启动探针的分片直接运行
+Linux Core 在运行同分片的并行检查点之前独占运行 `core-task-flow` 和
+`human-interactions-hidden`。后者保留在 Core 分片 9。需要原生启动探针的分片直接运行
 已锁定的 Electron 安装脚本，避免启动包脚本时额外安装根工作区依赖。
 平台 E2E 在 Rust 后端构建期间准备依赖和服务，
 使用前等待同一次 CI 运行的后端产物。同仓库 PR 可复用该 PR 中构建输入完全匹配的 Linux 桌面包。普通 PR 的 macOS 桌面检查构建本地应用和 Executor。

@@ -174,7 +174,12 @@ test('keeps the strict runtime load budget isolated from other Electron workload
 })
 
 test('isolates the task flow and CPU benchmarks on Linux Core only', async () => {
-  const isolated = ['core-task-flow', 'idle-executor-requests', 'executor-stream-recovery']
+  const isolated = [
+    'core-task-flow',
+    'human-interactions-hidden',
+    'idle-executor-requests',
+    'executor-stream-recovery',
+  ]
   const peers = ['collaboration-milestones', 'streaming-conversation-switching']
   const completed = []
   const active = new Set()
