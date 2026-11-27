@@ -1,6 +1,7 @@
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
+import { ownedProcessIdentityMatches, readNativeProcessIdentity } from './process-identity.mjs'
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000
 const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
@@ -191,10 +192,26 @@ export function processIsAlive(processId) {
 
 export async function waitForOwnedProcessExit(
   snapshot,
-  { timeoutMs = PROCESS_STOP_TIMEOUT_MS, isAlive = processIsAlive } = {}
+  { timeoutMs = PROCESS_STOP_TIMEOUT_MS, isAlive, readIdentity } = {}
 ) {
-  const pids = ownedCrashTargets({ pid: snapshot.applicationPid }, snapshot)
-  await waitForProcessIdsExit(pids, { timeoutMs, isAlive })
+  const targets = ownedProcessIdentities({ pid: snapshot.applicationPid }, snapshot)
+  // Preserve callers that supply their own instance-aware liveness diagnostic.
+  if (isAlive && !readIdentity) {
+    await waitForProcessIdsExit(
+      targets.map(target => target.pid),
+      { timeoutMs, isAlive }
+    )
+    return
+  }
+  const state = createOwnedIdentityState(targets, readIdentity ?? readNativeProcessIdentity)
+  if (process.platform === 'win32' && !readIdentity) {
+    await waitForWindowsOwnedProcessExit(targets, timeoutMs)
+    return
+  }
+  await waitForProcessIdsExit(
+    targets.map(target => target.pid),
+    { timeoutMs, isAlive: state.isAlive }
+  )
 }
 
 async function waitForProcessIdsExit(pids, { timeoutMs, isAlive = processIsAlive }) {
@@ -208,34 +225,162 @@ async function waitForProcessIdsExit(pids, { timeoutMs, isAlive = processIsAlive
   }
 }
 
-export async function stopOwnedProcessTree(child, snapshot) {
+export async function stopOwnedProcessTree(
+  child,
+  snapshot,
+  { readIdentity = readNativeProcessIdentity } = {}
+) {
   // Validate once, before shutdown can orphan descendants or age the snapshot.
-  const targets = ownedCrashTargets(child, snapshot)
+  const targets = ownedProcessIdentities(child, snapshot)
   if (process.platform === 'win32') {
     await stopProcessGroup(child)
-    await waitForProcessIdsExit(targets, { timeoutMs: PROCESS_STOP_TIMEOUT_MS })
+    await waitForWindowsOwnedProcessExit(targets, PROCESS_STOP_TIMEOUT_MS)
     return
   }
+  const state = createOwnedIdentityState(targets, readIdentity, child)
   const signalSurvivors = signal => {
-    const survivors = targets.filter(processIsAlive)
-    for (const pid of survivors.toReversed()) {
+    const errors = []
+    for (const { pid } of targets.toReversed()) {
       try {
+        if (!state.isAlive(pid)) continue
         process.kill(pid, signal)
         logDesktopE2eSignal({ action: 'stop-owned-process', pid, signal })
       } catch (error) {
-        if (error?.code !== 'ESRCH') throw error
+        if (error?.code !== 'ESRCH') errors.push(error)
       }
     }
+    throwShutdownErrors(errors)
   }
   // Independent process groups, including Codex SQLite writers, do not receive
   // the application's group signal. Give every owned process graceful shutdown.
-  signalSurvivors('SIGTERM')
-  await stopProcessGroup(child)
+  const errors = []
   try {
-    await waitForProcessIdsExit(targets, { timeoutMs: PROCESS_GROUP_GRACE_PERIOD_MS })
-  } catch {
-    signalSurvivors('SIGKILL')
-    await waitForProcessIdsExit(targets, { timeoutMs: PROCESS_STOP_TIMEOUT_MS })
+    signalSurvivors('SIGTERM')
+  } catch (error) {
+    errors.push(error)
+  }
+  try {
+    await stopProcessGroup(child, { isOwnedGroup: () => state.groupIsAlive(child.pid) })
+  } catch (error) {
+    errors.push(error)
+  }
+  try {
+    try {
+      await waitForProcessIdsExit(
+        targets.map(target => target.pid),
+        { timeoutMs: PROCESS_GROUP_GRACE_PERIOD_MS, isAlive: state.isAlive }
+      )
+    } catch {
+      signalSurvivors('SIGKILL')
+      await waitForProcessIdsExit(
+        targets.map(target => target.pid),
+        { timeoutMs: PROCESS_STOP_TIMEOUT_MS, isAlive: state.isAlive }
+      )
+    }
+  } catch (error) {
+    errors.push(error)
+  }
+  throwShutdownErrors(errors)
+}
+
+function throwShutdownErrors(errors) {
+  const unique = [...new Set(errors)]
+  if (unique.length === 1) throw unique[0]
+  if (unique.length > 1)
+    throw new AggregateError(
+      unique,
+      `Owned process shutdown failed: ${unique.map(error => error.message ?? String(error)).join('; ')}`
+    )
+}
+
+function createOwnedIdentityState(targets, readIdentity, child) {
+  const expected = new Map(targets.map(target => [target.pid, target]))
+  const applicationPid = targets[0].pid
+  const instances = new Map(
+    targets.filter(target => target.instanceToken).map(target => [target.pid, target])
+  )
+  const readOwned = (pid, visited = new Set()) => {
+    if (expected.get(pid).exited) return null
+    const actual = readIdentity(pid)
+    if (actual === null) return null
+    if (actual?.pid !== pid) return null
+    if (
+      !Number.isFinite(actual.startedAt) ||
+      actual.startedAt <= 0 ||
+      ![1, 1000].includes(actual.precisionMs)
+    ) {
+      throw new Error(`Process ${pid} has an unknown creation time`)
+    }
+    const pinned = instances.get(pid)
+    if (pinned?.instanceToken) {
+      if (!actual?.instanceToken)
+        throw new Error(`Process ${pid} lost its native instance identity`)
+      if (actual.instanceToken !== pinned.instanceToken) return null
+      if (!ownedProcessIdentityMatches(expected.get(pid), actual))
+        throw new Error(`Process ${pid} creation time disagrees with its snapshot`)
+      return actual
+    }
+    if (pinned && actual.startedAt !== pinned.startedAt) return null
+    if (!ownedProcessIdentityMatches(expected.get(pid), actual)) return null
+    if (visited.has(pid)) throw new Error('Current process ownership contains a cycle')
+    visited.add(pid)
+    if (pid === applicationPid) {
+      if (child && (child.exitCode === undefined || child.signalCode === undefined)) {
+        throw new Error('The native application lifetime is unavailable for its first identity pin')
+      }
+      if (child && (child.exitCode !== null || child.signalCode !== null)) return null
+      if (actual.parentPid !== expected.get(pid).parentPid) {
+        throw new Error('The application changed ownership before its first identity pin')
+      }
+    } else {
+      const parentPid = expected.get(pid).parentPid
+      if (actual.parentPid !== parentPid || !readOwned(parentPid, visited)) {
+        throw new Error(`Process ${pid} is not in the current application ownership chain`)
+      }
+    }
+    instances.set(pid, actual)
+    return actual
+  }
+  return {
+    isAlive: pid => readOwned(pid) !== null,
+    groupIsAlive: groupId => {
+      const errors = []
+      for (const { pid } of targets) {
+        try {
+          if (readOwned(pid)?.processGroupId === groupId) return true
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      throwShutdownErrors(errors)
+      if (processGroupIsAlive(groupId)) {
+        throw new Error(`Application group ${groupId} contains unverified live members`)
+      }
+      return false
+    },
+  }
+}
+
+async function waitForWindowsOwnedProcessExit(targets, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  const instances = new Map()
+  for (;;) {
+    const survivors = []
+    for (const target of targets) {
+      if (!processIsAlive(target.pid)) continue
+      const identity = await collectWindowsProcessIdentity(target.pid)
+      if (!identity) continue
+      const actual = { pid: identity.Id, startedAt: Date.parse(identity.StartedAt), precisionMs: 1 }
+      if (!ownedProcessIdentityMatches(target, actual)) continue
+      const pinned = instances.get(target.pid)
+      if (pinned && pinned !== identity.StartedAt) continue
+      instances.set(target.pid, identity.StartedAt)
+      survivors.push(target.pid)
+    }
+    if (survivors.length === 0) return
+    if (Date.now() >= deadline)
+      throw new Error(`Owned application processes survived shutdown: ${survivors.join(', ')}`)
+    await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
 }
 
@@ -320,13 +465,13 @@ export function processGroupIsAlive(processGroupId) {
   }
 }
 
-async function waitForProcessGroupExit(processGroupId, timeoutMs) {
+async function waitForProcessGroupExit(processGroupId, timeoutMs, isOwnedGroup = () => true) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    if (!processGroupIsAlive(processGroupId)) return true
+    if (!isOwnedGroup() || !processGroupIsAlive(processGroupId)) return true
     await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
-  return !processGroupIsAlive(processGroupId)
+  return !isOwnedGroup() || !processGroupIsAlive(processGroupId)
 }
 
 export async function stopProcess(child) {
@@ -342,7 +487,7 @@ export async function stopProcess(child) {
   }
 }
 
-export async function stopProcessGroup(child) {
+export async function stopProcessGroup(child, { isOwnedGroup = () => true } = {}) {
   if (!child) return
   if (process.platform === 'win32') {
     await stopWindowsProcessTree(child)
@@ -354,13 +499,18 @@ export async function stopProcessGroup(child) {
   }
 
   const processGroupId = child.pid
-  signalProcessGroup(processGroupId, 'SIGTERM')
+  const signal = name => {
+    if (!isOwnedGroup()) return
+    signalProcessGroup(processGroupId, name)
+  }
+  if (!isOwnedGroup()) return
+  signal('SIGTERM')
   if (child.exitCode === null && child.signalCode === null) {
     try {
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
     } catch {
       try {
-        signalProcessGroup(processGroupId, 'SIGKILL')
+        signal('SIGKILL')
       } catch (error) {
         if (error?.code !== 'EPERM') throw error
         // macOS can reject a group signal while its leader's exit event is pending.
@@ -373,9 +523,10 @@ export async function stopProcessGroup(child) {
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
     }
   }
-  if (await waitForProcessGroupExit(processGroupId, PROCESS_GROUP_GRACE_PERIOD_MS)) return
-  signalProcessGroup(processGroupId, 'SIGKILL')
-  if (!(await waitForProcessGroupExit(processGroupId, PROCESS_STOP_TIMEOUT_MS))) {
+  if (await waitForProcessGroupExit(processGroupId, PROCESS_GROUP_GRACE_PERIOD_MS, isOwnedGroup))
+    return
+  signal('SIGKILL')
+  if (!(await waitForProcessGroupExit(processGroupId, PROCESS_STOP_TIMEOUT_MS, isOwnedGroup))) {
     throw new Error(`Timed out waiting for process group ${processGroupId} to exit`)
   }
 }
@@ -410,7 +561,13 @@ export async function stopRecoveryProcess(
   }
 }
 
+export class InvalidOwnedProcessSnapshotError extends Error {}
+
 function ownedCrashTargets(child, snapshot) {
+  return ownedProcessIdentities(child, snapshot).map(target => target.pid)
+}
+
+function ownedProcessIdentities(child, snapshot) {
   if (
     !Number.isSafeInteger(child?.pid) ||
     snapshot?.applicationPid !== child.pid ||
@@ -422,7 +579,9 @@ function ownedCrashTargets(child, snapshot) {
     snapshot.degraded.length > 0 ||
     !Array.isArray(snapshot.processes)
   ) {
-    throw new Error('An application crash requires its complete owned process snapshot')
+    throw new InvalidOwnedProcessSnapshotError(
+      'An application crash requires its complete owned process snapshot'
+    )
   }
   const parents = new Map()
   for (const record of snapshot.processes) {
@@ -432,27 +591,39 @@ function ownedCrashTargets(child, snapshot) {
       parents.has(record.pid) ||
       !Number.isFinite(record.startedAt) ||
       record.startedAt <= 0 ||
-      record.startedAt > Date.now()
+      record.startedAt > Date.now() ||
+      (record.instanceToken !== undefined &&
+        (typeof record.instanceToken !== 'string' || !record.instanceToken.trim())) ||
+      (record.exited !== undefined && typeof record.exited !== 'boolean')
     ) {
-      throw new Error(
+      throw new InvalidOwnedProcessSnapshotError(
         'The owned crash snapshot requires unique process identities and creation times'
       )
     }
     parents.set(record.pid, record.parentPid)
   }
-  if (!parents.has(child.pid)) throw new Error('The crash snapshot is missing its application')
+  if (!parents.has(child.pid))
+    throw new InvalidOwnedProcessSnapshotError('The crash snapshot is missing its application')
   for (const pid of parents.keys()) {
     const visited = new Set()
     let current = pid
     while (current !== child.pid) {
       if (!parents.has(current) || visited.has(current)) {
-        throw new Error(`Crash target ${pid} is outside the isolated application tree`)
+        throw new InvalidOwnedProcessSnapshotError(
+          `Crash target ${pid} is outside the isolated application tree`
+        )
       }
       visited.add(current)
       current = parents.get(current)
     }
   }
-  return [child.pid, ...[...parents.keys()].filter(pid => pid !== child.pid)]
+  const identities = new Map(snapshot.processes.map(record => [record.pid, { ...record }]))
+  return [
+    identities.get(child.pid),
+    ...snapshot.processes
+      .filter(record => record.pid !== child.pid)
+      .map(record => identities.get(record.pid)),
+  ]
 }
 
 export async function crashOwnedProcessTree(child, snapshot) {

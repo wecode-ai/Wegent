@@ -3,9 +3,11 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { readNativeProcessIdentity } from '../process-identity.mjs'
 
 const file = fileURLToPath(import.meta.url)
-const startedAt = Date.now()
+const startedAt =
+  process.platform === 'win32' ? Date.now() : readNativeProcessIdentity(process.pid).startedAt
 if (process.argv[2] === 'writer') {
   const home = process.argv[3]
   await mkdir(home, { recursive: true })
@@ -27,5 +29,6 @@ if (process.argv[2] === 'writer') {
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   })
   child.once('message', detail => process.send({ ...detail, applicationStartedAt: startedAt }))
+  if (process.argv[5] === 'true') process.on('SIGTERM', () => {})
   setInterval(() => {}, 1000)
 }

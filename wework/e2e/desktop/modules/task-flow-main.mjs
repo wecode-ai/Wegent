@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { appendFile } from 'node:fs/promises'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
 import { closeExitedProcessOutput, flushProcessOutput } from '../process-output.mjs'
 import { launchWindowsOwnedApplication } from '../windows-owned-process.mjs'
@@ -262,6 +263,7 @@ import {
   confirmLocalProjectName,
   createOfficialPluginMarketplaceFixture,
   createPluginMarketplaceFixture,
+  createNativeShutdownCapture,
   createSingleRootLocalProject,
   ensureModelOptionVisible,
   join,
@@ -1656,6 +1658,9 @@ async function main() {
         }
         await owned?.resume()
         await scenarioStartup
+        if (process.platform !== 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets) {
+          application.captureShutdownSnapshot = createNativeShutdownCapture(application, resultDir)
+        }
         if (nativeInspector) {
           control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
         }
@@ -1664,35 +1669,6 @@ async function main() {
         throw error
       }
       control.applicationProcessId = application.pid
-      if (process.platform !== 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets) {
-        application.captureShutdownSnapshot = async () => {
-          const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
-          try {
-            // Retain only process identities, never command lines or credentials.
-            await writeFile(
-              join(resultDir, 'shutdown-process-tree.json'),
-              JSON.stringify(
-                {
-                  applicationPid: snapshot.applicationPid,
-                  capturedAt: snapshot.capturedAt,
-                  degraded: snapshot.degraded,
-                  platform: snapshot.platform,
-                  processes: snapshot.processes.map(({ pid, parentPid, startedAt }) => ({
-                    pid,
-                    parentPid,
-                    startedAt,
-                  })),
-                },
-                null,
-                2
-              )
-            )
-          } catch (error) {
-            console.error('[desktop-e2e] Shutdown process diagnostics failed:', error)
-          }
-          return snapshot
-        }
-      }
       return application
     }
     app = await startDesktopAppProcess()
@@ -5040,7 +5016,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         })
       }
     })
-    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('desktop controller', async () => {
+      try {
+        await control.close()
+      } catch (error) {
+        if (control.fatalError && control.fatalError !== error) {
+          throw new AggregateError(
+            [control.fatalError, error],
+            'Desktop scenario and controller shutdown failed'
+          )
+        }
+        throw error
+      }
+      // Native teardown must not bypass a model/scenario assertion retained by
+      // the controller merely because no renderer command is needed anymore.
+      await control.guard(Promise.resolve())
+    })
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
@@ -5087,6 +5078,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       console.error(`[desktop-e2e] ${failure.label} teardown failed:`, failure.error)
     }
     if (testFailed) {
+      if (teardownFailures.length > 0) {
+        try {
+          await appendFile(
+            join(resultDir, 'failure.txt'),
+            `\nTeardown failures:\n${teardownFailures
+              .map(failure => `${failure.label}: ${failure.error?.stack ?? failure.error}`)
+              .join('\n')}\n`,
+            'utf8'
+          )
+        } catch (error) {
+          console.error('[desktop-e2e] Teardown diagnostic append failed:', error)
+        }
+      }
       if (cleanupError) {
         console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
       }
