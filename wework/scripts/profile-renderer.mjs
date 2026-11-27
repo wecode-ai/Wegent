@@ -30,7 +30,6 @@ import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window
 import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
-  resolveCpuProfileLocations,
   startPerformanceRecording,
   stopPerformanceRecording,
   writeDiagnosticFile,
@@ -70,6 +69,76 @@ const limits = {
   tenTaskCpuPercent: 20,
   maxTurnUpdateLongTaskMs: 100,
   peakObservedJsHeapBytes: 200_000_000,
+}
+
+const rendererTimingEvents = new Set([
+  'RunTask',
+  'ProcessTask',
+  'FunctionCall',
+  'EvaluateScript',
+  'V8.Execute',
+  'Layout',
+  'UpdateLayoutTree',
+  'Paint',
+  'Commit',
+  'RasterTask',
+  'MajorGC',
+  'MinorGC',
+])
+const rendererTimingMarkers = new Set([
+  'wework-profile:single-task-start',
+  'wework-profile:single-task-end',
+  'wework-profile:turn-started',
+  'wework-profile:turn-settled',
+])
+const rendererThreadName =
+  /^(?:CrRendererMain|Compositor|CompositorTileWorker\d*|ThreadPool(?:Foreground|Background)Worker|V8Worker|DedicatedWorker thread|ServiceWorkerThread|Chrome_ChildIOThread)$/
+
+// Export only renderer timing data. The source trace and CDP events can
+// contain request headers, application data, and arbitrary script arguments.
+export function formatRendererThreadTiming(trace, rendererPids) {
+  const rendererEvents = trace.traceEvents.filter(({ pid }) => rendererPids.includes(pid))
+  const markers = rendererEvents.filter(
+    ({ name, ph, ts }) => ph === 'I' && rendererTimingMarkers.has(name) && Number.isFinite(ts)
+  )
+  const start = markers.find(({ name }) => name === 'wework-profile:single-task-start')?.ts
+  const end = markers.findLast(({ name }) => name === 'wework-profile:single-task-end')?.ts
+  const turnStart = markers.find(({ name }) => name === 'wework-profile:turn-started')?.ts
+  const turnEnd = markers.findLast(({ name }) => name === 'wework-profile:turn-settled')?.ts
+  const evidenceStart = turnStart === undefined ? start : Math.min(turnStart, start ?? turnStart)
+  const evidenceEnd = turnEnd === undefined ? end : Math.max(turnEnd, end ?? turnEnd)
+  const traceEvents = rendererEvents.flatMap(({ name, ph, pid, tid, ts, dur, tdur, tts, args }) => {
+    if (!Number.isInteger(tid)) return []
+    if (ph === 'M' && name === 'thread_name' && rendererThreadName.test(args?.name))
+      return [{ name, ph, pid, tid, ts: 0, args: { name: args.name } }]
+    if (ph === 'I' && rendererTimingMarkers.has(name) && Number.isFinite(ts))
+      return [{ name, ph, pid, tid, ts, s: 't' }]
+    if (
+      ph !== 'X' ||
+      (!rendererTimingEvents.has(name) && !/^V8\.GC[A-Z0-9_a-z]+$/.test(name)) ||
+      !Number.isFinite(ts) ||
+      !Number.isFinite(dur) ||
+      evidenceStart === undefined ||
+      evidenceEnd === undefined ||
+      ts + dur < evidenceStart ||
+      ts > evidenceEnd
+    )
+      return []
+    return [
+      {
+        name,
+        ph,
+        pid,
+        tid,
+        ts,
+        dur,
+        // Thread time is optional. Wall time cannot substitute for CPU time.
+        ...(Number.isFinite(tdur) && { tdur }),
+        ...(Number.isFinite(tts) && { tts }),
+      },
+    ]
+  })
+  return { singleTaskWindowUs: { start: start ?? null, end: end ?? null }, traceEvents }
 }
 
 export function installTurnUpdateProbe() {
@@ -532,6 +601,7 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
+  const threadTiming = process.env.WEWORK_RENDERER_PROFILE_THREAD_TIMING === 'true'
   const enforceBudgets = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
   const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
@@ -545,6 +615,7 @@ export function createDesktopScenario({
   let pids
   let readSingleTaskRendererMetrics
   let singleTaskStartMetrics
+  let markSingleTask
   const singleModelRequest = Promise.withResolvers()
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
@@ -703,6 +774,7 @@ export function createDesktopScenario({
       if (started) return false
       started = true
       singleModelRequest.resolve()
+      if (markSingleTask) await markSingleTask('single-task-start')
       singleTaskStartMetrics = await readSingleTaskRendererMetrics?.()
       start = await cpuSnapshot(pids)
       await emitStream(response, 'wework-benchmark-response')
@@ -776,7 +848,18 @@ export function createDesktopScenario({
         assert.ok(Number.isFinite(usedSize), 'The renderer did not report its used JS heap')
         samples.push({ phase, at: Date.now(), usedSize })
       }
-      const reportPath = join(resultDir, 'renderer-performance.json')
+      const reportPath = join(
+        resultDir,
+        threadTiming ? 'renderer-performance-timing.json' : 'renderer-performance.json'
+      )
+      const finishRecording = () =>
+        stopPerformanceRecording(
+          client,
+          resultDir,
+          target,
+          reportPath,
+          threadTiming ? trace => formatRendererThreadTiming(trace, pids) : undefined
+        )
       const sampleProcesses = async phase => {
         const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
         processSamples.push({
@@ -802,8 +885,6 @@ export function createDesktopScenario({
         })
       }
       let recording = false
-      let recordingTurnCpu = false
-      let turnCpuEvidence
       const command = (method, params) => client({ action: 'command', target, method, params })
       let probingTurnUpdates = false
       try {
@@ -846,9 +927,10 @@ export function createDesktopScenario({
         assert.equal(running.runningCount, 0, 'The idle profile requires zero running tasks')
         if (capture) {
           await startPerformanceRecording(client, resultDir, target, {
-            samplingIntervalUs: 100,
+            samplingIntervalUs: threadTiming ? 2000 : 100,
           })
           recording = true
+          if (threadTiming) markSingleTask = mark
         }
         await mark('idle-start')
         const idleStart = await cpuSnapshot(pids)
@@ -865,7 +947,6 @@ export function createDesktopScenario({
         )
         await evaluate(`(${installTurnUpdateProbe.toString()})()`)
         probingTurnUpdates = true
-        let navigationStartUs
         if (enforceBudgets) {
           await command('Performance.enable', { timeDomain: 'timeTicks' })
           const { metrics } = await command('Performance.getMetrics')
@@ -874,11 +955,7 @@ export function createDesktopScenario({
             Number.isFinite(navigationStart),
             'The renderer did not report its navigation clock'
           )
-          navigationStartUs = navigationStart * 1_000_000
-          await command('Profiler.enable')
-          await command('Profiler.setSamplingInterval', { interval: 2_000 })
-          await command('Profiler.start')
-          recordingTurnCpu = true
+          // The failure-only capture owns V8 profiling, which consumes renderer CPU.
           // Keep endpoint diagnostics outside the process CPU measurement window.
           readSingleTaskRendererMetrics = async () => {
             const system = { availableParallelism: availableParallelism(), loadAverage: loadavg() }
@@ -931,6 +1008,7 @@ export function createDesktopScenario({
             await observeText(client, target, suffix, textTimeoutMs)
             const end = await cpuSnapshot(pids)
             controller.abort()
+            if (markSingleTask) await markSingleTask('single-task-end')
             const endMetrics = await readSingleTaskRendererMetrics?.()
             return { end, endMetrics }
           } finally {
@@ -960,22 +1038,7 @@ export function createDesktopScenario({
           `window.__weworkProfileTurnUpdates.stop(${JSON.stringify(taskId)})`
         )
         probingTurnUpdates = false
-        if (recordingTurnCpu) {
-          recordingTurnCpu = false
-          const { profile } = await command('Profiler.stop')
-          await command('Profiler.disable')
-          await command('Performance.disable')
-          const slowUpdates = turnUpdates.filter(
-            update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
-          )
-          turnCpuEvidence = { navigationStartUs, slowUpdates, profile }
-          if (slowUpdates.length > 0) {
-            await writeDiagnosticFile(
-              join(resultDir, 'renderer-turn-long-task-profile.json'),
-              turnCpuEvidence
-            )
-          }
-        }
+        if (enforceBudgets) await command('Performance.disable')
         assert.ok(
           turnUpdates.some(update => update.status === 'started'),
           'The profiled task did not receive a started runtime.turn.updated snapshot'
@@ -1056,24 +1119,9 @@ export function createDesktopScenario({
         assert.ok(validPresentation, 'The presentation path changed during the run')
         if (recording) {
           recording = false
-          await stopPerformanceRecording(client, resultDir, target, reportPath)
+          await finishRecording()
         }
         if (enforceBudgets) {
-          if (
-            turnCpuEvidence &&
-            (turnCpuEvidence.slowUpdates.length > 0 ||
-              measurements.singleTaskCpuPercent >= limits.singleTaskCpuPercent)
-          ) {
-            const sourceMapEvidence = await resolveCpuProfileLocations(
-              client,
-              target,
-              turnCpuEvidence.profile
-            ).catch(error => ({ error: error.message }))
-            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
-              ...turnCpuEvidence,
-              sourceMapEvidence,
-            })
-          }
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
@@ -1084,8 +1132,7 @@ export function createDesktopScenario({
           if (probingTurnUpdates) await evaluate('window.__weworkProfileTurnUpdates?.stop()')
         } finally {
           try {
-            if (recordingTurnCpu) await command('Profiler.stop').catch(() => {})
-            if (recording) await stopPerformanceRecording(client, resultDir, target, reportPath)
+            if (recording) await finishRecording()
           } finally {
             await client({ action: 'detach', target })
           }
@@ -1099,16 +1146,19 @@ async function main() {
   const args = process.argv.slice(2)
   if (args.includes('--help')) {
     console.log(
-      'Usage: pnpm --filter wework profile:renderer [--capture | --check] [--history] [--processes] (macOS)'
+      'Usage: pnpm --filter wework profile:renderer [--capture [--thread-timing] | --check] [--history] [--processes] (macOS)'
     )
     return
   }
   assert.equal(process.platform, 'darwin', 'Renderer CPU counters require macOS')
   assert.ok(
     new Set(args).size === args.length &&
-      args.every(arg => ['--capture', '--check', '--history', '--processes'].includes(arg)) &&
-      !(args.includes('--capture') && args.includes('--check')),
-    'Use --capture or --check, with optional --history and --processes'
+      args.every(arg =>
+        ['--capture', '--check', '--thread-timing', '--history', '--processes'].includes(arg)
+      ) &&
+      !(args.includes('--capture') && args.includes('--check')) &&
+      (!args.includes('--thread-timing') || args.includes('--capture')),
+    'Use --capture or --check, with optional --history and --processes. --thread-timing requires --capture'
   )
   const contents = fileURLToPath(
     new URL(
@@ -1137,6 +1187,7 @@ async function main() {
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
       WEWORK_E2E_DESKTOP_SCENARIO_MODULE: import.meta.url,
       WEWORK_RENDERER_PROFILE_CAPTURE: String(args.includes('--capture')),
+      WEWORK_RENDERER_PROFILE_THREAD_TIMING: String(args.includes('--thread-timing')),
       WEWORK_RENDERER_PROFILE_CHECK: String(args.includes('--check')),
       WEWORK_RENDERER_PROFILE_HISTORY: String(args.includes('--history')),
       WEWORK_RENDERER_PROFILE_PROCESSES: String(args.includes('--processes')),

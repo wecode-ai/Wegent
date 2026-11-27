@@ -1,7 +1,48 @@
 // @vitest-environment node
 import { runInNewContext } from 'node:vm'
 import { expect, test } from 'vitest'
-import { installTurnUpdateProbe, peakTenSecondCpu } from './profile-renderer.mjs'
+import {
+  formatRendererThreadTiming,
+  installTurnUpdateProbe,
+  peakTenSecondCpu,
+} from './profile-renderer.mjs'
+
+test('exports only allowlisted renderer trace timing and preserves missing thread duration', () => {
+  const primary = { pid: 10, tid: 2 }
+  const worker = { pid: 10, tid: 3 }
+  const args = { request: { headers: { authorization: 'private' } } }
+  const trace = {
+    metadata: { args },
+    traceEvents: [
+      { ...primary, ph: 'M', name: 'thread_name', args: { ...args, name: 'CrRendererMain' } },
+      { ...worker, ph: 'M', name: 'thread_name', args: { name: 'V8Worker' } },
+      { ...primary, tid: 4, ph: 'M', name: 'thread_name', args: { name: 'private' } },
+      { ...primary, ph: 'X', name: 'RunTask', ts: 1, dur: 8, tdur: 6 },
+      { ...primary, ph: 'I', name: 'wework-profile:turn-started', ts: 10, args },
+      { ...primary, ph: 'I', name: 'wework-profile:single-task-start', ts: 15 },
+      { ...primary, ph: 'X', name: 'RunTask', ts: 15, dur: 8, tdur: 6, tts: 2, args },
+      { ...worker, ph: 'X', name: 'V8.GC_MC_BACKGROUND_MARKING', ts: 15, dur: 5, args },
+      { ...primary, ph: 'X', name: 'ResourceSendRequest', ts: 15, dur: 5, tdur: 5, args },
+      { ...primary, pid: 11, ph: 'X', name: 'RunTask', ts: 15, dur: 8, tdur: 8 },
+      { ...primary, ph: 'I', name: 'wework-profile:single-task-end', ts: 25 },
+      { ...primary, ph: 'I', name: 'wework-profile:turn-settled', ts: 30 },
+      { ...primary, ph: 'X', name: 'RunTask', ts: 31, dur: 8, tdur: 7 },
+    ],
+  }
+  expect(formatRendererThreadTiming(trace, [10])).toEqual({
+    singleTaskWindowUs: { start: 15, end: 25 },
+    traceEvents: [
+      { ...primary, ph: 'M', name: 'thread_name', ts: 0, args: { name: 'CrRendererMain' } },
+      { ...worker, ph: 'M', name: 'thread_name', ts: 0, args: { name: 'V8Worker' } },
+      { ...primary, ph: 'I', name: 'wework-profile:turn-started', ts: 10, s: 't' },
+      { ...primary, ph: 'I', name: 'wework-profile:single-task-start', ts: 15, s: 't' },
+      { ...primary, ph: 'X', name: 'RunTask', ts: 15, dur: 8, tdur: 6, tts: 2 },
+      { ...worker, ph: 'X', name: 'V8.GC_MC_BACKGROUND_MARKING', ts: 15, dur: 5 },
+      { ...primary, ph: 'I', name: 'wework-profile:single-task-end', ts: 25, s: 't' },
+      { ...primary, ph: 'I', name: 'wework-profile:turn-settled', ts: 30, s: 't' },
+    ],
+  })
+})
 
 test('uses full ten-second windows to measure the concurrent CPU peak', () => {
   expect(
