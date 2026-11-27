@@ -142,7 +142,7 @@ async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagg
         ..Default::default()
     })));
     let configs = [
-        json!({"id":"general","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2026-11-12T10:00:00Z"}),
+        json!({"teamRef":super::super::tests::saved_role_team(&handler,"general"),"id":"general","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2026-11-12T10:00:00Z"}),
         json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"tags":["review"],"enabledAfter":"2026-11-12T10:02:00Z"}),
     ];
     let issue = json!({"id":"issue","assignee_user_id":7,"tags":["review"],"human_task_binding":{
@@ -491,7 +491,7 @@ async fn manual_cloud_conversations_ignore_status_and_assignment_but_keep_projec
         ..RuntimeTaskLink::default()
     });
     let payload = json!({"id":"default","projectId":"project","issueId":"issue","userId":7,"projectStore":"cloud","standInId":"default"});
-    let config = json!({"id":"default","projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z","workspace":{"projectKey":"unregistered-project"}});
+    let config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"default"),"id":"default","projectId":"project","userId":7,"enabledAfter":"2020-01-01T00:00:00Z","workspace":{"projectKey":"unregistered-project"}});
     let mut automatic = handler.clone();
     automatic.store = RuntimeWorkStore::new(root.path().join("automatic-index.json"));
     for status in [
@@ -850,7 +850,7 @@ async fn manual_cloud_retry_reaches_preparation_without_mutating_an_existing_bin
         authenticated_user_id: Some(7),
         ..Default::default()
     })));
-    let mut config = json!({"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
+    let mut config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"default"),"id":"default","projectId":"project","projectStore":"cloud","userId":7,"manual":true,"workspace":{"projectKey":"unregistered-retry-project"}});
     let issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
     for status in ["failed", "archived"] {
         handler.upsert_local_task(RuntimeTaskLink {
@@ -894,7 +894,7 @@ async fn archived_local_stand_in_requires_real_preparation_before_reporting_succ
         runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"local","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
         ..RuntimeTaskLink::default()
     });
-    let mut config = json!({"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
+    let mut config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"default"),"id":"default","projectId":"project","projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"}});
     let issue = json!({"id":"issue"});
     let binding = json!({"humanAssignmentId":"human"});
     handler

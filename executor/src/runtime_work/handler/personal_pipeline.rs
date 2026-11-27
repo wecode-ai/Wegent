@@ -442,6 +442,8 @@ mod tests {
         })
         .await
         .expect("second Team stage should enter the durable native queue");
+        let handoff = handler.task_send_gate("pipeline:personal");
+        let _completed_handoff = handoff.lock().await;
         assert_eq!(next.runtime, "claude_code");
         assert!(next.request.new_session);
         assert_eq!(next.request.prompt, "Previous stage output:\nfinding");
@@ -458,6 +460,7 @@ mod tests {
             handler.local_task_link("personal").unwrap().runtime_handle[STATE]["phase"],
             "finished"
         );
+        drop(store);
         fs::remove_dir_all(root).unwrap();
     }
 

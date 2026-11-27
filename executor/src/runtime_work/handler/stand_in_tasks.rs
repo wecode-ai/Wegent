@@ -325,6 +325,9 @@ impl RuntimeWorkRpcHandler {
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
+        store
+            .materialize_implicit_primary(identity.user, &self.device_id)
+            .map_err(super::stand_in::settings_error)?;
         let settings = store
             .personal_stand_in(identity.user, &self.device_id)
             .map_err(super::stand_in::settings_error)?;

@@ -321,13 +321,15 @@ impl RuntimeWorkRpcHandler {
         })?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
+        if role_id == "@primary" {
+            store
+                .materialize_implicit_primary(user, &self.device_id)
+                .map_err(super::stand_in::settings_error)?;
+        }
         let settings = store
             .personal_stand_in(user, &self.device_id)
             .map_err(super::stand_in::settings_error)?;
-        let mut identities = stand_in_identities(&settings);
-        if role_id == "@primary" && !settings["primary"].is_object() {
-            identities.push(json!({"id":"@primary","enabled":true,"userId":user}));
-        }
+        let identities = stand_in_identities(&settings);
         let memory_review = role_id == "@primary"
             && automation.task_request["standInCalendar"]["template"]
                 == crate::runtime_work::automations::MEMORY_REVIEW_TEMPLATE;

@@ -543,7 +543,7 @@ async fn project_background_policy_queues_once_and_routed_work_does_not_reenter_
             serde_json::from_value(json!({"title":"Review","assignee_user_id":7})).unwrap(),
         )
         .unwrap();
-    let mut config = json!({"id":"review","projectId":project.id,"projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"},"handlingPolicy":{"automatic":true,"askBeforeAct":true,"immediate":false}});
+    let mut config = json!({"teamRef":super::super::tests::saved_role_team(&handler,"review"),"id":"review","projectId":project.id,"projectStore":"local","userId":7,"workspace":{"projectKey":"unregistered-project"},"handlingPolicy":{"automatic":true,"askBeforeAct":true,"immediate":false}});
     let binding = json!({"humanAssignmentId":format!("{}-1",issue.id)});
     let issue = serde_json::to_value(issue).unwrap();
     for _ in 0..2 {

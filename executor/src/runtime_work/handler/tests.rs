@@ -1127,6 +1127,18 @@ fn finish_test_native_turn(handler: &RuntimeWorkRpcHandler, task_id: &str, threa
     }
 }
 
+pub(super) fn saved_role_team(handler: &RuntimeWorkRpcHandler, id: &str) -> Value {
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let mut settings = store.personal_stand_in(7, &handler.device_id).unwrap();
+    let mut role = crate::test_env::stand_in_role(&handler.device_id);
+    role["id"] = json!(id);
+    settings["roles"] = json!([role]);
+    store
+        .save_personal_stand_in(7, &handler.device_id, settings)
+        .unwrap()["roles"][0]["teamRef"]
+        .clone()
+}
+
 pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
