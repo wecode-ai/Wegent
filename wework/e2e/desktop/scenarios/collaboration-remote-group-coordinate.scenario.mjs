@@ -888,7 +888,12 @@ export async function createDesktopScenario({
       )
       const dispatch = executionResponse.find(row => row.id === runningDispatch.id)
       assert.ok(dispatch, 'The original manager execution must complete')
-      const memberExecutions = executionResponse.filter(row => row.id !== dispatch.id)
+      const initialManagerTaskId = `${dispatch.runtimeTaskId}-manager-initial`
+      const followups = executionResponse.filter(row => row.id !== dispatch.id)
+      const managerReplies = followups.filter(row => row.runtimeTaskId === initialManagerTaskId)
+      assert.equal(managerReplies.length, 1, '负责人应在原会话中处理一次决策回复')
+      assert.equal(managerReplies[0].status, 'completed')
+      const memberExecutions = followups.filter(row => row.runtimeTaskId !== initialManagerTaskId)
       assert.equal(memberExecutions.length, 2)
       assert.ok(memberExecutions.every(row => row.status === 'completed'))
       assert.deepEqual(
@@ -906,7 +911,6 @@ export async function createDesktopScenario({
         '协作小组 execution 被当前 App 本地 Executor 冒领'
       )
       assert.ok(dispatch.runtimeTaskId, '远程协作根 execution 缺少 Runtime Task')
-      const initialManagerTaskId = `${dispatch.runtimeTaskId}-manager-initial`
       const runtimeTask = await cloudEnvironment.runtimeTask(initialManagerTaskId)
       const transcript = await request('/api/runtime-work/transcript', {
         method: 'POST',
