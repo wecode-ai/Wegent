@@ -1,6 +1,8 @@
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import { Button } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpCircle } from 'lucide-react'
 import { cloudUpgradeReminder } from './cloudDeviceUpgradeReminder'
 import { useWorkbenchCloudDeviceRestarts } from './useWorkbenchCloudDeviceRestarts'
 
@@ -13,24 +15,45 @@ export function CloudDeviceUpgradeBadge({
 }) {
   const { t } = useTranslation('common')
   const restarts = useWorkbenchCloudDeviceRestarts()
-  if (!device || !cloudUpgradeReminder(device)) return null
+  const reminder = cloudUpgradeReminder(device)
+  if (!device || !reminder) return null
+
   if (actionable && restarts) {
+    const restartLabel = t('workbench.connection_restart_version_tooltip', {
+      current: device.executor_version ?? '',
+      latest: reminder.target_version,
+    })
+
     return (
-      <Button
-        type="button"
-        variant="unstyled"
-        data-testid="cloud-device-upgrade-action"
-        className="h-7 shrink-0 rounded px-1 text-xs text-warning hover:bg-muted"
-        disabled={restarts.isRestarting(device)}
-        onClick={() => restarts.requestRestart([device], true)}
-      >
-        {t('workbench.cloud_upgrade_badge')}
-      </Button>
+      <Tooltip label={restartLabel}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          data-testid="cloud-device-upgrade-action"
+          aria-label={restartLabel}
+          className="shrink-0 gap-1 px-2 text-xs md:min-h-7"
+          disabled={restarts.isRestarting(device)}
+          onClick={() => restarts.requestRestart([device], true)}
+        >
+          <ArrowUpCircle aria-hidden="true" className="text-warning" />
+          {t('workbench.connection_update_available')}
+        </Button>
+      </Tooltip>
     )
   }
+
+  const label = t('workbench.cloud_upgrade_badge')
   return (
-    <span data-testid="cloud-device-upgrade-badge" className="shrink-0 text-xs text-warning">
-      {t('workbench.cloud_upgrade_badge')}
-    </span>
+    <Tooltip label={label}>
+      <span
+        role="img"
+        aria-label={label}
+        data-testid="cloud-device-upgrade-badge"
+        className="inline-flex shrink-0 items-center text-warning"
+      >
+        <ArrowUpCircle aria-hidden="true" className="h-3.5 w-3.5" />
+      </span>
+    </Tooltip>
   )
 }
