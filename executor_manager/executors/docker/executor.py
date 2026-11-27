@@ -1732,6 +1732,7 @@ class DockerExecutor(Executor):
                 }
 
             deleted_containers = []
+            absent_containers = []
             failed_containers = []
             for container in containers:
                 container_name = container.get("container_name")
@@ -1741,7 +1742,9 @@ class DockerExecutor(Executor):
                 status = delete_result.get("status")
                 if status == "success":
                     deleted_containers.append(container_name)
-                elif status != "not_found":
+                elif status == "not_found":
+                    absent_containers.append(container_name)
+                else:
                     failed_containers.append(container_name)
                     continue
 
@@ -1752,22 +1755,19 @@ class DockerExecutor(Executor):
                         sandbox=True,
                     )
 
+            outcomes = {
+                "deleted_containers": deleted_containers,
+                "absent_containers": absent_containers,
+            }
             if failed_containers:
                 return {
+                    **outcomes,
                     "status": "failed",
                     "error_msg": f"Failed to delete containers: {', '.join(failed_containers)}",
-                    "deleted_containers": deleted_containers,
                 }
             if deleted_containers:
-                return {
-                    "status": "success",
-                    "deleted_containers": deleted_containers,
-                }
-            else:
-                return {
-                    "status": "not_found",
-                    "error_msg": f"Failed to delete any containers for task_id '{task_id}'",
-                }
+                return {**outcomes, "status": "success"}
+            return {**outcomes, "status": "not_found"}
 
         except Exception as e:
             logger.error(f"Error deleting containers by task_id '{task_id}': {e}")

@@ -585,7 +585,7 @@ class TestDockerExecutor:
         assert mock_create.call_count == 1
         assert mock_dispatch.call_count == (0 if task_type == "sandbox" else 1)
 
-    @pytest.mark.parametrize("delete_status", ["success", "failed"])
+    @pytest.mark.parametrize("delete_status", ["success", "not_found", "failed"])
     def test_sandbox_task_cleanup_preserves_the_regular_executor(
         self, executor, mocker, delete_status
     ):
@@ -616,13 +616,17 @@ class TestDockerExecutor:
         )
         delete.assert_called_once_with("sandbox")
         assert result["status"] == delete_status
-        if delete_status == "success":
-            assert result["deleted_containers"] == ["sandbox"]
+        assert result["deleted_containers"] == (
+            ["sandbox"] if delete_status == "success" else []
+        )
+        assert result["absent_containers"] == (
+            ["sandbox"] if delete_status == "not_found" else []
+        )
+        if delete_status in {"success", "not_found"}:
             repository.delete_executor_binding.assert_called_once_with(
                 123, expected_executor_name="sandbox", sandbox=True
             )
         else:
-            assert result["deleted_containers"] == []
             repository.delete_executor_binding.assert_not_called()
 
     def test_validation_reports_callback_publication_failure(

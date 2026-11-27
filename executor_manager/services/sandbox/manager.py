@@ -1054,14 +1054,19 @@ class SandboxManager(metaclass=SingletonMeta):
                         "result": fallback,
                     }
                 )
-                # A successful label-based deletion may have removed a different
-                # container. Require proof that a failed named deletion was retried.
+                # Confirm the exact target when label-based cleanup follows a
+                # failed named deletion.
                 named_status = (delete_status or {}).get("status")
-                if named_status in {None, "not_found"} or (
-                    fallback.get("status") == "success"
-                    and (
-                        named_status == "unauthorized"
-                        or container_name in fallback.get("deleted_containers", [])
+                fallback_status = fallback.get("status")
+                if (
+                    named_status in {None, "not_found"}
+                    or (named_status == "unauthorized" and fallback_status == "success")
+                    or (
+                        fallback_status in {"success", "not_found"}
+                        and (
+                            container_name in fallback.get("deleted_containers", [])
+                            or container_name in fallback.get("absent_containers", [])
+                        )
                     )
                 ):
                     delete_status = fallback

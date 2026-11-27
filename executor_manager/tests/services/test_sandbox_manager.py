@@ -1464,10 +1464,11 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("named_status", "deleted_name"),
+        ("named_status", "label_status", "target_name"),
         [
-            ("unauthorized", "wegent-task-testuser-orphan"),
-            ("failed", "wegent-task-testuser-12345"),
+            ("unauthorized", "success", "wegent-task-testuser-orphan"),
+            ("failed", "success", "wegent-task-testuser-12345"),
+            ("failed", "not_found", "wegent-task-testuser-12345"),
         ],
     )
     async def test_cleanup_sandbox_by_task_id_can_recover_via_label(
@@ -1477,7 +1478,8 @@ class TestSandboxManager:
         sample_sandbox_redis_data,
         mocker,
         named_status,
-        deleted_name,
+        label_status,
+        target_name,
     ):
         """Label lookup can recover from a stale name or retry the named removal."""
         manager = sandbox_manager_with_mock_redis
@@ -1487,10 +1489,11 @@ class TestSandboxManager:
             "status": named_status,
             "error_msg": "named removal unsuccessful",
         }
-        mock_executor.delete_executor_by_task_id.return_value = {
-            "status": "success",
-            "deleted_containers": [deleted_name],
-        }
+        outcome_key = (
+            "deleted_containers" if label_status == "success" else "absent_containers"
+        )
+        label_result = {"status": label_status, outcome_key: [target_name]}
+        mock_executor.delete_executor_by_task_id.return_value = label_result
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
@@ -1502,9 +1505,9 @@ class TestSandboxManager:
             archive_before_delete=False,
         )
 
-        assert result["deleted"] is True
+        assert result["deleted"] is (label_status == "success")
         assert result["redis_cleared"] is True
-        assert result["delete_result"]["deleted_containers"] == [deleted_name]
+        assert result["delete_result"] == label_result
         mock_executor.delete_executor.assert_called_once_with(
             "wegent-task-testuser-12345"
         )
