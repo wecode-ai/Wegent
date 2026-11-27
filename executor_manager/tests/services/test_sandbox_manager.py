@@ -2475,6 +2475,7 @@ class TestSandboxManager:
         sample_sandbox.base_url = "http://sandbox:8080"
         sample_sandbox.last_activity_at = 1704067000.0
         lease = MagicMock()
+        lease.lost = asyncio.Event()
         mocker.patch.object(
             manager,
             "_try_acquire_task_lifecycle_lease",
@@ -2513,7 +2514,7 @@ class TestSandboxManager:
 
         await manager._handle_heartbeat_timeout("12345")
 
-        handle_dead.assert_awaited_once_with("12345", 1704067000.0)
+        handle_dead.assert_awaited_once_with(sample_sandbox, lease)
         release.assert_awaited_once_with(lease)
 
     @pytest.mark.asyncio
@@ -2542,8 +2543,13 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("delete_status", "revoked"),
-        [("success", True), ("success", False), ("failed", False)],
+        ("delete_status", "revoked", "lease_lost"),
+        [
+            ("success", True, False),
+            ("success", False, False),
+            ("failed", False, False),
+            ("success", False, True),
+        ],
     )
     async def test_handle_executor_dead_terminates_sandbox(
         self,
@@ -2553,11 +2559,15 @@ class TestSandboxManager:
         mocker,
         delete_status,
         revoked,
+        lease_lost,
     ):
         """Test marks sandbox as failed and cleans up when executor dies."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
         mock_redis_client.hgetall.return_value = {"__sandbox__": "{}"}
+        sandbox = manager._repository.load_sandbox("12345")
+        lease = MagicMock()
+        lease.lost = asyncio.Event()
 
         mock_heartbeat = MagicMock()
         # Mock async method used by _handle_executor_dead
@@ -2569,7 +2579,14 @@ class TestSandboxManager:
 
         # Mock ExecutorDispatcher to avoid actual Docker calls
         mock_executor = MagicMock()
-        mock_executor.delete_executor.return_value = {"status": delete_status}
+        loop = asyncio.get_running_loop()
+
+        def delete_container(_name):
+            if lease_lost:
+                loop.call_soon_threadsafe(lease.lost.set)
+            return {"status": delete_status}
+
+        mock_executor.delete_executor.side_effect = delete_container
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
@@ -2579,13 +2596,13 @@ class TestSandboxManager:
         )
         untrack = mocker.patch.object(manager._repository, "remove_from_active_set")
 
-        await manager._handle_executor_dead("12345", 1704067000.0)
+        await manager._handle_executor_dead(sandbox, lease)
 
         # Verify heartbeat key was deleted
         mock_heartbeat.delete_heartbeat.assert_called_once()
         # Verify container deletion was attempted
         mock_executor.delete_executor.assert_called_once()
-        if delete_status == "success":
+        if delete_status == "success" and not lease_lost:
             revoke.assert_called_once_with(
                 12345, expected_executor_name="wegent-task-testuser-12345", sandbox=True
             )

@@ -1758,15 +1758,22 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox_age,
                 last_heartbeat,
             )
-            await self._handle_executor_dead(
-                sandbox_id,
-                last_heartbeat or sandbox.last_activity_at,
-            )
+            if lease.lost.is_set():
+                return
+            cleanup = asyncio.create_task(self._handle_executor_dead(sandbox, lease))
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                # Let Docker finish before releasing the lifecycle lease.
+                while not cleanup.done():
+                    with suppress(asyncio.CancelledError):
+                        await asyncio.shield(cleanup)
+                raise
         finally:
             await self._release_task_lifecycle_lease(lease)
 
     async def _handle_executor_dead(
-        self, sandbox_id: str, last_heartbeat: float
+        self, sandbox: Sandbox, lease: _TaskLifecycleLease
     ) -> None:
         """Handle executor container death.
 
@@ -1774,10 +1781,8 @@ class SandboxManager(metaclass=SingletonMeta):
         Does NOT delete sandbox data immediately - lets GC handle cleanup later
         so clients can still poll for execution status.
 
-        Args:
-            sandbox_id: Sandbox ID (task_id as string)
-            last_heartbeat: Last heartbeat timestamp
         """
+        sandbox_id = sandbox.sandbox_id
         logger.warning(
             f"[SandboxManager] Handling executor death: sandbox_id={sandbox_id}"
         )
@@ -1787,6 +1792,8 @@ class SandboxManager(metaclass=SingletonMeta):
         # Mark all running executions as failed
         try:
             executions, _ = await self.list_executions(sandbox_id)
+            if lease.lost.is_set():
+                return
             for execution in executions:
                 if execution.status == ExecutionStatus.RUNNING:
                     execution.set_failed("Sandbox crashed")
@@ -1799,37 +1806,41 @@ class SandboxManager(metaclass=SingletonMeta):
             logger.error(f"[SandboxManager] Error marking executions as failed: {e}")
 
         # Clean up heartbeat key
+        if lease.lost.is_set():
+            return
         await heartbeat_mgr.delete_heartbeat(sandbox_id)
 
         # Mark sandbox as failed but don't delete data yet
         # This allows clients to poll for execution status
         # GC will clean up the data later
-        sandbox = self._repository.load_sandbox(sandbox_id)
-        if sandbox:
-            sandbox.set_failed("Sandbox crashed")
-            self._repository.save_sandbox(sandbox)
-            logger.info(
-                f"[SandboxManager] Marked sandbox {sandbox_id} as failed, "
-                "data preserved for client polling"
+        if lease.lost.is_set():
+            return
+        sandbox.set_failed("Sandbox crashed")
+        self._repository.save_sandbox(sandbox)
+        logger.info(
+            f"[SandboxManager] Marked sandbox {sandbox_id} as failed, "
+            "data preserved for client polling"
+        )
+
+        try:
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            result = await asyncio.to_thread(
+                executor.delete_executor, sandbox.container_name
             )
-
-            # Try to delete container (but don't delete Redis data)
-            try:
-                executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-                result = executor.delete_executor(sandbox.container_name)
-
-                if result.get("status") not in ("success", "not_found"):
-                    logger.warning(
-                        f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
-                    )
-                elif self._repository.delete_executor_binding(
-                    int(sandbox_id),
-                    expected_executor_name=sandbox.container_name,
-                    sandbox=True,
-                ):
-                    self._repository.remove_from_active_set(sandbox_id)
-            except Exception as e:
-                logger.warning(f"[SandboxManager] Error deleting container: {e}")
+            if lease.lost.is_set():
+                return
+            if result.get("status") not in ("success", "not_found"):
+                logger.warning(
+                    f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
+                )
+            elif self._repository.delete_executor_binding(
+                int(sandbox_id),
+                expected_executor_name=sandbox.container_name,
+                sandbox=True,
+            ):
+                self._repository.remove_from_active_set(sandbox_id)
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Error deleting container: {e}")
 
     async def _terminate_expired_sandbox(self, task_id_str: str) -> None:
         """Terminate a single expired sandbox.
