@@ -4,6 +4,7 @@ import {
   reloadMainWindow,
   revealCollaborationSidebarElement,
 } from './workspace-flows.mjs'
+import { collectCleanupErrors } from './cleanup.mjs'
 import { openProjectBoard } from './collaboration-board-personal-view.mjs'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
@@ -244,14 +245,7 @@ async function withProjectCreationAgents(request, workspace, verify) {
     }
     await verify(resources)
   } finally {
-    const failures = []
-    for (const cleanup of cleanups.reverse()) {
-      try {
-        await cleanup()
-      } catch (error) {
-        failures.push(error)
-      }
-    }
+    const failures = await collectCleanupErrors(cleanups.reverse())
     if (failures.length)
       throw new AggregateError(failures, 'Project creation agents cleanup failed')
   }

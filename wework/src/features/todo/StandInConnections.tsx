@@ -1,20 +1,36 @@
-import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
-import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
+import type {
+  StandInHandlingPolicy,
+  StandInProjectRef,
+  StandInProjectScopeKind,
+  StandInRole,
+} from '@/api/personalStandIn'
+import { roleSelectsProject, standInPolicy, standInProjectTags } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { SettingsSwitch } from '@/components/settings/settings-ui'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { TagEditor, createTagDraft, type TagDraftStore } from '@wegent/collaboration'
-import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
 import {
   CollapsiblePanel,
   CollapsibleRoot,
   CollapsibleTrigger,
 } from '@wegent/collaboration/controls/Collapsible'
-import { Folder } from 'lucide-react'
-import { useImperativeHandle, useState, useSyncExternalStore, type Ref } from 'react'
-import { StandInConnectionHeader } from './StandInConnectionHeader'
+import {
+  useImperativeHandle,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type Ref,
+} from 'react'
+import { StandInProjectScope, type ProjectScopeEditor } from './StandInProjectScope'
+import {
+  effectiveProjectSource,
+  projectRefKey,
+  updateProjectSource,
+  type ProjectSource,
+} from './standInProjects'
+import { StandInConnectionForm } from './StandInConnectionForm'
+import { ConnectionChoice } from './ConnectionScopeFields'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
@@ -22,9 +38,16 @@ export interface StandInProjectNavigationHandle extends AutomationNavigationHand
   requestLeave(action: (discarded?: boolean) => void): void
 }
 
+type TagTarget = { value: string; label: string } & (
+  | { scope: StandInProjectScopeKind; project?: never }
+  | { scope?: never; project: StandInProjectRef }
+)
+
 /** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
   role,
+  savedSource,
+  account,
   projects,
   allowLocalProjects,
   onChange,
@@ -34,6 +57,8 @@ export function StandInConnections({
   tagDraft: providedTagDraft,
 }: {
   role: StandInRole
+  savedSource?: ProjectSource
+  account: ReactNode
   projects: CollaborationProject[]
   allowLocalProjects: boolean
   onChange(role: StandInRole): void
@@ -52,6 +77,8 @@ export function StandInConnections({
   )
   const [discard, setDiscard] = useState(false)
   const [draftVersion, setDraftVersion] = useState(0)
+  const [scopeEditor, setScopeEditor] = useState<ProjectScopeEditor>(null)
+  const [selectedTagScope, setSelectedTagScope] = useState('')
   const navigation = useStandInPanelNavigation(tagDraftDirty, disabled, () => setDiscard(true))
   useImperativeHandle(navigationRef, () => ({
     requestLeave(action) {
@@ -59,215 +86,211 @@ export function StandInConnections({
     },
   }))
   const source = role.collaboration
-  const setSource = (patch: Partial<typeof source>) =>
-    onChange({ ...role, collaboration: { ...source, ...patch } })
+  const scope = effectiveProjectSource(source)
+  const hasProjects = scope.allProjects || scope.projects.length > 0
+  const tagScopes: StandInProjectScopeKind[] = []
+  if ((scopeEditor === 'all' || scopeEditor === 'projects') && hasProjects) {
+    tagScopes.push('projects')
+  }
+  if (
+    (scopeEditor === 'all' || scopeEditor === 'includeParticipatingIssues') &&
+    scope.includeParticipatingIssues
+  ) {
+    tagScopes.push('participating')
+  }
+  if (
+    (scopeEditor === 'all' ||
+      scopeEditor === 'projects' ||
+      scopeEditor === 'includeIndependentIssues') &&
+    scope.includeIndependentIssues
+  ) {
+    tagScopes.push('independent')
+  }
+  const tagScopeLabels: Record<StandInProjectScopeKind, string> = {
+    projects: t('standIn.workspace.project_only_all'),
+    participating: t('standIn.workspace.receive_participating_issues'),
+    independent: t('standIn.workspace.project_scope_independent'),
+  }
+  const excluded = new Set(scope.excludedProjects.map(projectRefKey))
   const ref = (project: CollaborationProject): StandInProjectRef => ({
     id: project.id,
     store: project.project_store === 'local' ? 'local' : 'cloud',
   })
-  const toggleProject = (project: CollaborationProject, checked: boolean) => {
-    const value = ref(project)
-    const without = (rows: StandInProjectRef[]) =>
-      rows.filter(row => row.id !== value.id || row.store !== value.store)
-    setSource(
-      source.allProjects
-        ? {
-            excludedProjects: checked
-              ? without(source.excludedProjects)
-              : [...without(source.excludedProjects), value],
+  const projectNames = new Map(projects.map(project => [projectRefKey(ref(project)), project.name]))
+  const tagTargets: TagTarget[] = tagScopes.flatMap((kind): TagTarget[] => {
+    const group: TagTarget = { value: kind, label: tagScopeLabels[kind], scope: kind }
+    if (kind !== 'projects') return [group]
+    const projectRefs = scope.allProjects ? (scope.projectTagFilters ?? []) : scope.projects
+    return [
+      ...(scope.allProjects ? [group] : []),
+      ...projectRefs
+        .filter(project => !excluded.has(projectRefKey(project)))
+        .map(project => {
+          const value = projectRefKey(project)
+          return {
+            value,
+            label: projectNames.get(value) ?? t('standIn.workspace.unavailable_project'),
+            project: { id: project.id, store: project.store },
           }
-        : { projects: checked ? [...without(source.projects), value] : without(source.projects) }
-    )
+        }),
+    ]
+  })
+  const tagTarget = tagTargets.find(target => target.value === selectedTagScope) ?? tagTargets[0]
+  const tags = tagTarget?.project
+    ? standInProjectTags(scope, tagTarget.project)
+    : tagTarget
+      ? (scope.tagFilters?.[tagTarget.scope] ?? scope.tags)
+      : []
+  const setSource = (patch: Partial<ProjectSource>) => {
+    onChange({ ...role, collaboration: updateProjectSource(source, patch, savedSource) })
+  }
+  const savedScope = savedSource && effectiveProjectSource(savedSource)
+  const restoreScope = (
+    target: 'projects' | 'includeParticipatingIssues' | 'includeIndependentIssues'
+  ) => {
+    if (!savedScope) return
+    const restored =
+      target === 'projects'
+        ? {
+            ...scope,
+            allProjects: savedScope.allProjects,
+            projects: savedScope.projects,
+            excludedProjects: savedScope.excludedProjects,
+            projectTagFilters: savedScope.projectTagFilters,
+          }
+        : { ...scope, [target]: savedScope[target] }
+    onChange({ ...role, collaboration: updateProjectSource(restored, {}, savedSource) })
+  }
+  const updateTags = (target: TagTarget, tags: string[]) => {
+    if (target.project) {
+      setSource({
+        projectTagFilters: [
+          ...(scope.projectTagFilters ?? []).filter(row => projectRefKey(row) !== target.value),
+          { ...target.project, tags },
+        ],
+      })
+      return
+    }
+    setSource({ tagFilters: { ...scope.tagFilters, [target.scope]: tags } })
   }
   return (
     <div className="space-y-4" data-testid="stand-in-connections">
-      <StandInConnectionHeader
-        icon={Folder}
-        title={t('standIn.personal.collaboration')}
-        description={t('standIn.workspace.project_connection_help')}
-      />
-      <label className="flex min-h-11 items-center justify-between gap-3 text-sm md:min-h-9">
-        <span>{t('standIn.workspace.receive_project_items')}</span>
-        <SettingsSwitch
-          data-testid="stand-in-source-collaboration"
-          checked={source.enabled}
-          disabled={disabled}
-          onCheckedChange={enabled => navigation.requestLeave(() => setSource({ enabled }))}
-          aria-label={t('standIn.personal.collaboration')}
-        />
-      </label>
-      <fieldset disabled={disabled || !source.enabled} className="min-w-0 max-w-full space-y-4">
-        <legend className="mb-2 text-sm font-medium">
-          {t('standIn.workspace.connection_scope')}
-        </legend>
-        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
-          <Checkbox
-            className="mt-1 accent-text-primary"
-            data-testid="stand-in-participating-issues"
-            checked={source.includeParticipatingIssues === true}
-            onCheckedChange={checked => setSource({ includeParticipatingIssues: checked === true })}
-          />
-          <span>
-            {t('standIn.workspace.receive_participating_issues')}
-            <span className="mt-1 block text-xs text-text-secondary">
-              {t('standIn.workspace.receive_participating_issues_help')}
-            </span>
-          </span>
-        </label>
-        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
-          <Checkbox
-            className="mt-1 accent-text-primary"
-            data-testid="stand-in-independent-issues"
-            checked={source.includeIndependentIssues === true}
+      <StandInConnectionForm
+        compact
+        account={account}
+        scope={
+          <StandInProjectScope
+            source={scope}
+            savedSource={savedScope}
+            projects={projects}
+            allowLocalProjects={allowLocalProjects}
+            focusedProjectId={focusedProjectId}
             disabled={disabled}
-            onCheckedChange={checked => setSource({ includeIndependentIssues: checked === true })}
+            editor={scopeEditor}
+            setEditor={editor => {
+              setScopeEditor(editor)
+              setSelectedTagScope('')
+            }}
+            protectTagDraft={navigation.requestLeave}
+            onChange={setSource}
+            onRestore={restoreScope}
           />
-          <span>{t('standIn.workspace.receive_independent_issues')}</span>
-        </label>
-        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
-          <Checkbox
-            className="mt-1 accent-text-primary"
-            data-testid="stand-in-all-projects"
-            checked={source.allProjects}
-            disabled={disabled}
-            onCheckedChange={checked => setSource({ allProjects: checked === true })}
-          />
-          <span>
-            {t('standIn.personal.all_projects')}
-            <span className="mt-1 block text-xs text-text-secondary">
-              {t('standIn.personal.all_projects_help')}
-            </span>
-          </span>
-        </label>
-        <div
-          className="min-w-0 max-w-full max-h-64 overflow-y-auto divide-y divide-border/50"
-          data-testid="stand-in-source-projects"
-        >
-          {/* Remote all-project scope uses that Executor's catalog, not this computer's. */}
-          {projects
-            .filter(
-              project =>
-                allowLocalProjects ||
-                project.project_store !== 'local' ||
-                source.projects.some(row => row.store === 'local' && row.id === project.id)
-            )
-            .map(project => (
-              <div
-                key={`${project.project_store}:${project.id}`}
-                className={`flex min-h-11 min-w-0 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
-              >
-                <label className="flex min-h-11 min-w-0 flex-1 items-center gap-3 md:min-h-9">
-                  <Checkbox
-                    className="accent-text-primary"
-                    data-testid={`stand-in-connect-project-${project.id}`}
-                    aria-label={project.name}
-                    checked={roleSelectsProject(role, ref(project))}
-                    disabled={
-                      disabled ||
-                      (!allowLocalProjects &&
-                        project.project_store === 'local' &&
-                        !roleSelectsProject(role, ref(project)))
-                    }
-                    onCheckedChange={checked => toggleProject(project, checked === true)}
-                  />
-                  <span className="min-w-0 flex-1 break-words">{project.name}</span>
-                  <span className="shrink-0 text-xs text-text-secondary">
-                    {t(
-                      project.project_store === 'local'
-                        ? 'standIn.personal.local'
-                        : 'standIn.personal.cloud'
-                    )}
+        }
+        extra={
+          tagTarget && (
+            <>
+              <CollapsibleRoot defaultOpen={tags.length > 0}>
+                <CollapsibleTrigger
+                  className="flex min-h-11 items-center gap-2 rounded-md text-sm text-text-secondary hover:text-text-primary md:min-h-7"
+                  data-testid="stand-in-source-tags-toggle"
+                >
+                  <span className="min-w-0 flex-1 font-medium">
+                    {tagTargets.length === 1
+                      ? t('standIn.workspace.project_range_tags', { name: tagTarget.label })
+                      : t('standIn.workspace.project_filter_tags')}
                   </span>
-                </label>
-              </div>
-            ))}
-          {!projects.length && (
-            <p className="py-3 text-text-secondary">
-              {t(
-                source.allProjects
-                  ? 'standIn.workspace.connection_projects_empty_all'
-                  : 'standIn.workspace.connection_projects_empty_selected'
+                </CollapsibleTrigger>
+                <CollapsiblePanel>
+                  {tagTargets.length > 1 && (
+                    <ConnectionChoice
+                      label={t('standIn.workspace.project_tag_scope')}
+                      value={tagTarget.value}
+                      options={tagTargets}
+                      disabled={disabled || tagDraftDirty}
+                      testId="stand-in-project-tag-scope"
+                      onChange={setSelectedTagScope}
+                    />
+                  )}
+                  <div className="mt-2 rounded-md border border-border p-2">
+                    <TagEditor
+                      key={`${tagTarget.value}:${draftVersion}`}
+                      tags={tags}
+                      onChange={tags => updateTags(tagTarget, tags)}
+                      draftStore={tagDraft}
+                      disabled={disabled}
+                      suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
+                      placeholder={t('standIn.personal.add_tag')}
+                      lengthErrorLabel={t('standIn.personal.tag_too_long')}
+                      removeLabel={tag => t('standIn.personal.remove_tag', { tag })}
+                      testIdPrefix="stand-in-connection-tags"
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-text-secondary">
+                    {t('standIn.workspace.project_scope_tags_help')}
+                  </p>
+                </CollapsiblePanel>
+              </CollapsibleRoot>
+              {tagDraftDirty && (
+                <p
+                  role="status"
+                  className="text-sm text-text-secondary"
+                  data-testid="stand-in-project-tags-draft-help"
+                >
+                  {t('standIn.workspace.tag_draft_help')}
+                </p>
               )}
-            </p>
-          )}
-        </div>
-        <CollapsibleRoot
-          className="group border-t border-border pt-3"
-          defaultOpen={source.tags.length ? true : undefined}
-        >
-          <CollapsibleTrigger
-            className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
-            data-testid="stand-in-source-tags-toggle"
-          >
-            <span className="min-w-0 flex-1 font-medium">{t('standIn.personal.limit_tags')}</span>
-            <span className="rounded-md border border-border bg-background px-2 py-1">
-              <span className="group-data-[open]:hidden">
-                {t('standIn.workspace.processing_edit')}
-              </span>
-              <span className="hidden group-data-[open]:inline">
-                {t('standIn.workspace.processing_hide')}
-              </span>
-            </span>
-          </CollapsibleTrigger>
-          <CollapsiblePanel>
-            <div className="mt-2 rounded-md border border-border p-2">
-              <TagEditor
-                key={draftVersion}
-                tags={source.tags}
-                onChange={tags => setSource({ tags })}
-                draftStore={tagDraft}
-                disabled={disabled}
-                suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
-                placeholder={t('standIn.personal.add_tag')}
-                lengthErrorLabel={t('standIn.personal.tag_too_long')}
-                removeLabel={tag => t('standIn.personal.remove_tag', { tag })}
-                testIdPrefix="stand-in-connection-tags"
-              />
-            </div>
-            <p className="mt-2 text-xs text-text-secondary">
-              {t('standIn.personal.limit_tags_help')}
-            </p>
-          </CollapsiblePanel>
-        </CollapsibleRoot>
-      </fieldset>
-      {tagDraftDirty && (
-        <p
-          role="status"
-          className="text-sm text-text-secondary"
-          data-testid="stand-in-project-tags-draft-help"
-        >
-          {t('standIn.workspace.tag_draft_help')}
-        </p>
-      )}
-      <StandInProcessingSettings
-        disabled={disabled}
-        sessionScope="issue"
-        rows={[
-          {
-            key: 'default',
-            name: t('standIn.workspace.default_processing'),
-            testId: 'stand-in-project-default-policy',
-            policy: standInPolicy(role),
-            onChange: (policy: StandInHandlingPolicy) => setSource({ policy }),
-          },
-          ...projects
-            .filter(project => roleSelectsProject(role, ref(project)))
-            .map(project => ({
-              key: `${project.project_store}:${project.id}`,
-              name: project.name,
-              policy: standInPolicy(role, ref(project)),
-              testId: `stand-in-project-policy-${project.id}`,
-              onChange: (policy: StandInHandlingPolicy) =>
-                setSource({
-                  projectPolicies: [
-                    ...(source.projectPolicies ?? []).filter(
-                      row => row.id !== project.id || row.store !== ref(project).store
-                    ),
-                    { ...ref(project), policy },
-                  ],
-                }),
-            })),
-        ]}
+            </>
+          )
+        }
+        processing={
+          tagScopes.length > 0 && (
+            <StandInProcessingSettings
+              compact
+              disabled={disabled}
+              sessionScope="issue"
+              rows={[
+                {
+                  key: 'default',
+                  name: t('standIn.workspace.default_processing'),
+                  testId: 'stand-in-project-default-policy',
+                  policy: standInPolicy(role),
+                  onChange: (policy: StandInHandlingPolicy) => setSource({ policy }),
+                },
+                ...projects
+                  .filter(
+                    project =>
+                      tagScopes.includes('projects') &&
+                      roleSelectsProject({ collaboration: scope }, ref(project))
+                  )
+                  .map(project => ({
+                    key: `${project.project_store}:${project.id}`,
+                    name: project.name,
+                    policy: standInPolicy(role, ref(project)),
+                    testId: `stand-in-project-policy-${project.id}`,
+                    onChange: (policy: StandInHandlingPolicy) =>
+                      setSource({
+                        projectPolicies: [
+                          ...(source.projectPolicies ?? []).filter(
+                            row => row.id !== project.id || row.store !== ref(project).store
+                          ),
+                          { ...ref(project), policy },
+                        ],
+                      }),
+                  })),
+              ]}
+            />
+          )
+        }
       />
       <ConfirmDialog
         open={discard}

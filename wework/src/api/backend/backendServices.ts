@@ -122,8 +122,10 @@ export function createBackendWorkbenchServices(
       clientOrigin: 'wework',
     })
   const projectDevicePluginApis = new Map<string, ProjectDevicePluginApi>()
-  const agentResourceApi = createAgentResourceApi(client, deviceId =>
-    composerRuntimeIpc.request('runtime.runner.catalog', {}, deviceId)
+  const agentResourceApi = createAgentResourceApi(
+    client,
+    deviceId => composerRuntimeIpc.request('runtime.runner.catalog', {}, deviceId),
+    socketBaseUrl
   )
   let knownDevices: DeviceInfo[] | null = null
   let discoveryRevision = 0

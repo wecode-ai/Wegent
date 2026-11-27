@@ -85,6 +85,7 @@ export function IssueConversationDrawers({
     <DialogSurface
       active={!embedded}
       suspended={!active}
+      modal={false}
       initialFocus={() =>
         containerRef.current?.querySelector<HTMLElement>(
           hasConversation

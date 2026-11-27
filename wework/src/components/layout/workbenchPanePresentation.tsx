@@ -103,19 +103,42 @@ export function SingleWorkbenchPane({
   )
 }
 
-export function WorkbenchPaneHost({ host }: { host: HTMLDivElement }) {
+const paneScrollPositions = new WeakMap<HTMLElement, number>()
+
+export function WorkbenchPaneHost({
+  host,
+  scrollSelector,
+}: {
+  host: HTMLDivElement
+  scrollSelector?: string
+}) {
   const bindSlot = useCallback(
     (slot: HTMLDivElement | null) => {
       if (!slot || host.parentElement === slot) return
       slot.append(host)
+      if (scrollSelector) {
+        const scroller = host.querySelector<HTMLElement>(scrollSelector)
+        if (scroller?.clientHeight) {
+          const saved = paneScrollPositions.get(scroller)
+          if (saved !== undefined) {
+            scroller.scrollTop = saved
+            paneScrollPositions.delete(scroller)
+          }
+        }
+      }
       const trace = createE2ELifecycleTrace('SplitWorkbenchPaneStack')
       trace.update({ paneKey: host.dataset.workbenchPaneHost, nativeHostAttached: true })
       return () => {
         trace.dispose()
-        if (host.parentElement === slot) host.remove()
+        if (host.parentElement !== slot) return
+        if (scrollSelector) {
+          const scroller = host.querySelector<HTMLElement>(scrollSelector)
+          if (scroller?.clientHeight) paneScrollPositions.set(scroller, scroller.scrollTop)
+        }
+        host.remove()
       }
     },
-    [host]
+    [host, scrollSelector]
   )
 
   return <div ref={bindSlot} className="h-full min-h-0 min-w-0" />

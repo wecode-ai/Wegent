@@ -12,6 +12,10 @@ if (!outputDirectory) throw new Error('A desktop E2E client output directory is 
 const require = createRequire(new URL('../../packages/chat-core/package.json', import.meta.url))
 const entries = [
   ['socket.io-client', require.resolve('socket.io-client')],
+  [
+    'wework-worker',
+    fileURLToPath(new URL('../../packages/wework-worker/index.js', import.meta.url)),
+  ],
   ['yaml', createRequire(new URL('../electron/package.json', import.meta.url)).resolve('yaml')],
   ['lz-string', fileURLToPath(new URL('./desktop-e2e-inventory-codec.mjs', import.meta.url))],
   ['tiktoken', createRequire(import.meta.url).resolve('tiktoken')],

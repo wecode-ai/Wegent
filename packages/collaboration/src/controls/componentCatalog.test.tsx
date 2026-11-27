@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { createAgent } from '@ui-sdk/react/agent'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@ui-sdk/react/tooltip'
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
@@ -12,6 +13,57 @@ import { Switch } from './Switch'
 import { TextField } from './TextField'
 
 const agent = createAgent()
+
+it('dismisses a focused searchable popup on Escape with an open background tooltip', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const container = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(container)
+  const onOpenChange = vi.fn()
+  function Fixture({ tooltip = false }: { tooltip?: boolean }) {
+    return (
+      <>
+        <SearchableSelect
+          accessibleLabel="Project"
+          testId="project-choice"
+          hideTrigger
+          anchor={container}
+          open
+          onOpenChange={onOpenChange}
+          value={null}
+          onChange={() => {}}
+          searchPlaceholder="Find a project"
+          emptyLabel="No projects"
+          options={[{ value: 'one', label: 'Project One' }]}
+        />
+        <Tooltip open={tooltip}>
+          <TooltipTrigger>Background action</TooltipTrigger>
+          <TooltipContent data-testid="background-tooltip">Background hint</TooltipContent>
+        </Tooltip>
+      </>
+    )
+  }
+  try {
+    await act(async () => root.render(<Fixture />))
+    const search = document.querySelector<HTMLInputElement>(
+      '[data-testid="project-choice-search"]'
+    )!
+    await act(async () => search.focus())
+    await act(async () => root.render(<Fixture tooltip />))
+    expect(
+      document.querySelector('[data-testid="background-tooltip"]')?.hasAttribute('data-open')
+    ).toBe(true)
+    expect(document.activeElement).toBe(search)
+    await act(async () =>
+      search.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false)
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
 
 it('lets an unselected combobox commit an explicit empty-value option', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })

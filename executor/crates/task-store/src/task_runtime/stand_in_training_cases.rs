@@ -117,17 +117,18 @@ pub(in super::super) fn local_issue_visible(
     role: &Value,
     source: &Value,
 ) -> Result<bool, TaskRuntimeError> {
-    let tags = role["collaboration"]["tags"]
-        .as_array()
-        .map(|v| json!(v))
-        .unwrap_or_else(|| json!([]));
+    let tags = super::super::personal_stand_in::collaboration_project_tags(
+        role,
+        source["projectId"].as_str().unwrap_or_default(),
+        "local",
+    );
     Ok(db.query_row(
         "SELECT EXISTS(SELECT 1 FROM loop_items issue JOIN loop_items project ON project.id=issue.cloud_project_id
            WHERE issue.id=?1 AND issue.resource_type='task' AND issue.deleted_at IS NULL
              AND project.id=?2 AND project.resource_type='project' AND project.deleted_at IS NULL
              AND (json_array_length(?3)=0 OR EXISTS(
                  SELECT 1 FROM json_each(?3) wanted JOIN json_each(issue.metadata,'$.tags') tag ON wanted.value=tag.value)))",
-        params![source["id"].as_str(),source["projectId"].as_str(),tags.to_string()], |row| row.get(0))?)
+        params![source["id"].as_str(),source["projectId"].as_str(),tags.as_array().map_or_else(|| "[]".into(), |_| tags.to_string())], |row| row.get(0))?)
 }
 
 impl LocalTaskStore {

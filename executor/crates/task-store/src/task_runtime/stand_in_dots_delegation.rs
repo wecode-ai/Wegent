@@ -15,9 +15,10 @@ pub fn requires_dingtalk_delegation(identity: &Value, source: &Value) -> bool {
     // Keep previously selected sources that required native confirmation.
     is_primary_dingtalk(identity, source)
         && (source["delegated"] == true
-            || identity["delegation"]["version"].as_u64().unwrap_or(0) > 0
             || source["policy"]["askBeforeAct"] != true
-            || !is_selected_conversation(source))
+            || (identity["dingTalkConnectionMode"] != "confirmed"
+                && (identity["delegation"]["version"].as_u64().unwrap_or(0) > 0
+                    || !is_selected_conversation(source))))
 }
 
 pub fn active_delegated_source<'a>(identity: &'a Value, source: &Value) -> Option<&'a Value> {
@@ -267,6 +268,39 @@ pub(super) fn save_delegation(
     let requested = primary["delegation"].clone();
     let previous = &previous_primary["delegation"];
     strip_source_markers(primary);
+    let previously_confirmed = previous_primary["dingTalkConnectionMode"] == "confirmed";
+    if previously_confirmed || primary["dingTalkConnectionMode"] == "confirmed" {
+        if requested.get("action").is_some()
+            || (!direct_save
+                && (!previously_confirmed
+                    || !dingtalk_sources(primary).eq(dingtalk_sources(previous_primary))))
+        {
+            return Err(invalid(
+                "Change DingTalk connections in the assistant settings",
+            ));
+        }
+        primary["dingTalkConnectionMode"] = json!("confirmed");
+        primary.as_object_mut().unwrap().remove("delegation");
+        for source in primary["connections"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter(|source| source_provider(source) == DINGTALK_PROVIDER)
+        {
+            source["policy"]["askBeforeAct"] = json!(true);
+            if !previously_confirmed {
+                let was_paused = source["paused"] == true
+                    || (previous["paused"] == true
+                        && stand_in_connection(previous_primary, source)
+                            .is_some_and(|saved| saved["delegated"] == true));
+                if was_paused {
+                    source["policy"]["automatic"] = json!(false);
+                }
+                source["enabledAfter"] = json!(now());
+            }
+        }
+        return Ok(());
+    }
     if requested.is_null() && previous.is_null() {
         return Ok(());
     }
@@ -446,5 +480,54 @@ fn stamp_delegated_sources(
         source["policy"]["automatic"] = json!(true);
         source["policy"]["askBeforeAct"] = json!(false);
         source["policy"]["immediate"] = json!(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confirmed_connection_replaces_delegation_only_through_direct_save() {
+        let previous = json!({
+            "id": "@primary",
+            "enabled": true,
+            "delegation": { "version": 2, "authorized": true, "paused": false },
+            "connections": [],
+        });
+        let mut primary = json!({
+            "id": "@primary",
+            "enabled": true,
+            "dingTalkConnectionMode": "confirmed",
+            "delegation": previous["delegation"],
+            "connections": [{
+                "providerId": DINGTALK_PROVIDER,
+                "kind": "group",
+                "profile": "chosen-account",
+                "id": "*",
+                "scope": "all",
+                "delegated": true,
+                "policy": { "automatic": true, "askBeforeAct": false },
+            }],
+        });
+        assert!(requires_dingtalk_delegation(
+            &previous,
+            &primary["connections"][0]
+        ));
+        assert!(save_delegation(&mut primary.clone(), &previous, false, None).is_err());
+        save_delegation(&mut primary, &previous, true, None).unwrap();
+        let source = &primary["connections"][0];
+        assert!(primary.get("delegation").is_none());
+        assert!(source.get("delegated").is_none());
+        assert_eq!(source["scope"], "all");
+        assert_eq!(source["profile"], "chosen-account");
+        assert_eq!(source["policy"]["askBeforeAct"], true);
+        assert!(timestamp(&source["enabledAfter"]).is_some());
+        assert!(!requires_dingtalk_delegation(&primary, source));
+        assert!(active_delegated_source(&primary, source).is_none());
+
+        let mut expanded = primary.clone();
+        expanded["connections"][0]["profile"] = json!("different-account");
+        assert!(save_delegation(&mut expanded, &primary, false, None).is_err());
     }
 }

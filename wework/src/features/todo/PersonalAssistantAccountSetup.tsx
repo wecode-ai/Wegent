@@ -7,14 +7,19 @@ import { Button } from '@/components/ui/button'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import {
+  getStandInErrorMessage,
+  isStandInDeviceUnreachable,
+  reportStandInError,
+} from '@/lib/stand-in-error-message'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { hasSavedStandIn } from './standInInstanceSource'
+import { hasSavedStandIn, initializeStandInTarget } from './standInInstanceSource'
+import { initializePersonalAssistantOnDevice } from './personalAssistantDeviceSettings'
 
 async function loadSetup(
   services: WorkbenchServices,
@@ -23,6 +28,8 @@ async function loadSetup(
   signal: AbortSignal,
   preferredDevice?: string
 ) {
+  if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
+    performance.mark('wework:assistant-account-load')
   const cloud = services.personalAssistantAccountApi!
   const account = await cloud.get(signal).catch((cause: unknown) => {
     signal.throwIfAborted()
@@ -39,14 +46,34 @@ async function loadSetup(
   }
   const device = await services.getLocalRuntimeSidebarIdentity()
   if (!device) throw new Error('Executor identity is unavailable')
-  const { target } = await api.binding(device.deviceId)
+  const binding = await api.binding(device.deviceId)
+  const { target } = binding
   signal.throwIfAborted()
   if (
     target &&
     (target.userId === userId ||
       (target.userId === LOCAL_USER.id && target.deviceId === device.deviceId))
   ) {
-    const profile = await api.personalGet(target.userId, target.deviceId)
+    let profile
+    try {
+      profile = await api.personalGet(target.userId, target.deviceId)
+    } catch (cause) {
+      signal.throwIfAborted()
+      if (!isStandInDeviceUnreachable(cause) || target.deviceId === device.deviceId) throw cause
+      const targetDevice =
+        preferredDevice && preferredDevice !== target.deviceId ? preferredDevice : device.deviceId
+      const account = await initializeStandInTarget(
+        api,
+        device.deviceId,
+        binding,
+        { userId, deviceId: targetDevice, backendUrl: target.backendUrl },
+        async () => {
+          signal.throwIfAborted()
+          return initializePersonalAssistantOnDevice(cloud, name, targetDevice)
+        }
+      )
+      return { account, local: undefined }
+    }
     signal.throwIfAborted()
     if (hasSavedStandIn(profile)) return { account: null, local: profile }
     return { account: await cloud.initialize(name, undefined, target.deviceId), local: undefined }

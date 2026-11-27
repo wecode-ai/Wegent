@@ -12,6 +12,8 @@ The Wework E2E workflow defaults to `false` so shared CI runner load does not pr
 
 Real macOS desktop tests allow windows larger than the display only when both `VITE_WEWORK_E2E=true` and `WEWORK_E2E_CONTROL_URL` are enabled. This prevents a work area shorter than 1200 from truncating fixed viewports. Native resize commands still wait for the requested actual content dimensions; existing assertions and deadlines remain enforced. The shared `tray-lifecycle` checkpoint verifies a native 1280×1200 resize and restoration in the existing macOS CI job, without another runner or app launch. Ordinary launches retain platform defaults.
 
+The `process-explorer-lifecycle` checkpoint runs in an existing core CI shard. It opens the real process explorer, starts a child process of the application, and verifies that the explorer lists and counts it. It then hides the explorer window and checks that the listed uptime stays frozen across an observation window, shows the window again and checks that sampling resumes, and finally stops the child. The exited child must remain visible as an exited row while the process count returns to its baseline. The window visibility and the row state come from the existing explorer window snapshot capability; the pause check is a negative observation window and never proves that an update completed.
+
 A reconnected controller after restart does not establish that the native startup splash has closed. Before asserting main-window focus, reuse `waitForClosedStartupSplash` to observe its actual closure. Activation during startup retains the product's existing splash routing; repeated activation or a longer focus timeout must not conceal this ordering requirement.
 
 Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks. Task restoration assertions retain the fixture's original display name.
@@ -247,6 +249,56 @@ Shared runner capacity can still introduce external queues, and expansion adds
 setup costs. Historical timing replay predicts only the test stage, not a measured
 speedup from a new CI run.
 
+### Reusing desktop E2E infrastructure
+
+- Launch the app through the checkpoint runner. Use `prepareApp` for
+  pre-launch configuration and the function provided through
+  `setRestartDesktopApp` for restarts. The restart waits for the controller to
+  reconnect and checks the device identity. Ordinary cold starts of release
+  packages use phased readiness checks.
+- Use `createLocalCollaborationProject` from
+  `e2e/desktop/modules/workspace-flows.mjs` to prepare an existing local
+  project, or `completeLocalCollaborationFolderImport` to drive folder import
+  through the UI. They share isolated Git repository setup. For a cloud
+  collaboration project, `createWorkspaceAndProject` in
+  `workspace-agent-setup.mjs` creates the project and waits for its board.
+- Record a cleanup action as soon as its resource is acquired. Pass the actions
+  in dependency order to `collectCleanupErrors` from
+  `e2e/desktop/modules/cleanup.mjs`. It runs every action and returns the
+  failures. Report each cleanup failure, preserve any existing scenario error,
+  and fail the checkpoint if cleanup alone fails. The scenario's `cleanup`
+  hook runs while the controller, proxies, and Backend are still available.
+
+#### Model fixtures
+
+- Use the runner's loopback model endpoint for ordinary scenarios. The scenario's
+  `handleHttp` hook can supply scenario-specific model responses while the app,
+  runtime, and tool calls continue through their real paths.
+- Import `sse(events)` from `e2e/desktop/modules/model-sse.mjs` to encode a
+  batch or use `writeSseEvents(response, events)` to write frames individually.
+  Use `createSse` from `response-protocol.mjs` when a Responses stream needs the
+  existing terminal-output merge.
+- Import `createModelResponseGates()` from
+  `e2e/desktop/modules/model-response-gates.mjs` and call `gates.pause()` for
+  each stage that needs a pause. Await `gate.promise` after writing a partial
+  response and call `gate.resolve()` once the scenario observes the expected
+  state. Call `gates.cleanup()` during teardown to release all pending responses.
+
+#### Waiting for observable state
+
+- For UI visibility, actionability, or a refreshed view, use the desktop
+  controller's `waitFor` or `clickWhenEnabled`, or the existing `waitForSnapshot`.
+- To repeatedly read API or runtime state, import
+  `waitForValue(load, predicate, message, timeoutMs)` from
+  `e2e/desktop/modules/wait.mjs`. Returning `true` from the predicate yields the
+  current value. The predicate can also return a match directly, as in
+  `items => items.find(item => item.id === taskId)`. A polling failure includes
+  the last read, so read only state that is safe to write to CI logs.
+- For an event you have subscribed to or an asynchronous operation already
+  underway, use `withTimeout(promise, timeoutMs, message)` from the same module.
+  Subscribe before triggering the event. The timeout ends the wait. The scenario
+  owns cancellation and cleanup.
+
 ### Test-only polling and retry timing
 
 - `stand-in`, `stand-in-cloud` and `stand-in-assignment-notifications` default to
@@ -362,6 +414,15 @@ other platforms retain OS write-denial checks. All platforms still verify explic
 authorized writes, native approval denial of private reads, and no private data
 disclosure. The network probe declares a text response type so PowerShell does not
 enumerate response bytes.
+On Windows, role delegation and Dots enable the unelevated sandbox in their
+isolated Codex configurations. Role delegation verifies actual writes in
+workspace-write mode and write denial after switching the task to read-only.
+The embedded-browser download scenario uses UI Automation to operate the native
+context menu and Save As dialog for the isolated Electron process, then verifies
+the file outcomes for cancel and save. Windows Core scheduling uses five newly
+measured checkpoint durations and shares DingTalk protocol fixture setup. Stand-in
+task preparation and creation reuse the boxed Future boundary to limit nested
+Windows worker stack use.
 The subscription model fixture rejects every upgrade path with HTTP 426 and
 handles `ECONNRESET` throughout the socket lifetime; other socket errors still
 fail. Node regressions cover different paths, repeated resets, and unexpected errors, preventing

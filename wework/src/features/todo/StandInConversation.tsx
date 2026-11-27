@@ -280,7 +280,7 @@ export function StandInConversation({
           ) : null
         }
         hideProcessing
-        showActivityDots
+        isAssistantView
         markReadWhenActive
         nativeConversation
         runtimeContext={

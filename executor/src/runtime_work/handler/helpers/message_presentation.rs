@@ -73,7 +73,54 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
     if bool_field(payload, "restoreUserMessageContent") == Some(true) {
         presentation["restoreContent"] = json!(true);
     }
+    // A guidance correction continues the conversation without becoming
+    // another visible user message: the corrected guidance row represents it.
+    if guidance_correction(payload).is_some() {
+        presentation["suppressUserMessage"] = json!(true);
+    }
     Some(presentation)
+}
+
+fn guidance_correction(payload: &Value) -> Option<&Value> {
+    payload
+        .get("guidanceCorrection")
+        .or_else(|| payload.get("guidance_correction"))
+        .filter(|value| value.is_object())
+}
+
+/// Keep a corrected guidance row in its original position. The continuation
+/// turn runs from the revised content, while the visible guidance message
+/// stays a single row that reports the correction.
+fn apply_guidance_correction_presentation(runtime_handle: &mut Value, payload: &Value) {
+    let Some(correction) = guidance_correction(payload) else {
+        return;
+    };
+    let Some(client_guidance_id) = string_field(correction, "clientGuidanceId")
+        .or_else(|| string_field(correction, "client_guidance_id"))
+    else {
+        return;
+    };
+    let content = string_field(correction, "content").unwrap_or_default();
+    let attachments = normalized_attachments(payload.get("attachments"));
+    let Some(presentations) = runtime_handle
+        .get_mut("userMessagePresentations")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(presentation) = presentations.iter_mut().find(|presentation| {
+        string_field(presentation, "clientUserMessageId")
+            .or_else(|| string_field(presentation, "client_user_message_id"))
+            .as_deref()
+            == Some(client_guidance_id.as_str())
+    }) else {
+        return;
+    };
+    presentation["content"] = json!(content);
+    presentation["attachments"] = json!(attachments);
+    presentation["restoreContent"] = json!(true);
+    presentation["runtimeGuidance"] = json!(true);
+    presentation["ensureVisible"] = json!(false);
 }
 
 #[cfg(test)]
@@ -154,6 +201,29 @@ fn attach_user_message_presentations_for_page(
                 .as_deref()
                 == Some(client_user_message_id.as_str())
         });
+        if bool_field(&presentation, "suppressUserMessage") == Some(true) {
+            let suppressed_index = message_index.or_else(|| {
+                // The send identity can stay unbound when a turn exposes a
+                // single prompt and the presentation has not been rebound yet.
+                let turn_id = string_field(&presentation, "turnId")
+                    .or_else(|| string_field(&presentation, "turn_id"))?;
+                let mut candidates = messages.iter().enumerate().filter(|(_, message)| {
+                    string_field(message, "role").as_deref() == Some("user")
+                        && string_field(message, "turnId")
+                            .or_else(|| string_field(message, "turn_id"))
+                            .or_else(|| string_field(message, "subtaskId"))
+                            .or_else(|| string_field(message, "subtask_id"))
+                            .as_deref()
+                            == Some(turn_id.as_str())
+                });
+                let first = candidates.next().map(|(index, _)| index)?;
+                candidates.next().is_none().then_some(first)
+            });
+            if let Some(index) = suppressed_index {
+                messages[index]["suppressedUserMessage"] = json!(true);
+            }
+            continue;
+        }
         let message_index = match message_index {
             Some(index) => index,
             None if bool_field(&presentation, "ensureVisible") == Some(true)
@@ -240,6 +310,9 @@ fn attach_user_message_presentations_for_page(
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
+            if bool_field(&presentation, "runtimeGuidance") == Some(true) {
+                message.insert("runtimeGuidance".to_owned(), json!(true));
+            }
             if restore_content {
                 message.insert("content".to_owned(), Value::String(presentation_content));
                 message.remove("presentationReferences");

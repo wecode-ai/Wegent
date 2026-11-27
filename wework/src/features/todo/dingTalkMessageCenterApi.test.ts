@@ -225,6 +225,29 @@ describe('DingTalk message center host projection', () => {
     expect(api.inbox).not.toHaveBeenCalled()
   })
 
+  it('recognizes a saved receive scope without exposing delegation records', async () => {
+    const { api, settings } = executor()
+    const center = createDingTalkMessageCenterApi({
+      ...api,
+      personalGet: async () => ({
+        ...settings,
+        primary: {
+          ...settings.primary,
+          delegation: undefined,
+          dingTalkConnectionMode: 'confirmed',
+        },
+      }),
+    })
+
+    await expect(center.read(scope)).resolves.toMatchObject({
+      status: 'configured',
+      identity: null,
+      records: [],
+      capabilities: ['refresh'],
+    })
+    expect(api.inbox).not.toHaveBeenCalled()
+  })
+
   it('uses the versioned settings save for resume and pause and preserves the saved scope', async () => {
     const { api, settings: fixture } = executor()
     const settings = { ...fixture, primary: { ...fixture.primary, connections: [source] } }

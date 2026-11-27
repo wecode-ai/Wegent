@@ -290,7 +290,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
                 enabled: true,
                 prompt: `${MARKER} ${id}`,
                 version: 0,
-                collaboration: { ...template.collaboration, tags: ['fanout'] },
+                collaboration: {
+                  ...template.collaboration,
+                  projectTagFilters: [{ id: String(project.id), store: 'cloud', tags: ['fanout'] }],
+                },
               })),
             ],
           },

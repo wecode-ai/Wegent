@@ -130,7 +130,7 @@ export interface ExperienceTimelineNode {
   executionAddress: RuntimeTaskAddress | null
   transition?: { from: string; to: string }
   handoff?: {
-    action: 'assign' | 'reassign' | 'unassign'
+    action: 'assign' | 'reassign' | 'redeliver' | 'unassign'
     targetType: string | null
     targetId: string | null
     targetName: string | null

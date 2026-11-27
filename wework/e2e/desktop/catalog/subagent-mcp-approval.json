@@ -1,0 +1,6 @@
+{
+  "order": 130025,
+  "scenario": "./scenarios/subagent-mcp-approval.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 79050, "shard": 10, "position": 2050 } }
+}

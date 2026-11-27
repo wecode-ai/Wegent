@@ -1,6 +1,9 @@
 use serde_json::json;
 use wegent_local_task_store::{
-    personal_stand_in::{source_collection_namespace, stand_in_collection_connection},
+    personal_stand_in::{
+        requires_dingtalk_delegation, source_collection_namespace, stand_in_collection_connection,
+        stand_in_identities, DINGTALK_PROVIDER,
+    },
     LocalTaskStore,
 };
 
@@ -53,4 +56,60 @@ fn group_message_mode_persists_and_invalidates_only_its_old_collection_partition
         &reverted["primary"]["connections"][0]
     )
     .is_some());
+}
+
+#[test]
+fn confirmed_all_messages_persists_both_scopes_and_keeps_mentions_separate() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    let mentions = json!({
+        "providerId": DINGTALK_PROVIDER, "profile":"account", "kind":"group", "id":"*",
+        "scope":"all", "name":"Groups", "policy":{"automatic":true, "askBeforeAct":true}
+    });
+    let mut groups = mentions.clone();
+    groups["collectionKey"] = json!("all-messages");
+    let mut direct = mentions.clone();
+    direct["kind"] = json!("direct");
+    direct["name"] = json!("Contacts");
+    settings["primary"] = json!({
+        "enabled":true, "prompt":"", "preferences":"", "dingTalkConnectionMode":"confirmed",
+        "connections":[&groups, &direct]
+    });
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    drop(store);
+    let store = LocalTaskStore::open(path).unwrap();
+    let saved = store.personal_stand_in(7, "mac").unwrap();
+    let primary = stand_in_identities(&saved)
+        .into_iter()
+        .find(|role| role["id"] == "@primary")
+        .unwrap();
+    for mut concrete in [groups, direct] {
+        concrete["id"] = json!("actual");
+        concrete.as_object_mut().unwrap().remove("scope");
+        let grant = stand_in_collection_connection(&primary, &concrete).unwrap();
+        assert_eq!(grant["id"], "*");
+        assert!(!requires_dingtalk_delegation(&primary, grant));
+        concrete["profile"] = json!("other-account");
+        assert!(stand_in_collection_connection(&primary, &concrete).is_none());
+    }
+    assert!(stand_in_collection_connection(&primary, &mentions).is_none());
+
+    let mut private_only = saved;
+    private_only["primary"]["connections"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|connection| connection["kind"] == "direct");
+    let private_only = store
+        .save_personal_stand_in(7, "mac", private_only)
+        .unwrap();
+    let mut direct = private_only["primary"]["connections"][0].clone();
+    direct["id"] = json!("contact");
+    direct.as_object_mut().unwrap().remove("scope");
+    let mut group = direct.clone();
+    group["kind"] = json!("group");
+    group["collectionKey"] = json!("all-messages");
+    assert!(stand_in_collection_connection(&private_only["primary"], &direct).is_some());
+    assert!(stand_in_collection_connection(&private_only["primary"], &group).is_none());
 }

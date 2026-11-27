@@ -77,10 +77,26 @@ fn already_failed_pr_status_starts_one_turn_in_the_original_conversation() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(verify_preexisting_pr_failure_delivery());
+        .block_on(verify_preexisting_pr_failure_delivery(Value::Null));
 }
 
-async fn verify_preexisting_pr_failure_delivery() {
+#[test]
+fn personal_issue_conversation_receives_pr_status_in_its_existing_session() {
+    let _lock = crate::test_env::lock();
+    let origin = json!({
+        "type": "issue_dispatch", "projectStore": "local",
+        "cloudProjectId": "project", "loopItemId": "issue",
+        "dispatchId": "direct-human:assignment", "roundId": "direct",
+        "assignmentId": "assignment", "humanAssignmentId": "human"
+    });
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(verify_preexisting_pr_failure_delivery(origin));
+}
+
+async fn verify_preexisting_pr_failure_delivery(origin: Value) {
     use crate::runtime_work::handler::tests::install_native_history;
     use std::fs;
     let root = tempfile::tempdir().unwrap();
@@ -121,12 +137,14 @@ async fn verify_preexisting_pr_failure_delivery() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
     install_native_history(&mut handler, root.path(), vec![], None);
+    let mut resumed = json!({"thread":{"id":thread,"modelProvider":"~"}});
+    if origin.is_object() {
+        resumed["activePermissionProfile"] = json!({"id":"wework-source-project"});
+        resumed["approvalsReviewer"] = json!("auto_review");
+    }
     for (method, response) in [
         ("thread_goal_get", json!({"goal":null})),
-        (
-            "thread_resume",
-            json!({"thread":{"id":thread,"modelProvider":"~"}}),
-        ),
+        ("thread_resume", resumed),
         ("turn_start", json!({"turn":{"id":"resumed"}})),
     ] {
         fs::write(
@@ -158,6 +176,15 @@ async fn verify_preexisting_pr_failure_delivery() {
     link.workspace_path = root.path().to_string_lossy().into_owned();
     link.runtime_handle = json!({"runtime":"codex","executionRequest":{"user_id":7,
         "bot":[{"shell_type":"Codex"}],"model_config":{"model_id":"gpt-test","api_key":"synthetic-key"}}});
+    link.runtime_handle["origin"] = origin;
+    let mut execution = runtime_event_request_from_link(&link);
+    crate::runtime_work::api_context::inject_current_session(
+        &mut execution,
+        "control-test-device",
+        "caller",
+    );
+    let control = ControlContext::from_request(&execution)
+        .expect("The existing conversation must have personal control");
     handler.store.upsert_task(link);
 
     let goal = handler
@@ -173,18 +200,14 @@ async fn verify_preexisting_pr_failure_delivery() {
         "continuation":"Inspect the CI failure"
     });
     let subscribed = handler
-        .control_operation(
-            &context("caller"),
-            "subscribe_connection_events",
-            request.clone(),
-        )
+        .control_operation(&control, "subscribe_connection_events", request.clone())
         .await
         .unwrap();
     assert_eq!(subscribed["subscription"]["status"], "armed");
     assert!(subscribed.get("conflict_subscription").is_none());
     let observer_source = request["source"].clone();
     let replay = handler
-        .control_operation(&context("caller"), "subscribe_connection_events", request)
+        .control_operation(&control, "subscribe_connection_events", request)
         .await
         .unwrap();
     assert_eq!(replay, subscribed);
@@ -209,11 +232,7 @@ async fn verify_preexisting_pr_failure_delivery() {
         .await
         .unwrap();
     let subscriptions = handler
-        .control_operation(
-            &context("caller"),
-            "list_connection_event_subscriptions",
-            json!({}),
-        )
+        .control_operation(&control, "list_connection_event_subscriptions", json!({}))
         .await
         .unwrap();
     let items = subscriptions["items"].as_array().unwrap();

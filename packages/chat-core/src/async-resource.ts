@@ -25,6 +25,8 @@ export function createAsyncResource<T>(
     delayMs?: number
     refreshIntervalMs?: number
     refreshIntervalMode?: 'fixed' | 'after-settle'
+    /** Suspends automatic refresh while it returns false. Explicit reloads still run. */
+    refreshEnabled?: () => boolean
     release?(data: T): void
     success?(data: T): void
     failure?(error: unknown): void
@@ -54,8 +56,12 @@ export function createAsyncResource<T>(
       !listeners.size
     )
       return
+    if (options.refreshEnabled?.() === false) return
     clearInterval(refreshTimer)
-    refreshTimer = setTimeout(() => void reload(), options.refreshIntervalMs)
+    refreshTimer = setTimeout(() => {
+      // The window may have been hidden after this refresh was scheduled.
+      if (options.refreshEnabled?.() !== false) void reload()
+    }, options.refreshIntervalMs)
   }
   const reload = (): Promise<void> => {
     const current = ++revision
@@ -132,7 +138,9 @@ export function createAsyncResource<T>(
         if (options.refreshIntervalMode === 'after-settle') {
           if (snapshot.status !== 'loading') scheduleRefresh(revision)
         } else if (options.refreshIntervalMs && options.refreshIntervalMs > 0)
-          refreshTimer = setInterval(() => void reload(), options.refreshIntervalMs)
+          refreshTimer = setInterval(() => {
+            if (options.refreshEnabled?.() !== false) void reload()
+          }, options.refreshIntervalMs)
       }
       return () => {
         listeners.delete(listener)
