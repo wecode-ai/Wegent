@@ -1909,7 +1909,7 @@ class SandboxManager(metaclass=SingletonMeta):
                     type(error).__name__,
                 )
                 return
-            if activity is not None and activity > idle_before:
+            if activity is None or activity > idle_before:
                 return
             cleanup = asyncio.create_task(self._delete_orphaned_executor(task_id))
             try:

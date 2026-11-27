@@ -2682,6 +2682,7 @@ class TestSandboxManager:
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.zrangebyscore.return_value = ["12345"]
         mock_redis_client.hget.return_value = None  # No sandbox data
+        mock_redis_client.zscore.return_value = 1.0
         mock_executor = MagicMock()
         mock_executor.delete_executor_by_task_id.side_effect = [
             {"status": "success"},
@@ -2713,7 +2714,8 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "condition", ["new_session", "busy", "lookup_failed", "new_activity"]
+        "condition",
+        ["new_session", "busy", "lookup_failed", "new_activity", "untracked"],
     )
     async def test_collect_expired_sandboxes_skips_orphan_during_activation(
         self,
@@ -2725,14 +2727,14 @@ class TestSandboxManager:
     ):
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.zrangebyscore.return_value = ["12345"]
+        mock_redis_client.hget.return_value = None
         if condition == "new_session":
             mock_redis_client.hget.side_effect = [None, sample_sandbox_redis_data]
         elif condition == "lookup_failed":
             mock_redis_client.hget.side_effect = [None, OSError("Redis unavailable")]
         elif condition == "new_activity":
             mock_redis_client.zscore.return_value = time.time()
-        else:
-            mock_redis_client.hget.return_value = None
+        elif condition == "busy":
             mocker.patch.object(
                 manager, "_try_acquire_task_lifecycle_lease", return_value=None
             )
@@ -2744,6 +2746,10 @@ class TestSandboxManager:
 
         executor.delete_executor_by_task_id.assert_not_called()
         mock_redis_client.zrem.assert_not_called()
+        if condition == "untracked":
+            mock_redis_client.zscore.assert_called_once_with(
+                manager._repository.active_sandboxes_zset, "12345"
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("supports_label_lookup", [False, True])
@@ -2760,6 +2766,7 @@ class TestSandboxManager:
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.zrangebyscore.return_value = ["12345"]
         mock_redis_client.hget.return_value = None
+        mock_redis_client.zscore.return_value = 1.0
         mock_executor = MagicMock()
         if supports_label_lookup:
             mock_executor.delete_executor_by_task_id.return_value = {
