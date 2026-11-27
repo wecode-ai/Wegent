@@ -583,9 +583,14 @@ mod tests {
             child.runtime_handle["standInResultReceipt"] = Value::Null;
         });
         handler.store.update_task(parent, |link| {
-            link.runtime_handle["executionRequest"]["model_id"] = json!("model-2");
+            link.runtime_handle["executionRequest"]["model_config"] = json!({"model_id":"model-2"});
         });
         let child = handler.local_task_link("child").unwrap();
+        assert_eq!(
+            handler.stand_in_result_delivery(&child).unwrap()["executionRequest"]["model_config"]
+                ["model_id"],
+            "model-2"
+        );
         handler
             .ensure_role_result_delivered_before_continuation(&child)
             .await
@@ -598,6 +603,7 @@ mod tests {
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].local_task_id, parent);
         assert_eq!(queued[0].request.extra["runtime_command_id"], command);
+        assert_ne!(queued[0].request.model_config["model_id"], "model-2");
         assert!(handler.finish_local_task_execution(parent, execution));
     }
 
