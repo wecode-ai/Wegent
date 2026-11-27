@@ -466,6 +466,27 @@ fn apply_failure(
     preserve_served: bool,
     restored: bool,
 ) -> &'static str {
+    // The shared stale scanner also encounters Python-owned web candidates.
+    // Their served body was never replaced; restore only the indexing stage,
+    // never a snapshot of user controls or the published attachment.
+    if let Some(candidate) = doc.source_config.get("_web_refresh")
+        && candidate.get("generation").and_then(Value::as_i64) == Some(doc.generation)
+    {
+        doc.index_status = candidate
+            .get("previous_index_status")
+            .and_then(Value::as_str)
+            .filter(|status| matches!(*status, "success" | "failed" | "not_indexed"))
+            .unwrap_or("failed")
+            .into();
+        let previous_draft = candidate.get("previous_draft").cloned();
+        doc.source_config.remove("_web_refresh");
+        if let Some(mut draft) = previous_draft {
+            draft["generation"] = doc.generation.into();
+            doc.source_config.insert("_web_refresh".into(), draft);
+        }
+        doc.source_config.insert("processing_error".into(), error);
+        return "web_candidate_abandoned";
+    }
     let mut external = doc.external();
     let sync = external.get("sync").and_then(Value::as_object);
     let active_sync = !restored
@@ -556,6 +577,63 @@ pub async fn active_attempts<M: Mysql>(mysql: &M) -> MysqlResult<Vec<ActiveAttem
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expired_web_candidate_keeps_publication_and_latest_user_controls() {
+        let mut doc = Document {
+            id: 1,
+            user_id: 4,
+            attachment_id: 10,
+            file_extension: "md".into(),
+            file_size: 50,
+            active: false,
+            status: "disabled".into(),
+            index_status: "indexing".into(),
+            generation: 3,
+            external_identity: false,
+            chunks: Some(serde_json::json!({"content":"served"})),
+            source_config: serde_json::json!({
+                "published_generation":2,
+                "_web_refresh":{"generation":3,"previous_index_status":"success","attachment_id":20}
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        };
+        assert_eq!(
+            apply_failure(
+                &mut doc,
+                serde_json::json!({"code":"timeout"}),
+                false,
+                false
+            ),
+            "web_candidate_abandoned"
+        );
+        assert_eq!(doc.index_status, "success");
+        assert!(!doc.active);
+        assert_eq!(doc.status, "disabled");
+        assert_eq!(doc.attachment_id, 10);
+        assert_eq!(doc.source_config["published_generation"], 2);
+        assert_eq!(doc.chunks.as_ref().unwrap()["content"], "served");
+        assert!(!doc.source_config.contains_key("_web_refresh"));
+        doc.index_status = "indexing".into();
+        doc.source_config.insert("_web_refresh".into(), serde_json::json!({
+            "generation": 3, "previous_index_status": "success",
+            "previous_draft": {"draft": true, "generation": 1, "attachment_id": 15, "doc_ref": "1@1"}
+        }));
+        assert_eq!(
+            apply_failure(
+                &mut doc,
+                serde_json::json!({"code":"timeout"}),
+                false,
+                false
+            ),
+            "web_candidate_abandoned"
+        );
+        assert_eq!(doc.source_config["_web_refresh"]["attachment_id"], 15);
+        assert_eq!(doc.source_config["_web_refresh"]["generation"], 3);
+        assert_eq!(doc.attachment_id, 10);
+    }
 
     #[test]
     fn chunk_storage_disabled_retains_qa_metadata_without_chunk_bodies() {

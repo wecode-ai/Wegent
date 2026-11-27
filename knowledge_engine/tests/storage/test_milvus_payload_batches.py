@@ -134,6 +134,48 @@ def nodes(count, text="表格内容" * 250, metadata=None):
     ]
 
 
+@pytest.mark.parametrize("mode", ["default", "text_search", "hybrid"])
+@pytest.mark.parametrize("versioned", [False, True])
+def test_native_sdk_forwards_consistency_only_for_versioned_searches(
+    vector_store, mode, versioned
+):
+    """Exercise actual SDK dispatch; query kwargs alone silently lose this option."""
+    from llama_index.core.vector_stores.types import (
+        VectorStoreQuery,
+        VectorStoreQueryMode,
+    )
+    from llama_index.vector_stores.milvus.utils import BM25BuiltInFunction
+
+    create, boundary = vector_store
+    boundary.search = MagicMock(return_value=[[]])
+    boundary.hybrid_search = MagicMock(return_value=[[]])
+    store = create(**({"read_consistency": "Strong"} if versioned else {}))
+    store.enable_sparse = True
+    store.sparse_embedding_function = BM25BuiltInFunction(
+        input_field_names="text", output_field_names="sparse_embedding"
+    )
+    result = store.query(
+        VectorStoreQuery(
+            query_str="营业时间",
+            query_embedding=[0.1] * 1024,
+            similarity_top_k=1,
+            mode=VectorStoreQueryMode(mode),
+        ),
+        string_expr='doc_ref in ["11@2"]',
+    )
+    assert result.nodes == []
+    rpc = boundary.hybrid_search if mode == "hybrid" else boundary.search
+    options = rpc.call_args.kwargs
+    if versioned:
+        assert options["consistency_level"] == "Strong"
+    else:
+        assert "consistency_level" not in options
+    if mode == "hybrid":
+        assert all(req.expr == 'doc_ref in ["11@2"]' for req in rpc.call_args.args[1])
+    else:
+        assert options["filter"] == 'doc_ref in ["11@2"]'
+
+
 def test_native_add_splits_complete_payload_with_default_headroom(vector_store):
     create, boundary = vector_store
     store = create()

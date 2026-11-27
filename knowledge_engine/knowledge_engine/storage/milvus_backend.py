@@ -120,6 +120,7 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
         *,
         max_batch_bytes: int = DEFAULT_MAX_BATCH_BYTES,
         batch_headroom_bytes: int = DEFAULT_BATCH_HEADROOM_BYTES,
+        read_consistency: str | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -155,6 +156,7 @@ class LazyAsyncMilvusVectorStore(MilvusVectorStore):
             max_batch_bytes=max_batch_bytes,
             batch_headroom_bytes=batch_headroom_bytes,
             max_rows=self.batch_size,
+            read_consistency=read_consistency,
         )
 
         # Store connection params for lazy async client creation
@@ -410,6 +412,8 @@ class MilvusBackend(BaseStorageBackend):
         retrieval_mode: str = "vector",
         dim: Optional[int] = None,
         retrieval_setting: Optional[Dict[str, Any]] = None,
+        *,
+        versioned_read: bool = False,
     ) -> MilvusVectorStore:
         """
         Create Milvus vector store instance.
@@ -450,6 +454,7 @@ class MilvusBackend(BaseStorageBackend):
             enable_sparse=True,  # Enable sparse vector for keyword/hybrid search
             hybrid_ranker=hybrid_ranker,
             hybrid_ranker_params=hybrid_ranker_params,
+            **({"read_consistency": "Strong"} if versioned_read else {}),
             **self._write_options,
         )
 
@@ -788,6 +793,7 @@ class MilvusBackend(BaseStorageBackend):
             collection_name,
             retrieval_mode,
             retrieval_setting=retrieval_setting,
+            **({"versioned_read": True} if scope and scope.published_versions else {}),
         )
 
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
@@ -907,6 +913,17 @@ class MilvusBackend(BaseStorageBackend):
         """
         return parse_metadata_filters(knowledge_id, metadata_condition)
 
+    def publication_nodes(
+        self, knowledge_id: str, node_ids: list[str], **kwargs
+    ) -> dict[str, dict]:
+        records = self._get_client().query(
+            collection_name=self.get_index_name(knowledge_id, **kwargs),
+            ids=node_ids,
+            output_fields=["id", "doc_ref", "knowledge_id"],
+            consistency_level="Strong",
+        )
+        return {str(record["id"]): record for record in records}
+
     def _build_scoped_native_filter_expr(
         self,
         *,
@@ -919,7 +936,7 @@ class MilvusBackend(BaseStorageBackend):
         metadata_expr = _to_milvus_filter(metadata_filters)
         doc_refs = [
             f'"{self._sanitize_filter_value(str(doc_id))}"'
-            for doc_id in scope.document_ids
+            for doc_id in scope.document_refs()
         ]
         doc_scope_expr = f"doc_ref in [{', '.join(doc_refs)}]"
 
@@ -1360,6 +1377,11 @@ class MilvusBackend(BaseStorageBackend):
                     "metadata_json",
                 ],
                 limit=1,
+                **(
+                    {"consistency_level": "Strong"}
+                    if kwargs.get("versioned_read")
+                    else {}
+                ),
             )
             if not results:
                 continue
@@ -1423,7 +1445,7 @@ class MilvusBackend(BaseStorageBackend):
             if scope is not None and scope.document_ids is not None:
                 doc_refs = [
                     reference
-                    for document_id in scope.document_ids
+                    for document_id in scope.document_refs()
                     for reference in (str(document_id), f"doc_{document_id}")
                 ]
                 filter_expr += f" and doc_ref in {json.dumps(doc_refs)}"
@@ -1442,6 +1464,11 @@ class MilvusBackend(BaseStorageBackend):
                     "display_text",
                 ],
                 limit=max_chunks,
+                **(
+                    {"consistency_level": "Strong"}
+                    if scope and scope.published_versions
+                    else {}
+                ),
             )
 
             # Convert to chunk format

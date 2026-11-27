@@ -198,6 +198,8 @@ async def test_document_diversity_scopes_normalized_ids_and_keeps_unknowns() -> 
         {"metadata": {"document_id": 7}},
         {"metadata": {"document_id": "007"}},
         {"doc_ref": "doc_7"},
+        {"metadata": {"doc_ref": "7@3"}},
+        {"doc_ref": "doc_7@3"},
         {"doc_ref": 7},
         {"metadata": {"doc_ref": 7}},
         {"document_id": True, "metadata": {"document_id": 7}},
@@ -246,6 +248,8 @@ async def test_document_diversity_keeps_invalid_ids_as_independent_records() -> 
         "doc_-7",
         " 7 ",
         "bad",
+        "7@invalid",
+        "7@",
         None,
         "²",
     ]
@@ -283,15 +287,16 @@ async def test_default_query_preserves_legacy_document_id_normalization() -> Non
         {"content": "direct", "document_id": 7},
         {"content": "metadata", "metadata": {"document_id": 7}},
         {"content": "legacy", "metadata": {"doc_ref": "doc_7"}},
+        {"content": "published", "metadata": {"doc_ref": "7@3"}},
     ]
     adapter = _CandidateQueryAdapter(candidates)
 
     result = await query_documents(
-        [QueryTarget(adapter, "one", {})], query="needle", max_results=3
+        [QueryTarget(adapter, "one", {})], query="needle", max_results=4
     )
 
-    assert [record["document_id"] for record in result["records"]] == [None, None, 7]
-    assert result["total"] == 3
+    assert [record["document_id"] for record in result["records"]] == [None, None, 7, 7]
+    assert result["total"] == 4
     assert adapter.executed_config == {}
 
 

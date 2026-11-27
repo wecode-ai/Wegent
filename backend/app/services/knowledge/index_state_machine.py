@@ -168,7 +168,7 @@ def _record_transition(
 @trace_sync(
     span_name="knowledge.prepare_document_index_enqueue",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False, expected_generation=None, capture_refresh_snapshot=False: {
+    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False, expected_generation=None, capture_refresh_snapshot=False, commit=True: {
         "knowledge.document_id": document_id,
         "knowledge.allow_if_success": allow_if_success,
         "knowledge.replace_active": replace_active,
@@ -182,6 +182,7 @@ def _prepare_document_index_enqueue(
     replace_active: bool = False,
     expected_generation: Optional[int] = None,
     capture_refresh_snapshot: bool = False,
+    commit: bool = True,
 ) -> IndexEnqueueDecision:
     """
     Implement the atomic transition into a new indexing generation.
@@ -220,6 +221,20 @@ def _prepare_document_index_enqueue(
             False, decision.generation, decision.reason, current_status
         )
 
+    # Web candidates have not changed the served body. A stale takeover must
+    # inherit its terminal index state, never the superseded "indexing" stage.
+    if document.source_type == "web" and current_status in ACTIVE_INDEX_STATUSES:
+        from app.services.knowledge.web_publication import abandon_candidate
+
+        if abandon_candidate(document, document.index_generation):
+            current_status = document.index_status
+        if current_status in ACTIVE_INDEX_STATUSES:
+            current_status = (
+                DocumentIndexStatus.SUCCESS
+                if (document.source_config or {}).get("published_generation")
+                else DocumentIndexStatus.FAILED
+            )
+
     superseded_attachment_ids = None
     previous_snapshot_status = current_status
     if decision.reason == "scheduled_after_stale_recovery" and capture_refresh_snapshot:
@@ -240,11 +255,14 @@ def _prepare_document_index_enqueue(
     document.index_generation = decision.generation
     document.index_status = DocumentIndexStatus(decision.next_status)
     document.clear_processing_error_payload()
-    db.commit()
-    if superseded_attachment_ids:
-        _cleanup_external_refresh_attachments(
-            db, owner_user_id=document.user_id, attachment_ids=superseded_attachment_ids
-        )
+    if commit:
+        db.commit()
+        if superseded_attachment_ids:
+            _cleanup_external_refresh_attachments(
+                db,
+                owner_user_id=document.user_id,
+                attachment_ids=superseded_attachment_ids,
+            )
     _record_transition(
         "knowledge.index.enqueue.scheduled",
         document_id=document_id,
@@ -264,8 +282,9 @@ def prepare_document_index_enqueue(
     allow_if_success: bool = False,
     replace_active: bool = False,
     expected_generation: Optional[int] = None,
+    commit: bool = True,
 ) -> IndexEnqueueDecision:
-    """Prepare an ordinary document for a new indexing generation."""
+    """Prepare indexing, optionally leaving the row locked for the caller's commit."""
     return _prepare_document_index_enqueue(
         db,
         document_id,
@@ -273,6 +292,7 @@ def prepare_document_index_enqueue(
         replace_active=replace_active,
         expected_generation=expected_generation,
         capture_refresh_snapshot=False,
+        commit=commit,
     )
 
 
@@ -350,6 +370,15 @@ def mark_document_index_started(
     current_status = (
         (document.index_status or DocumentIndexStatus.NOT_INDEXED) if document else None
     )
+    if document is not None and current_status == DocumentIndexStatus.INDEXING:
+        from app.services.knowledge.web_publication import candidate_for
+
+        if candidate_for(document, generation):
+            # An expired lease does not prove that the previous Runtime write
+            # stopped. Recover through a new generation, never concurrent writes
+            # into the same candidate. The existing stale scanner releases it.
+            db.rollback()
+            return IndexExecutionDecision(False, "already_in_progress")
     decision = decide_index_transition(
         _index_snapshot(document), event="start", generation=generation
     )
@@ -474,7 +503,13 @@ def mark_document_index_succeeded(
     )
     document.index_status = DocumentIndexStatus(decision.next_status)
     document.is_active = True
-    document.status = DocumentStatus.ENABLED
+    document.status = (
+        DocumentStatus(
+            (document.source_config or {}).get("web_user_status") or "enabled"
+        )
+        if document.source_type == "web"
+        else DocumentStatus.ENABLED
+    )
     if chunk_storage_enabled:
         document.chunks = chunks
     else:
@@ -630,6 +665,27 @@ def mark_document_index_failed(
         generation=generation,
         stage=DocumentProcessingStage.SYSTEM,
     )
+    from app.services.knowledge.web_publication import abandon_candidate
+
+    if abandon_candidate(document, generation):
+        _persist_attempt_failure(document, generation, candidate)
+        event_kb_id = document.kind_id
+        db.commit()
+        from shared.event_reporting.catalogs.knowledge import emit_index_event
+
+        emit_index_event(
+            "knowledge.index.generation.terminal",
+            kb_id=event_kb_id,
+            document_id=document_id,
+            status="failure",
+            operation_id=generation,
+            data={
+                "generation": generation,
+                "preservation_reason": "web_publication_preserved",
+                "retry_scheduled": False,
+            },
+        )
+        return True
     cleanup_attachment_ids = restore_external_refresh_snapshot(
         document,
         generation=generation,

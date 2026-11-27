@@ -189,6 +189,31 @@ class ElasticsearchBackend(BaseStorageBackend):
                 "status": "success",
             }
 
+    def publication_nodes(
+        self, knowledge_id: str, node_ids: list[str], **kwargs
+    ) -> dict[str, dict]:
+        with managed_es_client(
+            self.create_vector_store(self.get_index_name(knowledge_id, **kwargs))
+        ) as store:
+            return {
+                node.node_id: node.metadata
+                for node in store.get_nodes(node_ids=node_ids)
+            }
+
+    def prepare_document_publication(self, **kwargs) -> None:
+        knowledge_id = kwargs["knowledge_id"]
+        owner = {"user_id": kwargs.get("user_id")}
+        with managed_es_client(Elasticsearch(self.url, **self.es_kwargs)) as client:
+            for index in (
+                self.get_index_name(knowledge_id, **owner),
+                self.get_parent_store_name(knowledge_id, **owner),
+            ):
+                if client.indices.exists(index=index):
+                    result = client.indices.refresh(index=index)
+                    if result.get("_shards", {}).get("failed", 0):
+                        raise RuntimeError("Candidate refresh failed on a shard")
+        super().prepare_document_publication(**kwargs)
+
     @storage_fact("elasticsearch", "retrieve")
     def retrieve(
         self,
@@ -312,7 +337,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         if not scope or not scope.document_ids:
             return []
 
-        doc_refs = [str(doc_id) for doc_id in scope.document_ids]
+        doc_refs = scope.document_refs()
         return [{"terms": {"metadata.doc_ref.keyword": doc_refs}}]
 
     def _build_custom_query(
@@ -772,7 +797,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             if scope is not None and scope.document_ids is not None:
                 doc_refs = [
                     reference
-                    for document_id in scope.document_ids
+                    for document_id in scope.document_refs()
                     for reference in (str(document_id), f"doc_{document_id}")
                 ]
                 search_body["query"] = {

@@ -62,6 +62,7 @@ class IndexRuntimeSpec(RuntimeSpecModel):
     # them and resolves the index configuration through the shared module.
     authorized_resources: RemoteAuthorizedRetrievalResources | None = None
     source: IndexSource
+    index_generation: int | None = Field(default=None, gt=0)
     index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     # Retained by contract: splitter normalization is owned by the knowledge
     # ingestion path, and the runtime re-resolves the splitter from the document
@@ -110,6 +111,7 @@ class DeleteRuntimeSpec(RuntimeSpecModel):
     """Delete request that carries the document reference, not its config."""
 
     knowledge_base_id: int
+    version_attachment_id: int | None = Field(default=None, gt=0)
     document_ref: str
     index_owner_user_id: int
     authorized_resources: RemoteAuthorizedIndexResources | None = None

@@ -427,3 +427,82 @@ class TestRetrieve:
         embed_model.get_query_embedding.assert_called_once_with("semantic rewrite")
         vs_query = mock_vector_store.query.call_args.args[0]
         assert vs_query.query_str == "semantic rewrite"
+
+
+def test_published_version_filters_real_qdrant_before_top_k():
+    """Exercise the actual local Qdrant store, native filter and parent storage."""
+    from llama_index.core.embeddings import MockEmbedding
+    from qdrant_client import QdrantClient
+
+    from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+    from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+    # Qdrant's embedded implementation uses the real SDK filtering/index APIs.
+    with patch(
+        "knowledge_engine.storage.qdrant_backend.QdrantClient",
+        return_value=QdrantClient(":memory:"),
+    ):
+        backend = QdrantBackend({"url": "http://unused", "ext": {"vector_size": 3}})
+    embed = MockEmbedding(embed_dim=3)
+    for ref in ("11", "11@2", "11@3", "12@2"):
+        node = TextNode(text=f"body-{ref}", metadata={"chunk_index": 0})
+        metadata = ChunkMetadata(
+            knowledge_id="1",
+            doc_ref=ref,
+            source_file="web.md",
+            created_at="2026-11-19T00:00:00Z",
+        )
+        metadata.apply_to_nodes([node])
+        backend.index_with_metadata([node], metadata, embed)
+        parent = TextNode(text=f"parent-{ref}", metadata={"doc_ref": ref})
+        metadata.apply_to_nodes([parent])
+        backend.save_parent_nodes("1", [parent])
+        backend.prepare_document_publication(
+            knowledge_id="1",
+            doc_ref=ref,
+            chunk_count=1,
+            parent_node_ids=[parent.node_id],
+            node_ids=[node.node_id],
+        )
+        if ref == "11@3":
+            # A partially written candidate cannot cross the publication barrier.
+            missing = TextNode(text="unwritten chunk")
+            with pytest.raises(RuntimeError, match="not fully queryable"):
+                backend.prepare_document_publication(
+                    knowledge_id="1",
+                    doc_ref=ref,
+                    chunk_count=2,
+                    parent_node_ids=[parent.node_id],
+                    node_ids=[node.node_id, missing.node_id],
+                )
+
+    def retrieve(scope):
+        return backend.retrieve(
+            "1", "question", embed, {"top_k": 1, "score_threshold": 0}, scope=scope
+        )["records"]
+
+    assert retrieve(RetrievalScope(document_ids=[11]))[0]["content"] == "body-11"
+    assert (
+        retrieve(RetrievalScope(document_ids=[11], published_versions={11: 2}))[0][
+            "content"
+        ]
+        == "body-11@2"
+    )
+    assert (
+        retrieve(RetrievalScope(document_ids=[11], published_versions={11: 3}))[0][
+            "content"
+        ]
+        == "body-11@3"
+    )
+    # A different document's published generation must not admit 11@2.
+    assert retrieve(
+        RetrievalScope(document_ids=[11, 12], published_versions={11: 3, 12: 2})
+    )[0]["metadata"]["doc_ref"] in {"11@3", "12@2"}
+    backend.delete_document("1", "11@2")
+    assert (
+        retrieve(RetrievalScope(document_ids=[11], published_versions={11: 3}))[0][
+            "content"
+        ]
+        == "body-11@3"
+    )
+    backend.client.close()

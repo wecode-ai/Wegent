@@ -15,14 +15,21 @@ These tasks are the unified async mechanism used by both REST API and MCP tools.
 
 import asyncio
 import logging
+from contextlib import ExitStack
 from typing import Optional
 
 from celery import Task
 from celery.exceptions import Retry
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
-from app.core.distributed_lock import distributed_lock
+from app.core.distributed_lock import (
+    DistributedLockUnavailableError,
+    check_lease_ownership,
+    distributed_lock,
+)
 from app.db.session import SessionLocal
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
 from app.services.knowledge.processing_errors import (
@@ -313,6 +320,7 @@ def index_document_task(
     trigger_summary: bool = True,
     caller_user_id: int | None = None,
     trigger: str = "upload",
+    publication_generation: int | None = None,
 ):
     """
     Celery task for RAG document indexing.
@@ -387,11 +395,25 @@ def index_document_task(
         return result
 
     lock_name = get_document_index_lock_name(document_id)
-    with distributed_lock.acquire_watchdog_context(
-        lock_name,
-        expire_seconds=KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS,
-        extend_interval_seconds=KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS,
-    ) as acquired:
+    with ExitStack() as locks:
+        try:
+            acquired = locks.enter_context(
+                distributed_lock.owned_watchdog_context(
+                    lock_name,
+                    expire_seconds=KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS,
+                    extend_interval_seconds=KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS,
+                )
+            )
+        except (
+            DistributedLockUnavailableError,
+            RedisConnectionError,
+            RedisTimeoutError,
+        ) as exc:
+            if retry_count >= self.max_retries:
+                raise
+            raise self.retry(
+                exc=exc, countdown=KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS
+            ) from exc
         if not acquired:
             if retry_count < self.max_retries:
                 logger.warning(
@@ -408,10 +430,18 @@ def index_document_task(
                 )
 
             logger.warning(
-                f"[Celery RAG Indexing] Lock retry exhausted, marking failed: "
+                f"[Celery RAG Indexing] Lock retry exhausted: "
                 f"task_id={task_id}, document_id={document_id}, "
                 f"index_generation={index_generation}, retries={retry_count}"
             )
+            if publication_generation is not None:
+                # A waiter never owns another worker's candidate or failure state.
+                return {
+                    "status": "skipped",
+                    "reason": "lock_retry_exhausted",
+                    "document_id": document_id,
+                    "index_generation": index_generation,
+                }
             with SessionLocal() as state_db:
                 mark_document_index_failed(
                     db=state_db,
@@ -454,7 +484,10 @@ def index_document_task(
             )
 
         if not start_decision.should_execute:
-            if start_decision.reason == "document_not_found":
+            if (
+                start_decision.reason == "document_not_found"
+                and publication_generation is None
+            ):
                 # The document was deleted while this task waited for the index
                 # lock, so nothing may stay under its reference. Clean the
                 # reference up here as well, which is also the retry entry for a
@@ -513,7 +546,22 @@ def index_document_task(
                     splitter_config_dict=splitter_config_dict,
                     document_id=document_id,
                     trigger_summary=trigger_summary,
+                    **(
+                        {"publication_generation": publication_generation}
+                        if publication_generation is not None
+                        else {}
+                    ),
                 )
+
+            if publication_generation is not None and not check_lease_ownership(
+                acquired
+            ):
+                return {
+                    "status": "skipped",
+                    "reason": "lease_lost",
+                    "document_id": document_id,
+                    "index_generation": index_generation,
+                }
 
             if result.get("status") == "skipped":
                 with SessionLocal() as finalize_db:
@@ -555,20 +603,37 @@ def index_document_task(
                 return result
 
             with SessionLocal() as finalize_db:
-                finalized = mark_document_index_succeeded(
-                    db=finalize_db,
-                    document_id=document_id,
-                    generation=index_generation,
-                    chunks=result.get("chunks_data"),
-                    chunk_storage_enabled=settings.CHUNK_STORAGE_ENABLED,
-                )
+                if publication_generation is not None:
+                    from app.services.knowledge.web_publication import publish_candidate
+
+                    finalized = publish_candidate(
+                        finalize_db,
+                        document_id=document_id,
+                        generation=publication_generation,
+                        chunks=result.get("chunks_data"),
+                        lease=acquired,
+                    )
+                else:
+                    finalized = mark_document_index_succeeded(
+                        db=finalize_db,
+                        document_id=document_id,
+                        generation=index_generation,
+                        chunks=result.get("chunks_data"),
+                        chunk_storage_enabled=settings.CHUNK_STORAGE_ENABLED,
+                    )
 
             if not finalized:
-                deleted = _cleanup_late_index_or_retry(
-                    self,
-                    document_id=document_id,
-                    knowledge_base_id=knowledge_base_id,
-                    user_id=user_id,
+                # Versioned writes have a durable exact-version cleanup record;
+                # logical-document compensation must not touch that protocol.
+                deleted = (
+                    False
+                    if publication_generation is not None
+                    else _cleanup_late_index_or_retry(
+                        self,
+                        document_id=document_id,
+                        knowledge_base_id=knowledge_base_id,
+                        user_id=user_id,
+                    )
                 )
                 logger.info(
                     f"[Celery RAG Indexing] Task completed but finalization was skipped: "
@@ -619,6 +684,28 @@ def index_document_task(
             # running the removal a second time.
             raise
         except Exception as exc:
+            if publication_generation is not None and isinstance(
+                exc, DistributedLockUnavailableError
+            ):
+                raise
+            try:
+                owned = publication_generation is None or check_lease_ownership(
+                    acquired
+                )
+            except DistributedLockUnavailableError as lease_error:
+                raise exc from lease_error
+            if not owned:
+                logger.warning(
+                    "Web index result discarded after losing lease: document_id=%s generation=%s",
+                    document_id,
+                    index_generation,
+                )
+                return {
+                    "status": "skipped",
+                    "reason": "lease_lost",
+                    "document_id": document_id,
+                    "index_generation": index_generation,
+                }
             with SessionLocal() as finalize_db:
                 finalized = mark_document_index_failed(
                     db=finalize_db,
@@ -633,11 +720,15 @@ def index_document_task(
             if not finalized:
                 # The write failed after the document was deleted; the failed
                 # removal must retry rather than end as a clean skip.
-                deleted = _cleanup_late_index_or_retry(
-                    self,
-                    document_id=document_id,
-                    knowledge_base_id=knowledge_base_id,
-                    user_id=user_id,
+                deleted = (
+                    False
+                    if publication_generation is not None
+                    else _cleanup_late_index_or_retry(
+                        self,
+                        document_id=document_id,
+                        knowledge_base_id=knowledge_base_id,
+                        user_id=user_id,
+                    )
                 )
                 logger.warning(
                     f"[Celery RAG Indexing] Task failed after being superseded: "
@@ -884,7 +975,15 @@ def scan_stale_index_tasks():
     tracer_name="knowledge.tasks",
 )
 def cleanup_knowledge_attachment_orphans_task() -> dict[str, object]:
-    """Reap aged attachments explicitly owned by external Wiki sync."""
+    """Reap aged attachments and exact retired web index versions."""
+    from app.tasks.web_auto_update_tasks import cleanup_retired_versions_task
+
+    try:
+        cleanup_retired_versions_task.apply_async(queue="wegent_online", expires=3600)
+    except Exception:
+        logger.warning(
+            "Web version cleanup dispatch failed; retry on next scan", exc_info=True
+        )
     from app.services.knowledge.attachment_cleanup import (
         cleanup_orphaned_knowledge_attachments,
     )

@@ -22,6 +22,7 @@ import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/Generat
 import { ScheduledUpdateSettings } from '@/features/knowledge/code-wiki/ScheduledUpdateSettings'
 import { KnowledgeBaseForm, useKnowledgeBaseFormNavigation } from './KnowledgeBaseForm'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
+import { WebAutoUpdateSetting } from './WebAutoUpdateSetting'
 import { KnowledgeBaseDefaultViewSetting } from './KnowledgeBaseDefaultViewSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
@@ -562,10 +563,16 @@ export function EditKnowledgeBaseDialog({
               }
               documentSyncSetting={
                 !isCodeWiki && (
-                  <DingtalkAutoSyncSetting
-                    checked={dingtalkAutoSyncEnabled}
-                    onCheckedChange={setDingtalkAutoSyncEnabled}
-                  />
+                  <>
+                    <DingtalkAutoSyncSetting
+                      checked={dingtalkAutoSyncEnabled}
+                      onCheckedChange={setDingtalkAutoSyncEnabled}
+                    />
+                    <WebAutoUpdateSetting
+                      key={fullKnowledgeBase.id}
+                      knowledgeBaseId={fullKnowledgeBase.id}
+                    />
+                  </>
                 )
               }
               name={name}

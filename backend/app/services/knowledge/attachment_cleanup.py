@@ -10,7 +10,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Integer, cast, exists
+from sqlalchemy import Integer, cast, exists, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -19,6 +19,7 @@ from app.models.subtask_context import ContextType, SubtaskContext
 from app.services.knowledge.external_refresh_snapshot import (
     EXTERNAL_REFRESH_SNAPSHOT_KEY,
 )
+from app.services.knowledge.web_publication import CANDIDATE_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,34 @@ class AttachmentOrphanCleanupReport:
 
     def as_dict(self) -> dict[str, int]:
         return asdict(self)
+
+
+def has_knowledge_attachment_reference(db: Session, attachment_id: int) -> bool:
+    """Check live, staged and rollback references before removing a web body."""
+    config = KnowledgeDocument.source_config
+    snapshot = config[EXTERNAL_REFRESH_SNAPSHOT_KEY]
+    candidate = config[CANDIDATE_KEY]
+    return bool(
+        db.query(KnowledgeDocument.id)
+        .filter(
+            or_(
+                KnowledgeDocument.attachment_id == attachment_id,
+                *(
+                    cast(value.as_string(), Integer) == attachment_id
+                    for value in (
+                        config["converted_attachment_id"],
+                        config["summary_attachment_id"],
+                        snapshot["previous_attachment_id"],
+                        snapshot["previous_converted_attachment_id"],
+                        snapshot["staged_attachment_id"],
+                        candidate["attachment_id"],
+                        candidate["previous_draft"]["attachment_id"],
+                    )
+                ),
+            )
+        )
+        .first()
+    )
 
 
 def mark_attachments_for_orphan_cleanup(
@@ -169,6 +198,7 @@ def delete_attachment_best_effort(
     attachment_id: int,
     *,
     retry_orphan_cleanup: bool = False,
+    preserve_referenced: bool = False,
 ) -> None:
     """Delete one attachment owned by a knowledge document flow.
 
@@ -180,6 +210,27 @@ def delete_attachment_best_effort(
     from app.services.context.context_service import context_service
 
     try:
+        attachment = db.get(SubtaskContext, attachment_id)
+        if preserve_referenced and (
+            attachment is None
+            or attachment.subtask_id != 0
+            or has_knowledge_attachment_reference(db, attachment_id)
+        ):
+            return
+        if (
+            isinstance(attachment, SubtaskContext)
+            and attachment.user_id == owner_user_id
+            and attachment.context_type == ContextType.ATTACHMENT.value
+            and isinstance(attachment.type_data, dict)
+            and isinstance(attachment.type_data.get("web_index_version"), dict)
+        ):
+            # Retain both the body and exact index identity until the version
+            # reaper has checked readers, writers and the publication pointer.
+            from app.services.knowledge.web_publication import retire_attachment
+
+            retire_attachment(db, attachment_id, owner_user_id)
+            db.commit()
+            return
         if retry_orphan_cleanup:
             mark_attachments_for_orphan_cleanup(db, {attachment_id})
             db.commit()

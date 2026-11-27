@@ -1,4 +1,8 @@
+import asyncio
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from app.services.web_scraper.models import InternalScrapeResult, SourcePart
 from app.services.web_scraper.policy import ScrapePolicy
@@ -54,6 +58,28 @@ class RecordingPlaywrightStrategy(PlaywrightFrameExtractionStrategy):
     ) -> InternalScrapeResult:
         self.attempts.append(use_proxy)
         return self.results.pop(0)
+
+
+@pytest.mark.parametrize("structured", [True, False])
+async def test_refresh_retains_short_frames_after_quality_checks(structured):
+    strategy = PlaywrightFrameExtractionStrategy()
+    body = "营业时间：周一至周五9点至18点，周末及节假日均休息。"
+    frame = FakeFrame(html=f"<p>{body}</p>" if structured else "", text=body)
+    blocked = FakeFrame(html="<p>Access denied</p>", text="Access denied")
+    private_body = body + "（私有页面）"
+    private = FakeFrame(
+        html=f"<p>{private_body}</p>", text=private_body, url="http://127.0.0.1/frame"
+    )
+    page = SimpleNamespace(frames=[frame, frame, blocked, private])
+    guard = WebScraperUrlGuard()
+    policy = ScrapePolicy(allow_short_content=True)
+
+    parts = await strategy._extract_source_parts(page, policy, guard)
+
+    assert len(parts) == 1
+    assert parts[0].markdown == body
+    assert parts[0].quality_level == ("structured" if structured else "degraded")
+    assert await strategy._extract_source_parts(page, ScrapePolicy(), guard) == []
 
 
 async def test_playwright_frame_prefers_html_markdown() -> None:
@@ -177,3 +203,105 @@ async def test_playwright_proxy_mode_uses_proxy_first() -> None:
     )
 
     assert strategy.attempts == [True]
+
+
+async def test_browser_admission_checks_each_paused_document_before_continuing(
+    monkeypatch,
+):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.web_scraper.security import (
+        browser_domain_admission,
+        fetch_domain_admission,
+        install_page_domain_admission,
+    )
+
+    events = []
+
+    async def send(command, params=None):
+        events.append((command, (params or {}).get("requestId")))
+
+    async def admit(url):
+        events.append(("admitted", url))
+
+    session = MagicMock()
+    session.send = AsyncMock(side_effect=send)
+    session.detach = AsyncMock()
+    page = SimpleNamespace(
+        context=SimpleNamespace(new_cdp_session=AsyncMock(return_value=session))
+    )
+    admission = AsyncMock(side_effect=admit)
+    guard = MagicMock()
+    monkeypatch.setattr(
+        "app.services.web_scraper.security.WebScraperUrlGuard", lambda: guard
+    )
+    token = fetch_domain_admission.set(admission)
+    try:
+        async with browser_domain_admission():
+            await install_page_domain_admission(page)
+            handler = session.on.call_args.args[1]
+            session.send.reset_mock()
+            for request_id, url in [
+                ("initial", "https://a.example/start"),
+                ("redirect", "https://b.example/end"),
+            ]:
+                events.clear()
+                await handler({"requestId": request_id, "request": {"url": url}})
+                assert events == [
+                    ("admitted", url),
+                    ("Fetch.continueRequest", request_id),
+                ]
+            admission.side_effect = RuntimeError("domain busy")
+            events.clear()
+            await handler(
+                {"requestId": "busy", "request": {"url": "https://c.example"}}
+            )
+            session.send.assert_awaited_with(
+                "Fetch.failRequest",
+                {"requestId": "busy", "errorReason": "BlockedByClient"},
+            )
+            assert events == [("Fetch.failRequest", "busy")]
+            admission.reset_mock()
+            guard.validate_initial_url.side_effect = ValueError("unsafe URL")
+            events.clear()
+            await handler(
+                {"requestId": "unsafe", "request": {"url": "http://127.0.0.1"}}
+            )
+            admission.assert_not_awaited()
+            session.send.assert_awaited_with(
+                "Fetch.failRequest",
+                {"requestId": "unsafe", "errorReason": "BlockedByClient"},
+            )
+            assert events == [("Fetch.failRequest", "unsafe")]
+    finally:
+        fetch_domain_admission.reset(token)
+    session.remove_listener.assert_called_once_with("Fetch.requestPaused", handler)
+    session.detach.assert_awaited_once()
+    await install_page_domain_admission(page)
+    page.context.new_cdp_session.assert_awaited_once()
+
+
+@pytest.mark.parametrize("interruption", [RuntimeError, asyncio.CancelledError])
+async def test_browser_admission_detaches_on_interrupted_navigation(interruption):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.web_scraper.security import (
+        browser_domain_admission,
+        fetch_domain_admission,
+        install_page_domain_admission,
+    )
+
+    session = MagicMock(send=AsyncMock(), detach=AsyncMock())
+    page = SimpleNamespace(
+        context=SimpleNamespace(new_cdp_session=AsyncMock(return_value=session))
+    )
+    token = fetch_domain_admission.set(AsyncMock())
+    try:
+        with pytest.raises(interruption):
+            async with browser_domain_admission():
+                await install_page_domain_admission(page)
+                raise interruption()
+        session.remove_listener.assert_called_once()
+        session.detach.assert_awaited_once()
+    finally:
+        fetch_domain_admission.reset(token)

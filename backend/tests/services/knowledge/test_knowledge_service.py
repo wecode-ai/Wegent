@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import update
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
@@ -134,6 +135,55 @@ class TestKnowledgeServiceCreateKnowledgeBase:
 
         assert knowledge_base is not None
         assert "allowDocumentDownload" not in knowledge_base.json["spec"]
+
+    @pytest.mark.parametrize("default_view_only", [False, True])
+    def test_kb_save_preserves_web_switch_changed_after_initial_read(
+        self, test_db, test_user, default_view_only
+    ) -> None:
+        kb_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="web-switch"),
+        )
+        kb = test_db.get(Kind, kb_id)
+        kb.json = {**kb.json, "spec": {**kb.json["spec"], "webAutoUpdateEnabled": True}}
+        test_db.commit()
+        can_manage = KnowledgeService.can_manage_knowledge_base
+
+        def switch_off(db, knowledge_base_id, user_id):
+            allowed = can_manage(db, knowledge_base_id, user_id)
+            # Emulate the setting writer updating persisted JSON while the ORM
+            # identity map still holds the first read.
+            db.execute(
+                update(Kind)
+                .where(Kind.id == kb_id)
+                .values(
+                    json={
+                        **kb.json,
+                        "spec": {**kb.json["spec"], "webAutoUpdateEnabled": False},
+                    }
+                )
+                .execution_options(synchronize_session=False)
+            )
+            return allowed
+
+        with patch.object(
+            KnowledgeService, "can_manage_knowledge_base", side_effect=switch_off
+        ):
+            if default_view_only:
+                updated = KnowledgeService.update_knowledge_base_type(
+                    test_db, kb_id, test_user.id, "classic"
+                )
+                assert updated.json["spec"]["kbType"] == "classic"
+            else:
+                updated = KnowledgeService.update_knowledge_base(
+                    test_db,
+                    kb_id,
+                    test_user.id,
+                    KnowledgeBaseUpdate(description="Updated"),
+                )
+                assert updated.json["spec"]["description"] == "Updated"
+        assert updated.json["spec"]["webAutoUpdateEnabled"] is False
 
     def test_create_knowledge_base_persists_retrieval_config_as_dict(
         self, test_db, test_user

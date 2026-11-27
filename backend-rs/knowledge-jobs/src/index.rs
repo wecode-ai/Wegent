@@ -349,7 +349,7 @@ async fn enqueue_summary(state: &KnowledgeJobState, payload: &IndexPayload) -> R
     Ok(())
 }
 
-pub(super) fn enabled(name: &str, default: bool) -> bool {
+pub(crate) fn enabled(name: &str, default: bool) -> bool {
     crate::config::env_or_dotenv(name)
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on"))
         .unwrap_or(default)

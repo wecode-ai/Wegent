@@ -14,6 +14,145 @@ from shared.knowledge_cleanup import ExternalEngineCleanupError
 from shared.models import RemoteDeleteDocumentIndexRequest, RuntimeRetrieverConfig
 
 
+@pytest.mark.parametrize(
+    "stage",
+    ["published", "running", "failed", "deleted", "storage_changed", "uncaptured"],
+)
+def test_version_cleanup_uses_durable_identity_and_rejects_live_versions(
+    shared_model_db, stage
+):
+    from datetime import datetime, timedelta, timezone
+
+    from knowledge_runtime.models.knowledge_document import KnowledgeDocument
+    from knowledge_runtime.services.config_resolver import (
+        ConfigResolutionError,
+        ConfigResolver,
+    )
+    from knowledge_runtime.services.web_version_cleanup import resolve_retired_config
+    from shared.knowledge_module.publication import publication_fingerprint
+    from shared.models import RemoteAuthorizedIndexResources
+    from shared.models.db import Kind
+    from shared.models.db.subtask_context import SubtaskContext
+
+    SubtaskContext.__table__.create(shared_model_db.get_bind(), checkfirst=True)
+    retriever = (
+        shared_model_db.query(Kind)
+        .filter(Kind.kind == "Retriever", Kind.name == "test-retriever")
+        .one()
+    )
+    authorized = RemoteAuthorizedIndexResources(
+        operation="delete",
+        knowledge_base_id=1,
+        index_owner_user_id=42,
+        retriever={
+            "kind": "Retriever",
+            "name": "test-retriever",
+            "namespace": "default",
+        },
+    )
+    attachment = SubtaskContext(
+        user_id=42,
+        context_type="attachment",
+        name="web.md",
+        type_data={
+            "web_index_version": {
+                "document_id": 11,
+                "doc_ref": "11@2",
+                "storage_captured_at_staging": stage != "uncaptured",
+                "not_before": (
+                    datetime.now(timezone.utc) - timedelta(days=1)
+                ).isoformat(),
+                "retriever_revision": {
+                    "id": retriever.id,
+                    "hash": publication_fingerprint(retriever.json),
+                },
+                "delete_spec": {
+                    "knowledge_base_id": 1,
+                    "index_owner_user_id": 42,
+                    "authorized_resources": authorized.model_dump(mode="json"),
+                },
+            }
+        },
+    )
+    shared_model_db.add(attachment)
+    if stage != "deleted":
+        shared_model_db.add(
+            KnowledgeDocument(
+                id=11,
+                kind_id=1,
+                index_generation=2,
+                index_status="indexing" if stage == "running" else "failed",
+                source_config={
+                    "published_generation": 2 if stage == "published" else 1,
+                    "_web_refresh": {"generation": 2, "doc_ref": "11@2"},
+                },
+            )
+        )
+    if stage == "storage_changed":
+        retriever.json = {
+            "spec": {
+                "storageConfig": {"type": "qdrant", "url": "http://other-store:6333"}
+            }
+        }
+    shared_model_db.commit()
+    request = RemoteDeleteDocumentIndexRequest(
+        knowledge_base_id=1,
+        user_id=42,
+        document_ref="11@2",
+        authorized_resources=authorized,
+        extensions={"version_attachment_id": attachment.id},
+    )
+    if stage in {"published", "running", "storage_changed", "uncaptured"}:
+        with pytest.raises(ConfigResolutionError):
+            resolve_retired_config(shared_model_db, ConfigResolver(), request)
+    else:
+        config = resolve_retired_config(shared_model_db, ConfigResolver(), request)
+        assert config.retriever_config.storage_config["url"] == "http://qdrant:6333"
+        assert config.index_owner_user_id == 42
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reference", ["11", "11@2"])
+async def test_version_delete_without_record_cannot_use_current_storage(
+    shared_model_db, reference
+):
+    from sqlalchemy.orm import sessionmaker
+
+    from knowledge_runtime.models.knowledge_document import KnowledgeDocument
+    from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+    from knowledge_runtime.services.config_resolver import ConfigResolutionError
+    from shared.models import RemoteAuthorizedIndexResources
+
+    shared_model_db.add(
+        KnowledgeDocument(id=11, kind_id=1, source_config={"published_generation": 2})
+    )
+    shared_model_db.commit()
+    loader = RuntimeConfigLoader(
+        session_factory=sessionmaker(bind=shared_model_db.get_bind())
+    )
+    request = RemoteDeleteDocumentIndexRequest(
+        knowledge_base_id=1,
+        user_id=42,
+        document_ref=reference,
+        authorized_resources=RemoteAuthorizedIndexResources(
+            operation="delete",
+            knowledge_base_id=1,
+            index_owner_user_id=42,
+            retriever={
+                "kind": "Retriever",
+                "name": "test-retriever",
+                "namespace": "default",
+            },
+        ),
+    )
+    with patch(
+        "knowledge_runtime.services.admin_executor.create_storage_backend_from_runtime_config"
+    ) as factory:
+        with pytest.raises(ConfigResolutionError, match="recorded storage"):
+            await AdminExecutor(config_loader=loader).delete_document_index(request)
+        factory.assert_not_called()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["constructor", "delete"])
 async def test_cleanup_external_failure_is_distinct_from_runtime_failure(

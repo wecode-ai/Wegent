@@ -124,6 +124,7 @@ celery_app = Celery(
         "app.tasks.knowledge_tasks",
         "app.tasks.external_document_sync_tasks",
         "app.tasks.dingtalk_auto_sync_tasks",
+        "app.tasks.web_auto_update_tasks",
         "app.tasks.robot_queue_tasks",
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",

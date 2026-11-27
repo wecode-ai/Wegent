@@ -37,6 +37,7 @@ mod knowledge_organization_namespace;
 mod knowledge_wiki_bindings;
 mod share_knowledge_base_my_permission;
 mod tables;
+mod web_auto_update_config;
 mod wiki_connections;
 
 pub use attachment_access::check_knowledge_base_access;

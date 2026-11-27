@@ -28,6 +28,10 @@ def test_document_response_derives_error_and_hides_storage_key() -> None:
             "source_type": "file",
             "source_config": {
                 "converted_attachment_id": 8,
+                "_web_refresh": {
+                    "attachment_id": 99,
+                    "metadata": {"title": "unpublished candidate"},
+                },
                 "processing_error": {
                     "stage": "conversion",
                     "code": "model_quota_exhausted",
@@ -46,6 +50,7 @@ def test_document_response_derives_error_and_hides_storage_key() -> None:
     assert response.processing_error is not None
     assert response.processing_error.code == "model_quota_exhausted"
     assert "processing_error" not in response.source_config
+    assert "_web_refresh" not in response.model_dump()["source_config"]
     assert response.source_config["converted_attachment_id"] == 8
 
 

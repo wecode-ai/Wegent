@@ -67,11 +67,17 @@ class AdminExecutor:
             DocumentServiceIndexAdapter,
         )
 
-        config = self._config_loader.resolve_admin_config(
-            knowledge_base_id=request.knowledge_base_id,
-            operation="delete",
-            authorized=request.authorized_resources,
-        )
+        if (request.extensions or {}).get("version_attachment_id"):
+            config = self._config_loader.resolve_retired_config(request)
+        else:
+            self._config_loader.require_unversioned_delete(
+                request.knowledge_base_id, request.document_ref
+            )
+            config = self._config_loader.resolve_admin_config(
+                knowledge_base_id=request.knowledge_base_id,
+                operation="delete",
+                authorized=request.authorized_resources,
+            )
 
         storage_type = normalize_storage_type(
             config.retriever_config.storage_config.get("type", "")
@@ -207,12 +213,19 @@ class AdminExecutor:
             max_chunks=request.max_chunks,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,
-            scope=RetrievalScope(document_ids=config.document_ids),
+            scope=RetrievalScope(
+                document_ids=config.document_ids,
+                published_versions=config.published_versions,
+            ),
         )
         document_refs = {
             reference
             for document_id in config.document_ids
-            for reference in (str(document_id), f"doc_{document_id}")
+            for reference in (
+                (f"{document_id}@{config.published_versions[document_id]}",)
+                if document_id in config.published_versions
+                else (str(document_id), f"doc_{document_id}")
+            )
         }
         chunks = [
             chunk

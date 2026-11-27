@@ -24,6 +24,8 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    admit_fetch_domain,
+    browser_domain_admission,
     redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
@@ -179,7 +181,8 @@ class Crawl4AIScrapeStrategy:
             await self._validate_redirect_chain(url, proxy_plan, guard, use_proxy)
             crawler = await self._crawler_provider()
             run_config = self._build_run_config(policy, profile, proxy_config)
-            result = await crawler.arun(url=url, config=run_config)
+            async with browser_domain_admission():
+                result = await crawler.arun(url=url, config=run_config)
             return self._to_internal_result(url, result, guard)
         except WebScraperSecurityError as exc:
             return InternalScrapeResult(
@@ -214,6 +217,7 @@ class Crawl4AIScrapeStrategy:
         ) as client:
             current_url = url
             for _ in range(CRAWL4AI_MAX_REDIRECTS + 1):
+                await admit_fetch_domain(current_url)
                 async with client.stream(
                     "GET",
                     current_url,

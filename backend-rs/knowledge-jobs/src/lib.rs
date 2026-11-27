@@ -17,7 +17,7 @@ mod sources;
 mod state;
 mod store;
 mod summary;
-mod sync;
+pub(crate) mod sync;
 
 use std::{sync::Arc, time::Duration};
 
@@ -39,6 +39,7 @@ use wegent_mcp_providers::mcp_providers;
 use wegent_network_policy::http_trust;
 
 pub use index::{NAME as INDEX_JOB, dispatch_failed};
+pub use sync::{WEB_SCAN, WebTaskBroker, web_auto_update_enabled};
 
 pub struct KnowledgeJobState {
     pub mysql: brz_mysql::MysqlService,
@@ -47,6 +48,7 @@ pub struct KnowledgeJobState {
     pub attachment_upload: Arc<dyn AttachmentUploadBackend>,
     pub entity_resolvers: EntityResolvers,
     pub celery: celery_broker::CeleryBroker,
+    pub web_task_broker: WebTaskBroker,
     pub jwt_key: String,
     pub jwt_algorithm: String,
     pub attachment_http: brz_http::Client,
@@ -64,6 +66,7 @@ impl KnowledgeJobState {
 
 pub const STALE_SCAN: &str = "app.tasks.knowledge_tasks.scan_stale_index_tasks";
 pub const ORPHAN_CLEANUP: &str = "app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans";
+pub const WEB_CLEANUP: &str = "app.tasks.web_auto_update_tasks.cleanup_retired_versions";
 
 pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<KnowledgeJobState>) -> Result<()> {
     index::register(registry, state.clone())?;
@@ -77,18 +80,28 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<KnowledgeJobSta
     })?;
     registry.max_failures(STALE_SCAN, 1)?;
     registry.fixed_rate(STALE_SCAN, Duration::from_secs(300), false)?;
+    let cleanup_interval = Duration::from_secs(state::seconds(
+        "KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS",
+        3600,
+    ) as u64);
+    let web_cleanup_state = state.clone();
+    registry.register(WEB_CLEANUP, move |_, _| {
+        let state = web_cleanup_state.clone();
+        async move {
+            cleanup::queue_web_cleanup(&state).await?;
+            Ok(json!({"status":"dispatched"}))
+        }
+    })?;
+    registry.max_failures(WEB_CLEANUP, 1)?;
+    registry.fixed_rate(WEB_CLEANUP, cleanup_interval, false)?;
     registry.register(ORPHAN_CLEANUP, move |context, _| {
         let state = state.clone();
         async move {
-            let lease = Duration::from_secs(state::seconds(
-                "KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS",
-                3600,
-            ) as u64);
             Ok(with_lock_watchdog(
                 &state.background_jobs,
                 &context,
                 "wegent:lock:knowledge-attachment-orphan-cleanup",
-                lease,
+                cleanup_interval,
                 cleanup::scan(&state, &context),
             )
             .await?
@@ -96,14 +109,7 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<KnowledgeJobSta
         }
     })?;
     registry.max_failures(ORPHAN_CLEANUP, 1)?;
-    registry.fixed_rate(
-        ORPHAN_CLEANUP,
-        Duration::from_secs(state::seconds(
-            "KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_INTERVAL_SECONDS",
-            3600,
-        ) as u64),
-        false,
-    )
+    registry.fixed_rate(ORPHAN_CLEANUP, cleanup_interval, false)
 }
 
 async fn scan_stale(

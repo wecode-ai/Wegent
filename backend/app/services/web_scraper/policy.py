@@ -53,6 +53,7 @@ class ScrapePolicy(BaseModel):
     prefer_html_markdown: bool = True
     allow_text_degraded: bool = True
     min_markdown_chars: int = Field(default=DEFAULT_MIN_MARKDOWN_CHARS, ge=0)
+    allow_short_content: bool = False
     min_content_density: float = Field(
         default=DEFAULT_MIN_CONTENT_DENSITY,
         ge=0,
