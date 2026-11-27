@@ -462,6 +462,8 @@ class DockerExecutor(Executor):
         task_id: int,
         executor_name: str,
         callback_token: Optional[str],
+        *,
+        sandbox: bool = False,
     ) -> None:
         from executor_manager.services.sandbox.repository import get_sandbox_repository
 
@@ -475,6 +477,8 @@ class DockerExecutor(Executor):
                 task_id,
                 expected_executor_name=executor_name,
                 expected_callback_token=callback_token,
+                expected_container_id=container_id,
+                sandbox=sandbox,
             )
 
     def create_instance(
@@ -589,16 +593,21 @@ class DockerExecutor(Executor):
         from executor_manager.services.sandbox.repository import get_sandbox_repository
 
         task_type = get_metadata_field(task, "type")
+        task_id = int(get_metadata_field(task, "task_id"))
+        callback_token = get_metadata_field(task, CALLBACK_TOKEN)
+        sandbox = task_type == "sandbox"
         if get_sandbox_repository().save_executor_binding(
-            int(get_metadata_field(task, "task_id")),
+            task_id,
             executor_name,
-            sandbox=task_type == "sandbox",
-            callback_token=get_metadata_field(task, CALLBACK_TOKEN),
+            sandbox=sandbox,
+            callback_token=callback_token,
             container_id=container_id,
         ):
             return
 
-        delete_container(container_id)
+        self._cleanup_failed_start(
+            container_id, task_id, executor_name, callback_token, sandbox=sandbox
+        )
         message = "Could not persist executor callback credential"
         if task_type == "validation":
             self._report_validation_stage(

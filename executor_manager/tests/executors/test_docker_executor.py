@@ -640,21 +640,52 @@ class TestDockerExecutor:
         else:
             repository.delete_executor_binding.assert_not_called()
 
-    def test_validation_reports_callback_publication_failure(
-        self, executor, sample_task, mocker, callback_repository, mock_subprocess
+    @pytest.mark.parametrize("task_type", ["validation", "sandbox"])
+    @pytest.mark.parametrize("delete_status", ["success", "failed"])
+    def test_callback_publication_failure_cleans_up_the_matching_binding(
+        self,
+        executor,
+        sample_task,
+        mocker,
+        callback_repository,
+        mock_subprocess,
+        task_type,
+        delete_status,
     ):
-        sample_task["type"] = "validation"
+        sample_task["type"] = task_type
         callback_repository.save_executor_binding.return_value = False
         mock_subprocess.run.return_value.stdout = "new-container-id"
-        delete = mocker.patch.object(docker_executor_module, "delete_container")
+        mocker.patch.object(
+            docker_executor_module,
+            "generate_callback_token",
+            return_value="issued-token",
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": delete_status},
+        )
         validation = mocker.patch.object(executor, "_report_validation_stage")
 
         result = executor.submit_executor(sample_task)
 
         assert result["status"] == "failed"
         delete.assert_called_once_with("new-container-id")
-        assert validation.call_args.kwargs["status"] == "failed"
-        assert validation.call_args.kwargs["valid"] is False
+        if delete_status == "success":
+            callback_repository.delete_executor_binding.assert_called_once_with(
+                sample_task["task_id"],
+                expected_executor_name=result["executor_name"],
+                expected_callback_token="issued-token",
+                expected_container_id="new-container-id",
+                sandbox=task_type == "sandbox",
+            )
+        else:
+            callback_repository.delete_executor_binding.assert_not_called()
+        if task_type == "validation":
+            assert validation.call_args.kwargs["status"] == "failed"
+            assert validation.call_args.kwargs["valid"] is False
+        else:
+            validation.assert_not_called()
 
     def test_recreated_container_rotates_callback_token_after_docker_succeeds(
         self, executor, sample_task, mock_subprocess, callback_repository
@@ -823,6 +854,8 @@ class TestDockerExecutor:
                 123,
                 expected_executor_name="new-executor",
                 expected_callback_token="issued-token",
+                expected_container_id="new-container-id",
+                sandbox=False,
             )
         else:
             callback_repository.delete_executor_binding.assert_not_called()
@@ -917,6 +950,8 @@ class TestDockerExecutor:
                 123,
                 expected_executor_name="validation-executor",
                 expected_callback_token="issued-token",
+                expected_container_id="validation-container-id",
+                sandbox=False,
             )
 
     @patch.dict(
