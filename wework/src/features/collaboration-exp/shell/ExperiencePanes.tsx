@@ -141,7 +141,12 @@ export function ExperiencePanes({ panes, onBack, className }: ExperiencePanesPro
                 className="experience-pane-slot"
                 style={{ overflow: 'hidden' }}
               >
-                {hosts.has(pane.id) ? <WorkbenchPaneHost host={hosts.get(pane.id)!} /> : null}
+                {hosts.has(pane.id) ? (
+                  <WorkbenchPaneHost
+                    host={hosts.get(pane.id)!}
+                    scrollSelector={pane.scrollSelector}
+                  />
+                ) : null}
               </ResizablePanel>
             </Fragment>
           ))}
@@ -152,7 +157,11 @@ export function ExperiencePanes({ panes, onBack, className }: ExperiencePanesPro
           .filter(pane => !visiblePanes.some(visible => visible.id === pane.id))
           .map(pane =>
             hosts.has(pane.id) ? (
-              <WorkbenchPaneHost key={pane.id} host={hosts.get(pane.id)!} />
+              <WorkbenchPaneHost
+                key={pane.id}
+                host={hosts.get(pane.id)!}
+                scrollSelector={pane.scrollSelector}
+              />
             ) : null
           )}
       </div>

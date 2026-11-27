@@ -89,7 +89,7 @@ export function TaskListView(props: Props) {
         aria-busy={props.loading}
         onScroll={event => {
           const element = event.currentTarget
-          if (restored.current === element)
+          if (restored.current === element && element.isConnected && !element.closest('[hidden]'))
             sessionStorage.setItem(scrollKey, String(element.scrollTop))
         }}
       >

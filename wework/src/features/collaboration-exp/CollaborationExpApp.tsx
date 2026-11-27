@@ -265,6 +265,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
       title: t('tasks.title'),
       header: null,
       scroll: false,
+      scrollSelector: '.experience-task-scroll',
       minWidth: 240,
       defaultWidth: 300,
       content: (

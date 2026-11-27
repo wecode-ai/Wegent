@@ -12,6 +12,7 @@ export interface ExperiencePane {
   onBack?: () => void
   returnFocusRef?: RefObject<HTMLElement | null>
   scroll?: boolean
+  scrollSelector?: string
 }
 
 export interface ExperiencePanesProps {
