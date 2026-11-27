@@ -9,7 +9,6 @@ import type { RuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
-  RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type {
@@ -288,6 +287,10 @@ let originalDebug: ConsoleDebug | null = null
 let workbenchSnapshot: WorkbenchDebugSnapshot['workbench'] = null
 let paneSnapshot: RuntimePaneDebugSnapshot | null = null
 const debugLogs: DebugLogEntry[] = []
+const sanitizedRuntimeWorkspaces = new WeakMap<
+  RuntimeDeviceWorkspace,
+  RuntimeDeviceWorkspaceDebug
+>()
 
 export function installDebugPanelLogCapture() {
   if (installed) return
@@ -313,8 +316,9 @@ export function updateWorkbenchDebugSnapshot({
   cloudWorkStatus: CloudWorkStatus
   composer?: WorkbenchComposerDebugSnapshot | null
 }) {
-  const activeTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
   const activeWorkspace = findRuntimeWorkspace(state.runtimeWork, state.currentRuntimeTask)
+  const activeTask =
+    activeWorkspace?.tasks.find(task => task.taskId === state.currentRuntimeTask?.taskId) ?? null
   const activeLifecycle = state.currentRuntimeTask
     ? lifecycle.tasks.get(getRuntimeTaskLifecycleKey(state.currentRuntimeTask))
     : null
@@ -619,7 +623,11 @@ function sanitizeRuntimeWorkspace(
   workspace: RuntimeDeviceWorkspace | null
 ): RuntimeDeviceWorkspaceDebug | null {
   if (!workspace) return null
-  return {
+  // Lifecycle publications reuse the work list until the next list response.
+  // Its workspace contains only list metadata, which is independent of live turns.
+  const cached = sanitizedRuntimeWorkspaces.get(workspace)
+  if (cached) return cached
+  const sanitized = {
     deviceId: workspace.deviceId,
     deviceName: workspace.deviceName ?? null,
     workspacePath: workspace.workspacePath,
@@ -630,6 +638,8 @@ function sanitizeRuntimeWorkspace(
       .map(task => sanitizeRuntimeTaskSummary(task))
       .filter((task): task is RuntimeTaskSummaryDebug => task !== null),
   }
+  sanitizedRuntimeWorkspaces.set(workspace, sanitized)
+  return sanitized
 }
 
 function createMessageSummaryItem(message: WorkbenchMessage): MessageSummaryItem {
@@ -978,15 +988,6 @@ function summarizeRuntimeWork(
     chatWorkspaceCount: runtimeWork.chats.length,
     runningTaskCount: lifecycle.runningTaskKeys.size,
   }
-}
-
-function findRuntimeTask(
-  runtimeWork: RuntimeWorkListResponse | null,
-  address: RuntimeTaskAddress | null
-): RuntimeTaskSummary | null {
-  const workspace = findRuntimeWorkspace(runtimeWork, address)
-  if (!workspace || !address) return null
-  return workspace.tasks.find(task => task.taskId === address.taskId) ?? null
 }
 
 function findRuntimeTaskProjectKey(

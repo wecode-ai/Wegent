@@ -197,7 +197,7 @@ export function createDesktopScenario({
     const pane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
     const composer = `${pane} [data-testid="chat-message-input"][contenteditable="true"]`
     await control.command('waitFor', composer)
-    await control.command('click', `${pane} [data-testid="execution-mode-button"]`)
+    await control.command('clickWhenEnabled', `${pane} [data-testid="execution-mode-button"]`)
     await control.command(
       'clickWhenEnabled',
       '[data-testid="execution-mode-current-workspace-button"]'
