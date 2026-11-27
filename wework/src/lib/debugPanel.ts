@@ -413,20 +413,25 @@ export function getWorkbenchDebugSnapshot(): WorkbenchDebugSnapshot {
 }
 
 export function summarizeMessages(messages: WorkbenchMessage[]): MessageSummary {
-  const activeAssistantMessage =
-    messages.findLast(message => message.role === 'assistant' && message.status === 'streaming') ??
-    null
-  const lastMessage = messages.at(-1) ?? null
-
-  return {
-    total: messages.length,
-    byRole: countBy(messages, message => message.role || 'unknown'),
-    byStatus: countBy(messages, message => message.status || 'unknown'),
-    activeAssistantMessage: activeAssistantMessage
-      ? createMessageSummaryItem(activeAssistantMessage)
-      : null,
-    lastMessage: lastMessage ? createMessageSummaryItem(lastMessage) : null,
+  const byRole: Record<string, number> = {}
+  const byStatus: Record<string, number> = {}
+  let activeAssistant: WorkbenchMessage | undefined
+  for (const message of messages) {
+    const role = message.role || 'unknown'
+    const status = message.status || 'unknown'
+    byRole[role] = (byRole[role] ?? 0) + 1
+    byStatus[status] = (byStatus[status] ?? 0) + 1
+    if (role === 'assistant' && status === 'streaming') activeAssistant = message
   }
+  const last = messages.at(-1)
+  const lastMessage = last ? createMessageSummaryItem(last) : null
+  const activeAssistantMessage =
+    activeAssistant && activeAssistant !== last
+      ? createMessageSummaryItem(activeAssistant)
+      : activeAssistant
+        ? lastMessage
+        : null
+  return { total: messages.length, byRole, byStatus, activeAssistantMessage, lastMessage }
 }
 
 export function summarizeRuntimePaneMemory({
@@ -1028,12 +1033,4 @@ function findRuntimeWorkspace(
         workspace.tasks.some(task => task.taskId === address.taskId)
     ) ?? null
   )
-}
-
-function countBy<T>(items: T[], getKey: (item: T) => string): Record<string, number> {
-  return items.reduce<Record<string, number>>((counts, item) => {
-    const key = getKey(item)
-    counts[key] = (counts[key] ?? 0) + 1
-    return counts
-  }, {})
 }

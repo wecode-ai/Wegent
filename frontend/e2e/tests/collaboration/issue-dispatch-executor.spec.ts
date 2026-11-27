@@ -706,14 +706,17 @@ test.describe('Collaboration group Executor coordination', () => {
         model.token,
         fixture.projectId,
         fixture.issueId,
-        1
+        4
       )
-      expect(executions[0].executorType).toBe('collaboration_group_dispatch')
-      expect(executions[0].backendTaskId).toBeNull()
-      expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
-      expect(executions[0].executionEnvironment).toBe('local')
-      expectCanonicalAppRoute(executions[0], appDevice)
-      expect(executions[0].status).toBe('completed')
+      const managers = executions.filter(row => row.executorType === 'collaboration_group_dispatch')
+      expect(managers).toHaveLength(1)
+      const [manager] = managers
+      expect(manager.executorType).toBe('collaboration_group_dispatch')
+      expect(manager.backendTaskId).toBeNull()
+      expect(manager.runtimeTaskId).toMatch(/^codex-queue-\d+$/)
+      expect(manager.executionEnvironment).toBe('local')
+      expectCanonicalAppRoute(manager, appDevice)
+      expect(manager.status).toBe('completed')
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -735,7 +738,7 @@ test.describe('Collaboration group Executor coordination', () => {
       const managerToolNames = modelToolNames(managerBodies)
       expect(managerBodies.length).toBeGreaterThanOrEqual(6)
       expect(managerScenario.nextStep).toBe(6)
-      expect(managerSessionIds).toEqual([`${executions[0].runtimeTaskId}-manager-initial`])
+      expect(managerSessionIds).toEqual([`${manager.runtimeTaskId}-manager-initial`])
       expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
       expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
       expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)
@@ -773,15 +776,14 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(
         memberRuntimeSessionIds.every(sessionId => !managerSessionIds.includes(sessionId))
       ).toBe(true)
-      expect(collectorSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${firstRoundId}-collector-${suffix}`
-      )
-      expect(reviewerSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${firstRoundId}-reviewer-${suffix}`
-      )
-      expect(synthesisSessionIds[0]).toBe(
-        `${executions[0].runtimeTaskId}-member-${secondRoundId}-synthesis-${suffix}`
-      )
+      for (const [sessionId, agentId] of [
+        [collectorSessionIds[0], collector.id],
+        [reviewerSessionIds[0], reviewer.id],
+        [synthesisSessionIds[0], collector.id],
+      ]) {
+        const member = executions.find(row => row.runtimeTaskId === sessionId)
+        expect(member).toMatchObject({ agentId, status: 'completed' })
+      }
 
       await page.reload()
       await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(

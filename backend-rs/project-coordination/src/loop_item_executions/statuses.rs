@@ -92,11 +92,11 @@ async fn round_items(
         let assignment_id = assignment["assignment_id"]
             .as_str()
             .ok_or_else(invalid_round)?;
-        let (status, result, error): (String, String, String) = state.mysql.fetch_optional(
-            "SELECT e.status, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.assignment_result')), ''), COALESCE(e.error_message,'') FROM loop_item_executions first_attempt JOIN loop_item_executions e ON e.execution_scope=first_attempt.execution_scope WHERE first_attempt.id=? AND e.cloud_project_id=? AND e.loop_item_id=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.dispatch_id'))=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.coordination_round_id'))=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.assignment_id'))=? ORDER BY e.id DESC LIMIT 1",
+        let (status, Json(outcome)): (String, Json<Value>) = state.mysql.fetch_optional(
+            "SELECT e.status, JSON_OBJECT('result',COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.assignment_result')), ''),'error',COALESCE(e.error_message,'')) FROM loop_item_executions first_attempt JOIN loop_item_executions e ON e.execution_scope=first_attempt.execution_scope WHERE first_attempt.id=? AND e.cloud_project_id=? AND e.loop_item_id=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.dispatch_id'))=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.coordination_round_id'))=? AND JSON_UNQUOTE(JSON_EXTRACT(e.execution_payload,'$.origin_context.assignment_id'))=? ORDER BY e.id DESC LIMIT 1",
             (*id, project, issue, round.dispatch_id.as_str(), round.round_id.as_str(), assignment_id)
         ).await.map_err(internal_error)?.ok_or_else(|| FastApiError::not_found("Assignment not found"))?;
-        items.push(json!({"assignee_type":"agent","assignment_id":assignment_id,"execution_id":id,"status":status,"result":result,"error":error}));
+        items.push(json!({"assignee_type":"agent","assignment_id":assignment_id,"execution_id":id,"status":status,"result":outcome["result"],"error":outcome["error"]}));
     }
     Ok(items)
 }
