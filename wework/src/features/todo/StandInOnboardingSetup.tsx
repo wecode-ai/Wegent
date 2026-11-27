@@ -31,6 +31,7 @@ import {
 import {
   connectionConfigurationChanges,
   hasConnectionDraft,
+  rebaseConnectionDraft,
 } from './standInConnectionSettingsModel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
@@ -190,7 +191,7 @@ export function StandInOnboardingSetup({
         setInitialRole(savedRole)
         setRole(
           !chatting && detail
-            ? { ...role, ...connectionConfigurationChanges(role, savedRole, detail) }
+            ? rebaseConnectionDraft(role, initialRole ?? role, savedRole, detail)
             : savedRole
         )
       }

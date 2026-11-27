@@ -36,6 +36,7 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 import {
   connectionConfigurationChanges,
   hasConnectionDraft,
+  rebaseConnectionDraft,
 } from './standInConnectionSettingsModel'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
@@ -219,8 +220,7 @@ export function StandInPrimaryProfile({
     if (result?.primary && scopeView) {
       const accepted = normalizePrimary(result.primary)
       const remaining = {
-        ...draft,
-        ...connectionConfigurationChanges(draft, accepted, scopeView),
+        ...rebaseConnectionDraft(draft, original, accepted, scopeView),
         dingTalkConnectionMode: accepted.dingTalkConnectionMode,
       }
       setBaseline(accepted)

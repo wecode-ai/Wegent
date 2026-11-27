@@ -140,6 +140,7 @@ function StandInOnboardingContent({
       setDismissed(true)
       if (guideOpen) onGuideClose?.()
       else if (leaveWorkspace) onClose?.()
+      else onOpenConversation()
     }
     if (setupRef.current) setupRef.current.requestLeave(dismiss)
     else dismiss()

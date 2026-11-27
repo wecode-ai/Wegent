@@ -28,7 +28,7 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 
 After initial setup, open **Left sidebar → My assistants → Message center** to review DingTalk results. On desktop clients that support DingTalk delegation, the workspace opens this view on first entry. Select **Default assistant** in the header to return to its conversation.
 
-When the local executor verifies the DingTalk identity, review **Replied**, **Needs your attention**, **Not handled automatically**, and **Exceptions**. Only confirmed deliveries count as replies. The header shows **Pause delegation** or **Resume delegation** when the action is available. Select **Delegation settings** to open the default assistant's connection settings. Closing settings returns to the message center. If desktop notifications are turned off, select **Open notification settings** in the center to turn them on again.
+After connecting DingTalk on this device, review **Replied**, **Needs your attention**, **Not handled automatically**, and **Exceptions**. Only confirmed deliveries count as replies. The header shows **Pause delegation** or **Resume delegation** when the action is available. Select **Delegation settings** to open the default assistant's connection settings. Closing settings returns to the message center. If desktop notifications are turned off, select **Open notification settings** in the center to turn them on again.
 
 Open a record to see the original message, reply evidence, handling details, and delivery receipt. When delivery is unknown and a channel task is available, select **Check delivery status**. To take over work that needs your attention, select **I'll handle this** when available. Select **Edit this source** to open settings for the corresponding conversation.
 
@@ -438,7 +438,7 @@ Roles can receive personal events or all subscribable repository events. The plu
 
 ## Set up your stand-in
 
-On first use, choose an execution device and a chat model, then select **Start chatting**. Starting chat saves the model. Save each connection from its own page. You can add optional connections later from assistant settings. If saving or completing setup fails, the guide keeps the current settings available for retry. **Set up later** closes the guide. Choose **Continue setup** in My assistants to reopen it. Your saved scopes stay in place.
+On first use, choose an execution device and a chat model, then select **Start chatting**. Starting chat saves the model. Save each connection from its own page. You can add optional connections later from assistant settings. If saving or completing setup fails, the guide keeps the current settings available for retry. **Set up later** returns to the default assistant page. Choose **Continue setup** to reopen the guide. Your saved scopes stay in place.
 
 To select specific projects, choose **Add a receive scope → Projects and independent issues**, then search and select the projects. Expand **Task tags** in the scope details to filter each selected project, issues you participate in, or independent issues. If you receive issues from all projects, you can set one filter for that range. New ranges receive issues with any tag by default. Use **Remove** beside a scope to remove it from the draft.
 

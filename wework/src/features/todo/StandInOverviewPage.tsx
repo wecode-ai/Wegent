@@ -468,9 +468,10 @@ export function StandInOverviewPage({
     </p>
   )
   const device = findWorkbenchDevice(props.devices, deviceId) ?? undefined
+  const currentDeviceName = t('standIn.current_device')
   const messageCenterApi = useMemo(
-    () => api && createDingTalkMessageCenterApi(api, { deviceName: device?.name }),
-    [api, device?.name]
+    () => api && createDingTalkMessageCenterApi(api, { deviceName: currentDeviceName }),
+    [api, currentDeviceName]
   )
   const processingFailure = standInProcessingFailure(
     processing.status,

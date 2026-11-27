@@ -47,6 +47,46 @@ export function connectionConfigurationChanges(
   }
 }
 
+/** Rebase unsaved edits on the receipt without reviving old values for untouched sources. */
+export function rebaseConnectionDraft<T extends ConnectionConfiguration>(
+  draft: T,
+  before: ConnectionConfiguration,
+  accepted: T,
+  savedView: string
+): T {
+  const groupProviders = (configuration: ConnectionConfiguration) => {
+    const providers = new Map<string, NonNullable<ConnectionConfiguration['connections']>>()
+    for (const row of configuration.connections ?? []) {
+      const rows = providers.get(row.providerId)
+      if (rows) rows.push(row)
+      else providers.set(row.providerId, [row])
+    }
+    return providers
+  }
+  const beforeProviders = groupProviders(before)
+  const draftProviders = groupProviders(draft)
+  const editedProviders = new Set([...beforeProviders.keys(), ...draftProviders.keys()])
+  for (const provider of editedProviders) {
+    if (
+      provider === savedView ||
+      dequal(draftProviders.get(provider), beforeProviders.get(provider))
+    )
+      editedProviders.delete(provider)
+  }
+  const keepDraft = (view: string) => view !== savedView && hasConnectionDraft(draft, before, view)
+  return {
+    ...draft,
+    collaboration: keepDraft('projects') ? draft.collaboration : accepted.collaboration,
+    calendar: keepDraft('time') ? draft.calendar : accepted.calendar,
+    connections: editedProviders.size
+      ? [
+          ...(accepted.connections ?? []).filter(row => !editedProviders.has(row.providerId)),
+          ...(draft.connections ?? []).filter(row => editedProviders.has(row.providerId)),
+        ]
+      : accepted.connections,
+  }
+}
+
 export interface ConnectionSettingsInput {
   api?: StandInExecutorApi
   deviceId: string

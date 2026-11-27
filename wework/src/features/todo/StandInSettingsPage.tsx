@@ -47,6 +47,7 @@ import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
 import {
   connectionConfigurationChanges,
   hasConnectionDraft,
+  rebaseConnectionDraft,
 } from './standInConnectionSettingsModel'
 import { projectRefKey, updateProjectSource } from './standInProjects'
 import { createStandInRoleDraft } from './standInRoleDraft'
@@ -427,10 +428,9 @@ function StandInSettingsEditor({
     else if (scopeView) {
       const accepted = result.roles.find(row => row.id === role.id)
       let remainingDraft = result
-      if (scopeSettings && accepted) {
+      if (scopeSettings && savedRole && accepted) {
         const remaining = {
-          ...role,
-          ...connectionConfigurationChanges(role, accepted, scopeView),
+          ...rebaseConnectionDraft(role, savedRole, accepted, scopeView),
           version: accepted.version,
         }
         remainingDraft = {

@@ -259,6 +259,7 @@ test('saves only the selected connection without completing onboarding', async (
 test('defers setup in the assistant workspace and reopens it without saving', async () => {
   modelState.resolved = null
   const onClose = vi.fn()
+  const onOpenConversation = vi.fn()
   const onSave = vi.fn()
   const completeOnboarding = vi.fn()
   const user = userEvent.setup()
@@ -273,7 +274,7 @@ test('defers setup in the assistant workspace and reopens it without saving', as
       userId={7}
       deviceId="local"
       onClose={onClose}
-      onOpenConversation={vi.fn()}
+      onOpenConversation={onOpenConversation}
       configuration={{
         settings: { userId: 7, version: 0, executionDeviceId: 'local', roles: [] },
         loading: false,
@@ -289,6 +290,7 @@ test('defers setup in the assistant workspace and reopens it without saving', as
   )
   await user.click(await screen.findByTestId('stand-in-onboarding-close'))
   expect(onClose).not.toHaveBeenCalled()
+  expect(onOpenConversation).toHaveBeenCalledOnce()
   expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
   await user.click(screen.getByTestId('stand-in-onboarding-resume'))
   expect(await screen.findByTestId('stand-in-onboarding-complete')).toBeDisabled()

@@ -207,22 +207,26 @@ function MessageCenterContent({
                       />
                       {t(`runStatus.${status}`)}
                     </p>
-                    <p className="mt-1 text-xs text-text-secondary">
-                      {[
-                        snapshot.identity?.account,
-                        snapshot.identity?.organization,
-                        snapshot.deviceName,
-                        snapshot.updatedAt && t('updated', { at: formatTime(snapshot.updatedAt) }),
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </p>
-                    <p
-                      className="mt-1 text-xs text-text-secondary"
-                      data-testid="message-center-execution-hint"
-                    >
-                      {t('executionHint', { device: snapshot.deviceName })}
-                    </p>
+                    {snapshot.identity && (
+                      <p className="mt-1 text-xs text-text-secondary">
+                        {[
+                          snapshot.identity.account,
+                          snapshot.identity.organization,
+                          snapshot.updatedAt &&
+                            t('updated', { at: formatTime(snapshot.updatedAt) }),
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    )}
+                    {snapshot.identity && snapshot.deviceName && (
+                      <p
+                        className="mt-1 text-xs text-text-secondary"
+                        data-testid="message-center-execution-hint"
+                      >
+                        {t('executionHint', { device: snapshot.deviceName })}
+                      </p>
+                    )}
                   </div>
                   {(status === 'disconnected' || status === 'disabled') && (
                     <Button

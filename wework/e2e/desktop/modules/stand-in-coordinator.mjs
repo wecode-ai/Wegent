@@ -135,15 +135,14 @@ export function createStandInCoordinatorVerification({
         await control.command('getElementCount', '[data-testid="stand-in-work-view-scheduled"]'),
         '0'
       )
-      await control.command(
-        'clickWhenEnabled',
-        '[data-testid="stand-in-processing-settings-toggle"]'
-      )
+      await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]', {
+        text: '按每项安排的时间触发',
+      })
       await control.command('waitFor', `${CALENDAR_CONFIRM}[aria-checked="false"]`)
-      await control.command('click', CALENDAR_CONFIRM)
+      await control.command('clickWhenEnabled', CALENDAR_CONFIRM)
       await control.command('waitFor', `${CALENDAR_CONFIRM}[aria-checked="true"]`)
-      await control.command('click', CALENDAR_CONFIRM)
-      await control.command('click', '[data-testid="stand-in-calendar-policy"]')
+      await control.command('clickWhenEnabled', CALENDAR_CONFIRM)
+      await control.command('waitFor', `${CALENDAR_CONFIRM}[aria-checked="false"]`)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
@@ -303,11 +302,10 @@ export function createStandInCoordinatorVerification({
       await openConnectionTypePicker(control)
       await control.command('click', '[data-testid="stand-in-time-connections"]')
       await control.command('waitFor', '[data-testid="stand-in-calendar-empty"]')
-      await control.command(
-        'clickWhenEnabled',
-        '[data-testid="stand-in-processing-settings-toggle"]'
-      )
-      await control.command('waitFor', '[data-testid="stand-in-calendar-policy"]')
+      await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]', {
+        text: '按每项安排的时间触发',
+      })
+      await control.command('waitFor', CALENDAR_CONFIRM)
       await control.command('waitFor', '[data-testid="stand-in-save"]')
       const previousWindowSize = JSON.parse(
         await control.command('setMainWindowSize', 'body', {

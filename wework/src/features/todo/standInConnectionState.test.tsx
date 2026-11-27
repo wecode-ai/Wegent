@@ -16,6 +16,7 @@ import {
   type StandInConnectionNavigationHandle,
 } from './StandInConnectionSettings'
 import { createGitConnectionsModel } from './standInGitConnectionsModel'
+import { hasConnectionDraft, rebaseConnectionDraft } from './standInConnectionSettingsModel'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
 import { effectiveProjectSource, updateProjectSource, type ProjectSource } from './standInProjects'
@@ -49,6 +50,34 @@ it('restores the saved project draft after undoing scope edits on legacy roles',
   expect(
     updateProjectSource(all, { excludedProjects: [...scoped.excludedProjects].reverse() }, scoped)
   ).toBe(scoped)
+})
+
+it('adopts a refreshed DingTalk boundary after saving a project while retaining edited email', () => {
+  const dingtalk = {
+    providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+    id: 'group',
+    profile: 'test-account',
+    name: 'Test group',
+    kind: 'group',
+    policy: { automatic: true, askBeforeAct: true },
+    enabledAfter: '2026-11-27T08:00:00Z',
+  }
+  const original = { ...newStandInPrimaryRole('local'), connections: [dingtalk] }
+  const mailbox = { ...dingtalk, providerId: 'email', id: 'inbox', kind: 'mailbox' }
+  const draft = {
+    ...original,
+    collaboration: { ...original.collaboration, allProjects: true, enabled: true },
+    connections: [dingtalk, mailbox],
+  }
+  const accepted = {
+    ...draft,
+    connections: [{ ...dingtalk, enabledAfter: '2026-11-27T08:05:00Z' }],
+  }
+
+  const remaining = rebaseConnectionDraft(draft, original, accepted, 'projects')
+
+  expect(hasConnectionDraft(remaining, accepted, dingtalk.providerId)).toBe(false)
+  expect(remaining.connections).toEqual([...accepted.connections, mailbox])
 })
 
 it('drops the active wizard on Back and changes the scope list only after Save', async () => {
