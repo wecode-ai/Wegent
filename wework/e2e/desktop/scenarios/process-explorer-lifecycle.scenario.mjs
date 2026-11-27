@@ -97,15 +97,11 @@ export async function createDesktopScenario({ uiTimeoutMs }) {
         )
 
         await control.command('stopProcessExplorerFixture', 'body')
-        const exited = await waitForSnapshot(
+        await waitForSnapshot(
           control,
-          snapshot => fixtureRow(snapshot, pid)?.exited === true,
-          'An exited process did not linger as an exited row',
+          snapshot => fixtureRow(snapshot, pid)?.exited === true && totalsMatchRows(snapshot),
+          'An exited process did not linger without changing the explorer totals',
           uiTimeoutMs
-        )
-        assert.ok(
-          totalsMatchRows(exited),
-          'An exited process was still counted in the explorer totals'
         )
       } finally {
         await control.command('stopProcessExplorerFixture', 'body')
