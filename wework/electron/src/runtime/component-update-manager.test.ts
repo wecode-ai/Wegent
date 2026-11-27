@@ -238,6 +238,7 @@ describe('ComponentUpdateManager', () => {
       join(fixture.resources, 'codex', 'vendor', 'test-target', 'bin', 'codex')
     )
     expect(paths.dws).toBe(join(fixture.resources, 'bin', 'dws'))
+    expect(paths.dwsSource).toBe('bundled')
     await expect(
       readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'code.js'), 'utf8')
     ).resolves.toBe('plugin code')

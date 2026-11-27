@@ -535,11 +535,17 @@
     "description": "管理所有用户可用的公共 AI 模型",
     "loading": "加载模型中...",
     "no_models": "暂无公共模型",
+    "no_search_results": "没有匹配 “{{search}}” 的模型",
+    "search_placeholder": "按模型名称搜索",
+    "clear_search": "清除搜索",
     "create_model": "创建模型",
     "edit_model": "编辑模型",
     "delete_model": "删除模型",
     "model_id": "模型 ID",
     "namespace_label": "命名空间",
+    "pagination": {
+      "total_count": "共 {{count}} 个模型"
+    },
     "status": {
       "active": "启用",
       "inactive": "禁用",

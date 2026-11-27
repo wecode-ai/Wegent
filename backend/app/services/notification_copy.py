@@ -195,19 +195,24 @@ def push_copy(
     )
     headline = _push_headline(kind, title, data)
     detail = body.strip()
+    card_headline = (
+        _card_headline(kind, title, data)
+        if facts or kind == "issue_dispatch_assignment"
+        else headline
+    )
     if not facts:
         # A notification without structured context keeps its own body, and has
         # nothing a card header could be shortened against either.
         return PushNotification(
             headline=headline,
-            card_headline=headline,
+            card_headline=card_headline,
             detail=detail,
             kind=kind,
             payload=data,
         )
     return PushNotification(
         headline=headline,
-        card_headline=_card_headline(kind, title, data),
+        card_headline=card_headline,
         facts=tuple((label, str(value)) for label, value in facts),
         detail_label=_detail_label(kind, data),
         detail=detail,
@@ -254,6 +259,9 @@ def _card_headline(kind: str, title: str, payload: dict[str, Any]) -> str:
     if kind == "assignment":
         actor = payload.get("actorName")
         return f"📌 {actor} 把任务分配给了你" if actor else f"📌 {title}"
+    if kind == "issue_dispatch_assignment":
+        actor = str(payload.get("actorName") or "").strip()
+        return f"{actor} 将任务分配给你" if actor else "你收到一项任务"
     return title
 
 

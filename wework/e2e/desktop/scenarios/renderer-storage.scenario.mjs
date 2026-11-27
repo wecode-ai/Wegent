@@ -4,11 +4,41 @@ import { join } from 'node:path'
 import { verifyPerformanceRecording } from '../modules/performance-recording.mjs'
 
 import { verifyWorkbenchBackgroundSurfaces } from '../modules/appearance-flows.mjs'
+import { ACTIVE_COMPOSER_SELECTOR } from '../modules/shared.mjs'
 
 const STORAGE_ENTRIES = {
   'wework.e2e.renderer-storage.model': 'model-config',
   'wework.e2e.renderer-storage.draft': 'unsaved-draft',
   'wework.e2e.renderer-storage.layout': 'layout-state',
+}
+const UNSENT_DRAFT = 'WEWORK_RENDERER_STORAGE_UNSENT_DRAFT'
+
+async function verifyComposerDraftRecovery({ control, restartDesktopApp, uiTimeoutMs }) {
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: UNSENT_DRAFT })
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    text: UNSENT_DRAFT,
+    stableMs: 500,
+    timeoutMs: uiTimeoutMs,
+  })
+
+  await restartDesktopApp({ forceStop: true })
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    visible: true,
+    text: UNSENT_DRAFT,
+    stableMs: 500,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(
+    await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
+    UNSENT_DRAFT,
+    'The active blank-chat draft was not restored after a forced restart'
+  )
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
 }
 
 export async function createDesktopScenario({
@@ -22,6 +52,7 @@ export async function createDesktopScenario({
     async verify(control) {
       await control.command('snapshot', 'body')
       await verifyWorkbenchBackgroundSurfaces({ control })
+      await verifyComposerDraftRecovery({ control, restartDesktopApp, uiTimeoutMs })
 
       const originBeforeRestart = await control.command('getLocationOrigin', 'body')
       for (const [key, value] of Object.entries(STORAGE_ENTRIES)) {

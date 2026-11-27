@@ -158,13 +158,12 @@ export function createDesktopScenario(options) {
         await rpc(control, 'runtime.connections.observers.start', lease)
         await rpc(control, 'runtime.connections.observers.stop', lease)
       }
-      await waitForValue(
-        () => snapshot(),
+      const rows = await waitForValue(
+        snapshot,
         rows => rows.every(row => row.section !== 'observations'),
         'Retired observation histories were not reclaimed by the real scheduler',
         60_000
       )
-      const rows = snapshot()
       for (const row of rows.filter(row => row.section === 'observers')) {
         const observer = JSON.parse(row.value)
         assert.equal(observer.status, 'stopped')

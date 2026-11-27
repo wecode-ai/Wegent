@@ -25,6 +25,30 @@ function inboxWork(id: string): StandInInboxWork {
   }
 }
 
+it('keeps previously recorded owner replies visible without exposing ordinary skips', async () => {
+  const skippedWork = (id: string, reason: string): StandInInboxWork => {
+    const work = inboxWork(id)
+    return {
+      ...work,
+      source: { ...work.source, delegated: true },
+      status: 'sent',
+      messageCount: 1,
+      delegationResult: { action: 'skip', status: 'complete', reason },
+    }
+  }
+  const ownerReply = skippedWork('owner-reply', 'The account owner already responded.')
+  const greeting = skippedWork('greeting', 'This greeting needs no response.')
+  const inbox = vi
+    .fn<StandInExecutorApi['inbox']>()
+    .mockResolvedValue({ items: [ownerReply, greeting], sourceErrors: [] })
+  const api = { inbox } as unknown as StandInExecutorApi
+  const { result } = renderHook(() => useStandInInbox(api, 7, 'mac'))
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(result.current.items).toEqual([ownerReply])
+})
+
 it('prefers the backend-filtered task summary over a stale runtime snapshot', () => {
   const work = {
     ...inboxWork('visible'),

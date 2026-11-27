@@ -54,7 +54,8 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     excluding: null,
     newPolicy: { automatic: true, askBeforeAct: true, immediate: initial.role.id !== '@primary' },
     kind: initial.provider.resourceKinds[0] ?? '',
-    scope: !initial.delegatedDingTalk && initial.provider.allResourceKinds?.length ? 'all' : 'selected',
+    scope:
+      !initial.delegatedDingTalk && initial.provider.allResourceKinds?.length ? 'all' : 'selected',
     selection: [],
     query: '',
     results: [],
@@ -123,26 +124,33 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
   }
   const search = async (cursor?: string) => {
     if (!listeners.size || state.busy || !state.query.trim()) return
+    const profile = input.delegatedDingTalk ? input.provider.availability.profile : undefined
+    if (input.delegatedDingTalk && !profile) return
     const sequence = ++searchSequence
     setBusy(true)
     setError(null)
     setSearched(false)
     try {
-      const result = await input.api.searchConnectionResources(
+      const request = [
         input.deviceId,
         input.provider.id,
         state.kind,
         state.query.trim(),
-        cursor
-      )
+        cursor,
+      ] as const
+      const result = profile
+        ? await input.api.searchConnectionResources(...request, undefined, profile)
+        : await input.api.searchConnectionResources(...request)
       if (!isCurrent(sequence)) return
-      const items = result.items
-        .filter(row =>
-          input.delegatedDingTalk
-            ? isDingTalkDelegationSource(row) && matchesDingTalkAccount(input.provider.availability, row)
-            : !state.excluding ||
-              (row.profile === state.excluding.profile && row.kind === state.excluding.kind)
-        )
+      const items = result.items.filter(row =>
+        input.delegatedDingTalk
+          ? row.providerId === input.provider.id &&
+            row.kind === state.kind &&
+            isDingTalkDelegationSource(row) &&
+            matchesDingTalkAccount(input.provider.availability, row)
+          : !state.excluding ||
+            (row.profile === state.excluding.profile && row.kind === state.excluding.kind)
+      )
       setResults(previous => {
         const merged = new Map<string, Connection>()
         for (const row of cursor ? [...previous, ...items] : items) {
@@ -193,7 +201,8 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     if (current.delegatedDingTalk) {
       const selected = items.filter(
         row =>
-          isDingTalkDelegationSource(row) && matchesDingTalkAccount(current.provider.availability, row)
+          isDingTalkDelegationSource(row) &&
+          matchesDingTalkAccount(current.provider.availability, row)
       )
       if (!selected.length) return
       const retained = (current.role.connections ?? []).filter(

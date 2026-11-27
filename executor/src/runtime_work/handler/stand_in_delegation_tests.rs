@@ -2,6 +2,185 @@ use super::*;
 
 const QUESTION_AT: i64 = 1_795_507_200_000;
 
+fn enable_dingtalk_delegation(store: &LocalTaskStore, device: &str) -> Value {
+    let mut settings = store.personal_stand_in(7, device).unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":""});
+    settings["primary"]["connections"] = json!([{
+        "providerId":DINGTALK_PROVIDER,"kind":"direct","id":"peer","name":"Peer",
+        "profile":"current","accountId":"account","policy":{"automatic":false,"askBeforeAct":true}
+    }]);
+    settings["primary"]["delegation"] = json!({"action":"enable"});
+    store.save_personal_stand_in(7, device, settings).unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn automatic_receipt_check_stops_on_confirmation_or_when_only_uncertainty_remains() {
+    for (confirmation, expected_checks) in [(Some(2), 2), (None, 3)] {
+        let mut checks = 0;
+        poll_delegated_receipt(|| {
+            checks += 1;
+            let status = if confirmation == Some(checks) {
+                "sent"
+            } else {
+                "unknown"
+            };
+            std::future::ready(Ok(json!({"status":status})))
+        })
+        .await
+        .unwrap();
+        assert_eq!(checks, expected_checks);
+    }
+    let started = tokio::time::Instant::now();
+    poll_delegated_receipt(std::future::pending).await.unwrap();
+    assert_eq!(started.elapsed(), Duration::from_secs(10));
+}
+
+#[tokio::test]
+async fn interrupted_dingtalk_submission_reopens_as_unknown_without_replaying() {
+    let root = tempfile::tempdir().unwrap();
+    let device = "desktop";
+    let make_handler = || RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime.json")),
+        task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+        ..RuntimeWorkRpcHandler::new(device, "unused")
+    };
+    let handler = make_handler();
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let settings = enable_dingtalk_delegation(&store, device);
+    let source = &settings["primary"]["connections"][0];
+    let event = json!({"id":"question","text":"Where is the guide?","at":"2099-01-01T00:00:00Z"});
+    let work = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let record_id = work["latestMessage"]["recordId"].as_str().unwrap();
+    let gate = handler.task_send_gate(&format!("dingtalk-dispatch:{work_id}"));
+    let sending = gate.lock().await;
+    assert!(store
+        .record_delegation_decision(
+            7,
+            device,
+            work_id,
+            record_id,
+            json!({
+                "action":"reply","template":"document","attemptId":"attempt-question",
+                "policyVersion":settings["primary"]["delegation"]["version"]
+            }),
+        )
+        .unwrap()
+        .is_some());
+    let list = || json!({"userId":7,"roleId":"@primary"});
+    let in_flight = handler.list_connection_stand_in_work(list()).unwrap();
+    let submitted_at = &in_flight["items"][0]["delegationResult"]["submittedAt"];
+    assert!(submitted_at.is_string());
+    assert_eq!(
+        in_flight["items"][0]["delegationResult"]["status"],
+        "submitting"
+    );
+    drop(sending);
+    drop(handler);
+    drop(store);
+
+    let restarted = make_handler();
+    let store = LocalTaskStore::open(restarted.task_store_path.as_ref()).unwrap();
+    let recovered = restarted.list_connection_stand_in_work(list()).unwrap();
+    let result = &recovered["items"][0]["delegationResult"];
+    assert_eq!(result["status"], "unknown");
+    assert_eq!(result["attemptId"], "attempt-question");
+    assert_eq!(result["submittedAt"], *submitted_at);
+    assert!(result["receiptId"].is_null());
+    let replay = store
+        .ingest_stand_in_message(7, "@primary", source, &event, None)
+        .unwrap();
+    assert_eq!(replay["id"], work_id);
+    assert_eq!(replay["messageCount"], 1);
+    restarted
+        .run_connection_stand_in_work(json!({"userId":7,"workId":work_id}))
+        .await
+        .unwrap();
+    let replayed = restarted.list_connection_stand_in_work(list()).unwrap();
+    assert_eq!(replayed["items"][0]["delegationResult"], *result);
+}
+
+#[tokio::test]
+async fn dingtalk_receipt_and_takeover_require_the_current_delegated_account() {
+    let root = tempfile::tempdir().unwrap();
+    let device = "desktop";
+    let handler = RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime.json")),
+        task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+        ..RuntimeWorkRpcHandler::new(device, "unused")
+    };
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let settings = enable_dingtalk_delegation(&store, device);
+    let source = &settings["primary"]["connections"][0];
+    let mut old_source = source.clone();
+    old_source["accountId"] = json!("previous-account");
+    let event =
+        |id: &str| json!({"id":id,"text":"Where is the guide?","at":"2099-01-01T00:00:00Z"});
+    let old_work = store
+        .ingest_stand_in_message(7, "@primary", &old_source, &event("old-question"), None)
+        .unwrap();
+    let moved_work = store
+        .ingest_stand_in_message(7, "@primary", source, &event("moved-question"), None)
+        .unwrap();
+    let old_id = old_work["id"].as_str().unwrap();
+    let old_record = old_work["latestMessage"]["recordId"].as_str().unwrap();
+    let moved_record = moved_work["latestMessage"]["recordId"].as_str().unwrap();
+    let db = rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap();
+    // A historical mixed work is readable through its current visible message.
+    assert_eq!(
+        db.execute(
+            "UPDATE loop_items SET metadata=json_set(metadata,'$.workId',?1) WHERE id=?2",
+            (old_id, moved_record),
+        )
+        .unwrap(),
+        1
+    );
+    let save_receipt = |record_id: &str, receipt_id: &str| {
+        let result = json!({"action":"reply","status":"sent","receiptId":receipt_id});
+        assert_eq!(
+            db.execute(
+                "UPDATE loop_items SET metadata=json_set(metadata,'$.delegationResult',json(?1),'$.dispatchStatus','sent') WHERE id=?2",
+                (result.to_string(), record_id),
+            )
+            .unwrap(),
+            1
+        );
+    };
+    save_receipt(old_record, "old-receipt");
+    super::super::stand_in_work::validate_work_accounts(&store, 7, device, old_id, None).unwrap();
+    let request = |work: &str, record: &str| json!({"userId":7,"workId":work,"recordId":record});
+    let receipt_error = handler
+        .verify_delegated_dingtalk_delivery(request(old_id, old_record))
+        .await
+        .unwrap_err();
+    assert_eq!(receipt_error.code, "permission_denied");
+    let takeover_error = handler
+        .take_over_delegated_dingtalk_work(request(old_id, old_record))
+        .unwrap_err();
+    assert_eq!(takeover_error.code, "permission_denied");
+    assert!(store.stand_in_work(7, old_id).unwrap()["takenOverAt"].is_null());
+
+    let work = store
+        .ingest_stand_in_message(7, "@primary", source, &event("current-question"), None)
+        .unwrap();
+    let work_id = work["id"].as_str().unwrap();
+    let record_id = work["latestMessage"]["recordId"].as_str().unwrap();
+    save_receipt(record_id, "visible-receipt");
+    let receipt = handler
+        .verify_delegated_dingtalk_delivery(request(work_id, record_id))
+        .await
+        .unwrap();
+    assert_eq!(receipt["delegationResult"]["receiptId"], "visible-receipt");
+    let takeover = handler
+        .take_over_delegated_dingtalk_work(request(work_id, record_id))
+        .unwrap();
+    let result = &takeover["work"]["delegationResult"];
+    assert_eq!(result["receiptId"], "visible-receipt");
+    assert_eq!(result["takenOver"], true);
+}
+
 fn conversation(question: &str, history: &[(&str, &str)]) -> Value {
     let messages: Vec<_> = history
         .iter()
@@ -55,6 +234,14 @@ fn assert_reply(
     let reply = supported_reply(snapshot, proposed).expect("the reply has verifiable evidence");
     assert_eq!(reply.template, template);
     assert_eq!(reply.evidence_ids.as_slice(), evidence_ids);
+    assert_eq!(reply.evidence.len(), evidence_ids.len());
+    for (evidence, expected_id) in reply.evidence.iter().zip(evidence_ids) {
+        assert_eq!(evidence["messageId"], *expected_id);
+        assert!(evidence["excerpt"]
+            .as_str()
+            .is_some_and(|excerpt| !excerpt.is_empty()));
+    }
+    assert_eq!(reply.text, text);
     assert_eq!(reply.text, text);
 }
 
@@ -326,24 +513,4 @@ fn only_an_incoming_text_question_can_receive_a_delegated_reply() {
             "{field} changed"
         );
     }
-}
-
-#[test]
-fn receipt_requires_a_channel_message_id() {
-    let original = json!({"id":"original"});
-    assert_eq!(receipt_id(&json!({"success":true}), &original), None);
-    assert_eq!(
-        receipt_id(
-            &json!({"success":true,"result":{"openMessageId":"original"}}),
-            &original
-        ),
-        None
-    );
-    assert_eq!(
-        receipt_id(
-            &json!({"success":true,"result":{"openMessageId":"sent"}}),
-            &original
-        ),
-        Some("sent")
-    );
 }

@@ -12,6 +12,7 @@ packageExtensionsChecksum: sha256-3GPW0RD2OEoa+ghjgZDxiKOdOuYbfpGKnEfG8cSqwz0=
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': 269abd13fc9825762095194fdc00cad885f9df61a3a54f7d1a266df1fcd82501
   '@file-viewer/renderer-text@2.1.26': 07f0ee55b85ffe85a3d499bcc28faf7ce0f10ce66bff3db190de6980f45726a5
+  '@pierre/diffs@1.6.4': 3e8a3fb82e97674300d125dc6879cccfaf56eacb049c3ddc30c116122b37c9d6
   '@ui-sdk/core@0.1.0-beta.10': 094ff83e027272062f9ab53ba87a26cb18a96a9eb1e5dee80861f6576d1bf8e7
   '@xterm/xterm@6.0.0': b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb
   mermaid@11.15.0: 4942cd6c7680950e5d9b659c31069ee65bbe8a3a8274d1be4669202e1cc30a1e
@@ -278,6 +279,9 @@ importers:
       driver.js:
         specifier: ^1.3.6
         version: 1.8.0
+      entities:
+        specifier: 6.0.1
+        version: 6.0.1
       framer-motion:
         specifier: ^12.29.2
         version: 12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -324,6 +328,12 @@ importers:
         specifier: 2.1.0
         version: 2.1.0
       micromark-util-combine-extensions:
+        specifier: 2.0.1
+        version: 2.0.1
+      micromark-util-decode-string:
+        specifier: 2.0.1
+        version: 2.0.1
+      micromark-util-sanitize-uri:
         specifier: 2.0.1
         version: 2.0.1
       msw:
@@ -420,6 +430,9 @@ importers:
       '@types/dompurify':
         specifier: ^3.2.0
         version: 3.2.0
+      '@types/hast':
+        specifier: 3.0.5
+        version: 3.0.5
       '@types/jest':
         specifier: ^29.5.0
         version: 29.5.14
@@ -718,8 +731,8 @@ importers:
         specifier: 2.0.3
         version: 2.0.3(@modelcontextprotocol/client@2.4.0)(@modelcontextprotocol/core@2.4.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(zod@4.4.3)
       '@pierre/diffs':
-        specifier: ^1.6.4
-        version: 1.6.4(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: 1.6.4
+        version: 1.6.4(patch_hash=3e8a3fb82e97674300d125dc6879cccfaf56eacb049c3ddc30c116122b37c9d6)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(shiki@4.2.0)
@@ -855,6 +868,9 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
+      undici:
+        specifier: 7.27.2
+        version: 7.27.2
       unified:
         specifier: ^11.0.5
         version: 11.0.5
@@ -12556,7 +12572,7 @@ snapshots:
     dependencies:
       pako: 1.0.11
 
-  '@pierre/diffs@1.6.4(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@pierre/diffs@1.6.4(patch_hash=3e8a3fb82e97674300d125dc6879cccfaf56eacb049c3ddc30c116122b37c9d6)(@shikijs/themes@4.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@pierre/highlights': 0.4.0
       '@pierre/theme': 2.0.0

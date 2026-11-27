@@ -10,20 +10,22 @@ function nonEmptyString(value) {
 
 function activeProfile(response) {
   const profile = nonEmptyString(response.currentProfile)
-  if (!profile)
-    throw Object.assign(new Error('Authorize the account'), { code: 'connector_auth_required' })
+  if (!profile) throw authenticationRequired()
   return { profile, account: response.profiles?.find(row => row.profile === profile) }
 }
 
 export function activeAccountIdentity(response) {
-  return describeAccount(activeProfile(response))
+  const { profile, account } = activeProfile(response)
+  return accountIdentity(account, profile)
 }
 
-function describeAccount({ profile, account }) {
+function accountIdentity(account, profile) {
   const userId = nonEmptyString(account?.userId)
   const organizationId = nonEmptyString(account?.corpId) ?? nonEmptyString(account?.orgId)
   return {
     profile,
+    userId,
+    organizationId,
     ...(userId &&
       organizationId && {
         accountId: createHash('sha256')
@@ -35,12 +37,57 @@ function describeAccount({ profile, account }) {
   }
 }
 
+export function accountProfiles(response) {
+  if (!Array.isArray(response.profiles)) throw invalid('Missing account profiles')
+  const profiles = new Map()
+  for (const row of response.profiles) {
+    if (!validProfilePart(row?.corpId) || !validProfilePart(row?.userId)) continue
+    const profile = `${row.corpId}:${row.userId}`
+    if (profiles.has(profile)) throw invalid('Duplicate DingTalk account profile')
+    profiles.set(profile, { row, identity: accountIdentity(row, profile) })
+  }
+  return profiles
+}
+
+function validProfilePart(value) {
+  return typeof value === 'string' && value !== '*' && /^[^-\s,:\u0000][^\s,:\u0000]*$/.test(value)
+}
+
+function accountChanged() {
+  return Object.assign(new Error('The active DingTalk account or organization changed'), {
+    code: 'dingtalk_account_changed',
+  })
+}
+
+function authenticationRequired() {
+  return Object.assign(new Error('Authorize the account'), { code: 'connector_auth_required' })
+}
+
+export async function verifyAccountToken(ctx, identity, readTool) {
+  const status = await readTool(ctx, 'authStatus', { profile: identity.profile })
+  if (['ciphertext_key_mismatch', 'dek_missing', 'keychain_unavailable'].includes(status.reason))
+    throw Object.assign(new Error('DingTalk credentials could not be checked'), {
+      code: 'dingtalk_credentials_unavailable',
+    })
+  if (status.authenticated !== true || status.token_valid !== true) throw authenticationRequired()
+  if (identity.userId !== status.user_id || identity.organizationId !== status.corp_id)
+    throw accountChanged()
+}
+
+export async function verifiedProfile(ctx, profile, readTool, response) {
+  const profiles = accountProfiles(response ?? (await readTool(ctx, 'listProfiles')))
+  const identity = profiles.get(profile)?.identity
+  if (!identity) throw accountChanged()
+  await verifyAccountToken(ctx, identity, readTool)
+  return identity
+}
+
 function invalid(message) {
   return Object.assign(new Error(message), { code: 'dingtalk_response_invalid' })
 }
 
 function exactId(value) {
-  if (!nonEmptyString(value) || /[\s,]/u.test(value) || value === '*')
+  if (!nonEmptyString(value) || /^-|[\s,\u0000]/u.test(value) || value === '*')
     throw invalid('Delegation requires one exact DingTalk conversation')
   return value
 }
@@ -59,21 +106,37 @@ export function validateDelegatedSource(source) {
 
 export async function boundAccount(ctx, source, readTool) {
   validateDelegatedSource(source)
-  const selected = activeProfile(await readTool(ctx, 'listProfiles'))
-  const active = describeAccount(selected)
+  if (source.organizationId) {
+    const identity = await verifiedProfile(ctx, source.profile, readTool)
+    if (
+      identity.organizationId !== source.organizationId ||
+      identity.accountId !== source.accountId
+    )
+      throw accountChanged()
+    return identity
+  }
+  const { profile, account } = activeProfile(await readTool(ctx, 'listProfiles'))
+  const active = accountIdentity(account, profile)
   if (
     active.profile !== source.profile ||
     (active.accountId && active.accountId !== source.accountId)
   )
-    throw Object.assign(new Error('The active DingTalk account changed'), {
-      code: 'dingtalk_account_changed',
-    })
+    throw accountChanged()
   if (!active.accountId) throw invalid('The active DingTalk account cannot be verified')
-  return selected.account
+  return active
 }
 
 export async function exactConversation(ctx, source, until, readTool, validateNativePage) {
   if (source.kind === 'group') return source.id
+  if (source.organizationId) {
+    const { result } = await readTool(ctx, 'conversationInfo', {
+      peer: source.id,
+      profile: source.profile,
+    })
+    const conversation = Array.isArray(result) && result.length === 1 ? result[0] : result
+    const info = conversation?.conversationInfo ?? conversation
+    return exactId(info?.openConversationId)
+  }
   const page = await readTool(ctx, 'listDirectConversation', {
     peer: source.id,
     profile: source.profile,
@@ -114,27 +177,47 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
       page => normalize(page, false),
       readTool
     )
-    if (!mentions.some(row => row.id === trigger.id && !row.recalled))
+    if (!mentions.items.some(row => row.id === trigger.id && !row.recalled))
       throw invalid('The original message is no longer confirmed as a group mention')
   }
-  const records = await contextPages(
+  // Older history is evidence for an answer, not the authorization boundary.
+  // Keep it bounded so a busy conversation can still enter model evaluation.
+  const history = await contextPages(
     ctx,
     'searchMessages',
     {
       ...params,
       start: new Date(at - CONTEXT_LOOKBACK_MS).toISOString(),
+      end: new Date(at).toISOString(),
+      conversationIds: conversationId,
+      ...(!group && { senderIds: `${source.id},${ownId}` }),
+    },
+    page => normalize(page, true),
+    readTool,
+    { allowIncomplete: true }
+  )
+  // Messages after the question must be complete: an owner takeover in this
+  // window cancels the automatic reply.
+  const later = await contextPages(
+    ctx,
+    'searchMessages',
+    {
+      ...params,
+      start: new Date(at).toISOString(),
       conversationIds: conversationId,
       ...(!group && { senderIds: `${source.id},${ownId}` }),
     },
     page => normalize(page, true),
     readTool
   )
-  const target = records.find(row => row.id === trigger.id && !row.isOwn)
+  const target =
+    later.items.find(row => row.id === trigger.id && !row.isOwn) ??
+    history.items.find(row => row.id === trigger.id && !row.isOwn)
   if (!target || target.recalled || Date.parse(target.at) !== at)
     throw invalid('The original message is missing or changed')
-  const later = records.filter(row => row.id !== target.id && Date.parse(row.at) >= at)
-  const related = group ? relatedGroupMessages(target, later) : later
-  const messages = records.filter(row => Date.parse(row.at) < at)
+  const laterMessages = later.items.filter(row => row.id !== target.id && Date.parse(row.at) >= at)
+  const related = group ? relatedGroupMessages(target, laterMessages) : laterMessages
+  const messages = history.items.filter(row => Date.parse(row.at) < at)
   return {
     items: messages,
     hasMore: false,
@@ -146,13 +229,97 @@ export async function delegatedMessageContext(ctx, source, trigger, ownId, provi
   }
 }
 
-async function contextPages(ctx, tool, query, normalize, readTool) {
+export async function delegatedRecoveryEvents(ctx, source, window, ownId, provider) {
+  const { readTool, validateNativePage, normalizeMessages } = provider
+  const { start, end, after, limit } = window
+  const gap = reason => ({ events: [], reason })
+  try {
+    const conversationId = await exactConversation(ctx, source, end, readTool, validateNativePage)
+    if (!conversationId) return { events: [] }
+    const normalize = (page, sourceEvents) =>
+      normalizeMessages(source, page, ownId, undefined, {
+        conversationId,
+        delegated: true,
+        includeOwn: sourceEvents,
+        sourceEvents,
+      })
+    const query = { profile: source.profile, start, end }
+    const until = Date.parse(end)
+    const records = await contextPages(
+      ctx,
+      'searchMessages',
+      { ...query, conversationIds: conversationId },
+      page =>
+        normalize(page, true).filter(({ at }) => {
+          const time = Date.parse(at)
+          return time > after && time <= until
+        }),
+      readTool,
+      { limit: limit + 1, maxItems: limit }
+    )
+    if (!records) return gap('volume')
+    const candidates = records.items.filter(row => row.eligible && row.textMessage && !row.recalled)
+    const events =
+      source.kind === 'group' && candidates.length
+        ? await verifiedRecoveredMentions(
+            ctx,
+            query,
+            conversationId,
+            candidates,
+            normalize,
+            readTool
+          )
+        : candidates
+    return {
+      events: events.map(({ eligible: _eligible, ...event }) => event),
+    }
+  } catch (error) {
+    if (error.code !== 'dingtalk_response_invalid') throw error
+    return gap('coverage')
+  }
+}
+
+async function verifiedRecoveredMentions(
+  ctx,
+  query,
+  conversationId,
+  candidates,
+  normalize,
+  readTool
+) {
+  const mentions = await contextPages(
+    ctx,
+    'listMentions',
+    { ...query, start: candidates[0].at, group: conversationId },
+    page => normalize(page, false),
+    readTool
+  )
+  const byId = new Map(mentions.items.map(row => [row.id, row]))
+  return candidates.filter(row => {
+    const mention = byId.get(row.id)
+    if (!mention || mention.recalled) return false
+    if (row.at !== mention.at || row.senderId !== mention.senderId || row.text !== mention.text)
+      throw invalid('DingTalk recovery mention changed during collection')
+    return true
+  })
+}
+
+async function contextPages(
+  ctx,
+  tool,
+  query,
+  normalize,
+  readTool,
+  { allowIncomplete = false, limit = 100, maxItems } = {}
+) {
   let cursor = '0'
   const seen = new Set([cursor])
   const items = new Map()
   let bytes = 0
   for (let index = 0; index < MAX_CONTEXT_PAGES; index += 1) {
-    const page = await readTool(ctx, tool, { ...query, limit: '100', cursor })
+    const page = await readTool(ctx, tool, { ...query, limit: String(limit), cursor })
+    if (page.partial === true || page.result?.partial === true)
+      throw invalid('DingTalk returned partial conversation history')
     for (const item of normalize(page)) {
       const previous = items.get(item.id)
       if (previous && JSON.stringify(previous) !== JSON.stringify(item))
@@ -161,18 +328,32 @@ async function contextPages(ctx, tool, query, normalize, readTool) {
       if (item.text.length > 20_000 || bytes > MAX_CONTEXT_BYTES)
         throw invalid('The bounded DingTalk context is too large')
       items.set(item.id, item)
+      if (maxItems !== undefined && items.size > maxItems) return null
     }
     if (page.result?.hasMore === false)
-      return [...items.values()].sort(
-        (left, right) =>
-          Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
-      )
+      return {
+        items: [...items.values()].sort(
+          (left, right) =>
+            Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+        ),
+        complete: true,
+      }
     const next = nonEmptyString(page.result?.nextCursor)
     if (page.result?.hasMore !== true || !next || seen.has(next))
       throw invalid('Incomplete DingTalk context pagination')
+    if (index + 1 === MAX_CONTEXT_PAGES && !allowIncomplete)
+      throw invalid('The bounded DingTalk context is incomplete')
     cursor = next
     seen.add(cursor)
   }
+  if (allowIncomplete)
+    return {
+      items: [...items.values()].sort(
+        (left, right) =>
+          Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+      ),
+      complete: false,
+    }
   throw invalid('The bounded DingTalk context is incomplete')
 }
 

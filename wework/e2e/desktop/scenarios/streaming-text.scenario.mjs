@@ -194,6 +194,7 @@ export function createDesktopScenario({
       backgroundWindowRefresh.cleanup()
       completion.cleanup()
       commandCancellation.cleanup()
+      conversationScrollbar.cleanup()
       guidanceOrder.cleanup()
     },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',

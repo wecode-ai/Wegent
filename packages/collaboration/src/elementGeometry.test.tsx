@@ -216,9 +216,18 @@ test('measures typography on layout changes without reading it on content-only c
   const readWidth = vi
     .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
     .mockImplementation(() => width)
-  function TypographyProbe({ theme, text }: { theme: string; text: string }) {
+  const readStyle = vi.spyOn(window, 'getComputedStyle')
+  function TypographyProbe({
+    theme,
+    text,
+    layoutRevision,
+  }: {
+    theme: string
+    text: string
+    layoutRevision?: string
+  }) {
     const ref = useRef<HTMLDivElement>(null)
-    const typography = useElementTypography(ref, [])
+    const typography = useElementTypography(ref, [], true, layoutRevision)
     return (
       <div className="collaboration-theme" data-theme={theme}>
         <div ref={ref}>{text}</div>
@@ -230,13 +239,44 @@ test('measures typography on layout changes without reading it on content-only c
   act(() => root.render(<TypographyProbe theme="light" text="partial" />))
   expect(container.querySelector('output')?.textContent).toBe('400')
   readWidth.mockClear()
+  readStyle.mockClear()
   act(() => root.render(<TypographyProbe theme="light" text="complete" />))
   expect(readWidth).not.toHaveBeenCalled()
+  expect(readStyle).not.toHaveBeenCalled()
 
-  width = 320
-  notify()
+  const observer = observers[0]
+  const element = container.querySelector('.collaboration-theme > div')!
+  const observeWidth = (observedWidth: number, height: number) =>
+    act(() =>
+      observer.callback(
+        [
+          {
+            target: element,
+            contentRect: new DOMRect(0, 0, observedWidth, height),
+          } as ResizeObserverEntry,
+        ],
+        observer as unknown as ResizeObserver
+      )
+    )
+  observeWidth(400, 800)
+  expect(readStyle).not.toHaveBeenCalled()
+  observeWidth(320, 800)
   expect(container.querySelector('output')?.textContent).toBe('320')
-  readWidth.mockClear()
-  await act(async () => root.render(<TypographyProbe theme="dark" text="complete" />))
+  expect(readWidth).not.toHaveBeenCalled()
+  readStyle.mockClear()
+  width = 560
+  act(() => root.render(<TypographyProbe theme="light" text="complete" layoutRevision="split" />))
+  // The committed layout publishes its real width without waiting for ResizeObserver.
+  expect(container.querySelector('output')?.textContent).toBe('560')
   expect(readWidth).toHaveBeenCalledOnce()
+  expect(readStyle).not.toHaveBeenCalled()
+  readWidth.mockClear()
+  observeWidth(560, 1200)
+  expect(readWidth).not.toHaveBeenCalled()
+  expect(readStyle).not.toHaveBeenCalled()
+  await act(async () =>
+    root.render(<TypographyProbe theme="dark" text="complete" layoutRevision="split" />)
+  )
+  expect(readWidth).toHaveBeenCalledOnce()
+  expect(readStyle).toHaveBeenCalled()
 })

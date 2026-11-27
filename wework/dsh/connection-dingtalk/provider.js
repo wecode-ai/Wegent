@@ -1,9 +1,13 @@
 import {
+  accountProfiles,
   activeAccountIdentity,
   boundAccount,
   delegatedMessageContext,
+  delegatedRecoveryEvents,
   exactConversation,
   validateDelegatedSource,
+  verifiedProfile,
+  verifyAccountToken,
 } from './delegated-reads.js'
 import { createReadCursor } from './read-cursor.js'
 import { readImages } from './read-images.js'
@@ -12,19 +16,40 @@ const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 const GROUP_CATCH_UP_WINDOW_MINUTES = 15
 const DELEGATION_CATCH_UP_MS = 30 * 60_000
 const DELEGATION_CATCH_UP_MESSAGES = 50
+// A durable checkpoint older than four normal 15s polls also detects a restart
+// or a missed poll when the process could not persist a transient error.
+const DELEGATION_MISSED_POLLS_MS = 60_000
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
+const COMPONENT_ERROR_CODES = new Set([
+  'connection_cli_unavailable',
+  'connection_cli_request_unavailable',
+  'connection_cli_request_failed',
+  'connection_cli_failed',
+  'dingtalk_component_unavailable',
+  'dependency_missing',
+  'component_update_required',
+  'component_update_failed',
+])
+const READINESS_ERRORS = new Map([
+  ['connector_auth_required', 'auth_required'],
+  ['dingtalk_credentials_unavailable', 'auth_required'],
+  ['dingtalk_account_changed', 'identity_required'],
+  ['dingtalk_permissions_required', 'permissions_required'],
+  ...[...COMPONENT_ERROR_CODES].map(code => [code, 'component_unavailable']),
+])
 
 export function createProvider() {
   const identities = new Map()
   const readCursors = createReadCursor()
   return {
-    async check(ctx) {
+    async check(ctx, input) {
+      if (input?.readiness === true) return connectionReadiness(ctx, input)
       let authTarget
       try {
         authTarget = await ctx.cli.describe('dingtalk')
         await requireAuthentication(ctx)
         const account = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
-        return { status: 'ready', authTarget, ...account }
+        return { status: 'ready', authTarget, ...accountDisplay(account) }
       } catch (error) {
         return {
           status: error.code === 'connector_auth_required' ? 'auth_required' : 'error',
@@ -34,8 +59,13 @@ export function createProvider() {
       }
     },
     async listResources(ctx, input) {
-      const { profile, accountId } = activeAccountIdentity(await readTool(ctx, 'listProfiles'))
-      await requireAuthentication(ctx)
+      const selected =
+        input.profile === undefined
+          ? undefined
+          : await verifiedProfile(ctx, input.profile, readTool)
+      const { profile, accountId } =
+        selected ?? activeAccountIdentity(await readTool(ctx, 'listProfiles'))
+      if (!selected) await requireAuthentication(ctx)
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
       if (input.scope === 'all') {
@@ -69,11 +99,13 @@ export function createProvider() {
           throw error
         // A token can expire between connection checks. Re-read auth state before
         // showing a generic provider failure.
-        await requireAuthentication(ctx)
+        if (selected) await verifyAccountToken(ctx, selected, readTool)
+        else await requireAuthentication(ctx)
         throw error
       }
       const rows = kind === 'group' ? response.result?.groups : response.result
       if (!Array.isArray(rows)) throw invalid('Invalid search response')
+      if (selected) await verifyAccountToken(ctx, selected, readTool)
       return {
         items: rows.map(row => ({
           id: required(row, kind === 'group' ? 'openConversationId' : 'openDingTalkId'),
@@ -188,7 +220,7 @@ export function createProvider() {
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const now = Date.now()
       if (source.delegated === true) {
-        const page = await collectDelegatedMessages(ctx, source, start, now, selfId)
+        const page = await collectDelegatedMessages(ctx, source, start, now, selfId, checkpoint)
         await boundAccount(ctx, source, readTool)
         return page
       }
@@ -222,7 +254,7 @@ export function createProvider() {
   }
 }
 
-async function collectDelegatedMessages(ctx, source, from, now, ownId) {
+async function collectDelegatedMessages(ctx, source, from, now, ownId, checkpoint) {
   const fromTime = Date.parse(from)
   if (!Number.isFinite(fromTime) || fromTime > now)
     throw invalid('Invalid DingTalk delegation checkpoint')
@@ -234,6 +266,23 @@ async function collectDelegatedMessages(ctx, source, from, now, ownId) {
     nextCheckpoint: { ...nextCheckpoint, delegationGap: { reason, from, until } },
   })
   if (now - fromTime > DELEGATION_CATCH_UP_MS) return gap('duration')
+  if (source.kind === 'direct' && source.id === ownId)
+    return { events: [], hasMore: false, nextCheckpoint }
+  if (
+    checkpoint?.recover === true ||
+    (fromTime !== Date.parse(source.enabledAfter) && now - fromTime > DELEGATION_MISSED_POLLS_MS)
+  ) {
+    const { events, reason } = await delegatedRecoveryEvents(
+      ctx,
+      source,
+      { start: from, end: until, after: fromTime, limit: DELEGATION_CATCH_UP_MESSAGES },
+      ownId,
+      { readTool, validateNativePage, normalizeMessages }
+    )
+    return reason
+      ? gap(reason)
+      : { events: chronologicalEvents(events), hasMore: false, nextCheckpoint }
+  }
 
   const events = new Map()
   const cursors = new Set()
@@ -254,10 +303,21 @@ async function collectDelegatedMessages(ctx, source, from, now, ownId) {
       events.set(event.id, event)
       if (events.size > DELEGATION_CATCH_UP_MESSAGES) return gap('volume')
     }
-    if (!result.hasMore) return { events: [...events.values()], nextCheckpoint, hasMore: false }
+    if (!result.hasMore)
+      return {
+        events: chronologicalEvents([...events.values()]),
+        nextCheckpoint,
+        hasMore: false,
+      }
     cursor = result.nextCursor
   }
   throw invalid('DingTalk delegation collection could not complete within the page limit')
+}
+
+function chronologicalEvents(events) {
+  return [...events].sort(
+    (left, right) => Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+  )
 }
 
 function messageSentAt(message) {
@@ -431,16 +491,39 @@ async function trainingHistory(ctx, source, state, ownId, readCursors) {
   }
 }
 
+async function delegatedMessagePageRequest(ctx, source, window) {
+  const conversationId = await exactConversation(
+    ctx,
+    source,
+    window.end,
+    readTool,
+    validateNativePage
+  )
+  if (!conversationId) return undefined
+  const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  if (source.kind === 'group') {
+    return { tool: 'listMentions', args: { ...args, group: conversationId }, conversationId }
+  }
+  return {
+    tool: 'searchMessages',
+    args: { ...args, conversationIds: conversationId, senderIds: source.id },
+    conversationId,
+  }
+}
+
 async function readMessagePage(ctx, source, window, ownId) {
-  const delegated = source.delegated === true
-  let conversationId
-  if (delegated) {
-    conversationId = await exactConversation(ctx, source, window.end, readTool, validateNativePage)
-    if (!conversationId || (source.kind === 'direct' && source.id === ownId))
+  if (source.delegated === true) {
+    if (source.kind === 'direct' && source.id === ownId)
       return { events: [], hasMore: false, nextCursor: '0' }
+    const request = await delegatedMessagePageRequest(ctx, source, window)
+    if (!request) return { events: [], hasMore: false, nextCursor: '0' }
+    return readCollectedMessagePage(ctx, source, window, ownId, request, {
+      delegated: true,
+      conversationId: request.conversationId,
+    })
   }
   let selfConversationId
-  if (!delegated && source.kind === 'direct' && source.scope !== 'all' && source.id === ownId) {
+  if (source.kind === 'direct' && source.scope !== 'all' && source.id === ownId) {
     const page = await readTool(ctx, 'listDirectConversation', {
       peer: ownId,
       profile: required(source, 'profile'),
@@ -459,14 +542,17 @@ async function readMessagePage(ctx, source, window, ownId) {
   if (source.scope !== 'all') {
     if (source.kind === 'group')
       args[allMessages ? 'conversationIds' : 'group'] = required(source, 'id')
-    else {
-      args.senderIds = required(source, 'id')
-      if (delegated) args.conversationIds = conversationId
-    }
+    else args.senderIds = required(source, 'id')
   }
   const tool = source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages'
-  const options = { delegated, conversationId, selfConversationId }
-  return readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options)
+  return readCollectedMessagePage(
+    ctx,
+    source,
+    window,
+    ownId,
+    { tool, args },
+    { selfConversationId }
+  )
 }
 
 async function readCollectedMessagePage(ctx, source, window, ownId, { tool, args }, options) {
@@ -557,6 +643,9 @@ function messagePage(source, response, ownId, cursor, options) {
 
 export function normalizeMessages(source, response, ownId, selfConversationId, options = {}) {
   const { reportFilter } = options
+  const strictScope =
+    (options.conversationId && verifyScopedMessagePage(response, options.conversationId)) ||
+    options.sourceEvents
   if (
     response.success === true &&
     response.result?.hasMore === false &&
@@ -571,6 +660,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     if (typeof conversation.singleChat !== 'boolean') throw invalid('Missing conversation kind')
     const direct = conversation.singleChat
     if (direct !== (source.kind === 'direct')) {
+      if (strictScope) throw invalid('Search events belong to another conversation kind')
       reportFilter?.({
         conversationId: diagnosticId(conversation.openConversationId),
         reason: 'conversation_kind_mismatch',
@@ -578,10 +668,13 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
       continue
     }
     const conversationId = required(conversation, 'openConversationId')
-    if (
-      (!direct && source.scope !== 'all' && conversationId !== source.id) ||
-      (options.conversationId && conversationId !== options.conversationId)
-    ) {
+    if (strictScope && conversationId !== options.conversationId)
+      throw invalid('Search events belong to another conversation')
+    if (!direct && source.scope !== 'all' && conversationId !== source.id) {
+      reportFilter?.({ conversationId, reason: 'group_mismatch' })
+      continue
+    }
+    if (options.conversationId && conversationId !== options.conversationId) {
       reportFilter?.({
         conversationId,
         reason: direct ? 'conversation_mismatch' : 'group_mismatch',
@@ -591,7 +684,8 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
       // Bot notifications can come from another account and feed our own task output back in.
-      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) {
+      const automated = message.sendType === 'robot' || message.messageAiSendFlag !== undefined
+      if (automated && !options.sourceEvents) {
         reportFilter?.({
           conversationId,
           messageId: diagnosticId(message.openMessageId),
@@ -605,21 +699,19 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
         message.sendType === 'user' &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
-      if (isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)) {
-        reportFilter?.({
-          conversationId,
-          messageId: diagnosticId(message.openMessageId),
-          reason: options.delegated ? 'own_delegated_message' : 'non_manual_own_message',
-        })
+      const filteredOwn = isOwn && (options.delegated ? !options.includeOwn : !manualSelfMessage)
+      const outsideIntake =
+        filteredOwn ||
+        (direct && source.scope !== 'all' && sender !== source.id && !(isOwn && options.includeOwn))
+      if (outsideIntake && !options.sourceEvents) {
+        if (filteredOwn)
+          reportFilter?.({
+            conversationId,
+            messageId: diagnosticId(message.openMessageId),
+            reason: options.delegated ? 'own_delegated_message' : 'non_manual_own_message',
+          })
         continue
       }
-      if (
-        direct &&
-        source.scope !== 'all' &&
-        sender !== source.id &&
-        !(isOwn && options.includeOwn)
-      )
-        continue
       const at = messageSentAt(message)
       const content =
         typeof message.content === 'string' && message.content.trim() ? message.content : undefined
@@ -639,6 +731,7 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
           textMessage: content !== undefined && isTextMessage(message),
           recalled: message.recalled === true || message.isRecalled === true,
         }),
+        ...(options.sourceEvents && { eligible: !automated && !isOwn && !outsideIntake }),
         ...(source.scope === 'all'
           ? {
               resource: {
@@ -654,9 +747,145 @@ export function normalizeMessages(source, response, ownId, selfConversationId, o
   return events
 }
 
+function verifyScopedMessagePage(response, conversationId) {
+  const { result, scope } = response
+  if (response.partial === true || result?.partial === true)
+    throw invalid('DingTalk returned partial conversation history')
+  if (scope === undefined && result?.complete === undefined) return false
+
+  // DWS verifies the requested conversation and aggregates scoped searches without a success flag.
+  const requested = scope?.requestedConversationIds
+  if (
+    response.success === false ||
+    response.ok === false ||
+    response.error != null ||
+    response.errorCode != null ||
+    scope?.filterApplied !== true ||
+    scope.targetsValidated !== true ||
+    scope.resultsWithinScope !== true ||
+    !Array.isArray(requested) ||
+    requested.length !== 1 ||
+    requested[0] !== conversationId ||
+    !Array.isArray(result?.conversationMessagesList) ||
+    !Number.isSafeInteger(result.pagesFetched) ||
+    result.pagesFetched < 1
+  )
+    throw invalid('DingTalk could not verify the exact search scope')
+
+  if (result.hasMore === false && result.complete === true && scope.sourceComplete === true)
+    return true
+  if (
+    result.hasMore === true &&
+    typeof result.complete === 'boolean' &&
+    typeof scope.sourceComplete === 'boolean' &&
+    typeof result.nextCursor === 'string' &&
+    result.nextCursor.trim()
+  )
+    return true
+  throw invalid('DingTalk scoped search did not finish or supply a continuation')
+}
+
 function isTextMessage(message) {
   const type = message.messageType ?? message.msgType ?? message.contentType
   return type === undefined || (typeof type === 'string' && type.toLowerCase() === 'text')
+}
+
+function accountDisplay({ profile, accountId, accountName, organizationId, organizationName }) {
+  return { profile, accountId, accountName, organizationId, organizationName }
+}
+
+async function connectionReadiness(ctx, { profile, sources }) {
+  const details = {}
+  try {
+    details.authTarget = await ctx.cli.describe('dingtalk')
+    const component = await readTool(ctx, 'componentInfo')
+    if (!['managed', 'bundled', 'external'].includes(component.componentSource))
+      throw componentUnavailable('Missing component source')
+    if (typeof component.version !== 'string' || !component.version.trim())
+      throw componentUnavailable('Missing component version')
+    details.component = {
+      source: component.componentSource,
+      version: component.version,
+    }
+
+    const profiles = accountProfiles(await readTool(ctx, 'listProfiles'))
+    const current = [...profiles.values()].filter(({ row }) => row.isCurrent === true)
+    details.candidates = [...profiles.values()]
+      .filter(({ row }) => row.status === 'active')
+      .map(({ identity }) => readinessIdentity(identity))
+    const selected =
+      profile === undefined
+        ? current.length === 1 && current[0].row.isOrgCurrent === true
+          ? current[0]
+          : undefined
+        : profiles.get(profile)
+    if (!selected)
+      return {
+        ...details,
+        status: details.candidates.length ? 'identity_required' : 'auth_required',
+      }
+    details.identity = readinessIdentity(selected.identity)
+    await verifyAccountToken(ctx, selected.identity, readTool)
+    const read = await verifyMessageRead(ctx, selected.identity, sources)
+    if (read === 'verified') await verifyAccountToken(ctx, selected.identity, readTool)
+    return { ...details, status: 'ready', permissions: { read, reply: 'unverified' } }
+  } catch (error) {
+    return {
+      ...details,
+      status: READINESS_ERRORS.get(error.code) ?? 'error',
+      code: error.code ?? 'dingtalk_response_invalid',
+    }
+  }
+}
+
+function readinessIdentity(identity) {
+  return {
+    ...accountDisplay(identity),
+    accountName: identity.accountName ?? identity.userId,
+    organizationName: identity.organizationName ?? identity.organizationId,
+  }
+}
+
+async function verifyMessageRead(ctx, identity, sources) {
+  if (sources === undefined) return 'unchecked'
+  if (!Array.isArray(sources) || !sources.length) throw invalid('Select a conversation')
+  const end = Date.now()
+  const window = {
+    start: new Date(end - 1000).toISOString(),
+    end: new Date(end).toISOString(),
+    limit: 1,
+    cursor: '0',
+  }
+  for (const item of sources) {
+    const source = { ...item, ...accountDisplay(identity), delegated: true }
+    validateDelegatedSource(source)
+    const request = await delegatedMessagePageRequest(ctx, source, window)
+    if (!request) throw invalid('Message read permission could not be verified')
+    const { tool, args, conversationId } = request
+    const response = await readTool(ctx, tool, args)
+    const { hasMore, conversationMessagesList, nextCursor } = response.result ?? {}
+    const scoped = verifyScopedMessagePage(response, conversationId)
+    if (
+      response.success === true &&
+      hasMore === false &&
+      conversationMessagesList === undefined &&
+      typeof nextCursor === 'string'
+    )
+      continue
+    if (
+      (!scoped && response.success !== true) ||
+      typeof hasMore !== 'boolean' ||
+      !Array.isArray(conversationMessagesList) ||
+      conversationMessagesList.some(
+        conversation =>
+          conversation.openConversationId !== conversationId ||
+          conversation.singleChat !== (source.kind === 'direct') ||
+          !Array.isArray(conversation.messages)
+      )
+    )
+      throw invalid('Message read permission could not be verified')
+  }
+  return 'verified'
 }
 
 async function requireAuthentication(ctx) {
@@ -672,7 +901,7 @@ async function ownIdentity(ctx, source, cache) {
   const profile = required(source, 'profile')
   const delegated = source.delegated === true
   const bound = delegated ? await boundAccount(ctx, source, readTool) : null
-  const key = delegated ? source.accountId : profile
+  const key = bound?.accountId ?? profile
   const cached = cache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.id
   const account =
@@ -682,7 +911,7 @@ async function ownIdentity(ctx, source, cache) {
       code: 'connector_auth_required',
     })
   const users = await readTool(ctx, 'searchUsers', {
-    query: required(account, 'userName'),
+    query: required(account, bound ? 'accountName' : 'userName'),
     profile,
   })
   // A profile can be reassigned while the contact lookup is in flight.
@@ -700,6 +929,10 @@ function required(value, key) {
 
 function invalid(message) {
   return Object.assign(new Error(message), { code: 'dingtalk_response_invalid' })
+}
+
+function componentUnavailable(message) {
+  return Object.assign(new Error(message), { code: 'dingtalk_component_unavailable' })
 }
 
 async function readTool(ctx, tool, args = {}) {

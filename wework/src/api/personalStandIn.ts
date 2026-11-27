@@ -14,9 +14,12 @@ export interface StandInDingTalkDelegation {
   paused: boolean
   profile?: string
   accountId?: string
+  accountName?: string
+  organizationId?: string
+  organizationName?: string
   accountInvalidated?: boolean
   templates: Record<StandInDelegationTemplate, boolean>
-  action?: 'enable' | 'pause' | 'resume'
+  action?: 'prepare' | 'enable' | 'pause' | 'resume'
 }
 
 export interface StandInProjectRef {
@@ -182,6 +185,7 @@ export type StandInConversationScope =
   | `shared:${number}:${StandInShareDefinition['kind']}:${string}`
 
 export interface PersonalStandInSettings {
+  cloudDefinitionRevision?: string
   userId: number
   executionDeviceId: string
   version: number

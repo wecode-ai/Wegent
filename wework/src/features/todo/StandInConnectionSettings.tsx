@@ -1,13 +1,15 @@
-import {
-  STAND_IN_DINGTALK_PROVIDER,
-  type StandInDingTalkDelegation,
-  type StandInRole,
-} from '@/api/personalStandIn'
+import { STAND_IN_DINGTALK_PROVIDER, type StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
+import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import {
   AutomationsPage,
   type AutomationNavigationHandle,
 } from '@/features/automations/AutomationsPage'
+import {
+  DingTalkDelegationControls,
+  type DingTalkDelegationNavigation,
+  type DingTalkDelegationSettings,
+} from '@/features/collaboration-exp/stand-in/DingTalkDelegationControls'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { CollaborationProject, TagDraftStore } from '@wegent/collaboration'
@@ -21,7 +23,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
   type Ref,
 } from 'react'
 import { StandInConnectionCatalog } from './StandInConnectionCatalog'
@@ -32,10 +33,12 @@ import { EMAIL_PROVIDER, StandInEmailConnections } from './StandInEmailConnectio
 import { GIT_CONNECTION_PREFIX, StandInGitConnections } from './StandInGitConnections'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import { StandInSourceNavigationContext } from './standInOverviewSource'
 
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
   /** True means the source editor already confirmed discarding unsaved changes. */
   requestLeave(action: (discarded?: boolean) => void): void
+  requestLeaveDingTalk(action: () => void): void
   back(): void
 }
 
@@ -60,8 +63,8 @@ export function StandInConnectionSettings({
   projectScopeConfigured,
   ref,
   onNavigate,
-  renderDingTalkDelegation,
-  dingTalkDelegation,
+  dingTalk,
+  initialSource,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -83,8 +86,8 @@ export function StandInConnectionSettings({
   projectScopeConfigured?: boolean
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
-  renderDingTalkDelegation?(provider: ConnectionProviderDescriptor): ReactNode
-  dingTalkDelegation?: StandInDingTalkDelegation
+  dingTalk?: DingTalkDelegationSettings
+  initialSource?: MessageCenterSource
 }) {
   const { t, i18n } = useTranslation('common')
   const pending = Boolean(
@@ -96,6 +99,13 @@ export function StandInConnectionSettings({
   const timeTitle = t('standIn.workspace.time_connection')
   const projectsTitle = t('standIn.personal.collaboration')
   const unavailableTitle = t('standIn.workspace.connection_unavailable')
+  const requestedSourceExists = Boolean(
+    initialSource?.conversationId &&
+    role.connections?.some(
+      row =>
+        row.providerId === STAND_IN_DINGTALK_PROVIDER && row.id === initialSource.conversationId
+    )
+  )
   const input = useMemo(
     () => ({
       api,
@@ -122,7 +132,12 @@ export function StandInConnectionSettings({
       onDetailTitleChange,
     ]
   )
-  const [model] = useState(() => createConnectionSettingsModel(input, initialCalendar))
+  const [model] = useState(() => {
+    const settings = createConnectionSettingsModel(input, initialCalendar)
+    if (initialSource && requestedSourceExists && !initialCalendar)
+      settings.setView(STAND_IN_DINGTALK_PROVIDER)
+    return settings
+  })
   const subscribe = useCallback(
     (listener: () => void) => model.subscribe(listener, input),
     [model, input]
@@ -135,9 +150,11 @@ export function StandInConnectionSettings({
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
   const projectRef = useRef<StandInProjectNavigationHandle>(null)
+  const dingTalkRef = useRef<DingTalkDelegationNavigation>(null)
   const requestLeave = (action: (discarded?: boolean) => void) => {
     const editor = calendarRef.current ?? emailRef.current
-    if (projectRef.current) projectRef.current.requestLeave(action)
+    if (dingTalkRef.current) dingTalkRef.current.requestLeave(() => action(false))
+    else if (projectRef.current) projectRef.current.requestLeave(action)
     else if (editor) editor.requestLeave(() => action(false))
     else action(false)
   }
@@ -149,6 +166,10 @@ export function StandInConnectionSettings({
     requestLeave(action) {
       requestLeave(action)
     },
+    requestLeaveDingTalk(action) {
+      if (dingTalkRef.current) dingTalkRef.current.requestLeave(action)
+      else action()
+    },
   }))
   const matches = state.api === api && state.deviceId === deviceId && state.locale === i18n.language
   const providers = matches ? state.providers : []
@@ -156,6 +177,17 @@ export function StandInConnectionSettings({
   const visibleError = matches ? state.error : null
   const provider = providers.find(item => item.id === view)
   const install = model.install
+  const focusedProviderFallback = useRef(false)
+  const focusProviderFallback = (node: HTMLDivElement | null) => {
+    if (!node || !initialSource || requestedSourceExists || focusedProviderFallback.current) return
+    const row = Array.from(node.querySelectorAll<HTMLElement>('[data-testid]')).find(
+      element => element.dataset.testid === 'stand-in-add-dingtalk-connection'
+    )
+    if (!row) return
+    focusedProviderFallback.current = true
+    row.scrollIntoView?.({ block: 'center' })
+    row.focus({ preventScroll: true })
+  }
   return (
     <section
       className={view === 'time' ? 'flex min-h-0 flex-1 flex-col gap-3' : 'space-y-3'}
@@ -222,70 +254,82 @@ export function StandInConnectionSettings({
               onChange={onChange}
             />
           ) : provider && api ? (
-            <>
-              {!['ready', 'auth_required'].includes(provider.availability.status) && (
-                <StandInConnectionHeader
-                  icon={MessageSquare}
-                  title={provider.displayName}
-                  description={t('standIn.workspace.message_connection_help')}
-                />
-              )}
-              <ConnectionProviderStatus
-                provider={provider}
-                disabled={disabled || loading}
-                onInstall={() => void install(provider)}
-              />
-              {provider.id === EMAIL_PROVIDER ? (
-                <StandInEmailConnections
-                  ownerApi={api}
-                  userId={scheduling?.userId}
-                  ref={emailRef}
-                  onDirtyChange={setEmailDirty}
-                  key={deviceId}
-                  role={role}
-                  local={deviceId === localDeviceId}
-                  disabled={disabled || loading}
-                  onChange={onChange}
-                />
-              ) : provider.id.startsWith(GIT_CONNECTION_PREFIX) ? (
-                <StandInGitConnections
-                  userId={scheduling?.userId}
-                  key={`${deviceId}:${role.id}:${provider.id}`}
+            <StandInSourceNavigationContext.Provider value={initialSource?.conversationId}>
+              <>
+                {!['ready', 'auth_required'].includes(provider.availability.status) && (
+                  <StandInConnectionHeader
+                    icon={MessageSquare}
+                    title={provider.displayName}
+                    description={t('standIn.workspace.message_connection_help')}
+                  />
+                )}
+                <ConnectionProviderStatus
                   provider={provider}
-                  role={role}
-                  api={api}
-                  deviceId={deviceId}
                   disabled={disabled || loading}
-                  onChange={onChange}
+                  onInstall={() => void install(provider)}
                 />
-              ) : ['ready', 'auth_required'].includes(provider.availability.status) ? (
-                <StandInSourceConnections
-                  key={`${deviceId}:${provider.id}`}
-                  provider={provider}
-                  role={role}
-                  api={api}
-                  deviceId={deviceId}
-                  localDeviceId={localDeviceId}
-                  disabled={disabled || loading}
-                  onChange={onChange}
-                  onReady={() => model.reload()}
-                  delegatedDingTalk={
-                    role.id === '@primary' && provider.id === STAND_IN_DINGTALK_PROVIDER
-                  }
-                />
-              ) : null}
-              {provider.id !== EMAIL_PROVIDER &&
-                !['ready', 'auth_required'].includes(provider.availability.status) && (
-                  <UnavailableSourceConnections
+                {provider.id === STAND_IN_DINGTALK_PROVIDER && dingTalk ? (
+                  <DingTalkDelegationControls
+                    ref={dingTalkRef}
+                    key={deviceId}
+                    settings={dingTalk}
+                    api={api}
+                    provider={provider}
+                    deviceId={deviceId}
+                    localDeviceId={localDeviceId}
+                    disabled={disabled || loading}
+                  />
+                ) : provider.id === EMAIL_PROVIDER ? (
+                  <StandInEmailConnections
+                    ownerApi={api}
+                    userId={scheduling?.userId}
+                    ref={emailRef}
+                    onDirtyChange={setEmailDirty}
+                    key={deviceId}
                     role={role}
-                    providerId={provider.id}
+                    local={deviceId === localDeviceId}
                     disabled={disabled || loading}
                     onChange={onChange}
                   />
-                )}
-              {provider.id === STAND_IN_DINGTALK_PROVIDER &&
-                renderDingTalkDelegation?.(provider)}
-            </>
+                ) : provider.id.startsWith(GIT_CONNECTION_PREFIX) ? (
+                  <StandInGitConnections
+                    userId={scheduling?.userId}
+                    key={`${deviceId}:${role.id}:${provider.id}`}
+                    provider={provider}
+                    role={role}
+                    api={api}
+                    deviceId={deviceId}
+                    disabled={disabled || loading}
+                    onChange={onChange}
+                  />
+                ) : ['ready', 'auth_required'].includes(provider.availability.status) ? (
+                  <StandInSourceConnections
+                    key={`${deviceId}:${provider.id}`}
+                    provider={provider}
+                    role={role}
+                    api={api}
+                    deviceId={deviceId}
+                    localDeviceId={localDeviceId}
+                    disabled={disabled || loading}
+                    onChange={onChange}
+                    onReady={() => model.reload()}
+                    delegatedDingTalk={
+                      role.id === '@primary' && provider.id === STAND_IN_DINGTALK_PROVIDER
+                    }
+                  />
+                ) : null}
+                {provider.id !== EMAIL_PROVIDER &&
+                  !(provider.id === STAND_IN_DINGTALK_PROVIDER && dingTalk) &&
+                  !['ready', 'auth_required'].includes(provider.availability.status) && (
+                    <UnavailableSourceConnections
+                      role={role}
+                      providerId={provider.id}
+                      disabled={disabled || loading}
+                      onChange={onChange}
+                    />
+                  )}
+              </>
+            </StandInSourceNavigationContext.Provider>
           ) : (
             <div className="space-y-3">
               {!loading && <p role="status">{t('standIn.workspace.connection_unavailable')}</p>}
@@ -301,17 +345,20 @@ export function StandInConnectionSettings({
       ) : (
         <>
           {!hideHeading && <h3 className="font-medium">{t('standIn.workspace.connections')}</h3>}
-          <StandInConnectionCatalog
-            role={role}
-            projectScopeConfigured={projectScopeConfigured}
-            projects={projects}
-            providers={providers}
-            dingTalkDelegation={dingTalkDelegation}
-            loading={loading}
-            disabled={disabled}
-            scheduling={Boolean(scheduling)}
-            onSelect={setView}
-          />
+          <div ref={initialSource && !requestedSourceExists ? focusProviderFallback : undefined}>
+            <StandInConnectionCatalog
+              role={role}
+              projectScopeConfigured={projectScopeConfigured}
+              projects={projects}
+              providers={providers}
+              dingTalkDelegation={dingTalk?.saved.delegation}
+              dingTalkUnavailable={Boolean(dingTalk?.primaryStopped || dingTalk?.sourceProblem)}
+              loading={loading}
+              disabled={disabled}
+              scheduling={Boolean(scheduling)}
+              onSelect={setView}
+            />
+          </div>
         </>
       )}
       {loading && <p role="status">{t('standIn.loading')}</p>}

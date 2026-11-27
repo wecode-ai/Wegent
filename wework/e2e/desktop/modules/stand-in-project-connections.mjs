@@ -69,6 +69,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
   })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
   await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
   await openStandInSettings(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
   const row = `[data-testid="stand-in-connection-project-local-${project.id}"]`
