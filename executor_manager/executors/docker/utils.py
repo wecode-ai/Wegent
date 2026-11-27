@@ -74,35 +74,36 @@ def build_callback_url(task: dict) -> str:
 
 def check_container_ownership(container_name: str) -> bool:
     """Check whether the exact container name belongs to this manager."""
-    return find_owned_container_id(container_name) is not None
+    try:
+        return find_owned_container_id(container_name) is not None
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        logger.warning("Docker ownership lookup failed: %s", type(error).__name__)
+        return False
 
 
 def find_owned_container_id(container_name: str) -> Optional[str]:
     """Resolve an owned container's immutable ID from its exact name."""
-    try:
-        check_cmd = [
-            "docker",
-            "ps",
-            "-a",
-            "--no-trunc",
-            "--filter",
-            f"name={container_name}",
-            "--filter",
-            "label=owner=executor_manager",
-            "--format",
-            "{{.Names}}|{{.ID}}",
-        ]
-        check_result = subprocess.run(
-            check_cmd, check=True, capture_output=True, text=True
-        )
-        for line in check_result.stdout.splitlines():
-            name, _, container_id = line.partition("|")
-            if name == container_name and re.fullmatch(r"[0-9a-f]{64}", container_id):
-                return container_id
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error checking container ownership: {e.stderr}")
-    except Exception as e:
-        logger.error(f"Unexpected error checking container ownership: {e}")
+    check_cmd = [
+        "docker",
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        f"name={container_name}",
+        "--filter",
+        "label=owner=executor_manager",
+        "--format",
+        "{{.Names}}|{{.ID}}",
+    ]
+    check_result = subprocess.run(
+        check_cmd, check=True, capture_output=True, text=True, timeout=15
+    )
+    for line in check_result.stdout.splitlines():
+        name, _, container_id = line.partition("|")
+        if name == container_name:
+            if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+                raise RuntimeError("Docker returned incomplete container identity")
+            return container_id
     return None
 
 

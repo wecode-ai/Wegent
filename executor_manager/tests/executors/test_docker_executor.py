@@ -1135,6 +1135,16 @@ class TestDockerExecutor:
         delete.assert_not_called()
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
+    def test_delete_executor_reports_failed_ownership_lookup(self, mock_run, executor):
+        mock_run.side_effect = subprocess.TimeoutExpired("docker ps", 15)
+
+        result = executor.delete_executor("test-executor")
+
+        assert result["status"] == "failed"
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["timeout"] == 15
+
+    @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_get_executor_count_success(self, mock_run, executor):
         """Test getting executor count successfully"""
         # Mock docker ps output with two running tasks
