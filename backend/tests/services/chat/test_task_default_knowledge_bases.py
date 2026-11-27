@@ -390,6 +390,7 @@ def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(
     test_db, test_user
 ):
     team = SimpleNamespace(
+        json={"spec": {}},
         id=1256,
         user_id=test_user.id,
         name="team-alpha",

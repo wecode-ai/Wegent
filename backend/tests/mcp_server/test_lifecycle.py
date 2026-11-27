@@ -199,6 +199,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
 
     assert {tool["name"] for tool in listed["result"]["tools"]} == {
         "get_current_context",
+        "submit_workflow_plan",
         "update_issue_status",
         "send_notification",
         "list_spaces",

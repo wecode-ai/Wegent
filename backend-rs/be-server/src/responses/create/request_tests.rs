@@ -320,10 +320,12 @@ async fn web_chat_dispatches_coordinate_workers_and_keeps_pipeline_on_its_curren
         assert_eq!(configs[0]["shell_type"], "ClaudeCode");
         if mode == "coordinate" {
             assert_eq!(configs.len(), 3);
-            assert_eq!(configs[0]["skills"], json!([ANALYSIS_SKILL]));
-            assert_eq!(configs[0]["skill_refs"][ANALYSIS_SKILL]["skill_id"], 11);
+            assert_eq!(configs[0]["skills"], json!([]));
+            assert_eq!(configs[0]["mcp_servers"], json!([]));
+            assert_eq!(configs[1]["skills"], json!([ANALYSIS_SKILL]));
+            assert_eq!(configs[1]["skill_refs"][ANALYSIS_SKILL]["skill_id"], 11);
             assert!(
-                configs[0]["mcp_servers"]
+                configs[1]["mcp_servers"]
                     .as_array()
                     .unwrap()
                     .iter()

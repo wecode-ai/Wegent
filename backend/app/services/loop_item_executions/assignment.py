@@ -200,6 +200,7 @@ def prepare_assignment(
     if (
         effective_context.get("dispatch_kind") == "collaboration_group"
         and effective_context.get("dispatch_role") == "manager"
+        and not effective_context.get("comment_continue_task_id")
     ):
         executor_kind = "collaboration_group_dispatch"
         runtime_selection["executor_kind"] = executor_kind

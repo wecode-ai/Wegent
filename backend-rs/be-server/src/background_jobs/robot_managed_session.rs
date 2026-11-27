@@ -138,7 +138,12 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
         };
         let setup = session::setup_chat_session(app.task_store.as_ref(),tx,&input).await.map_err(dependency)?;
         let execute = managed::Execute {task_id:setup.task_id,assistant_subtask_id:setup.assistant_subtask_id,user_subtask_id:setup.user_subtask_id,team_id:row.team_id,user_id:row.executor_owner_user_id,prompt,developer_instruction:context["system_prompt"].as_str().unwrap_or_default().to_owned()};
-        persist(app,tx,&row,&issue,&setup,&execute,chat,(legacy_continuation || strategy["collaborationModel"] != "pipeline").then_some(&strategy)).await
+        let mut intent = row.intent();
+        if legacy_continuation || strategy["collaborationModel"] != "pipeline" {
+            intent["team_strategy"] = strategy.clone();
+        }
+        intent["managed_task"] = serde_json::to_value(execute).map_err(dependency)?;
+        persist(app,tx,&row,&issue,&setup,chat,intent).await
     }).await?;
     projection::publish(app, effects).await
 }
@@ -149,9 +154,8 @@ async fn persist(
     row: &Execution,
     issue: &store::Node,
     setup: &session::ChatSessionSetup,
-    execute: &managed::Execute,
     chat: bool,
-    legacy_strategy: Option<&Value>,
+    intent: Value,
 ) -> brz_mysql::MysqlResult<projection::Effects> {
     let mut document = setup.task_json.clone();
     let labels = &mut document["metadata"]["labels"];
@@ -177,11 +181,6 @@ async fn persist(
         (Json(document), setup.task_id, row.executor_owner_user_id),
     )
     .await?;
-    let mut intent = row.intent();
-    if let Some(strategy) = legacy_strategy {
-        intent["team_strategy"] = strategy.clone();
-    }
-    intent["managed_task"] = serde_json::to_value(execute).map_err(dependency)?;
     tx.execute("UPDATE loop_item_executions SET status='claimed',backend_task_id=?,runtime_task_id=?,execution_payload=?,claimed_at=UTC_TIMESTAMP(6),version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(setup.task_id,setup.task_id.to_string(),intent.to_string(),row.id)).await?;
     let existing: Option<(String,)> = tx.fetch_optional("SELECT id FROM loop_items WHERE resource_type='execution' AND loop_item_id=? AND backend_task_id=? AND task_user_id=? AND (unlinked_at IS NULL OR unlinked_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) LIMIT 1",(issue.id.as_str(),setup.task_id,row.executor_owner_user_id)).await?;
     if existing.is_none() {

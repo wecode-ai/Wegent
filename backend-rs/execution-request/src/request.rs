@@ -773,12 +773,15 @@ async fn build_request_with_runtime(
         tracing::error!(%error, "failed to load the bot ghost chain");
         FastApiError::internal()
     })?;
-    let merged = merge_ghost_capabilities(&chain);
-
     let capability_mode = bot_spec
         .get("capability_mode")
         .and_then(Value::as_str)
         .unwrap_or("manual");
+    let merged = if capability_mode == "follow_device" {
+        Default::default()
+    } else {
+        merge_ghost_capabilities(&chain)
+    };
     let accepted_prompt = accepted["ghost_prompt"]
         .as_str()
         .map(|prompt| super::model_config::wrap_base_prompt(prompt, input.team_member_prompt));
@@ -1253,6 +1256,24 @@ async fn build_request_with_runtime(
         request.bot[0]["mcp_servers"] = Value::Array(servers);
     }
     if coordinate_team && super::skills::is_coding_shell(&shell_type) {
+        // Follow-device Bots share the same execution principal and runtime.
+        // Their grants come from this request's resolved bindings and authorized
+        // connectors. Ghost capabilities are excluded when compiling that mode.
+        if capability_mode == "follow_device"
+            && let Some((leader, members)) = request
+                .bot
+                .as_array_mut()
+                .and_then(|bots| bots.split_first_mut())
+        {
+            for member in members
+                .iter_mut()
+                .filter(|bot| bot["capability_mode"] == "follow_device")
+            {
+                for field in ["skills", "skill_refs", "mcp_servers"] {
+                    member[field] = leader[field].clone();
+                }
+            }
+        }
         coordinate::finalize_bot_grants(&mut request);
     }
     if !resolved_api_key.is_empty() {

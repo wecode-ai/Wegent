@@ -72,10 +72,7 @@ pub(crate) async fn cancel(
             info.status
         ))));
     }
-    let device_id = info
-        .executor_name
-        .as_deref()
-        .and_then(|name| name.strip_prefix("device-"));
+    let device_id = info.device_id();
     let shell_type = data
         .get("shell_type")
         .and_then(Value::as_str)
@@ -93,7 +90,7 @@ pub(crate) async fn cancel(
         return Ok(Reply::payload(error_ack("Subtask is no longer running")));
     };
     let delivered = deliver_cancel(
-        state, runtime, user_id, &info, subtask_id, device_id, shell_type, &attempt,
+        state, runtime, user_id, &info, subtask_id, shell_type, &attempt,
     )
     .await?;
     if device_id.is_none() && shell_type == "Chat" {
@@ -268,6 +265,12 @@ struct CancelInfo {
     executor_name: Option<String>,
 }
 
+impl CancelInfo {
+    fn device_id(&self) -> Option<&str> {
+        self.executor_name.as_deref()?.strip_prefix("device-")
+    }
+}
+
 /// `_get_subtask_for_cancel`.
 ///
 /// `subtask_store.get_by_id` shares the sharded full-row lookup with
@@ -385,11 +388,10 @@ async fn deliver_cancel(
     user_id: i64,
     info: &CancelInfo,
     subtask_id: i64,
-    device_id: Option<&str>,
     shell_type: &str,
     attempt: &str,
 ) -> Result<bool, ClientError> {
-    if let Some(device_id) = device_id {
+    if let Some(device_id) = info.device_id() {
         let room = format!("device:{user_id}:{device_id}");
         let payload = json!({"task_id": info.task_id, "subtask_id": subtask_id, "execution_attempt_id": attempt});
         if let Err(error) = runtime.emitters().task_cancel(&room, &payload).await {

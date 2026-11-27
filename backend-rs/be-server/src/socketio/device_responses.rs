@@ -223,7 +223,8 @@ async fn process_remote_event(
     let mysql = state
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
-    let binding: Option<(Json<Value>, Option<String>, Option<String>, String)> = mysql.with_transaction(async |tx| {
+    type DeviceTurnBinding = (Json<Value>, Option<String>, Option<String>, String);
+    let binding: Option<DeviceTurnBinding> = mysql.with_transaction(async |tx| {
         tx.fetch_optional(format!(
             "SELECT t.json,s.executor_namespace,s.executor_name,s.status FROM {} t JOIN {} s ON s.task_id=t.id WHERE t.id=? AND t.kind='Task' AND t.is_active!=0 AND s.id=?",
             tables.tasks,tables.subtasks), (task_id,subtask_id)).await

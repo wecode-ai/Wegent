@@ -470,7 +470,7 @@
     {
       "table": "task_team_strategies",
       "statements": [
-        "CREATE TABLE task_team_strategies (task_id BIGINT NOT NULL PRIMARY KEY, strategy JSON NOT NULL) ENGINE=InnoDB"
+        "CREATE TABLE task_team_strategies (\n\ttask_id BIGINT NOT NULL, \n\tstrategy JSON NOT NULL, \n\tPRIMARY KEY (task_id)\n)ENGINE=InnoDB"
       ]
     }
   ]

@@ -27,27 +27,38 @@ use wegent_llm_proxy::CredentialRequest;
 /// Publish each compiled server once. Executor merges duplicate definitions by
 /// name and can otherwise carry headers across different endpoints.
 pub(crate) fn finalize_bot_grants(request: &mut ExecutionRequest) {
-    let Some(leader) = request.bot.as_array_mut().and_then(|bots| bots.first_mut()) else {
+    let Some((leader, members)) = request
+        .bot
+        .as_array_mut()
+        .and_then(|bots| bots.split_first_mut())
+    else {
         return;
     };
     leader["native_capability_scope"] = Value::String("bot".into());
-    let Some(servers) = leader["mcp_servers"].as_array_mut() else {
-        return;
-    };
-    // Skill MCPs are appended after Ghost MCPs, including late preloads.
-    let mut names = HashSet::new();
-    servers.reverse();
-    servers.retain(|server| {
-        server["name"]
-            .as_str()
-            .is_none_or(|name| names.insert(name.to_owned()))
-    });
-    servers.reverse();
+    for member in members {
+        deduplicate_bot_servers(member);
+    }
+    let names = deduplicate_bot_servers(leader);
     request.mcp_servers.retain(|server| {
         server["name"]
             .as_str()
             .is_none_or(|name| !names.contains(name))
     });
+}
+
+fn deduplicate_bot_servers(bot: &mut Value) -> HashSet<String> {
+    let mut names = HashSet::new();
+    if let Some(servers) = bot["mcp_servers"].as_array_mut() {
+        // Skill MCPs follow Ghost MCPs and take precedence within this Bot.
+        servers.reverse();
+        servers.retain(|server| {
+            server["name"]
+                .as_str()
+                .is_none_or(|name| names.insert(name.to_owned()))
+        });
+        servers.reverse();
+    }
+    names
 }
 
 pub(super) async fn members(

@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom'
+import { PlatformTaskConnection } from '@wegent/collaboration/platform-task-continuation'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { TaskDetail, Team } from '@/types/api'
 
@@ -952,6 +953,30 @@ describe('ChatArea queue message handler mounting', () => {
     })
 
     expect(handleSendMessage).toHaveBeenCalledWith('follow up while streaming', undefined)
+  })
+
+  it.each([true, false, undefined])('gates a device task link on server ownership %s', owner => {
+    selectedTaskDetailMock = {
+      id: 42,
+      team: readyTeam,
+      status: 'COMPLETED',
+      device_id: 'device',
+      user: { id: 7 },
+      is_group_owner: owner,
+    } as TaskDetail
+    render(
+      <PlatformTaskConnection.Provider
+        value={{ apiBaseUrl: 'https://backend.example/api', userId: 7 }}
+      >
+        <ChatArea
+          teams={[readyTeam]}
+          isTeamsLoading={false}
+          taskType="chat"
+          showRepositorySelector
+        />
+      </PlatformTaskConnection.Provider>
+    )
+    expect(Boolean(screen.queryByTestId('continue-platform-task-in-wework'))).toBe(owner === true)
   })
 
   it('keeps submit available for queueing while a pending user message is in state', () => {
