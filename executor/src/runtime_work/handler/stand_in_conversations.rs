@@ -156,7 +156,7 @@ impl RuntimeWorkRpcHandler {
         let Some(prompt) = prompt else { return Ok(()) };
         let Some(origin) = request
             .extra
-            .get_mut("origin")
+            .get("origin")
             .filter(|origin| origin["type"] == "stand_in_identity")
         else {
             return Ok(());
@@ -176,12 +176,19 @@ impl RuntimeWorkRpcHandler {
             None
         };
         request.system_prompt = identity_system_prompt(
-            "",
+            &super::stand_in_agent::lead_instructions(
+                "",
+                request
+                    .extra
+                    .get("collaboration_model")
+                    .and_then(Value::as_str),
+                &request.bot,
+            ),
             Some(prompt),
             preferences.as_deref(),
             origin["conversationScope"] == "collaboration",
         );
-        origin["assistantDefinitionDigest"] =
+        request.extra.get_mut("origin").expect("validated origin")["assistantDefinitionDigest"] =
             json!(format!("{:x}", Sha256::digest(prompt.as_bytes())));
         Ok(())
     }

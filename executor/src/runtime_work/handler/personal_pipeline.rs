@@ -42,16 +42,10 @@ fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String
         request.model_config["model_provider"] = json!(provider);
     }
     request.bot = json!([bot]);
-    request.system_prompt = [
-        &state["instructions"],
-        &bot["system_prompt"],
-        &bot["prompt"],
-    ]
-    .into_iter()
-    .filter_map(Value::as_str)
-    .filter(|s| !s.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n\n");
+    request.system_prompt = super::stand_in_agent::bot_instructions(
+        state["instructions"].as_str().unwrap_or_default(),
+        bot,
+    );
     if let Some(model) = bot["model_id"].as_str() {
         request.model_config["model_id"] = json!(model);
     }

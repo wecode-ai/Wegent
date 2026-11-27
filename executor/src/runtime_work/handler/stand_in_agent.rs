@@ -77,6 +77,28 @@ pub(super) fn apply_stand_in_agent(
     resolve_stand_in_routing(payload, agent, catalog, device, selected_model)
 }
 
+pub(super) fn bot_instructions(base: &str, bot: &Value) -> String {
+    [
+        Some(base),
+        bot["system_prompt"].as_str(),
+        bot["prompt"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|text| !text.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+pub(super) fn lead_instructions(base: &str, mode: Option<&str>, bots: &Value) -> String {
+    if mode == Some("pipeline") {
+        // The stage compiler adds only the currently executing member's instructions.
+        base.to_owned()
+    } else {
+        bot_instructions(base, &bots[0])
+    }
+}
+
 pub(super) fn copy_stand_in_team(payload: &mut Value, agent: &Value) -> Result<(), AppIpcError> {
     if !agent["id"].as_str().is_some_and(|id| !id.is_empty())
         || !agent["bot"].as_array().is_some_and(|bots| !bots.is_empty())
@@ -86,7 +108,11 @@ pub(super) fn copy_stand_in_team(payload: &mut Value, agent: &Value) -> Result<(
             "Bound Team has no executable Bots",
         ));
     }
-    payload["projectInstructions"] = agent["system_prompt"].clone();
+    payload["projectInstructions"] = json!(lead_instructions(
+        agent["system_prompt"].as_str().unwrap_or_default(),
+        agent["collaboration_model"].as_str(),
+        &agent["bot"],
+    ));
     payload["additionalSkills"] = agent["additional_skills"].clone();
     payload["projectPlugins"] = agent["plugins"].clone();
     payload["teamRef"] = agent["id"].clone();

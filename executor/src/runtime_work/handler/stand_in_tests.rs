@@ -630,11 +630,19 @@ fn tag_rules_include_every_eligible_role_without_suppressing_untagged_roles() {
 #[test]
 fn selected_agent_uses_existing_runner_compiler_and_keeps_capabilities() {
     let model = json!({"runtime":"codex","provider":"native","model_id":"model"});
-    let agent = json!({"id":"review-team","bot":[{"id":"reviewer","shell_type":"Codex"},{"id":"editor","shell_type":"Codex"}],"collaboration_model":"pipeline","name":"Reviewer","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"fixed","model":model},"system_prompt":"Review carefully","additional_skills":["review"],"plugins":[{"id":"plugin"}],"mcp_servers":{"tools":{}}});
+    let agent = json!({"id":"review-team","bot":[{"id":"reviewer","shell_type":"Codex","system_prompt":"Lead the review"},{"id":"editor","shell_type":"Codex","system_prompt":"Edit the draft"}],"collaboration_model":"pipeline","name":"Reviewer","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"fixed","model":model},"system_prompt":"Review carefully","additional_skills":["review"],"plugins":[{"id":"plugin"}],"mcp_servers":{"tools":{}}});
     let catalog = json!({"runtimes":["codex"],"models":[{"runtime":"codex","provider":"native","model_id":"model","local_model_id":"model","is_default":true}]});
     let mut payload =
         json!({"taskId":"task","message":"Handle this task","origin":{"initiatedBy":"stand_in"}});
     apply_stand_in_agent(&mut payload, &agent, &catalog, "mac", None).unwrap();
+    let mut coordinate = agent.clone();
+    coordinate["collaboration_model"] = json!("coordinate");
+    let mut coordinated = json!({});
+    apply_stand_in_agent(&mut coordinated, &coordinate, &catalog, "mac", None).unwrap();
+    assert_eq!(
+        coordinated["executionRequest"]["system_prompt"],
+        "Review carefully\n\nLead the review"
+    );
     let mut broken = agent.clone();
     broken.as_object_mut().unwrap().remove("bot");
     let mut rejected = json!({});
