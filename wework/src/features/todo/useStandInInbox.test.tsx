@@ -1,13 +1,104 @@
 import { act, renderHook } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
-import { useStandInInbox } from './useStandInInbox'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
+
+function inboxWork(id: string): StandInInboxWork {
+  return {
+    id,
+    taskId: `task-${id}`,
+    roleId: 'assistant-role',
+    title: 'Incoming work',
+    source: {
+      providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+      id: 'group-1',
+      profile: 'dingtalk',
+      name: 'Test group',
+      kind: 'group',
+      policy: { automatic: true, askBeforeAct: false },
+    },
+    status: 'pending',
+    updatedAt: '2026-01-01T00:00:00Z',
+    messageCount: 0,
+    latestMessage: null,
+  }
+}
+
+it('keeps previously recorded owner replies visible without exposing ordinary skips', async () => {
+  const skippedWork = (id: string, reason: string): StandInInboxWork => {
+    const work = inboxWork(id)
+    return {
+      ...work,
+      source: { ...work.source, delegated: true },
+      status: 'sent',
+      messageCount: 1,
+      delegationResult: { action: 'skip', status: 'complete', reason },
+    }
+  }
+  const ownerReply = skippedWork('owner-reply', 'The account owner already responded.')
+  const greeting = skippedWork('greeting', 'This greeting needs no response.')
+  const inbox = vi
+    .fn<StandInExecutorApi['inbox']>()
+    .mockResolvedValue({ items: [ownerReply, greeting], sourceErrors: [] })
+  const api = { inbox } as unknown as StandInExecutorApi
+  const { result } = renderHook(() => useStandInInbox(api, 7, 'mac'))
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(result.current.items).toEqual([ownerReply])
+})
+
+it('prefers the backend-filtered task summary over a stale runtime snapshot', () => {
+  const work = {
+    ...inboxWork('visible'),
+    messageCount: 1,
+    task: {
+      taskId: 'task-visible',
+      title: 'Visible title',
+      runtime: 'codex' as const,
+      workspacePath: '',
+      running: false,
+      error: null,
+    },
+  }
+  const runtimeItem = {
+    key: 'mac\0task-visible',
+    address: { deviceId: 'mac', taskId: 'task-visible' },
+    task: {
+      taskId: 'task-visible',
+      title: 'Hidden account title',
+      error: 'Hidden account error',
+      runtime: 'codex',
+      workspacePath: '',
+      status: 'running',
+      updatedAt: 1,
+    },
+    workspace: { deviceId: 'mac', available: true, workspacePath: '', tasks: [] },
+    projectName: 'Stale project',
+  } as unknown as RuntimeTaskReminderItem
+
+  const item = inboxRuntimeItem(work, 'mac', runtimeItem)
+
+  expect(item.task.title).toBe('Visible title')
+  expect(item.task.error).toBeUndefined()
+
+  const fallback = inboxRuntimeItem(
+    { ...inboxWork('fallback'), messageCount: 1 },
+    'mac',
+    runtimeItem
+  )
+  expect(fallback.task.title).toBe('Incoming work')
+  expect(fallback.task.error).toBeUndefined()
+})
 
 it('retains same-scope inbox data on failures and owns polling only while enabled', async () => {
   vi.useFakeTimers()
   try {
-    const items = [{ id: 'work' }] as StandInInboxWork[]
-    const inbox = vi.fn().mockResolvedValue({ items, sourceErrors: [] })
+    const items = [inboxWork('work')]
+    const inbox = vi
+      .fn<StandInExecutorApi['inbox']>()
+      .mockResolvedValue({ items, sourceErrors: [] })
     const api = { inbox } as unknown as StandInExecutorApi
     const { result, rerender, unmount } = renderHook(
       ({ enabled }) => useStandInInbox(api, 7, 'mac', enabled),
@@ -51,9 +142,9 @@ it('retains same-scope inbox data on failures and owns polling only while enable
 it('isolates an API change and refuses to restart polling after a detached read settles', async () => {
   vi.useFakeTimers()
   try {
-    let finish!: (value: { items: StandInInboxWork[]; sourceErrors: [] }) => void
+    let finish!: (value: Awaited<ReturnType<StandInExecutorApi['inbox']>>) => void
     const first = {
-      inbox: vi.fn(
+      inbox: vi.fn<StandInExecutorApi['inbox']>(
         () =>
           new Promise(resolve => {
             finish = resolve
@@ -61,7 +152,9 @@ it('isolates an API change and refuses to restart polling after a detached read 
       ),
     } as unknown as StandInExecutorApi
     const second = {
-      inbox: vi.fn().mockResolvedValue({ items: [{ id: 'new' }], sourceErrors: [] }),
+      inbox: vi
+        .fn<StandInExecutorApi['inbox']>()
+        .mockResolvedValue({ items: [inboxWork('new')], sourceErrors: [] }),
     } as unknown as StandInExecutorApi
     const { result, rerender, unmount } = renderHook(({ api }) => useStandInInbox(api, 7, 'mac'), {
       initialProps: { api: first },
@@ -71,9 +164,7 @@ it('isolates an API change and refuses to restart polling after a detached read 
     await act(async () => {
       await Promise.resolve()
     })
-    await act(async () =>
-      finish({ items: [{ id: 'late' }] as StandInInboxWork[], sourceErrors: [] })
-    )
+    await act(async () => finish({ items: [inboxWork('late')], sourceErrors: [] }))
     expect(result.current.items.map(item => item.id)).toEqual(['new'])
     expect(vi.getTimerCount()).toBe(1)
     unmount()

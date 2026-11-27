@@ -70,6 +70,8 @@ export function createDesktopScenario(options) {
       const declaration = provider.cliReadTools.dingtalk
       assert.deepEqual(Object.keys(declaration.operations).sort(), [
         'authStatus',
+        'componentInfo',
+        'conversationInfo',
         'downloadImage',
         'listConversation',
         'listDirectConversation',

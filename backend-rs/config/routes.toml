@@ -78,6 +78,9 @@ path = "/api/v1/wework-notifications"
 methods = ["GET"]
 path = "/api/v1/stand-in-issue-events"
 [[routes]]
+methods = ["GET", "POST", "PATCH"]
+path = "/api/v1/personal-assistant"
+[[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-notifications/preferences"
 #[[routes]]

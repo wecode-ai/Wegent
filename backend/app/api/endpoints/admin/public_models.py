@@ -51,6 +51,14 @@ def _get_is_advanced(model: Kind) -> bool:
     return False
 
 
+def _matches_search(model: Kind, search_term: str) -> bool:
+    """Return whether the model name or display name contains the search term."""
+    return (
+        search_term in model.name.lower()
+        or search_term in _get_display_name(model).lower()
+    )
+
+
 def _model_to_response(model: Kind) -> PublicModelResponse:
     """Convert Kind model to PublicModelResponse."""
     display_name = _get_display_name(model)
@@ -72,17 +80,27 @@ def _model_to_response(model: Kind) -> PublicModelResponse:
 async def list_public_models(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=1000),
+    search: Optional[str] = Query(
+        None, description="Case-insensitive filter on model name or display name"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Get list of all public models with pagination, sorted by displayName
+    Get public models with pagination, sorted by displayName.
+
+    The optional search term filters models whose name or display name contains it
+    (case-insensitive); the total reflects the filtered result set.
     """
-    query = db.query(Kind).filter(
-        Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default"
+    models = (
+        db.query(Kind)
+        .filter(Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default")
+        .all()
     )
-    total = query.count()
-    models = query.all()
+
+    search_term = search.strip().lower() if search else ""
+    if search_term:
+        models = [model for model in models if _matches_search(model, search_term)]
 
     # Sort models by displayName (case-insensitive)
     sorted_models = sorted(models, key=lambda m: _get_display_name(m).lower())
@@ -90,11 +108,10 @@ async def list_public_models(
     # Apply pagination after sorting
     start_idx = (page - 1) * limit
     end_idx = start_idx + limit
-    paginated_models = sorted_models[start_idx:end_idx]
 
     return PublicModelListResponse(
-        total=total,
-        items=[_model_to_response(model) for model in paginated_models],
+        total=len(sorted_models),
+        items=[_model_to_response(model) for model in sorted_models[start_idx:end_idx]],
     )
 
 

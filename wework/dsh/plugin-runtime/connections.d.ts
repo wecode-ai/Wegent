@@ -107,6 +107,7 @@ export interface ConnectionResourceQuery {
   query: string
   cursor?: string
   scope?: 'all'
+  profile?: string
 }
 
 export interface ConnectionResourcePage {
@@ -157,6 +158,36 @@ export interface ConnectionAvailability {
   status: 'ready' | 'auth_required' | 'error'
   code?: string
   authTarget?: { pluginKey: string; connectorSlug: string; instance?: string }
+  profile?: string
+  accountId?: string
+  accountName?: string
+  organizationName?: string
+}
+
+export interface ConnectionReadinessQuery {
+  readiness: true
+  profile?: string
+  sources?: Array<{ id: string; kind: 'direct' | 'group' }>
+}
+
+export interface ConnectionIdentity {
+  profile: string
+  accountId: string
+  accountName: string
+  organizationId: string
+  organizationName: string
+}
+
+export interface ConnectionReadiness extends Omit<ConnectionAvailability, 'status'> {
+  status:
+    | ConnectionAvailability['status']
+    | 'identity_required'
+    | 'permissions_required'
+    | 'component_unavailable'
+  identity?: ConnectionIdentity
+  candidates?: ConnectionIdentity[]
+  component?: { source: 'bundled' | 'managed' | 'external'; version: string }
+  permissions?: { read: 'unchecked' | 'verified'; reply: 'unverified' }
 }
 
 export interface ConnectionContext {
@@ -219,6 +250,7 @@ export interface ConnectionMcpResult {
 
 export interface ConnectionProvider {
   check(context: ConnectionContext): Promise<ConnectionAvailability>
+  check(context: ConnectionContext, input: ConnectionReadinessQuery): Promise<ConnectionReadiness>
   listResources(
     context: ConnectionContext,
     input: ConnectionResourceQuery

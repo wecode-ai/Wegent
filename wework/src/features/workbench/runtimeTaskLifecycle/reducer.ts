@@ -388,6 +388,7 @@ export function reduceRuntimeTaskLifecycle(
 
     case 'goal_status_received': {
       if (state.task?.executionState) {
+        if (state.hasAuthoritativeGoalStatus && state.goalStatus === event.goalStatus) return state
         return { ...state, goalStatus: event.goalStatus, hasAuthoritativeGoalStatus: true }
       }
       // Goal events also supersede the cached task's autonomous execution hint.

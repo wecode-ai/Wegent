@@ -1,8 +1,11 @@
 import { standInConversationTaskId, type StandInConversationScope } from '@/api/personalStandIn'
 import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
+import type { PersonalAssistantDefinition } from '@/api/personalAssistantAccount'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Button } from '@/components/ui/button'
+import { applyRuntimeConversationAction } from '@/features/workbench/runtimeConversationCache'
+import { useRuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -53,6 +56,7 @@ export function StandInConversation({
   settings,
   services,
   scope,
+  definition,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -70,6 +74,7 @@ export function StandInConversation({
   settings?: Pick<WorkspaceStandInSettings, 'model' | 'modelOptions'>
   services?: WorkbenchServices
   scope?: StandInConversationScope
+  definition?: PersonalAssistantDefinition
 }) {
   const [recordOpened] = useState(createStandInOpenedReceipt)
   const openedIdentity = roleId ? 'role' : 'primary'
@@ -89,6 +94,7 @@ export function StandInConversation({
   }
   const resource = owner.resource
   const workbench = useContext(WorkbenchContext)
+  const lifecycleStore = useRuntimeTaskLifecycleStore()
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
@@ -275,9 +281,11 @@ export function StandInConversation({
         }
         hideProcessing
         showActivityDots
-        assistantMessageStyle="bubble"
         markReadWhenActive
         nativeConversation
+        runtimeContext={
+          definition ? { assistantPrompt: definition.ghost.spec.systemPrompt } : undefined
+        }
         allowMessagesDuringApproval
         modelControls={conversationModelControls}
         expanded
@@ -305,17 +313,25 @@ export function StandInConversation({
         onOpenRuntimeTask={onOpenTask}
         createTask={async (message, options) => {
           const target = { deviceId, taskId }
+          applyRuntimeConversationAction(target, {
+            type: 'user_added',
+            message: options.optimisticUserMessage,
+          })
+          lifecycleStore.sendRequested(target)
           options.onRuntimeTaskOptimisticOpen(target)
           try {
             const result = await api.conversation(userId, deviceId, message, roleId, {
               ...options.executionModel,
               ...(scope ? { conversationScope: scope } : {}),
+              ...(definition ? { assistantPrompt: definition.ghost.spec.systemPrompt } : {}),
               attachments: localRuntimeAttachments(options.attachments),
               clientUserMessageId: options.optimisticUserMessage.id,
             })
+            lifecycleStore.sendAccepted(target)
             setAddress(result)
             return result
           } catch (cause) {
+            lifecycleStore.sendRejected(target)
             options.onError(getStandInErrorMessage(cause))
             return false
           }

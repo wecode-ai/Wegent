@@ -195,7 +195,7 @@ pnpm --filter wework e2e:desktop -- --cloud-only --segment core-task-flow
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。
 
-Developer Commands 菜单中的 **Enable Stream Logs** / **Disable Stream Logs** 会同时切换前端本地 chat stream 日志和 Codex executor stream 日志。优先使用这个菜单项做现场排查；它会让前端 `console.debug` 中的 stream 订阅/事件日志与 executor 的 Codex stream 详情保持同一个开关状态。
+Developer Commands 菜单中的 **Enable Stream Logs** / **Disable Stream Logs** 会同时切换前端本地 chat stream 日志和 Codex executor stream 日志。桌面前端的流式诊断默认关闭。开启后，在 Electron 日志目录的 `runtime-launch.log` 中按任务 ID 和轮次 ID 对照 `runtime-stream-native-event`、`runtime-terminal-received`、`runtime-terminal-projected` 与 `pane-assistant-published`，确认事件接收、完成回复入缓存和面板发布的时间。前端诊断仅记录事件元数据、状态和内容长度，不记录消息正文。
 
 为避免 debug 包在长回复或高频 token 输出时产生过多日志，runtime work 内部的 cache/emit mapping 日志默认关闭。这类日志会为同一个 delta 额外记录缓存和 UI 事件分发路径，只有排查本地 runtime work 路由时才需要打开。
 

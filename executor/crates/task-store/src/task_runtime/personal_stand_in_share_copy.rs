@@ -23,7 +23,11 @@ impl LocalTaskStore {
                 user,
                 device,
                 settings,
-                Some(backend),
+                super::personal_stand_in::StandInSaveOptions {
+                    direct_save: false,
+                    verified_account: None,
+                    backend: Some(backend),
+                },
             )?;
         }
         for entry in std::iter::once(&snapshot.root).chain(&snapshot.assistants) {

@@ -3496,9 +3496,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       ...(process.env.CODEX_BINARY_PATH?.trim() || !components || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
-      ...(process.env.DWS_BINARY_PATH?.trim() || !components || !existsSync(components.dws)
-        ? {}
-        : { DWS_BINARY_PATH: components.dws }),
+      ...(components && existsSync(components.dws)
+        ? {
+            ...(process.env.DWS_BINARY_PATH?.trim() ? {} : { DWS_BINARY_PATH: components.dws }),
+            WEWORK_COMPONENT_DWS_PATH: components.dws,
+            WEWORK_COMPONENT_DWS_SOURCE: components.dwsSource,
+          }
+        : {}),
     },
     metadata: packageMetadata,
     homeDirectory: app.getPath('home'),

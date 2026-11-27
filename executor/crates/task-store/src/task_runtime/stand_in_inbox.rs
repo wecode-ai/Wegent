@@ -3,6 +3,21 @@ use super::personal_stand_in::{source_collection_namespace, source_namespace};
 use super::*;
 use sha2::{Digest, Sha256};
 
+fn stand_in_source_key(user: i64, source: &Value) -> String {
+    stand_in_record_key(
+        "stand-in-source",
+        &json!([
+            user,
+            source_collection_namespace(source),
+            source["kind"],
+            source["id"]
+        ]),
+    )
+}
+
+#[path = "stand_in_dots_inbox.rs"]
+pub(super) mod dots_inbox;
+
 enum MessageGrouping<'a> {
     Known(Option<&'a str>),
     Uncertain(Option<&'a str>),
@@ -207,6 +222,20 @@ pub(crate) fn stand_in_record_key(prefix: &str, value: &Value) -> String {
     )
 }
 
+fn immutable_message_key(user: i64, role: &str, source: &Value, message_id: &Value) -> String {
+    stand_in_record_key(
+        "stand-in-message",
+        &json!([
+            user,
+            role,
+            source_namespace(source),
+            source["kind"],
+            source["id"],
+            message_id
+        ]),
+    )
+}
+
 fn read_record(
     connection: &Connection,
     id: &str,
@@ -237,8 +266,13 @@ fn find_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
-         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL) ORDER BY created_at DESC,id DESC LIMIT 1",
-        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only],
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6
+         AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8
+         AND (?9=0 OR json_type(metadata,'$.objectId') IS NULL)
+         AND COALESCE(json_extract(metadata,'$.source.delegated'),0)=?10
+         AND (?10=0 OR json_extract(metadata,'$.source.accountId') IS ?11)
+         ORDER BY created_at DESC,id DESC LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source),immutable_only,source["delegated"] == true,source["accountId"].as_str()],
         |row| row.get(0),
     ).optional()?;
     raw.map(|raw| {
@@ -269,8 +303,10 @@ fn find_event_message(
         "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
          AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
          AND json_extract(metadata,'$.source.providerId')=?3 AND json_extract(metadata,'$.source.profile')=?4
-         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6 LIMIT 1",
-        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str()], |row|row.get(0)
+         AND json_extract(metadata,'$.objectId')=?5 AND json_extract(metadata,'$.version')=?6
+         AND COALESCE(json_extract(metadata,'$.source.delegated'),0)=?7
+         AND (?7=0 OR json_extract(metadata,'$.source.accountId') IS ?8) LIMIT 1",
+        params![user,role,super::personal_stand_in::source_provider(source),source["profile"].as_str(),message["objectId"].as_str(),message["version"].as_str(),source["delegated"] == true,source["accountId"].as_str()], |row|row.get(0)
     ).optional()?;
     raw.map(|raw| {
         serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
@@ -278,26 +314,46 @@ fn find_event_message(
     .transpose()
 }
 
+fn read_stand_in_messages(
+    connection: &Connection,
+    user: i64,
+    work: &str,
+) -> Result<Vec<Value>, TaskRuntimeError> {
+    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
+    let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
+    rows.map(|raw| {
+        serde_json::from_str(&raw?).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .collect()
+}
+
 fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRuntimeError> {
-    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at DESC,id DESC")?;
-    let rows = statement.query_map(
-        params![work["userId"].as_i64(), work["id"].as_str()],
-        |row| row.get::<_, String>(0),
+    let messages = read_stand_in_messages(
+        connection,
+        work["userId"].as_i64().unwrap_or_default(),
+        work["id"].as_str().unwrap_or_default(),
     )?;
-    let messages = rows
-        .map(|raw| {
-            serde_json::from_str::<Value>(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     work["messageCount"] = json!(messages.len());
-    work["latestMessage"] = messages.first().cloned().unwrap_or(Value::Null);
-    work["status"] = json!(["sending", "needs_grouping", "pending", "failed"]
+    work["latestMessage"] = messages.last().cloned().unwrap_or(Value::Null);
+    if work["source"]["delegated"] == true {
+        work["delegationResult"] = dots_inbox::project_delegation_result(work, &messages);
+    }
+    let status = ["sending", "needs_grouping", "pending", "failed"]
         .into_iter()
-        .find(|status| messages
-            .iter()
-            .any(|message| message["dispatchStatus"] == *status))
-        .unwrap_or("sent"));
+        .find(|status| {
+            messages
+                .iter()
+                .any(|message| message["dispatchStatus"] == *status)
+        })
+        .unwrap_or("sent");
+    work["status"] = json!(if work["source"]["delegated"] == true
+        && !work["takenOverAt"].is_null()
+        && status != "sending"
+    {
+        "sent"
+    } else {
+        status
+    });
     work["updatedAt"] = json!(now());
     write_record(
         connection,
@@ -476,24 +532,30 @@ impl LocalTaskStore {
 
     pub fn stand_in_source_errors(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut statement=connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_source' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.error') IS NOT NULL ORDER BY updated_at DESC")?;
+        let mut statement = connection.prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_source'
+             AND json_extract(metadata,'$.userId')=?1
+             AND (json_extract(metadata,'$.error') IS NOT NULL
+                  OR json_extract(metadata,'$.delegationGap') IS NOT NULL)
+             ORDER BY updated_at DESC",
+        )?;
         let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
         rows.map(|row| {
-            serde_json::from_str(&row?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            let mut state: Value = serde_json::from_str(&row?)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            if state["error"].is_null() {
+                state["error"] = json!({
+                    "code":"dingtalk_delegation_gap",
+                    "message":"DingTalk delegation skipped a recovery window",
+                    "retryable":false
+                });
+            }
+            Ok(state)
         })
         .collect()
     }
     pub fn stand_in_source(&self, user: i64, source: &Value) -> Result<Value, TaskRuntimeError> {
-        let key = stand_in_record_key(
-            "stand-in-source",
-            &json!([
-                user,
-                source_collection_namespace(source),
-                source["kind"],
-                source["id"]
-            ]),
-        );
+        let key = stand_in_source_key(user, source);
         let connection = self.connection()?;
         Ok(read_record(&connection, &key, "stand_in_source")?.unwrap_or(Value::Null))
     }
@@ -504,20 +566,50 @@ impl LocalTaskStore {
         source: &Value,
         state: &Value,
     ) -> Result<(), TaskRuntimeError> {
-        let key = stand_in_record_key(
-            "stand-in-source",
-            &json!([
-                user,
-                source_collection_namespace(source),
-                source["kind"],
-                source["id"]
-            ]),
-        );
+        let key = stand_in_source_key(user, source);
         let mut state = state.clone();
         state["userId"] = json!(user);
         state["source"] = source.clone();
-        let connection = self.connection()?;
-        write_record(&connection, &key, "stand_in_source", &state)
+        let mut connection = self.connection()?;
+        if source["delegated"] != true {
+            return write_record(&connection, &key, "stand_in_source", &state);
+        }
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if state["delegationGap"].is_null() {
+            if let Some(current) =
+                read_record(&transaction, &key, "stand_in_source")?.filter(|current| {
+                    !current["delegationGap"].is_null()
+                        && ["enabledAfter", "generation", "subscriptionId"]
+                            .into_iter()
+                            .all(|field| current["source"][field] == source[field])
+                })
+            {
+                state["delegationGap"] = current["delegationGap"].clone();
+            }
+        }
+        write_record(&transaction, &key, "stand_in_source", &state)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn acknowledge_stand_in_source_error(
+        &self,
+        user: i64,
+        source: &Value,
+    ) -> Result<(), TaskRuntimeError> {
+        let key = stand_in_source_key(user, source);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(mut current) = read_record(&transaction, &key, "stand_in_source")? {
+            if let Some(state) = current.as_object_mut() {
+                if state.remove("error").map_or(true, |error| error.is_null()) {
+                    state.remove("delegationGap");
+                }
+            }
+            write_record(&transaction, &key, "stand_in_source", &current)?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn stand_in_work(&self, user: i64, id: &str) -> Result<Value, TaskRuntimeError> {
@@ -545,13 +637,7 @@ impl LocalTaskStore {
     pub fn stand_in_messages(&self, user: i64, work: &str) -> Result<Vec<Value>, TaskRuntimeError> {
         self.stand_in_work(user, work)?;
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
-        let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
-        rows.map(|raw| {
-            serde_json::from_str(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect()
+        read_stand_in_messages(&connection, user, work)
     }
 
     pub fn known_stand_in_message(
@@ -624,26 +710,25 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::validate_connection_message_version(message)?;
-        let identity = if message.get("objectId").is_some() {
-            json!([
-                user,
-                role,
-                super::personal_stand_in::source_provider(source),
-                source["profile"],
-                message["objectId"],
-                message["version"]
-            ])
+        let key = if message.get("objectId").is_some() {
+            stand_in_record_key(
+                "stand-in-message",
+                &json!([
+                    user,
+                    role,
+                    super::personal_stand_in::source_provider(source),
+                    if source["delegated"] == true {
+                        source_namespace(source)
+                    } else {
+                        source["profile"].clone()
+                    },
+                    message["objectId"],
+                    message["version"]
+                ]),
+            )
         } else {
-            json!([
-                user,
-                role,
-                source_namespace(source),
-                source["kind"],
-                source["id"],
-                message["id"]
-            ])
+            immutable_message_key(user, role, source, &message["id"])
         };
-        let key = stand_in_record_key("stand-in-message", &identity);
         if let Some(existing) = find_event_message(&connection, user, role, source, message)? {
             let result = read_record(
                 &connection,
@@ -654,9 +739,25 @@ impl LocalTaskStore {
             connection.commit()?;
             return Ok(result);
         }
+        let delegated = role == "@primary" && source["delegated"] == true;
+        let quoted = if delegated
+            && message["quotedMessageId"].is_string()
+            && message["quotedMessageId"] != message["id"]
+        {
+            let quoted_key = immutable_message_key(user, role, source, &message["quotedMessageId"]);
+            read_record(&connection, &quoted_key, "stand_in_message")?
+                .filter(|row| row["conversationId"] == message["conversationId"])
+        } else {
+            None
+        };
+        let work_id = work_id.or_else(|| quoted.as_ref().and_then(|row| row["workId"].as_str()));
         let mut work = if let Some(id) = work_id {
             read_record(&connection, id, "stand_in_work")?
-                .filter(|work| work["userId"] == user && work["roleId"] == role)
+                .filter(|work| {
+                    work["userId"] == user
+                        && work["roleId"] == role
+                        && same_delegated_scope(&work["source"], source)
+                })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
             let id = format!("stand-in-work-{}", Uuid::new_v4());
@@ -668,6 +769,13 @@ impl LocalTaskStore {
         record["roleId"] = json!(role);
         record["workId"] = work["id"].clone();
         record["source"] = source.clone();
+        if delegated {
+            record["delegationChainId"] = quoted
+                .as_ref()
+                .map(dots_inbox::delegated_reply_chain)
+                .cloned()
+                .unwrap_or_else(|| json!(key));
+        }
         record["dispatchStatus"] = json!(status);
         record["dispatchFailureCount"] = json!(0);
         if status == "needs_grouping" {
@@ -766,6 +874,7 @@ impl LocalTaskStore {
                     row["userId"] == user
                         && row["roleId"] == source["roleId"]
                         && row["id"] != source["id"]
+                        && same_delegated_scope(&row["source"], &source["source"])
                 })
                 .ok_or(TaskRuntimeError::TaskNotFound)?
         } else {
@@ -783,6 +892,11 @@ impl LocalTaskStore {
                 message["originalWorkId"] = source["id"].clone();
             }
             message["workId"] = destination["id"].clone();
+            if source["source"]["delegated"] == true && !source["takenOverAt"].is_null() {
+                message["takenOverAt"] = source["takenOverAt"].clone();
+                dots_inbox::mark_delegation_taken_over(&mut message["delegationResult"]);
+                message["dispatchStatus"] = json!("sent");
+            }
             // Organization never authorizes replay of completed effects.
             let failed = message["dispatchStatus"] == "failed";
             let failures = Self::stand_in_dispatch_failure_count(message, failed);
@@ -804,6 +918,22 @@ impl LocalTaskStore {
         connection.commit()?;
         Ok(destination)
     }
+}
+
+fn same_delegated_scope(left: &Value, right: &Value) -> bool {
+    if left["delegated"] != true && right["delegated"] != true {
+        return true;
+    }
+    [
+        "delegated",
+        "providerId",
+        "profile",
+        "accountId",
+        "kind",
+        "id",
+    ]
+    .iter()
+    .all(|key| left[*key] == right[*key])
 }
 
 #[cfg(test)]

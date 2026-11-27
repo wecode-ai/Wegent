@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
+import { openStandInDetails, openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -79,6 +79,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
+  captureScreenshot,
 }) {
   let cloud
   let modelRequests = 0
@@ -156,6 +157,7 @@ export function createDesktopScenario({
     // Model selection can still disable submission while the composer is mounted.
     await control.command('clickWhenEnabled', `${selector} [data-testid="send-message-button"]`, {
       visible: true,
+      timeoutMs: uiTimeoutMs,
     })
   }
   async function observeDevice(control, device, status) {
@@ -215,14 +217,77 @@ export function createDesktopScenario({
         userId: member.id,
         operation: 'start',
       })
+      const localProfile = await rpc(control, 'runtime.stand_in.personal.get', {
+        userId: member.id,
+      })
+      const legacyPrompt = 'Check the source before answering.'
+      await rpc(control, 'runtime.stand_in.personal.save', {
+        userId: member.id,
+        settings: {
+          ...localProfile,
+          primary: {
+            enabled: true,
+            preferences: '',
+            ...localProfile.primary,
+            prompt: legacyPrompt,
+          },
+        },
+      })
+      const readCloudAssistant = () =>
+        fetchJson(`${cloud.backendUrl}/api/v1/personal-assistant`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: AbortSignal.timeout(uiTimeoutMs),
+        })
+      assert.equal((await readCloudAssistant()).assistant, null)
       await reloadMainWindow(control)
+      const migrateConfirm = testId('personal-assistant-account-migrate-confirm')
+      await control.command('waitFor', migrateConfirm, { timeoutMs: uiTimeoutMs })
+      await captureScreenshot(control, 'personal-assistant-01-migration-confirmation.png')
+      await control.command('clickWhenEnabled', testId('personal-assistant-account-migrate-cancel'))
+      await control.command('waitFor', migrateConfirm, { visible: false, timeoutMs: uiTimeoutMs })
+      assert.equal(
+        (await readCloudAssistant()).assistant,
+        null,
+        'Cancel leaves the cloud account uninitialized'
+      )
+      const migrate = testId('personal-assistant-account-initialize')
+      await control.command('waitFor', migrate)
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+      await captureScreenshot(control, 'personal-assistant-02-migration-deferred.png')
+      await control.command('clickWhenEnabled', migrate)
+      await control.command('clickWhenEnabled', migrateConfirm)
+      await control.command('waitFor', migrate, { visible: false, timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', testId('transient-notice'), {
+        text: '云端助理已就绪',
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', testId('stand-in-overview'))
+      await captureScreenshot(control, 'personal-assistant-03-migration-complete.png')
+      const shared = (await readCloudAssistant()).assistant
+      const primary = shared.definitions.find(definition => definition.roleId === '@primary')
+      assert.deepEqual(primary.bot.spec.ghostRef, {
+        name: primary.ghost.metadata.name,
+        namespace: primary.ghost.metadata.namespace,
+      })
+      assert.equal(primary.ghost.spec.systemPrompt, legacyPrompt)
+      assert.deepEqual(primary.bot.spec.execution_policy, {
+        mode: 'fixed',
+        environment_id: localDevice,
+      })
       assert.deepEqual((await binding(control)).target, registered)
 
       await createRole(control, 'Ordinary account stand-in')
       const profile = await rpc(control, 'runtime.stand_in.personal.get', { userId: member.id })
       const role = profile.roles.find(row => row.name === 'Ordinary account stand-in')
       assert.ok(role)
+      const sharedRole = (await readCloudAssistant()).assistant.definitions.find(
+        definition => definition.roleId === role.id
+      )
+      assert.equal(
+        sharedRole?.bot.metadata.displayName,
+        role.name,
+        'New roles are saved to the cloud'
+      )
       await stop(control)
       const aliased = await saveBinding(control, {
         ...registered,
@@ -317,7 +382,6 @@ export function createDesktopScenario({
           language: 'zh-CN',
         })
       }
-      const initial = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       const localIdentity = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
       const localDevice = localIdentity.deviceId
       const remoteHome = dirname(cloud.remoteCodexHome)
@@ -340,26 +404,105 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-continue'))
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
       await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
+      const readInitialAssistant = () =>
+        fetchJson(`${cloud.backendUrl}/api/v1/personal-assistant`, {
+          headers: { Authorization: `Bearer ${cloud.authToken}` },
+          signal: AbortSignal.timeout(uiTimeoutMs),
+        })
+      const initialAssistant = (await readInitialAssistant()).assistant
+      assert.equal(initialAssistant.definitions[0].roleId, '@primary')
+      const executionDevice = testId('personal-assistant-execution-device')
+      async function openExecutionSettings() {
+        await openStandInDetails(control)
+        assert.equal(await control.command('getElementCount', executionDevice), '0')
+        await openStandInSettings(control)
+        await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
+      }
+      const activeBinding = await binding(control)
+      assert.equal(await control.command('getElementCount', executionDevice), '0')
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+      await openExecutionSettings()
+      await control.command('clickWhenEnabled', executionDevice)
+      await control.command('waitFor', '[role="listbox"] [role="option"]', {
+        text: '当前设备',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'personal-assistant-05-execution-choices.png')
+      await control.command(
+        'clickWhenEnabled',
+        `[role="listbox"] [role="option"][data-value=${JSON.stringify(localDevice)}]`
+      )
+      await control.command('waitFor', executionDevice, {
+        text: '当前设备',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
+      await reloadMainWindow(control)
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+      await control.command('waitFor', testId('stand-in-conversation'))
+      await sendChat(control, testId('stand-in-conversation'), LOCAL_PROMPT)
+      await control.command('waitFor', testId('stand-in-conversation'), {
+        text: LOCAL_COMPLETE,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const localTurn = await rpc(control, 'runtime.tasks.get', {
+        taskId: `stand-in-chat-${USER}-primary`,
+      })
+      assert.ok(localTurn.task.threadId, 'The selected local Executor must own the conversation')
+      assert.deepEqual(
+        await binding(control),
+        activeBinding,
+        'Execution selection preserves the binding'
+      )
+      assert.equal(
+        (await readInitialAssistant()).assistant.definitions[0].bot.spec.execution_policy
+          .environment_id,
+        localDevice
+      )
+      await openExecutionSettings()
+      await control.command('clickWhenEnabled', executionDevice)
+      await control.command(
+        'clickWhenEnabled',
+        `[role="listbox"] [role="option"][data-value=${JSON.stringify(firstUse.target.deviceId)}]`
+      )
+      await control.command('waitFor', `${executionDevice}:not(:disabled)`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        (await readInitialAssistant()).assistant.definitions[0].bot.spec.execution_policy
+          .environment_id,
+        firstUse.target.deviceId
+      )
+      await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
       await stop(control)
       if (firstUse.target.deviceId !== CLOUD_DEVICE_ID) {
         await bind(control, USER, CLOUD_DEVICE_ID)
         await finishStandInOnboarding(control)
         await stop(control)
       }
-      await bind(control, 0, localDevice)
-      await control.command('navigate', 'body', { value: '/settings/connections' })
-      await control.command('clickWhenEnabled', testId('settings-cloud-disconnect-button'))
-      await control.command('waitFor', testId('settings-cloud-connect-button'))
-      await control.command('navigate', 'body', { value: '/stand-in' })
-      await createRole(control, LOCAL_NAME)
-      const localBefore = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
-      const localRole = localBefore.roles.find(row => row.name === LOCAL_NAME)
-      assert.ok(localRole, 'Signed-out creation must persist under the local owner')
-      const localChat = await chat(control, localRole.id, LOCAL_PROMPT)
+      await bind(control, USER, localDevice)
+      await createRole(control, 'Account-local history')
+      const initial = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+      const historyRole = initial.roles.find(row => row.name === 'Account-local history')
+      assert.ok(historyRole)
+      const localChat = await chat(control, historyRole.id, LOCAL_PROMPT)
       await control.command('waitFor', localChat, {
         text: LOCAL_COMPLETE,
         timeoutMs: modelResponseTimeoutMs,
       })
+      await stop(control)
+      const stoppedAccount = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+      await saveBinding(control, { userId: 0, deviceId: localDevice, backendUrl: '' })
+      await rpc(control, 'runtime.stand_in.personal.lifecycle', { userId: 0, operation: 'start' })
+      const legacy = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
+      await rpc(control, 'runtime.stand_in.personal.save', {
+        userId: 0,
+        settings: { ...legacy, roles: [{ ...historyRole, name: LOCAL_NAME, id: 'legacy-role' }] },
+      })
+      await reloadMainWindow(control)
+      const localBefore = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
+      const localRole = localBefore.roles.find(row => row.name === LOCAL_NAME)
+      assert.ok(localRole, 'The existing local profile must retain its role')
       const memory = await rpc(control, 'runtime.stand_in.memory.save', {
         userId: 0,
         memory: {
@@ -367,6 +510,15 @@ export function createDesktopScenario({
           scope: { kind: 'role', roleId: localRole.id },
         },
       })
+      await control.command('navigate', 'body', { value: '/settings/connections' })
+      await control.command('clickWhenEnabled', testId('settings-cloud-disconnect-button'))
+      await control.command('waitFor', testId('settings-cloud-connect-button'))
+      await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command('waitFor', testId('personal-assistant-connect-cloud'))
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+      await captureScreenshot(control, 'personal-assistant-cloud-disconnected.png')
+      await control.command('clickWhenEnabled', testId('personal-assistant-connect-cloud'))
+      await control.command('waitFor', testId('settings-cloud-connect-button'))
       await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
       await observeDevice(control, CLOUD_DEVICE_ID, '在线')
       assert.equal(
@@ -374,9 +526,8 @@ export function createDesktopScenario({
         0,
         'Connecting must not replace the existing local binding'
       )
-      await createRole(control, 'Local role with cloud available')
-      const retained = await rpc(control, 'runtime.stand_in.personal.get', { userId: 0 })
-      assert.ok(retained.roles.some(role => role.name === 'Local role with cloud available'))
+      await control.command('waitFor', testId('stand-in-legacy-binding'))
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
       await stop(control)
       const beforeMigration = readProfile(remoteHome)
       await control.command('waitFor', testId('stand-in-migration'))
@@ -401,6 +552,10 @@ export function createDesktopScenario({
         migrated,
         'Successful migration must retain portable responsibilities on the target'
       )
+      const migratedDefinition = (await readInitialAssistant()).assistant.definitions.find(
+        definition => definition.roleId === migrated.id
+      )
+      assert.equal(migratedDefinition?.bot.metadata.displayName, LOCAL_NAME)
       assert.equal(migrated.enabled, false, 'Migration must not enable unconfigured device grants')
       assert.equal(migrated.workspace, undefined)
       assert.equal(migrated.connections, undefined)
@@ -528,8 +683,13 @@ export function createDesktopScenario({
       assert.equal(await control.command('getValue', migrationRole), role.id)
       assert.deepEqual(await binding(control), stoppedBinding)
 
-      await bind(control, 0, localDevice)
-      await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${localRole.id}`))
+      assert.deepEqual(
+        (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).roles,
+        stoppedAccount.roles,
+        'Cloud execution must preserve unrelated account-local roles'
+      )
+      await bind(control, USER, localDevice)
+      await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${historyRole.id}`))
       await control.command('waitFor', testId('stand-in-conversation'))
       await control.command('waitFor', localChat, { text: LOCAL_COMPLETE })
       assert.ok(
@@ -537,11 +697,6 @@ export function createDesktopScenario({
           row => row.id === memory.id
         ),
         'Stopping and rebinding must retain local memories'
-      )
-      assert.deepEqual(
-        (await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })).roles,
-        initial.roles,
-        'Cloud execution must preserve unrelated account-local roles'
       )
       await cloud.stopRemoteDockerExecutorAndWaitOffline()
       await observeDevice(control, REMOTE_DOCKER_DEVICE_ID, '离线')
@@ -555,8 +710,9 @@ export function createDesktopScenario({
       await stopProcessGroup(cloud.remoteExecutor)
       await cloud.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', cloud.remoteExecutorLogPath)
       await observeDevice(control, CLOUD_DEVICE_ID, '离线')
-      await openStandInSettings(control)
-      await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
+      await control.command('clickWhenEnabled', testId('stand-in-instance-stop'), {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
       await control.command('waitFor', testId('stand-in-instance-stop') + ':not(:disabled)')
       assert.equal(
