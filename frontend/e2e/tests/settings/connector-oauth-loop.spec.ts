@@ -536,6 +536,102 @@ test.describe('Connector app OAuth loop', () => {
     await expect(page.getByTestId(`disconnect-connector-app-${SLUG}`)).toHaveCount(0)
   })
 
+  test('refreshes from Integrations and offers authorization after refresh is rejected', async ({
+    page,
+    request,
+  }) => {
+    const row = page.getByTestId(`connector-app-connection-${SLUG}`)
+    const refresh = row.getByTestId(`retry-connector-app-${SLUG}`)
+    const authorize = row.getByTestId(`authorize-connector-app-${SLUG}`)
+    const disconnect = row.getByTestId(`disconnect-connector-app-${SLUG}`)
+    const clickRefresh = async () => {
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          response =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname.endsWith(
+              `/api/connector-apps/${SLUG}/connection/refresh`
+            ),
+          { timeout: 15_000 }
+        ),
+        refresh.click({ timeout: 5_000 }),
+      ])
+      return response
+    }
+
+    const openWithExpiredGrant = async () => {
+      const removed = await request.delete(`${API_URL}/api/connector-apps/${SLUG}/connection`, {
+        headers: authHeaders(adminToken),
+      })
+      expect(removed.ok(), await removed.text()).toBeTruthy()
+      await providerControl(request, { tokenTtlSeconds: 1, rejectRefresh: false })
+      await openIntegrations(page)
+      await authorizeThroughProvider(page)
+      await expect
+        .poll(async () => (await installedApp(request, adminToken))?.connection.status, {
+          message: 'Wait for the short-lived connector grant to expire',
+          timeout: 10_000,
+        })
+        .toBe('expired')
+      await openIntegrations(page)
+      await expect(refresh).toBeEnabled()
+      await expect(authorize).toHaveCount(0)
+    }
+
+    await test.step('Keep refresh disabled until the updated catalog is displayed', async () => {
+      await openWithExpiredGrant()
+      await providerControl(request, { tokenTtlSeconds: 3600 })
+      const catalogPath = /\/api\/connector-apps(?:\?.*)?$/
+      let releaseCatalog!: () => void
+      const catalogGate = new Promise<void>(resolve => {
+        releaseCatalog = resolve
+      })
+      // Hold the browser's catalog reload so the pending state can be asserted.
+      await page.route(
+        catalogPath,
+        async route => {
+          await catalogGate
+          await route.continue()
+        },
+        { times: 1 }
+      )
+      try {
+        const [, response] = await Promise.all([
+          page.waitForRequest(req => req.method() === 'GET' && catalogPath.test(req.url()), {
+            timeout: 15_000,
+          }),
+          clickRefresh(),
+        ])
+        expect(response.status()).toBe(200)
+        await expect(page.getByText(/^(Connection refreshed|连接已刷新)$/)).toBeVisible({
+          timeout: 5_000,
+        })
+        await expect(refresh).toBeDisabled({ timeout: 5_000 })
+        await expect(disconnect).toBeDisabled({ timeout: 5_000 })
+      } finally {
+        releaseCatalog()
+        await page.unroute(catalogPath)
+      }
+
+      await expect(row.getByText(/^(Authorized|已授权)$/)).toBeVisible({ timeout: 10_000 })
+      await expect(disconnect).toBeEnabled()
+      await expect(refresh).toHaveCount(0)
+      await expect(authorize).toHaveCount(0)
+    })
+
+    await test.step('Offer re-authorization when the provider rejects refresh', async () => {
+      await openWithExpiredGrant()
+      await providerControl(request, { rejectRefresh: true })
+      const response = await clickRefresh()
+      expect(response.status()).toBe(400)
+      expect(await response.text()).toContain('rejected')
+      await expect(authorize).toBeVisible({ timeout: 10_000 })
+      await expect(authorize).toBeEnabled()
+      await expect(refresh).toHaveCount(0)
+      await expect(disconnect).toHaveCount(0)
+    })
+  })
+
   test('rejects duplicate callbacks while successful polling remains idempotent', async ({
     request,
   }) => {
