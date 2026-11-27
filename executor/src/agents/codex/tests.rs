@@ -4141,7 +4141,7 @@ fn unavailable_managed_mcps_are_omitted_instead_of_creating_invalid_transports()
         task_id: "42".into(),
         ..Default::default()
     };
-    let configs = runtime_capabilities::managed_mcp_configs(&request).unwrap();
+    let configs = runtime_capabilities::managed_mcp_configs_for_shell(&request, true).unwrap();
     assert!(
         configs.len() < 4,
         "the request must contain an unavailable managed service"

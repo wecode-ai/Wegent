@@ -47,6 +47,8 @@ use wegent_subprocess::{decode_output, run_prepared_command, ProcessTreeGuard};
 pub use wegent_subprocess::{hide_windows_console, spawn_program_parts};
 
 mod claude_resume;
+mod manager;
+pub use manager::ManagerOperations;
 use wegent_runtime_logging::native_stdout as debug_stdout;
 mod stream_diagnostics;
 mod stream_session;
@@ -193,6 +195,7 @@ impl AgentEngine for ProcessEngine {
 
 #[derive(Debug, Clone)]
 pub struct StreamProcessEngine {
+    manager: Option<Arc<dyn ManagerOperations>>,
     spec: CommandSpec,
     timeout_seconds: u64,
     environment: Arc<dyn ChildEnvironment>,
@@ -200,6 +203,16 @@ pub struct StreamProcessEngine {
 }
 
 impl StreamProcessEngine {
+    pub fn with_manager(
+        mut self,
+        manager: Arc<dyn ManagerOperations>,
+        environment: Arc<dyn ChildEnvironment>,
+    ) -> Self {
+        self.environment = environment;
+        self.manager = Some(manager);
+        self
+    }
+
     pub fn new(
         spec: CommandSpec,
         timeout_seconds: u64,
@@ -208,6 +221,7 @@ impl StreamProcessEngine {
     ) -> Self {
         assert!(timeout_seconds > 0, "timeout_seconds must be positive");
         Self {
+            manager: None,
             spec,
             timeout_seconds,
             environment,
@@ -224,10 +238,22 @@ impl AgentEngine for StreamProcessEngine {
         let timeout_seconds = self.timeout_seconds;
         let environment = Arc::clone(&self.environment);
         let client_version = self.client_version;
+        let manager = self.manager.clone();
         Box::pin(async move {
             let runner = FollowUpCommandRunner::<NoopEventSink>::Silent {
                 environment: Arc::clone(&environment),
             };
+            if let Some(manager) = manager {
+                return manager::run(
+                    &request,
+                    spec,
+                    timeout_seconds,
+                    &runner,
+                    manager.as_ref(),
+                    client_version,
+                )
+                .await;
+            }
             let (spec, outcome) =
                 claude_resume::run(&request, spec, timeout_seconds, &runner).await;
             match outcome {
@@ -313,6 +339,7 @@ impl AgentEngine for StreamProcessEngine {
         let timeout_seconds = self.timeout_seconds;
         let environment = Arc::clone(&self.environment);
         let client_version = self.client_version;
+        let manager = self.manager.clone();
         Box::pin(async move {
             let runner = FollowUpCommandRunner::Streaming {
                 environment: Arc::clone(&environment),
@@ -322,6 +349,17 @@ impl AgentEngine for StreamProcessEngine {
                 subtask_id: request.subtask_id.clone(),
                 session: stream_session::SessionRecorder::new(&request),
             };
+            if let Some(manager) = manager {
+                return manager::run(
+                    &request,
+                    spec,
+                    timeout_seconds,
+                    &runner,
+                    manager.as_ref(),
+                    client_version,
+                )
+                .await;
+            }
             let (spec, outcome) =
                 claude_resume::run(&request, spec, timeout_seconds, &runner).await;
             match outcome {

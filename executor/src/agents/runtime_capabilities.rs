@@ -454,8 +454,9 @@ pub async fn prepare_claude_runtime(
     Ok(spec)
 }
 
-pub(super) fn managed_mcp_configs(
+pub(super) fn managed_mcp_configs_for_shell(
     request: &ExecutionRequest,
+    expose_space_transport: bool,
 ) -> Result<BTreeMap<&'static str, crate::task_runtime::mcp::SpaceMcpClientConfig>, String> {
     crate::task_runtime::mcp::has_bound_issue_context(request)?;
     let independent_issue = request
@@ -478,7 +479,7 @@ pub(super) fn managed_mcp_configs(
         ),
         (
             crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-            if independent_issue {
+            if independent_issue || !expose_space_transport {
                 Ok(None)
             } else {
                 crate::task_runtime::mcp::space_mcp_client_config(request).map(Some)
@@ -508,7 +509,10 @@ fn inject_managed_wework_mcps(
     ] {
         mcp_servers.remove(name);
     }
-    for (name, config) in managed_mcp_configs(request)? {
+    for (name, config) in managed_mcp_configs_for_shell(
+        request,
+        !crate::task_runtime::mcp::native_project_manager(request)?,
+    )? {
         let timeout = if name == crate::workbench_control::SERVER_NAME {
             crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS
         } else {
@@ -1727,6 +1731,9 @@ fn bind_claude_roles(
             Err(error) => return Err(error.to_string()),
         }
     }
+    if crate::task_runtime::mcp::native_project_manager(request)? {
+        return Ok(spec);
+    }
     let roles = coordinate_roles(request, "ClaudeCode")?;
     if !roles.is_empty() {
         spec = spec
@@ -1758,13 +1765,27 @@ pub(super) fn coordinate_roles<'a>(
     let Some((leader, members)) = request.bot.as_array().and_then(|bots| bots.split_first()) else {
         return Ok(roles);
     };
-    if !members.is_empty() && crate::task_runtime::mcp::has_manager_grant(request)? {
+    let project_manager = crate::task_runtime::mcp::native_project_manager(request)?;
+    if !members.is_empty()
+        && crate::task_runtime::mcp::has_manager_grant(request)?
+        && !project_manager
+    {
         return Err("Native subagents cannot isolate the Issue manager grant".into());
     }
     for bot in members {
         // Both native engines inherit the parent process's MCP credentials.
         // Compare the whole transport, including headers and approval modes.
-        let tools = native_role_tools(leader, bot, shell)?;
+        let tools = if shell == "ClaudeCode"
+            && project_manager
+            && bot["capability_mode"] != "follow_device"
+            && !["plugins", "skills", "preload_skills", "skill_refs"]
+                .iter()
+                .any(|field| nonempty_grant(bot.get(*field)))
+        {
+            Some(Vec::new()) // Filled from role-owned MCP registrations on native stdin.
+        } else {
+            native_role_tools(leader, bot, shell)?
+        };
         if bot
             .get("shell_type")
             .and_then(Value::as_str)
@@ -2502,7 +2523,7 @@ mod tests {
     };
 
     #[test]
-    fn native_roles_reject_different_credentials_and_issue_manager_authority() {
+    fn native_roles_isolate_bot_credentials_and_accept_host_scoped_manager_authority() {
         let mut request = ExecutionRequest {
             bot: json!([
                 {"mcp_servers": [{"name":"shared","headers":{"X-Grant":"a"}}]},
@@ -2525,9 +2546,8 @@ mod tests {
         request.extra.insert("origin".into(), json!({
             "type":"issue_dispatch", "dispatchRole":"manager", "cloudProjectId":"p", "loopItemId":"i"
         }));
-        for shell in ["Codex", "ClaudeCode"] {
-            assert!(coordinate_roles(&request, shell).is_err());
-        }
+        assert!(coordinate_roles(&request, "Codex").is_ok());
+        assert!(coordinate_roles(&request, "ClaudeCode").is_ok());
     }
 
     #[test]

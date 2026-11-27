@@ -284,6 +284,13 @@ impl SpaceMcpRequestContext {
     }
 }
 
+pub(crate) fn native_project_manager(request: &ExecutionRequest) -> Result<bool, String> {
+    Ok(wegent_execution_contracts::is_coordinate_team(request)
+        && request.bot.as_array().is_some_and(|bots| bots.len() > 1)
+        && stand_in_identity(request).is_none()
+        && is_manager_context(space_context_grant(request)?.as_ref()))
+}
+
 pub(crate) fn has_manager_grant(request: &ExecutionRequest) -> Result<bool, String> {
     let grant = space_context_grant(request)?;
     Ok(is_manager_context(grant.as_ref())
@@ -299,6 +306,13 @@ pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool
 pub(crate) fn space_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<SpaceMcpClientConfig, String> {
+    let context = project_space_request_context(request)?;
+    register_space_client(context)
+}
+
+pub(crate) fn project_space_request_context(
+    request: &ExecutionRequest,
+) -> Result<SpaceMcpRequestContext, String> {
     let mut context = SpaceMcpRequestContext::new(
         space_context_grant(request)?,
         request
@@ -335,6 +349,10 @@ pub(crate) fn space_mcp_client_config(
         })
         .and_then(Value::as_str)
         .map(str::to_owned);
+    Ok(context)
+}
+
+fn register_space_client(context: SpaceMcpRequestContext) -> Result<SpaceMcpClientConfig, String> {
     let registered = super::mcp_http::register_space_mcp_context(context)?;
     Ok(SpaceMcpClientConfig {
         url: registered.endpoint.url,
@@ -913,7 +931,7 @@ fn selected_local_delivery_chat(
     })))
 }
 
-async fn call_tool_with_context(
+pub(crate) async fn call_tool_with_context(
     runtime: &TaskRuntime,
     name: &str,
     arguments: Value,
@@ -3570,7 +3588,7 @@ fn tools() -> Vec<Value> {
     tools
 }
 
-fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+pub(crate) fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
     if context.surface == WeworkMcpSurface::StandIn {
         return stand_in::tools(context);
     }

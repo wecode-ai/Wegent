@@ -137,6 +137,7 @@ mod auth_mode;
 mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
+use super::manager_tools;
 mod marketplace_catalog;
 mod memory_review;
 mod native_provider;
@@ -2595,6 +2596,7 @@ async fn drive_codex_turn(
         }
         if let Some(admit) = input_admission.as_ref() { admit()?; }
         let mut state = CodexRunState::default();
+        state.manager = launch_config.manager.clone();
         let thread_plan = codex_thread_plan(
             direct_thread_id.as_deref(),
             fork_thread_id.as_deref(),
@@ -3320,6 +3322,21 @@ async fn read_shared_turn_notifications(
         }
 
         if !private_turn && !notification_belongs_to_thread(client, &message, thread_id).await {
+            continue;
+        }
+
+        if message["method"] == "item/tool/call" && private_turn {
+            if let Some(id) = message.get("id") {
+                let result = manager_tools::respond(
+                    state.manager.as_deref(),
+                    &message["params"],
+                    thread_id,
+                    options.active_turn_id.as_deref(),
+                    cancellation_requested,
+                )
+                .await;
+                client.send_response(id.clone(), result).await?;
+            }
             continue;
         }
 
@@ -4297,6 +4314,10 @@ fn codex_app_server_command(
     {
         command.env_remove(key);
     }
+    if launch_config.manager.is_some() {
+        command.env_remove("WEGENT_AUTH_TOKEN");
+        command.env_remove("WEWORK_SPACE_AUTH_TOKEN");
+    }
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
@@ -4544,6 +4565,7 @@ fn initialize_params() -> Value {
 
 #[derive(Debug, Clone, Default)]
 struct CodexLaunchConfig {
+    manager: Option<Arc<manager_tools::ManagerTools>>,
     config_overrides: Vec<String>,
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
@@ -4741,6 +4763,19 @@ fn build_codex_launch_config_with_route_scope(
         }
     }
 
+    if launch_config.manager.is_some() {
+        let thread =
+            serde_json::to_string(&launch_config.thread_config).map_err(|e| e.to_string())?;
+        manager_tools::check_shell_values(
+            request,
+            launch_config
+                .config_overrides
+                .iter()
+                .chain(launch_config.env.values())
+                .map(String::as_str)
+                .chain(std::iter::once(thread.as_str())),
+        )?;
+    }
     effective_instructions::publish(request, &launch_config)?;
     Ok(launch_config)
 }
@@ -4972,7 +5007,9 @@ fn explicit_codex_upstream(
 }
 
 pub(crate) fn task_identity_thread_config(request: &ExecutionRequest) -> Map<String, Value> {
-    let restricted = crate::runtime_work::external_work_kind(request).is_some();
+    let restricted = crate::runtime_work::external_work_kind(request).is_some()
+        || (coordinate_team(request)
+            && crate::task_runtime::mcp::native_project_manager(request).unwrap_or(true));
     let mut config = external_work::permission_config(request);
     config.extend(
         task_identity_env(request)
@@ -6002,6 +6039,11 @@ fn configure_managed_wework_mcp(
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
     crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    if native_roles::coordinate_team(request)
+        && crate::task_runtime::mcp::native_project_manager(request)?
+    {
+        launch.manager = Some(Arc::new(manager_tools::ManagerTools::new(request)?));
+    }
     let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() else {
         runtime_capabilities::mcp_environment::log_server_unavailable(
             request,
@@ -6015,7 +6057,8 @@ fn configure_managed_wework_mcp(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
-    let configs = runtime_capabilities::managed_mcp_configs(request)?;
+    let configs =
+        runtime_capabilities::managed_mcp_configs_for_shell(request, launch.manager.is_none())?;
     for (name, config) in configs {
         configure_managed_mcp_server(request, name, config, launch);
     }
@@ -6946,6 +6989,9 @@ fn validate_codex_model_provider(
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
+    if let Some(manager) = &launch_config.manager {
+        params.insert("dynamicTools".into(), manager.specs());
+    }
     params.insert(
         "historyMode".to_owned(),
         Value::String("paginated".to_owned()),

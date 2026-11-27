@@ -19,3 +19,21 @@ impl wegent_claude_harness::ChildEnvironment for CredentialEnvironment {
         process_env(extra)
     }
 }
+
+#[derive(Debug)]
+pub struct ManagerEnvironment;
+impl wegent_claude_harness::ChildEnvironment for ManagerEnvironment {
+    fn environment(&self, extra: &[(String, String)]) -> std::collections::HashMap<String, String> {
+        let mut environment = process_env(extra);
+        for key in [
+            "AUTH_TOKEN",
+            "WEGENT_AUTH_TOKEN",
+            "WEWORK_SPACE_AUTH_TOKEN",
+            "WEGENT_RUNTIME_AUTH_TOKEN",
+            "WEGENT_SKILL_IDENTITY_TOKEN",
+        ] {
+            environment.remove(key);
+        }
+        environment
+    }
+}

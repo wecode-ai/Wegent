@@ -74,6 +74,15 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
     if let Some(title) = runtime_task_title(request) {
         env.insert("WEWORK_PARENT_TITLE".to_owned(), title);
     }
+    let member_request;
+    let request = if request.resolved_agent_kind() == crate::protocol::AgentKind::ClaudeCode
+        && crate::task_runtime::mcp::native_project_manager(request).unwrap_or(true)
+    {
+        member_request = super::manager_tools::shell_request(request);
+        &member_request
+    } else {
+        request
+    };
     if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
         env.insert("AUTH_TOKEN".to_owned(), auth_token.to_owned());
     }
