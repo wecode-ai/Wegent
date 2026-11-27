@@ -721,6 +721,35 @@ async function waitForOverflowMetrics(control, selector, description, timeoutMs 
   throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify(metrics)}`)
 }
 
+async function waitForAnchorOffset(
+  control,
+  elementSelector,
+  scrollerSelector,
+  expectedOffset,
+  description,
+  timeoutMs = 3_000
+) {
+  const startedAt = Date.now()
+  const observations = []
+  while (Date.now() - startedAt < timeoutMs) {
+    const scroller = await getSingleElementMetrics(
+      control,
+      scrollerSelector,
+      description
+    )
+    const element = (await getElementMetrics(control, elementSelector)).at(-1)
+    const offset = element ? element.top - scroller.top + scroller.scrollTop : null
+    observations.push(offset)
+    if (offset !== null && Math.abs(offset - expectedOffset) <= 8) {
+      return { element, scroller, offset }
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `${description} remained at offset ${observations.at(-1)}px instead of ${expectedOffset}px; observations=${JSON.stringify(observations)}`
+  )
+}
+
 async function waitForElementInsideScroller(
   control,
   elementSelector,
@@ -1395,10 +1424,11 @@ export {
   assertDesktopComposerDocked,
   waitForBottomMetrics,
   waitForOverflowMetrics,
+  waitForAnchorOffset,
   waitForElementInsideScroller,
+  waitForElementTop,
   waitForTopMetrics,
   waitForElementWidth,
-  waitForElementTop,
   waitForProcessingBlock,
   waitForComposerFocus,
   verifyViewImageProcessingBlock,
