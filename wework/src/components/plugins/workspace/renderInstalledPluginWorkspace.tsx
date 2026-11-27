@@ -22,9 +22,16 @@ import {
   tryPluginInChat,
 } from '../workspace/marketplaceWorkspaceHelpers'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
+import {
+  isLocalPersonalPlugin,
+  syncPersonalPluginToCurrentAccount,
+} from './personalPluginCloudInstall'
 
 export function renderInstalledPluginWorkspace({
   selectedPlugin,
+  syncPersonalPluginInBackground,
+  catalog,
+  operations,
   findOwnedMarketplacePlugin,
   pluginMarketplaceState,
   publicationRequests,
@@ -32,6 +39,8 @@ export function renderInstalledPluginWorkspace({
   installedPlugins,
   currentDeviceId,
   isInstalledPluginUninstalling,
+  installingMarketplacePluginIds,
+  isReconcilingPlugins,
   pluginPublishPreparing,
   isUploadingPlugin,
   openCreatedPluginAccess,
@@ -185,6 +194,29 @@ export function renderInstalledPluginWorkspace({
             continueEditingKey
               ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
               : undefined
+          }
+          onSyncToAccount={
+            packableCreated &&
+            isLocalPersonalPlugin(packableCreated.raw) &&
+            associatedListing?.accessRole === 'owner' &&
+            associatedListing.visibility === 'personal' &&
+            syncPersonalPluginInBackground
+              ? () =>
+                  void syncPersonalPluginToCurrentAccount({
+                    plugin: packableCreated,
+                    listing: associatedListing,
+                    sync: syncPersonalPluginInBackground,
+                    catalog,
+                    operations,
+                    t,
+                  })
+              : undefined
+          }
+          syncToAccountDisabled={
+            headerBusy ||
+            selectedUninstalling ||
+            isReconcilingPlugins ||
+            installingMarketplacePluginIds.has(associatedListing?.id ?? '')
           }
           deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
           deleteActionDisabled={headerBusy}

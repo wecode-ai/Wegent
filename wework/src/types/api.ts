@@ -1463,7 +1463,14 @@ export interface PluginMarketplaceItem {
     deviceId: string
     desiredReleaseId: number
     actualReleaseId?: number | null
-    state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+    state:
+      | 'pending'
+      | 'downloading'
+      | 'installing'
+      | 'installed'
+      | 'source'
+      | 'failed'
+      | 'uninstalling'
     errorCode?: string | null
     errorMessage?: string | null
     attemptCount: number

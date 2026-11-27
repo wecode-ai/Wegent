@@ -27,7 +27,7 @@ pub(in crate::plugins_installed) async fn record_local_completion<Q: MysqlQuery>
             query,
             user_id,
             &result.device_id,
-            installed.id,
+            installed,
             integer_release_id(&installed.json.0.to_value()).unwrap_or(0),
             result,
             result.plugins.first().cloned(),

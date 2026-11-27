@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+mod author_source;
 mod automation;
 pub mod broker;
 mod execution;

@@ -140,7 +140,15 @@ fn managed_plugin_report_entry(
             .cloned()
             .unwrap_or_else(|| json!("user")),
     );
-    if let Some(version) = value_string(manifest_entry.get("version"))
+    let author_source = (manifest_entry["materialization"] == "author_source")
+        .then(|| &manifest_entry["author_source"]);
+    if let Some(source) = author_source {
+        entry.insert("materialization".to_owned(), json!("author_source"));
+        entry.insert("author_source".to_owned(), author_source::receipt(source));
+        if let Some(version) = source["version"].as_str() {
+            entry.insert("version".to_owned(), json!(version));
+        }
+    } else if let Some(version) = value_string(manifest_entry.get("version"))
         .or_else(|| registry_entry.and_then(|entry| value_string(entry.get("version"))))
     {
         entry.insert("version".to_owned(), json!(version));
@@ -150,9 +158,11 @@ fn managed_plugin_report_entry(
     copy_registry_plugin_timestamp(&mut entry, registry_entry, "lastUpdated", "last_updated");
     entry.insert(
         "skills".to_owned(),
-        Value::Array(scan_optional_plugin_path(managed_plugin_scan_path(
-            manifest_entry,
-        ))?),
+        Value::Array(if author_source.is_some() {
+            Vec::new()
+        } else {
+            scan_optional_plugin_path(managed_plugin_scan_path(manifest_entry))?
+        }),
     );
     if let Some(installed_plugin_id) = value_i64(manifest_entry.get("installed_plugin_id")) {
         entry.insert("installed_plugin_id".to_owned(), json!(installed_plugin_id));

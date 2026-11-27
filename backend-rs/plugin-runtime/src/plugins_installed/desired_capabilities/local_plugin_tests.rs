@@ -160,3 +160,29 @@ fn prepared_payload_keeps_override_and_unready_release_semantics() {
         "A ready release without an override keeps stored package metadata"
     );
 }
+
+#[tokio::test]
+async fn source_preservation_capability_comes_from_catalog_ownership() {
+    let fixture = MysqlRows::start_results(|sql| {
+        assert!(sql.contains("owner_user_id=? AND visibility='personal'"));
+        let row = vec![("id", Cell::I64(2))];
+        (row.clone(), vec![row])
+    })
+    .await;
+    let mut payloads = vec![
+        json!({"cloud_plugin_id":1}),
+        json!({"cloud_plugin_id":2}),
+        json!({}),
+    ];
+    crate::plugins_installed::personal_source::mark_owned_payloads(
+        &mut &fixture.mysql,
+        7,
+        &mut payloads,
+    )
+    .await
+    .unwrap();
+    assert!(payloads[0].get("personal_source_owner").is_none());
+    assert_eq!(payloads[1]["personal_source_owner"], true);
+    assert!(payloads[2].get("personal_source_owner").is_none());
+    assert_eq!(fixture.queries().len(), 1);
+}

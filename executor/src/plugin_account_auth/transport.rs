@@ -17,6 +17,9 @@ pub trait PluginAuthTransport: Clone + Send + Sync + 'static {
     fn uses_native_http(&self) -> bool {
         false
     }
+    fn account_scope(&self) -> Option<Value> {
+        None
+    }
     fn exchange<'a>(
         &'a self,
         operation: &'a str,

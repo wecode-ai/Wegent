@@ -356,6 +356,7 @@ export function toWegentStoreInstalledPlugin(
   storePath: string,
   translate: (key: string) => string
 ): InstalledPlugin {
+  const authorSource = plugin.materialization === 'author_source' ? plugin.authorSource : null
   const marketplace = isWegentCloudMarketplace(plugin.marketplace)
     ? INTERNAL_DEVICE_MARKETPLACE_ID
     : plugin.marketplace
@@ -368,12 +369,12 @@ export function toWegentStoreInstalledPlugin(
     {
       id: plugin.packageId,
       name: plugin.name,
-      installed: true,
+      installed: authorSource?.installed ?? true,
       enabled: plugin.enabled,
-      localVersion: plugin.version ?? undefined,
+      localVersion: authorSource ? authorSource.version : (plugin.version ?? undefined),
       source: {
         source: 'local',
-        path: plugin.pluginPath,
+        path: authorSource?.runtime_path ?? plugin.pluginPath,
       },
       interface: {
         defaultPrompt: plugin.defaultPrompt,
@@ -401,6 +402,11 @@ export function toWegentStoreInstalledPlugin(
         cloudPluginId: plugin.cloudPluginId ?? null,
         cloudInstalledPluginId: plugin.installedPluginId ?? null,
         runtimeRecoveryError: plugin.runtimeRecoveryError?.trim() || null,
+        ...(authorSource && {
+          materialization: 'author_source',
+          authorSource,
+          cloudPackageVersion: plugin.version ?? null,
+        }),
       },
     },
     status: plugin.runtimeRecoveryError?.trim()

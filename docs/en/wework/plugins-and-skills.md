@@ -106,6 +106,16 @@ If you do not have a package yet, choose **Download example plugin** in the impo
 
 When connected to your organization server, installing or importing a plugin you created first completes the local installation. Wework then installs it for your account in the background so your cloud devices can sync it. The first sync uploads a version available only to you if the plugin has no cloud version. You can keep using the local plugin if cloud sync fails.
 
+Synchronization and marketplace refresh preserve the author's personal source, unpublished changes, and currently installed local version. Cloud devices install the published release selected for the account. These versions may differ; synchronization never requires deleting the original. Local authorization uses the current installation's connector declaration, rather than selecting an authorization program from retained older caches. Credential migration still requires matching the published release's authorization declaration.
+
+<a id="sync-personal-plugin-to-account"></a>
+
+## Sync a personal plugin to the current account
+
+Open **Left sidebar → Plugins → Personal creations → your plugin → More actions → Sync to current account**. **Manage plugins → Codex plugins → plugin name** opens the same details. This action appears when an account is connected, the current account owns the personal cloud listing, and the corresponding original source is available locally.
+
+Use this action when an older local association cannot finish syncing after an upgrade. It confirms the association with the current account, retains an existing account installation, preserves the local original and unpublished edits, and keeps sharing permissions. The app then checks local installation state and reports success only after verification. On failure, the source remains available; check your connection and retry.
+
 ## Managed local Python
 
 After startup, Wework asynchronously inspects locally installed, enabled plugins. Python adapters, commands, scripts, or runtime declarations request background preparation of the client-pinned Python 3.12.12. Installing or enabling a plugin also checks demand. Users without Python plugins do not automatically download Python; an existing healthy runtime is reused. Preparation does not block the main window or ordinary tasks. Chat execution, authorization, and background preparation share one installation. A failed automatic preparation is not retried repeatedly during the same application launch; users can retry from the notice or execution environment settings. The notice shows actual download progress and installation and verification stages. The interpreter and launchers remain under `managed-runtimes/python/` in application data without changing ordinary tasks' `PATH` or Python configuration.

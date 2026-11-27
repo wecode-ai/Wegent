@@ -25,11 +25,23 @@ impl Paths {
         &mut self,
         store: &GlobalCapabilityStore,
         spec: &PluginSyncSpec,
+        recorded: Option<&Value>,
     ) -> Result<(), CapabilitySyncError> {
         for component in [&spec.name, &spec.marketplace, &spec.version] {
             shared_packages::validate_component(component)?;
         }
-        let (files, directories) = store.runtime_state_paths(spec);
+        let (files, mut directories) = store.runtime_state_paths(spec);
+        let source = match recorded.filter(|entry| entry["materialization"] == "author_source") {
+            Some(entry) => recorded_author_source(store, entry)?,
+            None => store.personal_author_source(spec)?,
+        };
+        if let Some(source) = source {
+            directories.clear();
+            directories.push(PathBuf::from(source["source_path"].as_str().unwrap()));
+            if let Some(runtime) = source["runtime_path"].as_str() {
+                directories.push(PathBuf::from(runtime));
+            }
+        }
         self.metadata.extend(files);
         self.plugins
             .entry(spec.key.clone())
@@ -48,9 +60,10 @@ impl Paths {
             self.add_plugin(
                 store,
                 &PluginSyncSpec::from_manifest_entry(&spec.key, previous),
+                Some(previous),
             )?;
         }
-        self.add_plugin(store, spec)
+        self.add_plugin(store, spec, manifest["plugins"].get(&spec.key))
     }
 
     fn add_skill(
@@ -351,7 +364,12 @@ impl Snapshot {
             let entry = &manifest["plugins"][key];
             // Ordering fences, URLs, historical paths and publication times are
             // bookkeeping. Component states and the complete runtime are effective.
-            let definition = if entry.is_object() {
+            let definition = if entry["materialization"] == "author_source" {
+                let source = recorded_author_source(store, entry)?.ok_or_else(|| {
+                    CapabilitySyncError::invalid_payload("Author plugin source is unavailable")
+                })?;
+                json!({"materialization":"author_source","source":author_source::receipt(&source)})
+            } else if entry.is_object() {
                 let spec = PluginSyncSpec::from_manifest_entry(key, entry);
                 json!({"enabled":spec.enabled, "version":spec.version,
                     "checksum":spec.checksum, "component_states":spec.component_states})
@@ -541,7 +559,11 @@ pub(super) fn local_plugin_digest(
     let mut paths = Paths::default();
     for (key, entry) in object_map(manifest.get("plugins")).unwrap_or_default() {
         if entry["managed"] == true {
-            paths.add_plugin(store, &PluginSyncSpec::from_manifest_entry(&key, &entry))?;
+            paths.add_plugin(
+                store,
+                &PluginSyncSpec::from_manifest_entry(&key, &entry),
+                Some(&entry),
+            )?;
         }
     }
     for marketplace in RECONCILABLE_PLUGIN_MARKETPLACES {
@@ -553,4 +575,18 @@ pub(super) fn local_plugin_digest(
     Ok(sha256_json_digest(
         &json!({"plugins":snapshot.plugins,"metadata":snapshot.metadata}),
     ))
+}
+
+fn recorded_author_source(
+    store: &GlobalCapabilityStore,
+    entry: &Value,
+) -> Result<Option<Value>, CapabilitySyncError> {
+    read_personal_author_source(
+        &store.manifest.path,
+        store
+            .codex_plugins_dir
+            .parent()
+            .unwrap_or(&store.codex_plugins_dir),
+        entry,
+    )
 }

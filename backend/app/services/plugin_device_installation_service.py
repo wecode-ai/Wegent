@@ -28,6 +28,7 @@ from app.services.plugin_device_identity import (
     reconcile_plugin_device_rows,
 )
 from app.services.plugin_kind_revision import kind_revision
+from app.services.plugin_personal_source import owns_personal_plugin
 from app.services.plugin_write_coordination import (
     acquire_plugin_write_lock,
     acquire_plugin_write_locks,
@@ -144,6 +145,12 @@ class PluginDeviceInstallationService:
                 row.attempt_count = 0
             # The active Kind was re-read under the write lease. Its new install
             # intent supersedes removal even when the release has not changed.
+            if (
+                row.state == "source"
+                and not desired_changed
+                and owns_personal_plugin(db, installed, user_id)
+            ):
+                continue
             if row.actual_release_id != desired_release_id or reinstalling:
                 if self._auto_update_blocked(row) and not reset_failures:
                     continue
@@ -600,6 +607,11 @@ class PluginDeviceInstallationService:
         row = self._device_row(db, installed.id, result.device_id)
         if row and self._auto_update_blocked(row, desired_release_id=release_id):
             return
+        if item_result and item_result.status == "source_preserved":
+            if item_result.source is None or not owns_personal_plugin(
+                db, installed, user_id
+            ):
+                raise ValueError("INVALID_PERSONAL_SOURCE_RECEIPT")
         state, error_message = self._device_install_state(result, item_result)
         if (
             item_result is None
@@ -622,6 +634,9 @@ class PluginDeviceInstallationService:
         row.desired_release_id = release_id
         if state == "installed":
             row.actual_release_id = release_id
+            row.attempt_count = 0
+        elif state == "source":
+            row.actual_release_id = 0
             row.attempt_count = 0
         elif state == "failed":
             row.attempt_count = 1 if desired_changed else (row.attempt_count or 0) + 1
@@ -726,6 +741,12 @@ class PluginDeviceInstallationService:
             row.attempt_count = 0
         if row.state == "installed" and row.actual_release_id == release_id:
             return 0
+        if (
+            row.state == "source"
+            and not desired_changed
+            and owns_personal_plugin(db, installed, user_id)
+        ):
+            return 0
         # Never interrupt an in-flight uninstall; the Kind may still be
         # active for a brief window before account uninstall completes.
         if row.state == "uninstalling":
@@ -780,6 +801,8 @@ class PluginDeviceInstallationService:
         if item_result is not None:
             if item_result.status in {"failed", "error"}:
                 return "failed", item_result.error or "Device rejected plugin install"
+            if item_result.status == "source_preserved":
+                return "source", None
             if item_result.status == "synced":
                 return "installed", None
         if not result.success:

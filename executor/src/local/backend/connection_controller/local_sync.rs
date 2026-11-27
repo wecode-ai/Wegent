@@ -492,6 +492,9 @@ impl LocalBackendConnectionController {
             .as_i64()
             .filter(|id| *id > 0)
             .ok_or_else(|| error("plugin_local_invalid_response"))?;
+        handler
+            .bind_account_scope(&connection.backend_url, account)
+            .map_err(|_| error("plugin_route_profile_mismatch"))?;
         let scope = format!(
             "{:x}",
             Sha256::digest(format!("{}:{account}", connection.backend_url).as_bytes())
@@ -799,14 +802,18 @@ impl LocalBackendConnectionController {
                 .handle_sync_capabilities(snapshot["payload"].clone())
                 .await,
         );
+        super::super::handlers::log_capability_sync_items(&result, "plugins", "plugin");
         journal = self
             .resume_local_sync_journal(connection, path, lease)
             .await?;
         let completed = result["success"] == true
             && result["plugins"].as_array().is_some_and(|items| {
-                items
-                    .iter()
-                    .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
+                items.iter().all(|item| {
+                    matches!(
+                        item["status"].as_str(),
+                        Some("synced" | "source_preserved" | "removed")
+                    )
+                })
             });
         if completed {
             // Preserve actual application separately from the server receipt.

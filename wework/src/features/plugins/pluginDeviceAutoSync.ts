@@ -159,6 +159,7 @@ function localPackageLagsCatalogVersion(item: PluginMarketplaceItem): boolean {
 
 /** Account has an install record but this device still needs materialization. */
 export function marketplaceItemNeedsDeviceSync(item: PluginMarketplaceItem): boolean {
+  if (item.currentDeviceInstallation?.state === 'source') return false
   if (item.installedPluginId === null || item.installedPluginId === undefined) {
     return false
   }
@@ -256,7 +257,12 @@ export function installedPluginNeedsDeviceStatusReport(
   if (plugin.spec.installState === 'update_available') return false
   if (numericInstalledPluginId(plugin) === null) return false
   const device = plugin.status.devices?.find(row => row.deviceId === deviceId)
-  if (device?.state === 'uninstalling' || device?.state === 'installed') return false
+  if (
+    device?.state === 'uninstalling' ||
+    device?.state === 'installed' ||
+    device?.state === 'source'
+  )
+    return false
   if (device && hasReleaseGap(device)) return false
   if (device) return true
   return (plugin.status.devices?.length ?? 0) > 0 || plugin.spec.installState === 'not_installed'

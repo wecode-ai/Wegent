@@ -274,9 +274,13 @@ export function createLocalFirstPluginApi(
       plugins: response.result?.plugins ?? [],
       mcps: [],
       errors: [],
-      synced: response.result?.plugins?.length ?? 0,
+      synced:
+        response.result?.plugins?.filter(
+          item => item.status === 'synced' || item.status === 'removed'
+        ).length ?? 0,
       failed: 0,
-      skipped: 0,
+      skipped:
+        response.result?.plugins?.filter(item => item.status === 'source_preserved').length ?? 0,
       results: [],
     }
     // Native confirms its source device; the renderer must not send a duplicate receipt.

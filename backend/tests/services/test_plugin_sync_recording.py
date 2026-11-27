@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.models.kind import Kind
-from app.models.plugin_marketplace import PluginDeviceInstallation
-from app.schemas.device import DeviceCapabilitySyncResult
+from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
+from app.schemas.device import DeviceCapabilityItemResult, DeviceCapabilitySyncResult
 from app.services.device.capability_sync_service import DeviceCapabilitySyncService
 from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
@@ -683,3 +683,70 @@ def test_mixed_batch_keeps_all_device_watermarks_with_autoflush_disabled(
         )
         assert row.state == "installed"
         assert row.actual_release_id == 17
+
+
+@pytest.mark.parametrize("ownership", ["author", "recipient", "workspace"])
+def test_personal_source_receipt_preserves_truthful_device_state(
+    test_db, test_user, ownership
+):
+    installed = _installed(test_db, test_user.id, "author-source")
+    plugin = Plugin(
+        slug="author-source",
+        name="author-source",
+        display_name="Author Source",
+        owner_user_id=test_user.id if ownership != "recipient" else 0,
+        visibility="workspace" if ownership == "workspace" else "personal",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    installed.json = {"spec": {**installed.json["spec"], "pluginId": plugin.id}}
+    test_db.commit()
+    row = _device_row(test_db, installed, state="installed", actual=17)
+    payload = _payload(test_db, installed)
+    assert payload["plugins"][0].get("personal_source_owner", False) is (
+        ownership == "author"
+    )
+    result = _result(payload, status="source_preserved")
+    result.plugins[0] = DeviceCapabilityItemResult.model_validate(
+        {
+            **result.plugins[0].model_dump(),
+            "source": {
+                "installed": True,
+                "enabled": False,
+                "version": "unpublished-draft",
+            },
+        }
+    )
+    service = PluginDeviceInstallationService()
+    if ownership != "author":
+        with pytest.raises(ValueError, match="INVALID_PERSONAL_SOURCE_RECEIPT"):
+            service.record_device_sync_result(
+                test_db, user_id=test_user.id, result=result
+            )
+        test_db.rollback()
+        test_db.refresh(row)
+        assert row.state == "installed"
+        assert row.actual_release_id == 17
+        return
+    service.record_device_sync_result(test_db, user_id=test_user.id, result=result)
+    test_db.refresh(row)
+    assert row.state == "source"
+    assert row.actual_release_id == 0
+    assert row.desired_release_id == 17
+    assert not row.error_code
+    assert row.attempt_count == 0
+    assert (
+        service.ensure_plugin_pending_for_device(
+            test_db,
+            user_id=test_user.id,
+            device_id="device",
+            installed_kind_id=installed.id,
+            manual_retry=True,
+        )
+        == 0
+    )
+    test_db.refresh(row)
+    assert row.state == "source"

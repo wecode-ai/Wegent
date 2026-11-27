@@ -74,6 +74,10 @@ pub struct WegentStorePluginSummary {
     plugin_path: String,
     default_prompt: Option<Value>,
     runtime_recovery_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    materialization: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author_source: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -218,6 +222,11 @@ fn wegent_store_plugin_summary(
             .and_then(|value| value.get("defaultPrompt"))
             .cloned(),
         runtime_recovery_error: optional_trimmed_string(installed.get("runtime_recovery_error")),
+        materialization: optional_trimmed_string(installed.get("materialization")),
+        author_source: installed
+            .get("author_source")
+            .filter(|source| source.is_object())
+            .cloned(),
     })
 }
 

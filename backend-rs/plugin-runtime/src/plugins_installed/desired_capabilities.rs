@@ -214,13 +214,14 @@ pub(super) async fn build_local_plugins<Q: MysqlQuery>(
             .map(|row| (row.id, row))
             .collect();
     let releases_loaded = started.elapsed();
-    let plugins: Vec<_> = prepared
+    let mut plugins: Vec<_> = prepared
         .into_iter()
         .map(|payload| {
             let release = payload.release_id().and_then(|id| releases.get(&id));
             payload.render(release)
         })
         .collect::<Result<_, _>>()?;
+    super::personal_source::mark_owned_payloads(query, user_id, &mut plugins).await?;
     tracing::debug!(
         installations = installation_count,
         plugins = plugins.len(),
@@ -635,7 +636,9 @@ async fn plugin_payload<Q: MysqlQuery>(
         Some(id) => get_release(query, id).await?,
         None => None,
     };
-    payload.render(release.as_ref())
+    let mut rendered = vec![payload.render(release.as_ref())?];
+    super::personal_source::mark_owned_payloads(query, installed.user_id, &mut rendered).await?;
+    Ok(rendered.pop().expect("One rendered plugin payload"))
 }
 
 /// `plugin_package_storage.presign_download`: a MinIO SigV4 query URL plus the

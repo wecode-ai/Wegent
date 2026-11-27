@@ -156,6 +156,11 @@ pub(super) fn unavailable_plugin_summary(
         category: None,
         plugin_path: String::new(),
         default_prompt: None,
+        materialization: optional_trimmed_string(entry.get("materialization")),
+        author_source: entry
+            .get("author_source")
+            .filter(|source| source.is_object())
+            .cloned(),
         runtime_recovery_error: Some(
             optional_trimmed_string(entry.get("runtime_recovery_error"))
                 .unwrap_or_else(|| error.to_owned()),

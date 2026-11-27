@@ -118,6 +118,14 @@ export type WegentStorePluginSummary = {
   category?: string | null
   pluginPath: string
   runtimeRecoveryError?: string | null
+  materialization?: 'author_source' | null
+  authorSource?: {
+    source_path: string
+    runtime_path?: string
+    installed: boolean
+    enabled: boolean
+    version?: string
+  } | null
 }
 
 export type WegentStoreListResult = {

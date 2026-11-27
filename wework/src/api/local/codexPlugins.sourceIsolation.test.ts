@@ -12,6 +12,10 @@ import {
 import { resolveLocalPluginInventory } from '@/features/plugins/pluginInventorySources'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
 import { ExpiredPluginInventoryRequest } from './codexInstalledCatalog'
+import {
+  clearStoredCloudConnection,
+  saveStoredCloudConnection,
+} from '@/features/cloud-connection/cloudConnectionStorage'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
 import {
   clearPluginMarketplaceCache,
@@ -830,6 +834,54 @@ describe('local plugin source isolation', () => {
       (await listLocalInstalledPluginsFromDisk()).map(item => item.spec.source.pluginKey)
     ).toContain('personal-tool')
   })
+
+  test.each([
+    ['https://plugins.example', 1, 9, false],
+    ['https://another.example', 1, undefined, false],
+    ['https://plugins.example', 2, undefined, false],
+    ['https://plugins.example', 1, 9, true],
+  ])(
+    'isolates personal links for backend %s and account %s',
+    async (backendUrl, userId, expected, legacyAfter) => {
+      saveStoredCloudConnection({
+        backendUrl: 'https://plugins.example',
+        apiBaseUrl: 'https://plugins.example/api',
+        socketBaseUrl: 'https://plugins.example',
+        socketPath: '/socket.io',
+        user: { id: 1, user_name: 'author', email: 'author@example.com' },
+        connectedAt: '2026-11-27T00:00:00.000Z',
+      })
+      const original = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) =>
+        method === 'executor.plugins.links.list'
+          ? [
+              {
+                localPluginName: 'personal-tool',
+                cloudPluginId: 9,
+                cloudReleaseId: 8,
+                accountScope: { backendUrl, userId },
+              },
+              ...(legacyAfter
+                ? [{ localPluginName: 'personal-tool', cloudPluginId: 99, cloudReleaseId: 98 }]
+                : []),
+            ]
+          : original(method, params)
+      )
+      try {
+        const state = await createLocalCodexPluginApi().readState({
+          mergeAllMarketplaces: true,
+          refresh: true,
+        })
+        const plugin = state.installedPlugins.find(
+          item => item.spec.source.pluginKey === 'personal-tool'
+        )
+        expect(plugin?.spec.sourcePayload?.cloudPluginId).toBe(expected)
+        expect(plugin?.spec.installState).toBe('installed')
+      } finally {
+        clearStoredCloudConnection()
+      }
+    }
+  )
 
   test('retains failed link reads as partial and clears links only on successful empty reads', async () => {
     const original = mocks.request.getMockImplementation()!

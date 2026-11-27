@@ -237,6 +237,7 @@ class PluginDeviceInstallationItem(BaseModel):
         "downloading",
         "installing",
         "installed",
+        "source",
         "failed",
         "uninstalling",
     ]

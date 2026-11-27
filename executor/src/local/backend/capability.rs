@@ -29,6 +29,9 @@ pub trait CapabilityReportProvider: Send + Sync + 'static {
 
 pub trait CapabilitySyncRpcHandler: Send + Sync + 'static {
     fn invalidate_connection(&self) {}
+    fn bind_account_scope(&self, _backend_url: &str, _user_id: i64) -> Result<(), String> {
+        Ok(())
+    }
     fn local_plugin_digest(&self) -> Option<String> {
         None
     }
@@ -70,6 +73,10 @@ impl<P> CapabilitySyncRpcHandler for CapabilitySyncHandler<P>
 where
     P: CapabilityPackageProvider + Send + Sync + 'static,
 {
+    fn bind_account_scope(&self, backend_url: &str, user_id: i64) -> Result<(), String> {
+        CapabilitySyncHandler::bind_account_scope(self, backend_url, user_id)
+            .map_err(|error| error.to_string())
+    }
     fn invalidate_connection(&self) {
         CapabilitySyncHandler::invalidate_connection(self);
     }
@@ -98,9 +105,17 @@ where
 pub(super) fn default_capability_sync_handler(
     config: &LocalBackendConfig,
 ) -> CapabilitySyncHandler<HttpPackageProvider> {
+    let store = default_plugin_store();
+    let scope = config.authenticated_user_id.and_then(|user_id| {
+        crate::local::plugin_import::PluginAccountScope::new(&config.backend_url, user_id).ok()
+    });
+    let store = match scope {
+        Some(scope) => store.with_account_scope(scope),
+        None => store,
+    };
     CapabilitySyncHandler::with_package_provider(
         config.auth_token.clone(),
-        default_plugin_store(),
+        store,
         HttpPackageProvider::new(config.backend_url.clone(), config.auth_token.clone()),
         std::sync::Arc::new(crate::agents::CodexSkillConfigurationReloader),
     )

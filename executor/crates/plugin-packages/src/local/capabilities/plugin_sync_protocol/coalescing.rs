@@ -22,6 +22,7 @@ pub(super) fn target_fingerprint(spec: &PluginSyncSpec, removing: bool) -> Strin
             spec.key,
             spec.installed_plugin_id,
             spec.cloud_plugin_id,
+            spec.personal_source_owner,
             spec.enabled,
             spec.version,
             checksum.as_ref().or(spec.checksum.as_ref()),
@@ -218,13 +219,28 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 "superseded",
                 if removing { "remove" } else { "upsert" },
             );
-        } else if matches!(result["status"].as_str(), Some("synced" | "removed")) {
+        } else if matches!(
+            result["status"].as_str(),
+            Some("synced" | "removed" | "source_preserved")
+        ) {
+            if result["status"] == "source_preserved" {
+                let _personal =
+                    acquire_personal_marketplace_lock(&self.store.personal_marketplace_dir())
+                        .map_err(CapabilitySyncError::invalid_payload)?;
+                let source = self.store.personal_author_source(spec)?.ok_or_else(|| {
+                    invalid("Author plugin source changed during shared account installation")
+                })?;
+                result["source"] = author_source::receipt(&source);
+                manifest["plugins"][&spec.key]["author_source"] = source;
+            }
             record_generation(&mut manifest, spec, generation, removing);
             self.store.manifest.save_with_revision_bump(manifest)?;
             result["unchanged"] = json!(true);
             if !removing {
                 result["version"] = json!(spec.version);
-                result["checksum"] = json!(spec.checksum);
+                if spec.checksum.is_some() || result.get("checksum").is_none() {
+                    result["checksum"] = json!(spec.checksum);
+                }
             }
         }
         result["generation"] = json!(generation);

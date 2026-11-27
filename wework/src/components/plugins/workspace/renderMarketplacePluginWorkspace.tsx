@@ -35,9 +35,16 @@ import {
   withMarketplacePluginDetail,
 } from '../workspace/marketplaceWorkspaceHelpers'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
+import {
+  isLocalPersonalPlugin,
+  syncPersonalPluginToCurrentAccount,
+} from './personalPluginCloudInstall'
 
 export function renderMarketplacePluginWorkspace({
   selectedMarketplacePlugin,
+  syncPersonalPluginInBackground,
+  catalog,
+  operations,
   installedPlugins,
   selectedMarketplacePluginDetail,
   selectedRequiredConnectionNames,
@@ -45,6 +52,7 @@ export function renderMarketplacePluginWorkspace({
   installingMarketplacePluginIds,
   isMarketplacePluginUninstalling,
   reconciliationBlocksActions,
+  isReconcilingPlugins,
   pluginMarketplaceState,
   publicationRequests,
   openPluginShare,
@@ -265,6 +273,26 @@ export function renderMarketplacePluginWorkspace({
             continueEditingKey
               ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
               : undefined
+          }
+          onSyncToAccount={
+            packableCreated &&
+            isLocalPersonalPlugin(packableCreated.raw) &&
+            selectedMarketplacePlugin?.accessRole === 'owner' &&
+            selectedMarketplacePlugin.visibility === 'personal' &&
+            syncPersonalPluginInBackground
+              ? () =>
+                  void syncPersonalPluginToCurrentAccount({
+                    plugin: packableCreated,
+                    listing: selectedMarketplacePlugin,
+                    sync: syncPersonalPluginInBackground,
+                    catalog,
+                    operations,
+                    t,
+                  })
+              : undefined
+          }
+          syncToAccountDisabled={
+            pluginPublishPreparing || isInstalling || isUninstalling || isReconcilingPlugins
           }
           deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
           deleteActionDisabled={pluginPublishPreparing || isActionPending}

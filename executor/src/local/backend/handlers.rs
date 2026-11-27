@@ -644,7 +644,7 @@ fn task_config_from_snapshot(
     Some(config)
 }
 
-fn log_capability_sync_items(response: &Value, field: &str, capability_type: &str) {
+pub(super) fn log_capability_sync_items(response: &Value, field: &str, capability_type: &str) {
     let Some(items) = response.get(field).and_then(Value::as_array) else {
         return;
     };

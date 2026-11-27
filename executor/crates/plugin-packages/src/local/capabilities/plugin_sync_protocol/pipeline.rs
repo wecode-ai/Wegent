@@ -99,7 +99,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _publication = self.store.lock_shared_manifest()?;
         let _binding = self.plugin_sync_binding.lock_active()?;
         let mut manifest = self.store.manifest.load()?;
-        let binding_changed = self.plugin_sync_binding.bind_manifest(&mut manifest);
+        let account_scope = json!(self.store.account_scope.lock().unwrap().clone());
+        let binding_changed = self
+            .plugin_sync_binding
+            .bind_manifest(&mut manifest, account_scope);
         let original = manifest.clone();
         if !request.plugins_only && request.generation > full_generation(&manifest) {
             protocol_state(&mut manifest)
@@ -289,15 +292,35 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                             result["unchanged"] = json!(true);
                             result
                         } else {
-                            activation.observe_plugin(spec)?;
+                            if prepared.author_source.is_none() {
+                                activation.observe_plugin(spec)?;
+                            }
                             match prepared.publish(&self.store, &mut manifest) {
-                                Ok(()) => acknowledgement(spec, generation, "synced", "upsert"),
+                                Ok(()) => {
+                                    if let Some(source) = &prepared.author_source {
+                                        let mut result = acknowledgement(
+                                            spec,
+                                            generation,
+                                            "source_preserved",
+                                            "upsert",
+                                        );
+                                        result["source"] = author_source::receipt(source);
+                                        result["version"] = json!(prepared.spec.version);
+                                        result["checksum"] = json!(prepared.spec.checksum);
+                                        result
+                                    } else {
+                                        acknowledgement(spec, generation, "synced", "upsert")
+                                    }
+                                }
                                 Err(failure) => failed_ack(spec, generation, failure),
                             }
                         }
                     }
                 };
-                if result["status"] == "synced" {
+                if matches!(
+                    result["status"].as_str(),
+                    Some("synced" | "source_preserved")
+                ) {
                     record_generation(&mut manifest, spec, generation, false);
                 }
                 self.store.manifest.save_with_revision_bump(manifest)?;

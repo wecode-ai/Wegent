@@ -97,6 +97,7 @@ enum Plan {
     InvalidSnapshot,
     UnexpectedUnchanged,
     FailedApplication,
+    AuthorSource,
     HeldHttp,
     HeldTargetHttp,
     HeldApplication,
@@ -157,7 +158,14 @@ impl CapabilitySyncRpcHandler for Installer {
             let id = payload["plugins"][0]["installed_plugin_id"]
                 .as_u64()
                 .unwrap_or(8);
-            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":id,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
+            let mut item = json!({"id":id,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}});
+            if matches!(self.plan, Plan::AuthorSource) && !removed {
+                item["status"] = json!("source_preserved");
+                item["version"] = json!("1.0.0");
+                item["checksum"] = json!("sha256:published-package");
+                item["source"] = json!({"installed":true,"enabled":true,"version":"1.1.0"});
+            }
+            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[item]})
         })
     }
 }

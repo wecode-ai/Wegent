@@ -192,7 +192,12 @@ pub fn resolve_managed_package(
 ) -> Result<PathBuf, AuthError> {
     let manifest_path = manifest_path_for_home(executor_home);
     let shared_plugins = shared_plugins_for_home(executor_home)?;
-    resolve_managed_package_at(&manifest_path, &shared_plugins, package)
+    let codex_home = if is_current_executor_home(executor_home) {
+        crate::agents::wework_codex_home()
+    } else {
+        executor_home.join("codex")
+    };
+    resolve_managed_package_at(&manifest_path, &shared_plugins, package, Some(&codex_home))
 }
 
 fn shared_plugins_for_home(executor_home: &Path) -> Result<PathBuf, AuthError> {
@@ -272,7 +277,10 @@ fn registered_python_roots(
     Ok(roots)
 }
 
-fn read_package_json(path: &Path, missing_code: &'static str) -> Result<Value, AuthError> {
+pub(super) fn read_package_json(
+    path: &Path,
+    missing_code: &'static str,
+) -> Result<Value, AuthError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| AuthError(missing_code))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 8 * 1024 * 1024
     {
@@ -302,6 +310,7 @@ fn resolve_managed_package_at(
     manifest_path: &Path,
     shared_plugins: &Path,
     package: &PreparedPackage,
+    codex_home: Option<&Path>,
 ) -> Result<PathBuf, AuthError> {
     let capabilities = manifest_path
         .parent()
@@ -321,6 +330,15 @@ fn resolve_managed_package_at(
     if entry["managed"] != true || entry["enabled"] != true || entry["checksum"] != package.checksum
     {
         return Err(AuthError("plugin_auth_package_sync_required"));
+    }
+    if entry["materialization"] == "author_source" {
+        super::author_source::validate_current(
+            manifest_path,
+            codex_home.ok_or(AuthError("plugin_auth_package_sync_required"))?,
+            entry,
+            package,
+            super::broker::account_scope().as_ref(),
+        )?;
     }
     crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry).map_err(
         |error| match error {
@@ -389,14 +407,14 @@ mod tests {
         let new_home = temp.path().join("new-home");
         let (manifest, shared, root, package) = fixture(&old_home);
         assert_eq!(
-            resolve_managed_package_at(&manifest, &shared, &package).unwrap(),
+            resolve_managed_package_at(&manifest, &shared, &package, None).unwrap(),
             root.canonicalize().unwrap()
         );
         fs::rename(&old_home, &new_home).unwrap();
         assert!(!old_home.exists());
         let relocated = |path: &Path| new_home.join(path.strip_prefix(&old_home).unwrap());
         assert_eq!(
-            resolve_managed_package_at(&relocated(&manifest), &relocated(&shared), &package)
+            resolve_managed_package_at(&relocated(&manifest), &relocated(&shared), &package, None)
                 .unwrap(),
             relocated(&root).canonicalize().unwrap()
         );
@@ -407,12 +425,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let (manifest, shared, root, mut package) = fixture(temp.path());
         assert_eq!(
-            resolve_managed_package_at(&manifest, &shared, &package).unwrap(),
+            resolve_managed_package_at(&manifest, &shared, &package, None).unwrap(),
             root.canonicalize().unwrap()
         );
         package.checksum = format!("sha256:{}", "b".repeat(64));
         assert_eq!(
-            resolve_managed_package_at(&manifest, &shared, &package),
+            resolve_managed_package_at(&manifest, &shared, &package, None),
             Err(AuthError("plugin_auth_package_sync_required"))
         );
         // Matching server and local metadata must not authorize a different hash directory.
@@ -420,7 +438,7 @@ mod tests {
         data["plugins"]["mail"]["checksum"] = json!(package.checksum);
         fs::write(&manifest, data.to_string()).unwrap();
         assert_eq!(
-            resolve_managed_package_at(&manifest, &shared, &package),
+            resolve_managed_package_at(&manifest, &shared, &package, None),
             Err(AuthError("plugin_auth_invalid_package"))
         );
     }
@@ -434,19 +452,20 @@ mod tests {
         let bridge = temp.path().join("legacy-capabilities");
         symlink(manifest.parent().unwrap(), &bridge).unwrap();
         assert!(
-            resolve_managed_package_at(&bridge.join("manifest.json"), &shared, &package).is_ok()
+            resolve_managed_package_at(&bridge.join("manifest.json"), &shared, &package, None)
+                .is_ok()
         );
         let alias = temp.path().join("manifest.json");
         symlink(&manifest, &alias).unwrap();
         assert_eq!(
-            resolve_managed_package_at(&alias, &shared, &package),
+            resolve_managed_package_at(&alias, &shared, &package, None),
             Err(AuthError("plugin_auth_invalid_package"))
         );
         let outside = temp.path().join("outside");
         fs::rename(&root, &outside).unwrap();
         symlink(&outside, &root).unwrap();
         assert_eq!(
-            resolve_managed_package_at(&manifest, &shared, &package),
+            resolve_managed_package_at(&manifest, &shared, &package, None),
             Err(AuthError("plugin_auth_invalid_package"))
         );
     }
@@ -519,7 +538,7 @@ mod tests {
         let (manifest, shared, root, package) = fixture(temp.path());
         fs::remove_dir(&root).unwrap();
         assert_eq!(
-            resolve_managed_package_at(&manifest, &shared, &package),
+            resolve_managed_package_at(&manifest, &shared, &package, None),
             Err(AuthError("plugin_auth_package_sync_required"))
         );
     }

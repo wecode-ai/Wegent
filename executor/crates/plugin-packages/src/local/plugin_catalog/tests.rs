@@ -98,6 +98,41 @@ fn lists_only_plugins_inside_the_managed_store() {
 }
 
 #[test]
+fn author_source_catalog_keeps_the_cloud_artifact_separate_from_native_facts() {
+    let temp = tempfile::tempdir().unwrap();
+    let capabilities = temp.path().join("capabilities");
+    let plugin_root = capabilities.join("store/plugins/example");
+    write_plugin(&plugin_root, "example", json!([]));
+    let source = json!({"source_path":"/author/example", "runtime_path":"/codex/cache/example/2.0",
+        "installed":true,"enabled":true,"version":"2.0"});
+    write_json(
+        &capabilities.join("manifest.json"),
+        &json!({"plugins": {
+            "example@wework-personal": {
+                "name":"example", "installed_plugin_id":104,"cloud_plugin_id":7,
+                "marketplace":"wework-personal", "version":"1.2.3", "enabled":false,
+                "store_path":"store/plugins/example", "materialization":"author_source",
+                "author_source":source,
+            }
+        }}),
+    );
+
+    let listed = list_wegent_store_plugins_at(temp.path()).unwrap();
+    let summary = serde_json::to_value(&listed.plugins[0]).unwrap();
+
+    assert_eq!(listed.plugins.len(), 1);
+    assert_eq!(summary["version"], "1.2.3");
+    assert_eq!(
+        summary["pluginPath"],
+        json!(plugin_root.canonicalize().unwrap())
+    );
+    assert_eq!(summary["installedPluginId"], 104);
+    assert_eq!(summary["cloudPluginId"], 7);
+    assert_eq!(summary["materialization"], "author_source");
+    assert_eq!(summary["authorSource"], source);
+}
+
+#[test]
 fn relocated_catalog_lists_legacy_and_shared_packages_without_a_legacy_store_dependency() {
     let temp = tempfile::tempdir().unwrap();
     let capabilities = temp.path().join("workbench/wework/test/capabilities");

@@ -18,6 +18,8 @@ import {
   personalPluginListingType,
 } from '../pluginOwnerLocalPackage'
 import { createDefaultPluginApi } from './marketplaceWorkspaceHelpers'
+import type { InstalledPluginItem } from '../PluginManagementRows'
+import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
 
 interface PersonalPluginCloudScope {
   apiBaseUrl?: string
@@ -33,6 +35,7 @@ interface BackgroundInstall {
   cancelled: boolean
   isCurrent(): boolean
   settled?: Promise<void>
+  completed?: boolean
 }
 
 const pending = new Map<string, BackgroundInstall>()
@@ -268,7 +271,7 @@ export function capturePersonalPluginInstallScope() {
   }
 }
 
-/** Capture the initiating desktop account. The returned callback never waits on cloud work. */
+/** Capture the initiating desktop account; callers can await completion when needed. */
 export function capturePersonalPluginCloudInstall(
   local: LocalCodexPluginApi,
   { apiBaseUrl, userId, getToken, onInstalled }: PersonalPluginCloudScope
@@ -280,18 +283,24 @@ export function capturePersonalPluginCloudInstall(
   const run = async (source: LocalPluginSource) => {
     const pluginKey = sourceKey(source)
     const device = getKnownLocalExecutorDeviceId()
-    if (!pluginKey || !device) return
+    if (!pluginKey || !device) return false
     const isCurrent = () => scopeIsCurrent() && getKnownLocalExecutorDeviceId() === device
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     const key = workKey(device, pluginKey)
     const previous = pending.get(key)
-    if (previous && !previous.cancelled && previous.isCurrent()) return
+    if (previous && !previous.cancelled && previous.isCurrent()) {
+      await previous.settled
+      return previous.completed === true && !previous.cancelled && isCurrent()
+    }
     const job: BackgroundInstall = { cancelled: false, isCurrent }
     const attempt = beginOperation('plugin.install_request')
     pending.set(key, job)
     try {
       const token = getToken()
-      if (!token || !isCurrent()) return attempt.cancel()
+      if (!token || !isCurrent()) {
+        attempt.cancel()
+        return false
+      }
       job.settled = syncPersonalInstall(
         createDefaultPluginApi(apiBaseUrl, token),
         local,
@@ -300,11 +309,19 @@ export function capturePersonalPluginCloudInstall(
         job
       )
       await job.settled
-      if (job.cancelled || !isCurrent()) return attempt.cancel()
+      if (job.cancelled || !isCurrent()) {
+        attempt.cancel()
+        return false
+      }
       attempt.succeed()
       onInstalled()
+      job.completed = true
+      return true
     } catch (error) {
-      if (job.cancelled || !isCurrent()) return attempt.cancel()
+      if (job.cancelled || !isCurrent()) {
+        attempt.cancel()
+        return false
+      }
       attempt.fail('request')
       throw error
     } finally {
@@ -313,12 +330,62 @@ export function capturePersonalPluginCloudInstall(
   }
 
   return (source: LocalPluginSource) => {
-    void run(source).catch(error => {
+    return run(source).catch(error => {
       console.warn('[Wework] Background personal plugin install failed', {
         error: error instanceof ApiError ? error.errorCode || error.status : 'local-or-transport',
       })
+      return false
     })
   }
 }
 
 export type PersonalPluginCloudInstall = ReturnType<typeof capturePersonalPluginCloudInstall>
+
+/** Rebind the owned source, then let the existing full refresh verify its device state. */
+export async function syncPersonalPluginToCurrentAccount({
+  plugin,
+  listing,
+  sync,
+  catalog,
+  operations,
+  t,
+}: Pick<PluginWorkspaceServices, 'catalog' | 'operations' | 't'> & {
+  plugin: InstalledPluginItem
+  listing: PluginMarketplaceItem
+  sync: NonNullable<PersonalPluginCloudInstall>
+}) {
+  const isCurrent = catalog.captureScope()
+  if (
+    !isCurrent() ||
+    !isLocalPersonalPlugin(plugin.raw) ||
+    listing.accessRole !== 'owner' ||
+    listing.visibility !== 'personal' ||
+    operations.getSnapshot().installingMarketplacePluginIds.has(listing.id)
+  )
+    return
+  operations.beginInstall(listing.id)
+  catalog.showNotice({
+    id: `personal-account-sync-${listing.id}`,
+    kind: 'authorization',
+    message: t('workbench.plugins_sync_to_account_pending', '正在同步到当前账号…'),
+  })
+  let completed: boolean
+  try {
+    completed = await sync(plugin.raw)
+  } finally {
+    operations.finishInstall(listing.id)
+  }
+  if (!isCurrent()) return
+  if (completed) {
+    catalog.refresh(true)
+  } else {
+    catalog.showNotice({
+      id: `personal-account-sync-error-${listing.id}`,
+      kind: 'error',
+      message: t(
+        'workbench.plugins_sync_to_account_failed',
+        '同步到当前账号失败，请检查连接后重试'
+      ),
+    })
+  }
+}

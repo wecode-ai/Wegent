@@ -240,9 +240,9 @@ test('a pending or failed account install cannot delay another personal plugin',
     id === 17 ? failing.promise : Promise.resolve()
   )
 
-  expect(schedule(first)).toBeUndefined()
-  schedule(first)
-  schedule(second)
+  const firstAttempt = schedule(first)
+  const repeatedAttempt = schedule(first)
+  const independentAttempt = schedule(second)
   await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledExactlyOnceWith())
   expect(mocks.install.mock.calls).toEqual([
     [17, undefined],
@@ -252,10 +252,13 @@ test('a pending or failed account install cannot delay another personal plugin',
 
   failing.reject(new ApiError('Account install failed', 503))
   await vi.waitFor(() => expect(console.warn).toHaveBeenCalled())
+  expect(await firstAttempt).toBe(false)
+  expect(await repeatedAttempt).toBe(false)
+  expect(await independentAttempt).toBe(true)
   expect(onInstalled).toHaveBeenCalledTimes(1)
 
   mocks.install.mockResolvedValue(undefined)
-  schedule(first)
+  expect(await schedule(first)).toBe(true)
   await vi.waitFor(() => expect(onInstalled).toHaveBeenCalledTimes(2))
   expect(mocks.install.mock.calls.map(([id]) => id)).toEqual([17, 18, 17])
 })

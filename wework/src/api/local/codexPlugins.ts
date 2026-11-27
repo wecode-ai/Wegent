@@ -262,6 +262,7 @@ export interface LocalPluginCloudLink {
   localPluginName: string
   cloudPluginId: number
   cloudReleaseId: number | null
+  accountScope?: { backendUrl: string; userId: number } | null
 }
 
 async function readLocalPluginCloudLinks(marketplacePath: string): Promise<LocalPluginCloudLink[]> {
@@ -273,7 +274,19 @@ async function readLocalPluginCloudLinks(marketplacePath: string): Promise<Local
     links.some(link => !link || typeof link.localPluginName !== 'string')
   )
     throw new Error('Invalid local plugin cloud links')
-  return links
+  const connection = readStoredCloudConnection()
+  const matchesAccount = (link: LocalPluginCloudLink) =>
+    Boolean(
+      link.accountScope &&
+      connection &&
+      link.accountScope.backendUrl.replace(/\/+$/, '') ===
+        connection.backendUrl.replace(/\/+$/, '') &&
+      link.accountScope.userId === connection.user.id
+    )
+  const scopedNames = new Set(links.filter(matchesAccount).map(link => link.localPluginName))
+  return links.filter(
+    link => matchesAccount(link) || (!link.accountScope && !scopedNames.has(link.localPluginName))
+  )
 }
 
 export interface PluginIdentityReference {
@@ -3278,6 +3291,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId, scope) {
       if (!isElectronRuntime()) return
       if (scope) requireCurrentPluginSourceScope(scope.isCurrent)
+      const connection = readStoredCloudConnection()
       const ensured = scope
         ? installedPersonalPackageSource(plugin)
         : await this.ensureCreatedPluginInWeworkPersonal(plugin)
@@ -3287,6 +3301,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           localPluginName: ensured.pluginName,
           cloudPluginId,
           cloudReleaseId,
+          ...(connection && {
+            accountScope: { backendUrl: connection.backendUrl, userId: connection.user.id },
+          }),
           ...(scope && { accountInstall: scope.accountInstall }),
         })
       } catch (error) {

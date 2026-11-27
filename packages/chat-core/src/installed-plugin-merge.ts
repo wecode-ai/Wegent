@@ -364,6 +364,12 @@ function payloadString(payload: Record<string, unknown> | null | undefined, key:
 
 /** Codex already materialized this package on disk, even if the cloud row is pending. */
 export function hasLocalCodexMaterialization(item: InstalledPlugin): boolean {
+  if (item.spec.sourcePayload?.materialization === 'author_source') {
+    const source = item.spec.sourcePayload.authorSource
+    return Boolean(
+      source && typeof source === 'object' && 'installed' in source && source.installed
+    )
+  }
   if (typeof item.spec.pluginId !== 'number') return true
   return item.spec.sourcePayload?.localPresent === true
 }

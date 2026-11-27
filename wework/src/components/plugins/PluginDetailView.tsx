@@ -55,6 +55,8 @@ interface PluginDetailViewProps {
   onPromptSelect?: (prompt: string) => void
   editActionLabel?: string
   onEditAction?: () => void
+  onSyncToAccount?: () => void
+  syncToAccountDisabled?: boolean
   onManageConnector?: (slug: string) => void
   connectorAuthBySlug?: Record<string, 'connected' | 'disconnected'>
   connectorAuthBusySlug?: string | null
@@ -125,6 +127,8 @@ export function PluginDetailView({
   onPromptSelect,
   editActionLabel,
   onEditAction,
+  onSyncToAccount,
+  syncToAccountDisabled = false,
   onManageConnector,
   connectorAuthBySlug,
   connectorAuthBusySlug,
@@ -303,7 +307,11 @@ export function PluginDetailView({
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
   const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
   const showActionMenu =
-    showUninstall || Boolean(onEditAction) || showMenuCopy || Boolean(onDeleteAction)
+    showUninstall ||
+    Boolean(onEditAction) ||
+    Boolean(onSyncToAccount) ||
+    showMenuCopy ||
+    Boolean(onDeleteAction)
 
   const actionMenu = showActionMenu ? (
     <ActionMenu
@@ -317,6 +325,16 @@ export function PluginDetailView({
                 testId: `plugin-detail-edit-${plugin.id}`,
                 label: editActionLabel || t('workbench.plugins_continue_editing', '继续编辑'),
                 onSelect: onEditAction,
+              },
+            ]
+          : []),
+        ...(onSyncToAccount
+          ? [
+              {
+                testId: `plugin-detail-sync-account-${plugin.id}`,
+                label: t('workbench.plugins_sync_to_current_account', '同步到当前账号'),
+                disabled: syncToAccountDisabled,
+                onSelect: onSyncToAccount,
               },
             ]
           : []),

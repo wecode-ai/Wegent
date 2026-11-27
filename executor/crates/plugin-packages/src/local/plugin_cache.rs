@@ -62,19 +62,10 @@ pub fn read_codex_marketplace_cache(
     codex_home: &Path,
     marketplace: &str,
 ) -> Result<BTreeMap<String, Option<CachedCodexPlugin>>, String> {
-    if !native_cache_segment(marketplace) {
-        return Err("Invalid Codex marketplace cache identity".into());
-    }
-    let mut directory = codex_home.to_path_buf();
-    for segment in ["plugins", "cache", marketplace] {
-        directory.push(segment);
-        match fs::symlink_metadata(&directory) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => return Err("Invalid Codex marketplace cache directory".into()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-            Err(error) => return Err(error.to_string()),
-        }
-    }
+    let Some(directory) = native_cache_directory(codex_home, &["plugins", "cache", marketplace])?
+    else {
+        return Ok(BTreeMap::new());
+    };
     let read = || -> io::Result<_> {
         let mut plugins = BTreeMap::new();
         for entry in fs::read_dir(directory)? {
@@ -96,6 +87,40 @@ pub fn read_codex_marketplace_cache(
         Ok(plugins)
     };
     read().map_err(|error| format!("Failed to read Codex marketplace cache: {error}"))
+}
+
+pub fn read_codex_plugin_cache(
+    codex_home: &Path,
+    marketplace: &str,
+    name: &str,
+) -> Result<Option<CachedCodexPlugin>, String> {
+    let Some(directory) =
+        native_cache_directory(codex_home, &["plugins", "cache", marketplace, name])?
+    else {
+        return Ok(None);
+    };
+    selected_codex_package(&directory, name)
+        .map_err(|error| format!("Failed to read Codex plugin cache: {error}"))
+}
+
+fn native_cache_directory(codex_home: &Path, segments: &[&str]) -> Result<Option<PathBuf>, String> {
+    if segments
+        .iter()
+        .any(|segment| !native_cache_segment(segment))
+    {
+        return Err("Invalid Codex marketplace cache identity".into());
+    }
+    let mut directory = codex_home.to_path_buf();
+    for segment in segments {
+        directory.push(segment);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("Invalid Codex marketplace cache directory".into()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(Some(directory))
 }
 
 fn selected_codex_package(path: &Path, name: &str) -> io::Result<Option<CachedCodexPlugin>> {
