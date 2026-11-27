@@ -107,9 +107,10 @@ export function useCommentAssignment(
       ? effectiveMode !== 'current' || !selectedShortcut
       : !options.some(option => option.value === target && !option.disabled))
   const assignmentBlocked =
-    assignment?.assignmentBusy === true &&
-    effectiveMode === 'current' &&
-    (target !== '' || actions?.assigneeMoves?.includes(moveTarget) === true)
+    (invalidTarget && (effectiveMode === 'current' || !closeWithComment)) ||
+    (assignment?.assignmentBusy === true &&
+      effectiveMode === 'current' &&
+      (target !== '' || actions?.assigneeMoves?.includes(moveTarget) === true))
   const selectedAssignee = selectedShortcut ? commentAssigneeValue(selectedShortcut.target) : target
   const suggestion =
     candidate !== selectedAssignee && candidate !== dismissedSuggestion
@@ -187,7 +188,7 @@ export function useCommentAssignment(
   }
 
   async function submit(draft: string) {
-    if (submitting.current || invalidTarget || assignmentBlocked) return
+    if (submitting.current || assignmentBlocked) return
     const { body, mentions } = issueCommentSubmission(draft)
     const creatingChild = effectiveMode === 'child' && !closeWithComment
     const currentTarget = effectiveMode === 'child' && !creatingChild ? '' : target

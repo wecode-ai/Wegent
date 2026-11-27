@@ -37,13 +37,14 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
   >()
   const listeners = new Set<() => void>()
   const publish = () => {
-    const latestFailure = [...failures.values()].at(-1)
+    const currentFailures = [...failures.values()]
+    const latestFailure = currentFailures.at(-1)
     snapshot = {
       pending: pendingFields.size > 0,
       pendingFields: new Set(pendingFields.keys()),
       error: latestFailure?.error ?? null,
       saved,
-      canRetry: Boolean(latestFailure && latestFailure.options.retry !== false),
+      canRetry: currentFailures.some(failure => failure.options.retry !== false),
     }
     if (active) listeners.forEach(listener => listener())
   }

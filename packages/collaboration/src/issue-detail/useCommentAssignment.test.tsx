@@ -280,6 +280,47 @@ describe('comment assignment', () => {
     expect(transfer.commentCommitted).toBe(false)
   })
 
+  it.each(['current', 'child'] as const)(
+    'validates an unavailable assignee when closing only if the selected %s operation uses it',
+    async mode => {
+      const toggle = vi.fn().mockResolvedValue(undefined)
+      createChild = vi.fn()
+      actions = {
+        moves: [],
+        boardName: 'Board',
+        currentColumns: [],
+        closed: false,
+        canToggle: true,
+        move: vi.fn(),
+        toggle,
+      }
+      render('Close this Issue')
+      act(() => {
+        transfer.setMode(mode)
+        transfer.setTarget('1')
+      })
+      options = options.filter(option => option.value !== '1')
+      render(draft)
+      expect(transfer.invalidTarget).toBe(true)
+      await act(() => transfer.submit(draft))
+      expect(send).not.toHaveBeenCalled()
+
+      act(() => transfer.selectCloseWithComment(true))
+      expect(transfer.invalidTarget).toBe(true)
+      expect(transfer.assignmentBlocked).toBe(mode === 'current')
+      await act(() => transfer.submit(draft))
+      if (mode === 'child') {
+        expect(send).toHaveBeenCalledExactlyOnceWith(draft, [], { commentOnly: true })
+        expect(toggle).toHaveBeenCalledExactlyOnceWith(true)
+      } else {
+        expect(send).not.toHaveBeenCalled()
+        expect(toggle).not.toHaveBeenCalled()
+      }
+      expect(assign).not.toHaveBeenCalled()
+      expect(createChild).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves a cancelled invitation and retries without duplicating its saved comment', async () => {
     assign.mockResolvedValueOnce(false).mockResolvedValueOnce(undefined)
     render(mention(1))

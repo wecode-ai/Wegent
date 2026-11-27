@@ -6314,6 +6314,52 @@ describe('CollaborationPlatformApp real component flow', () => {
     }
   )
 
+  it('keeps a failed field edit retryable after a redelivery failure', async () => {
+    const assignee = { ...member, user_name: 'User 7', email: null }
+    const assigned = {
+      ...issue,
+      can_edit: true,
+      assignee_user_id: assignee.user_id,
+      assignee_name: assignee.user_name,
+    }
+    const { api } = createApi({ initialIssues: [assigned] })
+    vi.mocked(api.members.list).mockResolvedValue([assignee])
+    vi.mocked(api.issues.get).mockResolvedValue(assigned)
+    vi.mocked(api.issues.update)
+      .mockRejectedValueOnce(new Error('Field save failed'))
+      .mockRejectedValueOnce(new Error('Redelivery failed'))
+      .mockResolvedValueOnce({ ...assigned, priority: 'urgent', version: assigned.version + 1 })
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: 'projects',
+          projectId: project.id,
+          issueId: issue.id,
+        }}
+      />
+    )
+    await sdkSelectValue(byTestId('cloud-todo-detail-priority'), 'urgent')
+    await flush()
+    expect(byTestId('cloud-todo-save-error').textContent).toContain('Field save failed')
+    expect(byTestId('cloud-todo-field-retry')).toBeTruthy()
+
+    await click(byTestId('cloud-todo-detail-assignee'))
+    await click(portalByTestId('cloud-todo-detail-assignee-redeliver'))
+    expect(byTestId('cloud-todo-save-error').textContent).toContain('Redelivery failed')
+    await click(byTestId('cloud-todo-field-retry'))
+
+    expect(api.issues.update).toHaveBeenCalledTimes(3)
+    expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
+      version: assigned.version,
+      priority: 'urgent',
+    })
+    expect(byTestId('cloud-todo-save-error').textContent).toContain('Redelivery failed')
+    expect(container.querySelector('[data-testid="cloud-todo-field-retry"]')).toBeNull()
+  })
+
   it.each([
     { store: 'backend' as const, marked: true, confirmed: true },
     { store: 'backend' as const, marked: false, confirmed: false },

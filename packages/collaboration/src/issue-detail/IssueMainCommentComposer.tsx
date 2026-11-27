@@ -146,7 +146,6 @@ export function IssueMainCommentComposer({
   const canSend =
     !blocked &&
     !uploading &&
-    !transfer.invalidTarget &&
     !transfer.assignmentBlocked &&
     (transfer.closeWithComment
       ? Boolean(value.trim() || transfer.commentCommitted)
