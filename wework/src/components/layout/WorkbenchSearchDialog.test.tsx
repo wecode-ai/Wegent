@@ -33,13 +33,17 @@ test('releases focus to the active tab and restores the search draft and opener'
   const note = screen.getByRole('textbox', { name: 'Other tab note' })
   await user.click(opener)
   const input = screen.getByTestId('workbench-search-input')
-  await waitFor(() => expect(input).toHaveFocus())
-  expect(note.closest('[inert]')).not.toBeNull()
+  await waitFor(() => {
+    expect(input).toHaveFocus()
+    expect(note.closest('[inert]')).not.toBeNull()
+  })
   await user.type(input, 'video settings')
 
   rerender(<Workbench suspended />)
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  expect(note.closest('[inert]')).toBeNull()
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(note.closest('[inert]')).toBeNull()
+  })
   await user.click(note)
   expect(note).toHaveFocus()
   await user.keyboard('{Escape}other task')

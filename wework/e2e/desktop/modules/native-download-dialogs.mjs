@@ -223,8 +223,9 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   }
 }
 
-export async function clickLinuxPointer(button = 1) {
-  await execute('xdotool', ['click', '--clearmodifiers', String(button)], {
+export async function sendLinuxPointerButton(phase, button = 1) {
+  assert.ok(phase === 'down' || phase === 'up', 'A native pointer button phase is required')
+  await execute('xdotool', [phase === 'down' ? 'mousedown' : 'mouseup', String(button)], {
     encoding: 'utf8',
     timeout: 3_000,
   })

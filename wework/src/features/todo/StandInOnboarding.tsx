@@ -36,9 +36,10 @@ type StandInOnboardingProps = {
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
-  onOpenConversation(): void
+  onOpenConversation?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
+  onActivate?(): Promise<boolean>
   configuration: StandInOnboardingConfiguration
   children: ReactNode
 }
@@ -65,6 +66,7 @@ function StandInOnboardingContent({
   onOpenConversation,
   onExampleSelect,
   onClose,
+  onActivate,
   children,
   configuration,
 }: StandInOnboardingProps) {
@@ -141,7 +143,8 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
-      if (openConversation) onOpenConversation()
+      if (onActivate && !(await onActivate())) return false
+      if (openConversation) onOpenConversation?.()
       resource.update(() => completed)
       onGuideClose?.()
       return true

@@ -142,33 +142,31 @@ export async function assertMobileAssistantPriority(control, testId, runningRole
   assert.equal(snapshot?.height ?? 0, 0, 'The desktop work snapshot must collapse on mobile')
 }
 
-export async function assertMobileNavigation(control, testId) {
-  const navigation = testId('collaboration-exp-mobile-navigation')
-  for (const id of ['navigation-assistant', 'navigation-tasks', 'account']) {
-    const selector = `${navigation} [data-testid="collaboration-exp-${id}"]`
+export async function assertMobileCollaborationControls(control, testId) {
+  const switcher = testId('collaboration-exp-task-view-mode')
+  for (const selector of [switcher, '[data-testid="collaboration-host-settings"]']) {
     await control.command('waitFor', selector, { visible: true })
-    const [button] = await metrics(control, selector)
+    const [button] = await metrics(control, selector, ['aria-label'])
     assert.ok(button?.width >= 44 && button.height >= 44, 'Mobile navigation must remain usable')
+    assert.ok(
+      button.attributes['aria-label']?.trim(),
+      'Navigation controls need an accessible name'
+    )
     assert.ok(
       button.visibleIntersection?.height >= button.height - 1,
       'Mobile navigation controls must fit in the viewport'
     )
-    const [label] = await metrics(control, `${selector} .truncate`)
-    assert.ok(label?.text.trim().length > 0, 'Mobile navigation needs its visible label')
-    assert.ok(
-      label.clientHeight > 0 && label.scrollHeight <= label.clientHeight + 1,
-      `Mobile navigation labels must not clip vertically: ${JSON.stringify({
-        selector,
-        height: label.height,
-        clientHeight: label.clientHeight,
-        scrollHeight: label.scrollHeight,
-      })}`
-    )
-    assert.ok(
-      label.visibleIntersection?.height >= label.height - 1,
-      'Mobile navigation labels must fit in the viewport'
-    )
   }
+  const [label] = await metrics(control, `${switcher} .truncate`)
+  assert.ok(label?.text.trim().length > 0, 'Mobile navigation needs its visible label')
+  assert.ok(
+    label.clientHeight > 0 && label.scrollHeight <= label.clientHeight + 1,
+    'Mobile navigation labels must not clip vertically'
+  )
+  assert.ok(
+    label.visibleIntersection?.height >= label.height - 1,
+    'Mobile navigation labels must fit in the viewport'
+  )
 }
 
 export async function assertNativeWorkOpened(control, address, timeoutMs) {

@@ -530,7 +530,7 @@ function StandInSettingsEditor({
             role={role}
             onOpenSettings={
               onOpenPersonalSettings && role
-                ? () => onOpenPersonalSettings(role.id, draft.executionDeviceId)
+                ? () => onOpenPersonalSettings(role.id, role.executionDeviceId)
                 : undefined
             }
             saving={saving}
