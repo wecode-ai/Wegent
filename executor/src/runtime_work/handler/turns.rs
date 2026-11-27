@@ -2712,7 +2712,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn finish_scheduled_turn_locked(
         &self,
         local_task_id: &str,
-        _operation: tokio::sync::OwnedMutexGuard<()>,
+        operation: tokio::sync::OwnedMutexGuard<()>,
     ) {
         // A native Goal can outlive the local request that admitted it. Its
         // task keeps the reservation until native execution actually settles.
@@ -2746,17 +2746,11 @@ impl RuntimeWorkRpcHandler {
             );
             return;
         }
-        for turn in &turns {
-            self.reserve_turn_preparation(turn);
-        }
-        drop(_operation);
-        for turn in turns {
-            self.start_queued_turn(turn);
-        }
+        self.dispatch_queued_turns(operation, turns);
     }
 
     pub(super) async fn update_concurrency_settings(&self, settings: RuntimeSettings) {
-        let _operation = self.turn_queue_operation.lock().await;
+        let operation = self.turn_queue_operation.clone().lock_owned().await;
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler
@@ -2786,18 +2780,12 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         }
-        for turn in &turns {
-            self.reserve_turn_preparation(turn);
-        }
-        drop(_operation);
-        for turn in turns {
-            self.start_queued_turn(turn);
-        }
+        self.dispatch_queued_turns(operation, turns);
     }
 
     pub(super) async fn resume_persisted_turns(&self) {
         self.ensure_quota_waker();
-        let _operation = self.turn_queue_operation.lock().await;
+        let operation = self.turn_queue_operation.clone().lock_owned().await;
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler
@@ -2812,16 +2800,28 @@ impl RuntimeWorkRpcHandler {
             (previous, turns, scheduler.queued_turns.clone())
         };
         if let Err(error) = self
-            .commit_reserved_turns(previous, remaining_turns, &turns)
+            .persist_turn_queue(remaining_turns, Some(&previous), &turns)
             .await
         {
+            *self.turn_scheduler.lock().expect("turn scheduler poisoned") = previous;
             log_executor_event(
                 "runtime turn queue drain persistence failed",
                 &[("error", error.message)],
             );
             return;
         }
-        drop(_operation);
+        self.dispatch_queued_turns(operation, turns);
+    }
+
+    pub(super) fn dispatch_queued_turns(
+        &self,
+        operation: tokio::sync::OwnedMutexGuard<()>,
+        turns: Vec<SpawnTurnRequest>,
+    ) {
+        for turn in &turns {
+            self.reserve_turn_preparation(turn);
+        }
+        drop(operation);
         for turn in turns {
             self.start_queued_turn(turn);
         }

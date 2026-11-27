@@ -226,7 +226,7 @@ impl RuntimeWorkRpcHandler {
         turn: SpawnTurnRequest,
         execution: Option<u64>,
     ) -> Result<bool, AppIpcError> {
-        let operation = self.turn_queue_operation.lock().await;
+        let operation = self.turn_queue_operation.clone().lock_owned().await;
         if execution.is_some_and(|id| {
             !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, id)
         }) {
@@ -296,13 +296,7 @@ impl RuntimeWorkRpcHandler {
             .lock()
             .expect("preparation map poisoned")
             .remove(&turn.local_task_id);
-        for next in &ready {
-            self.reserve_turn_preparation(next);
-        }
-        drop(operation);
-        for next in ready {
-            self.start_queued_turn(next);
-        }
+        self.dispatch_queued_turns(operation, ready);
         Ok(true)
     }
 }
