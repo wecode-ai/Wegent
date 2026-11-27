@@ -1363,14 +1363,63 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=False
         )
-        delete_sandbox = mocker.patch.object(
-            manager._repository, "delete_sandbox", return_value=True
+        terminate = mocker.patch.object(
+            manager, "_terminate_sandbox_locked", return_value=(True, "Terminated")
         )
 
         sandbox = await manager.get_sandbox("12345", check_health=True)
 
         assert sandbox is None
-        delete_sandbox.assert_called_once_with("12345")
+        terminate.assert_awaited_once()
+        assert terminate.await_args.args[0] == "12345"
+        assert terminate.await_args.args[2].sandbox_id == "12345"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lifecycle_busy", [False, True])
+    async def test_failed_health_check_preserves_busy_or_recovered_runtime(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, lifecycle_busy
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", side_effect=[False, True]
+        )
+        if lifecycle_busy:
+            mocker.patch.object(
+                manager, "_try_acquire_task_lifecycle_lease", return_value=None
+            )
+        terminate = mocker.patch.object(manager, "_terminate_sandbox_locked")
+
+        result = await manager.get_sandbox("12345")
+
+        assert result is (None if lifecycle_busy else sample_sandbox)
+        terminate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_preserves_terminating_runtime_when_cleanup_cannot_finish(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.set_terminating()
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager,
+            "_terminate_sandbox_locked",
+            return_value=(False, "Cleanup unavailable"),
+        )
+        provision = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            "ClaudeCode", 1, "test", metadata={"task_id": 12345}
+        )
+
+        assert sandbox is sample_sandbox
+        assert error == "Cleanup unavailable"
+        provision.assert_not_awaited()
 
     # ----- terminate_sandbox Tests -----
 

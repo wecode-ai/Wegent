@@ -198,6 +198,7 @@ class SandboxManager(metaclass=SingletonMeta):
                         workspace_ref=workspace_ref,
                         bot_config=bot_config,
                         metadata=sandbox_metadata,
+                        lease=lease,
                     )
                     if lease.lost.is_set():
                         return (
@@ -366,6 +367,7 @@ class SandboxManager(metaclass=SingletonMeta):
         workspace_ref: Optional[str],
         bot_config: Optional[Dict[str, Any]],
         metadata: Dict[str, Any],
+        lease: _TaskLifecycleLease | None = None,
     ) -> Tuple[Sandbox, Optional[str]]:
         """Create a sandbox while holding the task-specific create lock."""
         sandbox_metadata = metadata
@@ -374,11 +376,22 @@ class SandboxManager(metaclass=SingletonMeta):
         if task_id is not None:
             # Check by task_id only (not subtask_id) to reuse sandbox across subtasks
             existing_sandbox = self._repository.load_sandbox(str(task_id))
+            if (
+                existing_sandbox
+                and existing_sandbox.status is SandboxStatus.TERMINATING
+            ):
+                assert lease is not None
+                success, error = await self._terminate_sandbox_locked(
+                    str(task_id), lease, existing_sandbox
+                )
+                if not success:
+                    return existing_sandbox, error
             if existing_sandbox and existing_sandbox.status == SandboxStatus.RUNNING:
                 # Verify container is actually alive via health check
                 if existing_sandbox.base_url:
-                    is_healthy = self._health_checker.check_health_sync(
-                        existing_sandbox.base_url
+                    is_healthy = await asyncio.to_thread(
+                        self._health_checker.check_health_sync,
+                        existing_sandbox.base_url,
                     )
                     if is_healthy:
                         workspace_error = await self._ensure_sandbox_workspace(
@@ -414,7 +427,12 @@ class SandboxManager(metaclass=SingletonMeta):
                             f"[SandboxManager] Existing sandbox {existing_sandbox.sandbox_id} "
                             f"failed health check, will create new sandbox"
                         )
-                        await self._cleanup_dead_sandbox(existing_sandbox)
+                        assert lease is not None
+                        success, error = await self._terminate_sandbox_locked(
+                            str(task_id), lease, existing_sandbox
+                        )
+                        if not success:
+                            return existing_sandbox, error
 
         # Create new sandbox
         if workspace_ref:
@@ -783,7 +801,9 @@ class SandboxManager(metaclass=SingletonMeta):
 
         # Optionally check health via HTTP
         if check_health and sandbox.base_url:
-            is_healthy = self._health_checker.check_health_sync(sandbox.base_url)
+            is_healthy = await asyncio.to_thread(
+                self._health_checker.check_health_sync, sandbox.base_url
+            )
             if not is_healthy:
                 logger.info(
                     "[SandboxManager] Sandbox health check failed; cleaning stale "
@@ -792,38 +812,34 @@ class SandboxManager(metaclass=SingletonMeta):
                     sandbox.container_name,
                     sandbox.base_url,
                 )
-                await self._cleanup_dead_sandbox(sandbox)
-                return None
+                return await self._recheck_unhealthy_sandbox(sandbox)
 
         return sandbox
 
-    async def _cleanup_dead_sandbox(self, sandbox: Sandbox) -> None:
-        """Clean up a sandbox whose container is no longer alive.
-
-        This is called when health check fails for an existing sandbox.
-        It removes the sandbox from Redis so a new one can be created.
-
-        Args:
-            sandbox: Sandbox to clean up
-        """
+    async def _recheck_unhealthy_sandbox(self, sandbox: Sandbox) -> Sandbox | None:
+        """Recheck the selected runtime under the same lease used by uploads."""
+        sandbox_id = sandbox.sandbox_id
+        lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            return None
         try:
-            sandbox_id = sandbox.sandbox_id
-
-            # Try to delete container (might already be gone)
-            try:
-                executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-                executor.delete_executor(sandbox.container_name)
-            except Exception:
-                pass  # Container might already be deleted
-
-            # Remove from Redis
-            self._repository.delete_sandbox(sandbox_id)
-
-            logger.info(
-                f"[SandboxManager] Cleaned up dead sandbox: sandbox_id={sandbox_id}"
+            current = self._repository.load_sandbox(sandbox_id)
+            if current is None or not self._same_sandbox_runtime(sandbox, current):
+                return None
+            if current.base_url and await asyncio.to_thread(
+                self._health_checker.check_health_sync, current.base_url
+            ):
+                return current
+            success, reason = await self._terminate_sandbox_locked(
+                sandbox_id, lease, current
             )
-        except Exception as e:
-            logger.error(f"[SandboxManager] Error cleaning up dead sandbox: {e}")
+            if not success:
+                logger.warning(
+                    "Could not clean up unhealthy sandbox %s: %s", sandbox_id, reason
+                )
+            return None
+        finally:
+            await self._release_task_lifecycle_lease(lease)
 
     async def terminate_sandbox(
         self, sandbox_id: str, *, expected_runtime: Sandbox | None = None
