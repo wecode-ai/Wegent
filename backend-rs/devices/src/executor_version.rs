@@ -32,6 +32,7 @@ use brz_http::Client as HttpClient;
 use brz_redis::{Redis, SetExpiration, SetOptions};
 use tokio::sync::mpsc;
 
+use crate::cloud_upgrade_threshold::CloudUpgradeThreshold;
 use crate::config::env_or_dotenv;
 
 /// `ExecutorVersionService.EXECUTOR_VERSION_CACHE_KEY`.
@@ -43,7 +44,7 @@ const EXECUTOR_VERSION_UNAVAILABLE: &str = "__unavailable__";
 
 /// Default when neither Redis nor the checker produced a version
 /// (`settings.EXECUTOR_LATEST_VERSION`).
-const EXECUTOR_LATEST_VERSION_DEFAULT: &str = "1.0.0";
+pub(crate) const EXECUTOR_LATEST_VERSION_DEFAULT: &str = "1.0.0";
 
 /// `EXECUTOR_VERSION_FAILURE_CACHE_TTL`: how long a failed remote check is
 /// suppressed before the next request may refresh again.
@@ -273,6 +274,7 @@ fn platform_release_version(release: &serde_json::Value) -> Option<&str> {
 /// Process-lifetime `executor_version_service` singleton.
 #[derive(Clone)]
 pub struct ExecutorVersionService {
+    pub(crate) cloud_upgrade_threshold: CloudUpgradeThreshold,
     cache: Arc<dyn ExecutorVersionCache>,
     /// `_start_refresh` admission: a request enqueues the triggering request's
     /// `X-Request-ID` here and returns.
@@ -288,11 +290,13 @@ impl ExecutorVersionService {
     /// service handle is dropped.
     pub fn from_redis(redis: Option<brz_redis::RedisService>) -> anyhow::Result<Self> {
         let checker = build_checker()?;
-        Ok(Self::with_cache(
+        let mut service = Self::with_cache(
             Arc::new(RedisVersionCache { redis }),
             checker,
             executor_version_cache_ttl(),
-        ))
+        );
+        service.cloud_upgrade_threshold = CloudUpgradeThreshold::from_env();
+        Ok(service)
     }
 
     fn with_cache(
@@ -309,7 +313,11 @@ impl ExecutorVersionService {
             cache_ttl,
             refresh_rx,
         ));
-        Self { cache, refresh }
+        Self {
+            cache,
+            refresh,
+            cloud_upgrade_threshold: CloudUpgradeThreshold::default(),
+        }
     }
 
     /// `executor_version_service.get_latest_version()` before the callers'
@@ -320,22 +328,28 @@ impl ExecutorVersionService {
     /// `asyncio.create_task` copies the request context into the detached
     /// refresh, so the header reflects the request that admitted it.
     pub async fn latest_version(&self, request_id: Option<&str>) -> Option<String> {
+        self.latest_published_version(request_id)
+            .await
+            .or_else(|| Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string()))
+    }
+
+    /// Read the release source without treating the legacy display default as a release.
+    pub(crate) async fn latest_published_version(
+        &self,
+        request_id: Option<&str>,
+    ) -> Option<String> {
         let Some(payload) = self.cache.get(EXECUTOR_VERSION_KEY).await else {
-            // `get_latest_version` found no cached value and called
-            // `_start_refresh()`; the caller then applies the default.
             self.start_refresh(request_id);
-            return Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string());
+            return None;
         };
         match serde_json::from_slice::<String>(&payload) {
-            Ok(value) if value == EXECUTOR_VERSION_UNAVAILABLE => {
-                Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string())
-            }
+            Ok(value) if value == EXECUTOR_VERSION_UNAVAILABLE => None,
             Ok(value) if !value.is_empty() => Some(value),
             // `if cached:` is false for an empty string, and a decode failure
             // is the exception `cache_manager.get` swallows: both are misses.
             Ok(_) | Err(_) => {
                 self.start_refresh(request_id);
-                Some(EXECUTOR_LATEST_VERSION_DEFAULT.to_string())
+                None
             }
         }
     }
@@ -640,7 +654,8 @@ mod tests {
         let service = no_check(&cache);
 
         assert_eq!(service.latest_version(None).await.as_deref(), Some("1.0.0"));
-        cache.no_further_reads(1).await;
+        assert_eq!(service.latest_published_version(None).await, None);
+        cache.no_further_reads(2).await;
         assert!(cache.writes().is_empty());
     }
 

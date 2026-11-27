@@ -165,6 +165,7 @@ Internal routes below support version maintenance and automated checks; they are
 | Left sidebar → Plugins      | Find, install and update plugins, manage app authorization, and remove custom marketplaces. See [Plugins and Skills](./plugins-and-skills.md)                                                                                                                     | `/plugins`     |
 | Left sidebar → Applications | Open the applications page                                                                                                                                                                                                    | `/sites`       |
 | Left sidebar → Cloud work   | View devices and cloud projects. The desktop app also offers the local version. In deployments that support cloud-device restart, use the card menu or the Update available badge. See [Devices and cloud work](./devices.md) | `/cloud-work`  |
+| Task composer → Upgrade needed       | Opens the [cloud device upgrade dialog](./devices.md#cloud-device-upgrade-reminder) when the device qualifies for an upgrade reminder. | Desktop |
 
 ### Space and auxiliary feature links
 

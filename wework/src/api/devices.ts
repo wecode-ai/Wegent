@@ -331,11 +331,14 @@ export function createDeviceApi(client: HttpClient) {
       )
     },
 
-    async restartCloudDevice(deviceId: string): Promise<{ message: string }> {
+    async restartCloudDevice(
+      deviceId: string,
+      forceStopTasks = true
+    ): Promise<{ message: string }> {
       // The registered device action delegates to the deployment's restart provider.
       return client.post<UpgradeDeviceResponse>(
         `/devices/${encodeURIComponent(deviceId)}/upgrade`,
-        { force_stop_tasks: true }
+        { force_stop_tasks: forceStopTasks }
       )
     },
 
