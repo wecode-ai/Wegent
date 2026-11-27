@@ -157,6 +157,106 @@ def test_ordered_task_history_preserves_filters_without_sorting_large_payloads(
     )
 
 
+@pytest.mark.parametrize("owner_id", [None, 10, 20])
+def test_list_by_task_desc_sorts_ids_without_sorting_large_payloads(
+    test_db: Session,
+    assistant_history: dict,
+    history_statements: list[str],
+    owner_id: Optional[int],
+) -> None:
+    subtasks = SqlAlchemySubtaskStore().list_by_task_desc(
+        test_db, task_id=42, owner_user_id=owner_id
+    )
+
+    assert [subtask.id for subtask in subtasks] == (
+        [] if owner_id == 20 else [41, 42, 44]
+    )
+    for subtask in subtasks:
+        assert isinstance(subtask, Subtask)
+        assert subtask.result == assistant_history
+        assert subtask.prompt == "original prompt"
+        assert subtask.error_message == "Task output exceeded the device callback limit"
+    assert not any("subtask_contexts" in s for s in history_statements)
+    _assert_id_sort_projection(history_statements)
+
+
+@pytest.mark.parametrize("for_update", [False, True])
+@pytest.mark.parametrize(
+    ("statuses", "owner_id", "expected_id"),
+    [
+        ([SubtaskStatus.FAILED], None, 42),
+        ([SubtaskStatus.FAILED], 10, 42),
+        ([SubtaskStatus.FAILED], 20, None),
+        ([SubtaskStatus.COMPLETED], None, None),
+    ],
+)
+def test_latest_assistant_by_statuses_sorts_ids_without_sorting_large_payloads(
+    test_db: Session,
+    assistant_history: dict,
+    history_statements: list[str],
+    statuses: list[SubtaskStatus],
+    owner_id: Optional[int],
+    expected_id: Optional[int],
+    for_update: bool,
+) -> None:
+    latest = SqlAlchemySubtaskStore().get_latest_assistant_by_statuses(
+        test_db,
+        task_id=42,
+        statuses=statuses,
+        owner_user_id=owner_id,
+        for_update=for_update,
+    )
+
+    if expected_id is None:
+        assert latest is None
+    else:
+        assert isinstance(latest, Subtask)
+        assert latest.id == expected_id
+        assert latest.result == assistant_history
+        assert latest.prompt == "original prompt"
+        assert latest.error_message == "Task output exceeded the device callback limit"
+    assert not any("subtask_contexts" in s for s in history_statements)
+    _assert_id_sort_projection(history_statements)
+
+
+def test_locked_latest_assistant_refreshes_cached_state_without_sorting_payloads(
+    test_db: Session,
+    assistant_history: dict,
+    history_statements: list[str],
+) -> None:
+    cached = test_db.get(Subtask, 42)
+    assert cached is not None
+    test_db.query(Subtask).filter(Subtask.id == 42).update(
+        {Subtask.error_message: "updated by another writer"}, synchronize_session=False
+    )
+    assert cached.error_message != "updated by another writer"
+    history_statements.clear()
+    statements: list[str] = []
+    connection = test_db.connection()
+
+    def capture(_conn, clause, _multiparams, _params, _options):
+        statements.append(str(clause.compile(dialect=mysql.dialect())))
+
+    event.listen(connection, "before_execute", capture)
+    try:
+        latest = SqlAlchemySubtaskStore().get_latest_assistant_by_statuses(
+            test_db,
+            task_id=42,
+            statuses=[SubtaskStatus.FAILED],
+            owner_user_id=10,
+            for_update=True,
+        )
+    finally:
+        event.remove(connection, "before_execute", capture)
+
+    assert latest is cached
+    assert latest.error_message == "updated by another writer"
+    assert latest.result == assistant_history
+    assert len(statements) == 2
+    assert all("FOR UPDATE" in statement for statement in statements)
+    _assert_id_sort_projection(history_statements)
+
+
 @pytest.mark.parametrize(
     "chain",
     [

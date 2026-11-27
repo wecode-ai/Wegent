@@ -4,7 +4,7 @@
 
 from types import SimpleNamespace
 
-from app.models.subtask import SubtaskRole
+from app.models.subtask import Subtask, SubtaskRole
 from app.services.chat.interactive_forms import (
     get_pending_interactive_form,
     validate_interactive_form_answer,
@@ -111,25 +111,30 @@ def _unpromoted_tool_output_result(tool_use_id: str = "tool-1"):
 
 
 class _Query:
-    def __init__(self, subtasks):
-        self._subtasks = subtasks
+    def __init__(self, rows):
+        self._rows = rows
 
     def filter(self, *args, **kwargs):
+        return self
+
+    def options(self, *args, **kwargs):
         return self
 
     def order_by(self, *args, **kwargs):
         return self
 
     def all(self):
-        return self._subtasks
+        return self._rows
 
 
 class _Db:
     def __init__(self, subtasks):
         self._subtasks = subtasks
 
-    def query(self, _model):
-        return _Query(self._subtasks)
+    def query(self, model):
+        if model is Subtask:
+            return _Query(self._subtasks)
+        return _Query([(subtask.id,) for subtask in self._subtasks])
 
 
 def test_get_pending_interactive_form_returns_latest_unanswered_form():
