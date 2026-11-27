@@ -103,10 +103,11 @@ class TestDockerUtils:
         result = check_container_ownership("test-container")
         assert result is True
 
+    @pytest.mark.parametrize("stdout", ["", "test-container-copy\n"])
     @patch("subprocess.run")
-    def test_check_container_ownership_false(self, mock_run):
-        """Test checking container ownership when not owned"""
-        mock_run.return_value = MagicMock(stdout="", returncode=0)
+    def test_check_container_ownership_false(self, mock_run, stdout):
+        """Ownership requires an exact container name."""
+        mock_run.return_value = MagicMock(stdout=stdout, returncode=0)
         result = check_container_ownership("test-container")
         assert result is False
 

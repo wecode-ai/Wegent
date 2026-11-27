@@ -97,7 +97,7 @@ def check_container_ownership(container_name: str) -> bool:
         check_result = subprocess.run(
             check_cmd, check=True, capture_output=True, text=True
         )
-        return container_name in check_result.stdout
+        return container_name in check_result.stdout.splitlines()
     except subprocess.CalledProcessError as e:
         logger.error(f"Error checking container ownership: {e.stderr}")
         return False
