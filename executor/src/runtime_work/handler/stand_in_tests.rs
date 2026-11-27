@@ -1253,6 +1253,20 @@ async fn stand_in_role_transfer_excludes_permissions_on_first_save_and_retransfe
         )
         .await
         .unwrap();
+    let denied = handler
+        .dispatch_method(
+            save,
+            json!({
+                "userId":7,"settings":saved,"ownedTeam":{"roleId":"moving","botGrants":[]}
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(denied.code, "permission_denied");
+    assert_eq!(
+        store.personal_stand_in(7, "mac").unwrap()["version"],
+        saved["version"]
+    );
     assert!(saved["roles"][1].get("taskPermissions").is_none());
     assert_eq!(saved["roles"][1]["name"], "Moving assistant");
     saved["roles"][1]["taskPermissions"] = workspace_write.clone();

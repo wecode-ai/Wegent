@@ -1,6 +1,8 @@
 //! Durable execution definitions for personal roles. Group duties remain in the role settings.
 use super::*;
 
+const LOCAL_BOT_GRANTS: [&str; 3] = ["skills", "skill_refs", "mcp_servers"];
+
 fn identity_ref(user: i64, role: &str, identity: &Value) -> String {
     // A portable copy may have a new local role id. Recover the original identity
     // inside the destination owner's namespace, without importing its permissions.
@@ -253,7 +255,7 @@ pub(super) fn replace_bot_grants(
         used.insert(bot["id"].to_string());
         let grant = entries.get(&bot["id"].to_string()).ok_or_else(invalid)?;
         let fields = bot.as_object_mut().ok_or_else(invalid)?;
-        for key in ["skills", "skill_refs", "mcp_servers"] {
+        for key in LOCAL_BOT_GRANTS {
             if let Some(v) = grant.get(key) {
                 fields.insert(key.into(), v.clone());
             } else {
@@ -321,12 +323,21 @@ impl LocalTaskStore {
             .into_iter()
             .find(|r| r["id"] == role_id)
             .ok_or_else(|| TaskRuntimeError::Invalid("Unknown source role".into()))?;
-        let value = self.personal_execution_team(
-            user,
-            role["teamRef"]
-                .as_str()
-                .ok_or_else(|| TaskRuntimeError::Invalid("Role has no Team".into()))?,
-        )?;
+        let reference = role["teamRef"]
+            .as_str()
+            .ok_or_else(|| TaskRuntimeError::Invalid("Role has no Team".into()))?;
+        let mut value = self.personal_execution_team(user, reference)?;
+        if reference.starts_with("stand-in-team-") {
+            for bot in value["bot"].as_array_mut().into_iter().flatten() {
+                if bot["native_capability_scope"] == "bot" {
+                    let fields = bot.as_object_mut().expect("locally provisioned Bot");
+                    fields.remove("native_capability_scope");
+                    for key in LOCAL_BOT_GRANTS {
+                        fields.remove(key);
+                    }
+                }
+            }
+        }
         portable(&value)
     }
 
@@ -480,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_grants_commit_atomically_and_cannot_be_transferred() {
+    fn owner_grants_commit_atomically_and_stay_on_the_source_device() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let mut settings = store.personal_stand_in(7, "target").unwrap();
@@ -518,7 +529,20 @@ mod tests {
             12
         );
         assert!(store.personal_execution_team(8, reference).is_err());
-        assert!(store.portable_personal_team(7, "target", "review").is_err());
+        let exported = store.portable_personal_team(7, "target", "review").unwrap();
+        assert_eq!(exported["bot"][0]["id"], id);
+        for key in [
+            "skills",
+            "mcp_servers",
+            "skill_refs",
+            "native_capability_scope",
+        ] {
+            assert!(exported["bot"][0].get(key).is_none());
+        }
+        assert!(!exported.to_string().contains("private"));
+        let mut injected = exported;
+        injected["bot"][0]["mcp_servers"] = grant["mcp_servers"].clone();
+        assert!(portable(&injected).is_err());
     }
 
     #[test]
