@@ -5,7 +5,6 @@ import {
   primaryWithConnectionMode,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
@@ -67,7 +66,6 @@ interface StandInPrimaryProfileProps {
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
-  initialConnections?: boolean | MessageCenterSource
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
@@ -101,15 +99,12 @@ function StandInPrimaryProfileEditor({
   onSelectDevice,
   deviceReadOnly = false,
   initialCalendar = false,
-  initialConnections = false,
   onCalendarViewChange,
   onReload,
   shortcuts,
   footerLeading,
 }: StandInPrimaryProfileProps) {
   const { t } = useTranslation('common')
-  const initialSource =
-    initialConnections && typeof initialConnections === 'object' ? initialConnections : undefined
   const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const settings = incomingSettings
@@ -143,7 +138,7 @@ function StandInPrimaryProfileEditor({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar || initialConnections ? 'connections' : 'main')
+  >(initialCalendar ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -393,7 +388,6 @@ function StandInPrimaryProfileEditor({
               calendar: original.calendar,
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
-            initialSource={initialSource}
             onScheduleDirtyChange={setScheduleDirty}
             onScheduleEditorOpenChange={setScheduleEditorOpen}
             tagDraft={tagDraft}

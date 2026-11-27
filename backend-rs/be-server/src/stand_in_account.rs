@@ -13,7 +13,7 @@ use crate::{
 const NAMESPACE: &str = "personal-assistant";
 const ACCOUNT_KIND: &str = "PersonalAssistantSettings";
 const DEFAULT_NAME: &str = "primary";
-const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Bot','Ghost') AND is_active=true";
+const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Team','Bot','Ghost') AND is_active=true";
 
 #[derive(FromMysqlRow)]
 struct Row {
@@ -173,7 +173,23 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
     let definitions = identities
         .iter()
         .map(|identity| {
-            let name = identity["botRef"]["name"]
+            let team_name = identity["teamRef"]["name"]
+                .as_str()
+                .ok_or(MysqlError::RowNotFound)?;
+            let team = resources
+                .get(&("Team", team_name))
+                .ok_or(MysqlError::RowNotFound)?;
+            let [member] = team["spec"]["members"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            else {
+                return Err(MysqlError::RowNotFound);
+            };
+            if team["spec"]["collaborationModel"] != "solo" {
+                return Err(MysqlError::RowNotFound);
+            }
+            let name = member["botRef"]["name"]
                 .as_str()
                 .ok_or(MysqlError::RowNotFound)?;
             let bot = resources
@@ -185,7 +201,7 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
             let ghost = resources
                 .get(&("Ghost", ghost_name))
                 .ok_or(MysqlError::RowNotFound)?;
-            Ok(json!({"roleId":identity["roleId"],"bot":bot,"ghost":ghost}))
+            Ok(json!({"roleId":identity["roleId"],"team":team,"bot":bot,"ghost":ghost}))
         })
         .collect::<MysqlResult<Vec<_>>>()?;
     let retired = spec["retiredRoleIds"]
@@ -193,7 +209,7 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
         .cloned()
         .unwrap_or_default();
     let revision = crate::hex_sha256(json!([definitions, retired]).to_string().as_bytes());
-    let mut result = json!({"assistant":{"defaultBotRef":spec["defaultBotRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}});
+    let mut result = json!({"assistant":{"defaultTeamRef":spec["defaultTeamRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}});
     let states = stop_intent_states(spec)?;
     if !states.is_empty() {
         let generations: BTreeMap<_, _> = states
@@ -229,7 +245,20 @@ fn resource(kind: &str, name: &str, display_name: &str, spec: Value) -> Value {
     })
 }
 
-fn definition_documents(definition: Definition) -> (Value, Value, Value) {
+fn team_document(name: &str, display_name: &str, bot_ref: &Value) -> Value {
+    resource(
+        "Team",
+        name,
+        display_name,
+        json!({
+            "collaborationModel":"solo",
+            "members":[{"botRef":bot_ref,"role":"leader"}],
+            "bind_mode":["task"]
+        }),
+    )
+}
+
+fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     let name = if definition.role_id == "@primary" {
         DEFAULT_NAME.to_string()
     } else {
@@ -255,10 +284,10 @@ fn definition_documents(definition: Definition) -> (Value, Value, Value) {
     if let Some(device) = definition.execution_device_id {
         bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
     }
+    let team = team_document(&name, &definition.name, &reference);
     (
-        json!({"roleId":definition.role_id,"botRef":reference}),
-        bot,
-        ghost,
+        json!({"roleId":definition.role_id,"teamRef":reference}),
+        [ghost, bot, team],
     )
 }
 
@@ -268,10 +297,10 @@ async fn create_definitions(
     request: Initialize,
 ) -> MysqlResult<()> {
     let mut identities = Vec::with_capacity(request.definitions.len());
-    let mut records = Vec::with_capacity(2 * request.definitions.len() + 1);
+    let mut records = Vec::with_capacity(3 * request.definitions.len() + 1);
     for definition in request.definitions {
-        let (identity, bot, ghost) = definition_documents(definition);
-        records.extend([ghost, bot]);
+        let (identity, documents) = definition_documents(definition);
+        records.extend(documents);
         identities.push(identity);
     }
     let account = resource(
@@ -279,7 +308,7 @@ async fn create_definitions(
         DEFAULT_NAME,
         "",
         json!({
-            "defaultBotRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
+            "defaultTeamRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
             "identities":identities
         }),
     );
@@ -317,6 +346,98 @@ async fn insert_documents(
     Ok(())
 }
 
+fn legacy_account(rows: &[Row]) -> Option<&Value> {
+    rows.iter()
+        .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
+        .map(|row| &row.document.0)
+        .filter(|account| {
+            let spec = &account["spec"];
+            spec.get("defaultBotRef").is_some() && spec.get("defaultTeamRef").is_none()
+        })
+}
+
+fn legacy_team_upgrade(rows: &[Row], account: &Value) -> MysqlResult<(Value, Vec<Value>)> {
+    let bots: HashMap<_, _> = rows
+        .iter()
+        .filter(|row| row.kind == "Bot")
+        .map(|row| (row.name.as_str(), &row.document.0))
+        .collect();
+    let occupied_teams: HashSet<_> = rows
+        .iter()
+        .filter(|row| row.kind == "Team")
+        .map(|row| row.name.to_ascii_lowercase())
+        .collect();
+    let mut upgraded = account.clone();
+    let spec = upgraded["spec"]
+        .as_object_mut()
+        .ok_or(MysqlError::RowNotFound)?;
+    let default_ref = spec
+        .remove("defaultBotRef")
+        .ok_or(MysqlError::RowNotFound)?;
+    let identities = spec
+        .get_mut("identities")
+        .and_then(Value::as_array_mut)
+        .ok_or(MysqlError::RowNotFound)?;
+    let mut teams = Vec::with_capacity(identities.len());
+    let mut primary = false;
+    let mut names = HashSet::new();
+    for identity in identities {
+        let entry = identity.as_object_mut().ok_or(MysqlError::RowNotFound)?;
+        let bot_ref = entry.remove("botRef").ok_or(MysqlError::RowNotFound)?;
+        let name = bot_ref["name"].as_str().ok_or(MysqlError::RowNotFound)?;
+        if bot_ref["namespace"] != NAMESPACE || !names.insert(name.to_owned()) {
+            return Err(MysqlError::RowNotFound);
+        }
+        if occupied_teams.contains(&name.to_ascii_lowercase()) {
+            return Err(MysqlError::InvalidQuery {
+                reason: "Legacy personal assistant Team name is already occupied".into(),
+            });
+        }
+        let bot = bots.get(name).ok_or(MysqlError::RowNotFound)?;
+        let display_name = bot["metadata"]["displayName"]
+            .as_str()
+            .ok_or(MysqlError::RowNotFound)?;
+        if entry.get("roleId").and_then(Value::as_str) == Some("@primary") {
+            if bot_ref != default_ref {
+                return Err(MysqlError::RowNotFound);
+            }
+            primary = true;
+        }
+        teams.push(team_document(name, display_name, &bot_ref));
+        entry.insert("teamRef".into(), bot_ref);
+    }
+    if !primary {
+        return Err(MysqlError::RowNotFound);
+    }
+    spec.insert("defaultTeamRef".into(), default_ref);
+    Ok((upgraded, teams))
+}
+
+async fn lock_account_owner(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<()> {
+    let _: (i64,) = tx
+        .fetch_optional(
+            "SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE",
+            (user,),
+        )
+        .await?
+        .ok_or(MysqlError::RowNotFound)?;
+    Ok(())
+}
+
+// Called only after the account owner row is locked, before the first consistent read.
+async fn load_account_rows(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<Vec<Row>> {
+    let rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+    let Some(account) = legacy_account(&rows) else {
+        return Ok(rows);
+    };
+    let (account, teams) = legacy_team_upgrade(&rows, account)?;
+    insert_documents(tx, user, teams).await?;
+    update_document(tx, user, &account).await?;
+    let rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+    view(&rows)?;
+    Ok(rows)
+}
+
 #[brz_http_server::get("/api/v1/personal-assistant")]
 async fn get(
     #[inject(state)] state: &AppState,
@@ -330,8 +451,19 @@ async fn get(
 async fn read_account(mysql: &brz_mysql::MysqlService, user: i64) -> MysqlResult<Value> {
     // Device lifecycle decisions need current stop intents, including marks
     // committed by another client before this request. Read from the writer.
+    let rows: Vec<Row> = mysql
+        .with_transaction(async |tx| tx.fetch_all(SELECT, (user, NAMESPACE)).await)
+        .await?;
+    if legacy_account(&rows).is_none() {
+        return view(&rows);
+    }
+    // Reread in a fresh transaction after taking the lock so concurrent first
+    // requests see a completed upgrade instead of the earlier read snapshot.
     mysql
-        .with_transaction(async |tx| view(&tx.fetch_all(SELECT, (user, NAMESPACE)).await?))
+        .with_transaction(async |tx| {
+            lock_account_owner(tx, user).await?;
+            view(&load_account_rows(tx, user).await?)
+        })
         .await
 }
 
@@ -361,14 +493,8 @@ async fn initialize_for(
         .with_transaction(async |tx| {
             // Acquire the existing user row before the first consistent read. Concurrent
             // initializers see the winner's commit without locking an empty Kind index range.
-            let _: (i64,) = tx
-                .fetch_optional(
-                    "SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE",
-                    (user,),
-                )
-                .await?
-                .ok_or(MysqlError::RowNotFound)?;
-            let current = view(&tx.fetch_all(SELECT, (user, NAMESPACE)).await?)?;
+            lock_account_owner(tx, user).await?;
+            let current = view(&load_account_rows(tx, user).await?)?;
             if !current["assistant"].is_null() {
                 return Ok(current);
             }
@@ -517,13 +643,7 @@ async fn set_stop_intent(
         .with_transaction(async |tx| {
             // Serialize with account edits and device registration/deletion using
             // the same existing account owner row lock.
-            let _: (i64,) = tx
-                .fetch_optional(
-                    "SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE",
-                    (user,),
-                )
-                .await?
-                .ok_or(MysqlError::RowNotFound)?;
+            lock_account_owner(tx, user).await?;
             let Some(device) = crate::device_identity::resolve_device_for_binding_on(
                 &mut &mut *tx,
                 user,
@@ -534,7 +654,7 @@ async fn set_stop_intent(
                 return Ok(StopIntentOutcome::DeviceNotFound);
             };
             let device_id = crate::device_identity::record_route_id(&device);
-            let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+            let mut rows = load_account_rows(tx, user).await?;
             let Some(account) = rows
                 .iter_mut()
                 .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
@@ -561,9 +681,8 @@ async fn replace_definitions(
     body: DefinitionChange,
 ) -> MysqlResult<Option<Value>> {
     mysql.with_transaction(async |tx| {
-        let _: (i64,) = tx.fetch_optional("SELECT id FROM users WHERE id=? AND is_active=true FOR UPDATE", (user,))
-            .await?.ok_or(MysqlError::RowNotFound)?;
-        let mut rows: Vec<Row> = tx.fetch_all(SELECT, (user, NAMESPACE)).await?;
+        lock_account_owner(tx, user).await?;
+        let mut rows = load_account_rows(tx, user).await?;
         let current = view(&rows)?;
         if current["assistant"]["revision"] != body.revision {
             return Ok(None);
@@ -579,14 +698,19 @@ async fn replace_definitions(
         for desired in body.desired.definitions {
             retired.remove(&desired.role_id);
             if let Some(entry) = previous.remove(desired.role_id.as_str()) {
+                let mut team = entry["team"].clone();
                 let mut bot = entry["bot"].clone();
                 let mut ghost = entry["ghost"].clone();
                 if let Some(device) = desired.execution_device_id {
                     bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
                 }
-                bot["metadata"]["displayName"] = json!(desired.name);
+                team["metadata"]["displayName"] = json!(desired.name);
+                bot["metadata"]["displayName"] = team["metadata"]["displayName"].clone();
                 ghost["metadata"]["displayName"] = bot["metadata"]["displayName"].clone();
                 ghost["spec"]["systemPrompt"] = json!(desired.prompt);
+                if team != entry["team"] {
+                    update_document(tx, user, &team).await?;
+                }
                 if bot != entry["bot"] {
                     update_document(tx, user, &bot).await?;
                 }
@@ -595,18 +719,18 @@ async fn replace_definitions(
                 }
                 identities.push(json!({
                     "roleId":desired.role_id,
-                    "botRef":{"name":bot["metadata"]["name"],"namespace":NAMESPACE}
+                    "teamRef":{"name":team["metadata"]["name"],"namespace":NAMESPACE}
                 }));
             } else {
-                let (identity, bot, ghost) = definition_documents(desired);
+                let (identity, documents) = definition_documents(desired);
                 identities.push(identity);
-                additions.extend([ghost, bot]);
+                additions.extend(documents);
             }
         }
         for entry in previous.into_values() {
             let role_id = entry["roleId"].as_str().ok_or(MysqlError::RowNotFound)?;
             retired.insert(role_id.to_string());
-            for resource in ["bot", "ghost"] {
+            for resource in ["team", "bot", "ghost"] {
                 let document = &entry[resource];
                 let (kind, name) = document_key(document)?;
                 tx.execute(
@@ -683,7 +807,21 @@ pub(crate) async fn verify_concurrent_initialization(
         2
     );
     let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 7);
+    let assistant = &first["assistant"];
+    for definition in assistant["definitions"].as_array().unwrap() {
+        assert_eq!(definition["team"]["spec"]["collaborationModel"], "solo");
+        let members = definition["team"]["spec"]["members"].as_array().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(
+            members[0]["botRef"]["name"],
+            definition["bot"]["metadata"]["name"]
+        );
+    }
+    assert_eq!(
+        assistant["defaultTeamRef"]["name"],
+        assistant["definitions"][0]["team"]["metadata"]["name"]
+    );
     assert_eq!(view(&rows)?, first);
     let revision = first["assistant"]["revision"].as_str().unwrap();
     let foreign = user + 1;
@@ -852,6 +990,130 @@ pub(crate) async fn verify_concurrent_initialization(
         final_account["assistant"]["revision"],
         updated["assistant"]["revision"]
     );
+    verify_legacy_account_upgrade(mysql, user + 2).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+async fn verify_legacy_account_upgrade(
+    mysql: &brz_mysql::MysqlService,
+    user: i64,
+) -> anyhow::Result<()> {
+    mysql.execute(
+        "INSERT INTO users (id,user_name,password_hash,role,auth_source,preferences,is_active) VALUES (?,'personal-assistant-legacy','fixture','user','local','{}',true)",
+        (user,),
+    ).await?;
+    mysql.execute(
+        "INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (?,'Device','legacy-device','default',JSON_OBJECT('spec',JSON_OBJECT('deviceType','cloud','deviceId','legacy-runtime')),true,NOW(),NOW())",
+        (user,),
+    ).await?;
+    let mut original = Vec::new();
+    let mut identities = Vec::new();
+    for (role_id, display_name, prompt) in [
+        ("@primary", "Legacy assistant", "Keep my primary prompt"),
+        ("support", "Legacy support", "Keep my support prompt"),
+    ] {
+        let (identity, [ghost, bot, _]) = definition_documents(Definition {
+            execution_device_id: Some("legacy-device".into()),
+            role_id: role_id.into(),
+            name: display_name.into(),
+            prompt: prompt.into(),
+        });
+        original.extend([ghost, bot]);
+        // Accounts created before the Team-backed contract referenced Bots directly.
+        identities.push(json!({"roleId":role_id,"botRef":identity["teamRef"]}));
+    }
+    let stop_states = json!({
+        "legacy-device":{"requestId":"pending","pending":true,"expectedVersion":7},
+        "old-device":{"requestId":"cleared","pending":false}
+    });
+    let mut records = original.clone();
+    records.push(resource(
+        ACCOUNT_KIND,
+        DEFAULT_NAME,
+        "",
+        json!({
+            "defaultBotRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
+            "identities":identities,
+            "retiredRoleIds":["retired"],
+            "stopIntentStates":stop_states
+        }),
+    ));
+    mysql
+        .with_transaction(async |tx| insert_documents(tx, user, records).await)
+        .await?;
+
+    let start = Initialize {
+        definitions: vec![Definition {
+            execution_device_id: None,
+            role_id: "@primary".into(),
+            name: "Never overwrite".into(),
+            prompt: "Never overwrite".into(),
+        }],
+    };
+    let stop = StopIntentChange {
+        expected_version: Some(7),
+        ..stop_change("legacy-runtime", StopIntentOperation::Mark, "pending", None)
+    };
+    let (read, initialized, marked) = tokio::try_join!(
+        read_account(mysql, user),
+        initialize_for(mysql, user, start),
+        set_stop_intent(mysql, user, stop),
+    )?;
+    assert_eq!(read, initialized);
+    assert_eq!(read, stop_intent_view(marked));
+    assert_eq!(
+        read["assistant"]["defaultTeamRef"],
+        json!({"name":DEFAULT_NAME,"namespace":NAMESPACE})
+    );
+    assert_eq!(read["assistant"]["retiredRoleIds"], json!(["retired"]));
+    assert_eq!(
+        read["assistant"]["stopIntents"],
+        json!([{"deviceId":"legacy-device","requestId":"pending","expectedVersion":7}])
+    );
+    assert_eq!(
+        read["assistant"]["stopIntentGenerations"],
+        json!({"legacy-device":"pending","old-device":"cleared"})
+    );
+
+    let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
+    assert_eq!(rows.len(), 7);
+    let account = &rows
+        .iter()
+        .find(|row| row.kind == ACCOUNT_KIND && row.name == DEFAULT_NAME)
+        .unwrap()
+        .document
+        .0;
+    assert!(account["spec"].get("defaultBotRef").is_none());
+    assert_eq!(account["spec"]["stopIntentStates"], stop_states);
+    let definitions = read["assistant"]["definitions"].as_array().unwrap();
+    for (identity, definition) in account["spec"]["identities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(definitions)
+    {
+        assert!(identity.get("botRef").is_none());
+        assert_eq!(identity["roleId"], definition["roleId"]);
+        let team_ref = &identity["teamRef"];
+        assert_eq!(definition["team"]["metadata"]["name"], team_ref["name"]);
+        assert_eq!(
+            definition["team"]["spec"]["members"],
+            json!([{"botRef":team_ref,"role":"leader"}])
+        );
+    }
+    for document in original {
+        let (kind, name) = document_key(&document)?;
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.kind == kind && row.name == name)
+                .unwrap()
+                .document
+                .0,
+            document
+        );
+    }
+    assert_eq!(read_account(mysql, user).await?, read);
     Ok(())
 }
 

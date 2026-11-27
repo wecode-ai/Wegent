@@ -21,9 +21,8 @@ import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import { fetchJson } from '../modules/shared.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
-  bindStoppedStandIn,
   finishStandInOnboarding,
-  stopBoundStandIn,
+  assertStandInAccountDevice,
 } from '../modules/stand-in-instance-flows.mjs'
 
 const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
@@ -171,9 +170,7 @@ export function createDesktopScenario(options) {
       userId = user.id
       const local = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
       await finishStandInOnboarding(control)
-      await stopBoundStandIn(control, uiTimeoutMs)
-      await bindStoppedStandIn(control, userId, local.deviceId, uiTimeoutMs, cloud)
-      await finishStandInOnboarding(control)
+      await assertStandInAccountDevice(userId, local.deviceId, uiTimeoutMs, cloud)
       const settings = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',

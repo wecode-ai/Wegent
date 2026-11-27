@@ -11,7 +11,6 @@ import type {
   MessageCenterSnapshot,
   StandInMessageCenterApi,
 } from '@/api/standInMessageCenter'
-import { unavailableMessageCenterSnapshot } from './standInMessageCenterSource'
 
 const DETAIL_CONCURRENCY = 4
 const COMPONENT_UNAVAILABLE_CODES = new Set([
@@ -368,6 +367,17 @@ async function findWorkRecord(
       // A damaged work detail must not hide the exact record in another work.
     }
   }
+}
+
+const unavailableMessageCenterSnapshot: MessageCenterSnapshot = {
+  identity: null,
+  deviceName: '',
+  updatedAt: null,
+  status: 'unavailable',
+  records: [],
+  sources: [],
+  policyVersion: null,
+  capabilities: [],
 }
 
 export function createDingTalkMessageCenterApi(

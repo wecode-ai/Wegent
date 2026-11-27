@@ -246,6 +246,11 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
+      assert.equal(
+        JSON.parse(await control.command('getLocalExecutorStatus', 'body')).deviceId,
+        beforeSave.executionDeviceId,
+        'Workspace settings must remain on the local Executor'
+      )
       await clickVisibleControl(
         control,
         '[data-testid="stand-in-settings"] [data-testid="project-work-button"]'

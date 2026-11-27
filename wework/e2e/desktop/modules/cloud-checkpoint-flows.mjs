@@ -767,7 +767,9 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'cloud-device-lifecycle') {
     setPhase('cloud-device-lifecycle')
-    await verifyCloudDeviceLifecycleFlow(control, cloudEnvironment)
+    await verifyCloudDeviceLifecycleFlow(control, cloudEnvironment, () =>
+      createCloudProjectFixture(control, workspacePath)
+    )
     return
   }
 

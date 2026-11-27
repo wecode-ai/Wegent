@@ -29,23 +29,14 @@ import {
   activateStandInBinding,
   cancelStandInActivation,
   completeStandInActivation,
+  getStandInAccountStopIntent,
   hasSavedStandIn,
+  localStopGeneration,
   sameTarget,
   type InstanceSnapshot,
   type InstanceObservation,
 } from './standInLocalInstanceSource'
 import { availableStandInDevices } from './standInDevices'
-
-const localStopGeneration = (saved: StandInInstanceBinding, target: StandInBindingTarget) => {
-  const key = `${target.userId}:${target.deviceId}`
-  if (
-    saved.stoppingTargets?.includes(key) ||
-    (saved.status === 'stopping' && sameTarget(saved.target, target))
-  ) {
-    return saved.stoppingTargetGenerations?.[key] ?? 0
-  }
-  return undefined
-}
 
 const accountAccessDeniedOrMissing = (cause: unknown) =>
   cause instanceof ApiError && [401, 403, 404].includes(cause.status)
@@ -85,16 +76,6 @@ export function resolveReachableStandInDevice(
     return matched.device_id
   }
   return undefined
-}
-
-export function getStandInAccountStopIntent(
-  account: PersonalAssistantAccount | undefined,
-  deviceId: string,
-  devices: DeviceInfo[]
-) {
-  const device = findWorkbenchDevice(devices, deviceId)
-  const ids = device ? getWorkbenchDeviceIds(device) : [deviceId]
-  return account?.stopIntents?.find(intent => ids.includes(intent.deviceId))
 }
 
 export function configuredPrimaryStandInDevice(
@@ -142,6 +123,7 @@ export function createAccountStandInInstanceSource({
   backendUrl,
   initialDeviceId,
   requireSetupConfirmation = true,
+  accountNavigationOnly = false,
 }: {
   services: WorkbenchServices
   api: StandInExecutorApi | undefined
@@ -149,6 +131,7 @@ export function createAccountStandInInstanceSource({
   backendUrl: string
   initialDeviceId?: string
   requireSetupConfirmation?: boolean
+  accountNavigationOnly?: boolean
 }) {
   let snapshot: InstanceSnapshot = { localDeviceId: '', busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -259,7 +242,7 @@ export function createAccountStandInInstanceSource({
     if (configuredPrimaryStandInDevice(currentAccount) === deviceId) return
     const definitions = currentAccount.definitions.map(entry => ({
       roleId: entry.roleId,
-      name: entry.bot.metadata.displayName ?? '',
+      name: entry.team.metadata.displayName ?? entry.bot.metadata.displayName ?? '',
       prompt: entry.ghost.spec.systemPrompt,
       executionDeviceId:
         entry.roleId === '@primary' ? deviceId : entry.bot.spec?.execution_policy?.environment_id,
@@ -366,6 +349,19 @@ export function createAccountStandInInstanceSource({
         owner.publishAccount?.(stopAccount)
       }
       const configured = configuredPrimaryStandInDevice(activeAccount)
+      if (accountNavigationOnly && !configured) {
+        pinnedSelection = undefined
+        verifiedProfile = undefined
+        setupSelection = undefined
+        publish({
+          binding: { version: ++version, status: 'unbound', target: null },
+          stoppedProfile: undefined,
+          setupTarget: undefined,
+          entryFailure: undefined,
+          error: accountError,
+        })
+        return
+      }
       const scope = selectionScope(configured, identity.deviceId, owner.devices)
       let targetDeviceId: string
       if (pinnedSelection?.userId === userId && pinnedSelection.scope === scope) {
@@ -438,7 +434,12 @@ export function createAccountStandInInstanceSource({
       }
       // Only the explicitly confirmed first activation uses the durable local binding.
       // Its target must still match the account, and a pending stop always takes priority.
-      if (!pendingStop && lifecycleStatus !== 'stopping' && !accountError) {
+      if (
+        !accountNavigationOnly &&
+        !pendingStop &&
+        lifecycleStatus !== 'stopping' &&
+        !accountError
+      ) {
         if (nativeBinding.status === 'activating' && sameTarget(nativeBinding.target, target)) {
           const latest = await loadStopAccount()
           if (!current()) return
@@ -541,6 +542,7 @@ export function createAccountStandInInstanceSource({
     publish({ busy: true, error: null })
     try {
       if (operation === 'setup') {
+        if (accountNavigationOnly) return
         const selection = setupSelection
         const target = snapshot.setupTarget
         if (

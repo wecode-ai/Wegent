@@ -8,9 +8,8 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import {
-  bindStoppedStandIn,
   finishStandInOnboarding,
-  stopBoundStandIn,
+  assertStandInAccountDevice,
 } from '../modules/stand-in-instance-flows.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelResponseTimeoutMs }) {
@@ -255,9 +254,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         // This protocol fixture installs its connection host on the local Executor.
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
         await finishStandInOnboarding(control)
-        await stopBoundStandIn(control, uiTimeoutMs)
-        await bindStoppedStandIn(control, user.id, deviceId, uiTimeoutMs, cloud)
-        await finishStandInOnboarding(control)
+        await assertStandInAccountDevice(user.id, deviceId, uiTimeoutMs, cloud)
         await openStandInSettings(control)
         await control.command(
           'clickWhenEnabled',

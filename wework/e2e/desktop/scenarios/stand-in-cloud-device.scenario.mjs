@@ -10,6 +10,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   bindStoppedStandIn,
   finishStandInOnboarding,
+  readStandInBinding,
   stopBoundStandIn,
 } from '../modules/stand-in-instance-flows.mjs'
 import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
@@ -37,6 +38,7 @@ const PROMPT = 'CLOUD_STAND_IN_DEVICE_EXECUTION'
 const COMPLETE = 'CLOUD_STAND_IN_DEVICE_EXECUTION_COMPLETE'
 const REOPEN_PROMPT = 'CLOUD_STAND_IN_VERIFY_REOPENED_RELAY'
 const REOPEN_COMPLETE = 'CLOUD_STAND_IN_REOPENED_RELAY_CONFIRMED'
+const PREVIOUS_ADDRESS = 'https://previous-stand-in.example.invalid/api'
 const HOLD = 'CLOUD_STAND_IN_STOP_RUNNING_CONVERSATION'
 const LOCAL_NAME = 'Signed-out local stand-in'
 const LOCAL_PROMPT = 'LOCAL_STAND_IN_DEVICE_HISTORY'
@@ -459,16 +461,27 @@ export function createDesktopScenario({
           language: 'zh-CN',
         })
       }
+      await remoteRpc('runtime.stand_in.onboarding.complete', {
+        userId: USER,
+        weeklyReview: false,
+        language: 'zh-CN',
+      })
       const localIdentity = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
       const localDevice = localIdentity.deviceId
       const remoteHome = dirname(cloud.remoteCodexHome)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('setAppPreferences', 'body', {
-        value: JSON.stringify({ collaborationExperienceEnabled: true }),
+        value: JSON.stringify({ collaborationExperienceEnabled: false }),
       })
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('waitFor', testId('stand-in-onboarding-setup'))
-      const beforeSetup = await rpc(control, 'runtime.stand_in.binding', { operation: 'get' })
+      await control.command(
+        'waitFor',
+        `${testId('stand-in-conversation')} [data-testid="chat-message-input"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      const beforeSetup = await readStandInBinding(control, uiTimeoutMs)
       assert.equal(beforeSetup.status, 'unbound')
       assert.equal(beforeSetup.target, null)
       const firstUseDevice = await readPrimaryDevice()
@@ -479,17 +492,13 @@ export function createDesktopScenario({
       assert.equal(
         await control.command('getElementCount', testId('stand-in-device')),
         '0',
-        'Onboarding must not expose the legacy binding switch'
+        'Account assistant must not expose the legacy binding switch'
       )
-      await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
-      await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
       assert.equal(await readPrimaryDevice(), firstUseDevice)
       const readInitialAssistant = () => readCloudAssistant()
       const initialAssistant = (await readInitialAssistant()).assistant
       assert.equal(initialAssistant.definitions[0].roleId, '@primary')
-      await control.command('setAppPreferences', 'body', {
-        value: JSON.stringify({ collaborationExperienceEnabled: false }),
-      })
+      assert.equal(initialAssistant.definitions[0].team.spec.collaborationModel, 'solo')
       await control.command('waitFor', testId('stand-in-overview'), { visible: true })
       const executionDevice = testId('personal-assistant-execution-device')
       async function openExecutionSettings() {
@@ -516,6 +525,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
+      await until(
+        readPrimaryDevice,
+        device => device === localDevice,
+        'The account must record the local execution choice',
+        uiTimeoutMs
+      )
       await reloadMainWindow(control)
       await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await control.command('waitFor', testId('stand-in-conversation'))
@@ -524,9 +539,12 @@ export function createDesktopScenario({
         text: LOCAL_COMPLETE,
         timeoutMs: modelResponseTimeoutMs,
       })
-      const localTurn = await rpc(control, 'runtime.tasks.get', {
-        taskId: `stand-in-chat-${USER}-primary`,
-      })
+      const localTurn = await until(
+        () => rpc(control, 'runtime.tasks.get', { taskId: `stand-in-chat-${USER}-primary` }),
+        value => value.task?.status === 'done' && value.task.running !== true,
+        'The selected local Executor must finish the primary conversation',
+        modelResponseTimeoutMs
+      )
       assert.ok(localTurn.task.threadId, 'The selected local Executor must own the conversation')
       assert.equal(
         await readPrimaryDevice(),
@@ -542,7 +560,12 @@ export function createDesktopScenario({
       await control.command('waitFor', `${executionDevice}:not(:disabled)`, {
         timeoutMs: uiTimeoutMs,
       })
-      assert.equal(await readPrimaryDevice(), firstUseDevice)
+      await until(
+        readPrimaryDevice,
+        device => device === firstUseDevice,
+        'The account must record the remote execution choice',
+        uiTimeoutMs
+      )
       await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
       await stop(control)
       if (firstUseDevice !== CLOUD_DEVICE_ID) {
@@ -664,7 +687,7 @@ export function createDesktopScenario({
       const localTasks = await rpc(control, 'runtime.tasks.list', {})
       assert.equal(localTasks.coverage.authorized_index_complete, true)
       assert.equal(
-        findRuntimeWorkTask(localTasks.workspaces, taskId),
+        findRuntimeWorkTask(localTasks, taskId),
         undefined,
         'Remote conversations must not run on the local Executor'
       )
@@ -702,6 +725,11 @@ export function createDesktopScenario({
         'Ordinary identity conversation and cancellation must not create a business Issue'
       )
 
+      const staleBinding = await rpc(control, 'runtime.stand_in.binding', {
+        operation: 'bind',
+        version: (await readStandInBinding(control, uiTimeoutMs)).version,
+        target: { userId: USER, deviceId: localDevice, backendUrl: PREVIOUS_ADDRESS },
+      })
       await remoteRpc('runtime.stand_in.personal.lifecycle', { userId: USER, operation: 'start' })
       await reloadMainWindow(control)
       await control.command('waitFor', testId('stand-in-overview'))
@@ -721,6 +749,7 @@ export function createDesktopScenario({
       assert.equal(reopened.success, true, reopened.error)
       assert.equal(reopened.task.threadId, threadId)
       assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
+      assert.deepEqual(await readStandInBinding(control, uiTimeoutMs), staleBinding)
       await stop(control)
       await reloadMainWindow(control)
       await control.command('waitFor', testId('stand-in-instance-stopped'))
@@ -763,7 +792,16 @@ export function createDesktopScenario({
         stop,
         observeDevice,
         sendChat,
+        localPrimaryThreadId: localTurn.task.threadId,
       })
+      const retainedBinding = await readStandInBinding(control, uiTimeoutMs)
+      for (const key of ['target', 'version', 'status']) {
+        assert.deepEqual(
+          retainedBinding[key],
+          staleBinding[key],
+          'Account routing must ignore the old local binding'
+        )
+      }
       await verifyUnreachableSourceInitialization(control, readInitialAssistant)
       await verifyRegularBinding(control, localDevice)
       await writeFile(

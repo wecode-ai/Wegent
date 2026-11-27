@@ -8,6 +8,10 @@ interface ResourceRef {
 
 export interface PersonalAssistantDefinition {
   roleId: string
+  team: {
+    metadata: ResourceRef & { displayName?: string }
+    spec: { collaborationModel: 'solo'; members: [{ botRef: ResourceRef; role: 'leader' }] }
+  }
   bot: {
     spec?: { execution_policy?: { mode: string; environment_id?: string } }
     metadata: ResourceRef & { displayName?: string }
@@ -16,7 +20,7 @@ export interface PersonalAssistantDefinition {
 }
 
 export interface PersonalAssistantAccount {
-  defaultBotRef: ResourceRef
+  defaultTeamRef: ResourceRef
   revision: string
   retiredRoleIds: string[]
   definitions: PersonalAssistantDefinition[]

@@ -16,12 +16,16 @@ const reference = { name: 'assistant', namespace: 'default' }
 
 function account(deviceId: string): PersonalAssistantAccount {
   return {
-    defaultBotRef: reference,
+    defaultTeamRef: reference,
     revision: 'current',
     retiredRoleIds: [],
     definitions: [
       {
         roleId: '@primary',
+        team: {
+          metadata: reference,
+          spec: { collaborationModel: 'solo', members: [{ botRef: reference, role: 'leader' }] },
+        },
         bot: {
           metadata: reference,
           spec: { execution_policy: { mode: 'fixed', environment_id: deviceId } },

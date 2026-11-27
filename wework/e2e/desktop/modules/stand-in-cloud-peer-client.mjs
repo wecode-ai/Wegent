@@ -122,6 +122,7 @@ export function createStandInCloudPeerClient({
         stop,
         observeDevice,
         sendChat,
+        localPrimaryThreadId,
       }
     ) {
       async function verifySavedLocalBinding(control, localDevice) {
@@ -176,14 +177,16 @@ export function createStandInCloudPeerClient({
         assert.ok(transcript.threadId, 'The cloud transcript must expose a native thread')
         assert.equal(finished.task.threadId, transcript.threadId)
         const peerLocalTasks = await rpc(peerControl, 'runtime.tasks.list', {})
+        assert.equal(peerLocalTasks.coverage.authorized_index_complete, true)
         assert.equal(
-          findRuntimeWorkTask(peerLocalTasks.workspaces, taskId),
+          findRuntimeWorkTask(peerLocalTasks, taskId),
           undefined,
           'Cloud @primary chat must not execute on the second client local Executor'
         )
-        return transcript.messages.find(
+        const turnId = transcript.messages.find(
           message => message.role === 'user' && message.content === prompt
         ).turnId
+        return { turnId, threadId: transcript.threadId }
       }
 
       assert.ok(preparedApp, 'Multi-client stand-in E2E requires prepared desktop launch metadata')
@@ -306,10 +309,15 @@ export function createStandInCloudPeerClient({
           text: PEER_CLOUD_COMPLETE,
           timeoutMs: modelResponseTimeoutMs,
         })
-        const cloudTurnId = await verifyPeerCloudTurn(
+        const cloudTurn = await verifyPeerCloudTurn(
           primaryTaskId,
           PEER_CLOUD_PROMPT,
           PEER_CLOUD_COMPLETE
+        )
+        assert.notEqual(
+          cloudTurn.threadId,
+          localPrimaryThreadId,
+          'The cloud primary conversation must have a different native thread from the local primary'
         )
         await reloadMainWindow(control)
         await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
@@ -380,12 +388,16 @@ export function createStandInCloudPeerClient({
           text: PEER_FALLBACK_COMPLETE,
           timeoutMs: modelResponseTimeoutMs,
         })
-        const fallbackTurnId = await verifyPeerCloudTurn(
+        const fallbackTurn = await verifyPeerCloudTurn(
           primaryTaskId,
           PEER_FALLBACK_PROMPT,
           PEER_FALLBACK_COMPLETE
         )
-        assert.notEqual(fallbackTurnId, cloudTurnId, 'Fallback must execute a distinct cloud turn')
+        assert.notEqual(
+          fallbackTurn.turnId,
+          cloudTurn.turnId,
+          'Fallback must execute a distinct cloud turn'
+        )
         assert.equal(await readPrimaryDevice(), localDevice)
       } finally {
         await stopPeerClient()

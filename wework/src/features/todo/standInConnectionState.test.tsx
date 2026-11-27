@@ -39,12 +39,25 @@ const cloudDevice = (id: string, status: DeviceInfo['status'] = 'online'): Devic
   }) as DeviceInfo
 
 const makeAccount = (environmentId?: string, revision = 'rev-1'): PersonalAssistantAccount => ({
-  defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
+  defaultTeamRef: { name: 'primary-team', namespace: 'personal-assistant' },
   revision,
   retiredRoleIds: [],
   definitions: [
     {
       roleId: '@primary',
+      team: {
+        metadata: {
+          name: 'primary-team',
+          namespace: 'personal-assistant',
+          displayName: '默认助理',
+        },
+        spec: {
+          collaborationModel: 'solo',
+          members: [
+            { botRef: { name: 'primary', namespace: 'personal-assistant' }, role: 'leader' },
+          ],
+        },
+      },
       bot: {
         metadata: { name: 'primary', namespace: 'personal-assistant', displayName: '默认助理' },
         spec: {
@@ -54,7 +67,6 @@ const makeAccount = (environmentId?: string, revision = 'rev-1'): PersonalAssist
         },
       },
       ghost: {
-        metadata: { name: 'primary', namespace: 'personal-assistant', displayName: '默认助理' },
         spec: { systemPrompt: 'Prompt' },
       },
     },
@@ -539,13 +551,14 @@ it('shares cloud primary execution device across clients and falls back cleanly 
         true,
         true,
         'https://cloud.example/api',
-        { account, requireSetupConfirmation: false }
+        { account, accountNavigationOnly: true, newAccount: true }
       ),
     { initialProps: { account: freshAccount, userId: 1, devices } }
   )
 
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-1'))
   expect(result.current.binding?.status).toBe('active')
+  expect(result.current.setupTarget).toBeUndefined()
 
   // When another desktop saved its private electron-* IPC ID (either current sha256 or legacy UUID),
   // this client resolves an available cloud device without overwriting the other desktop's setting.
@@ -579,6 +592,14 @@ it('shares cloud primary execution device across clients and falls back cleanly 
   freshAccount = makeAccount('cloud-2', 'rev-3')
   act(() => result.current.reload())
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-2'))
+
+  freshAccount = makeAccount(undefined, 'rev-4')
+  act(() => result.current.reload())
+  await waitFor(() =>
+    expect(result.current.binding).toMatchObject({ status: 'unbound', target: null })
+  )
+  expect(result.current.setupTarget).toBeUndefined()
+  freshAccount = makeAccount('cloud-2', 'rev-5')
 
   const denied = new ApiError('Access denied', 403)
   getAccount.mockRejectedValueOnce(denied)
@@ -1303,3 +1324,59 @@ it.each(['runtime_rpc_timeout', 'unsupported_method', 'protocol_mismatch'])(
     expect(result.current.binding).toEqual(ready)
   }
 )
+
+it('recovers an unavailable legacy source without reattaching the native binding', async () => {
+  const source = { ...account, deviceId: 'remote' }
+  const destination = { ...account, deviceId: 'local' }
+  const sourceBinding: StandInInstanceBinding = {
+    status: 'activating',
+    version: 1,
+    target: source,
+  }
+  const stoppingBinding: StandInInstanceBinding = {
+    ...sourceBinding,
+    status: 'stopping',
+    version: 2,
+  }
+  const settings: PersonalStandInSettings = {
+    executionDeviceId: destination.deviceId,
+    userId: destination.userId,
+    version: 5,
+    roles: [],
+    lifecycle: { status: 'stopped' },
+  }
+  const binding = vi
+    .fn<StandInExecutorApi['binding']>()
+    .mockResolvedValueOnce(sourceBinding)
+    .mockResolvedValueOnce(stoppingBinding)
+    .mockResolvedValueOnce(stoppingBinding)
+  const lifecycle = vi
+    .fn<StandInExecutorApi['lifecycle']>()
+    .mockRejectedValueOnce({ code: 'runtime_rpc_timeout' })
+    .mockResolvedValueOnce({ ...settings, version: 6, lifecycle: undefined })
+  const personalGet = vi.fn<StandInExecutorApi['personalGet']>().mockResolvedValue(settings)
+  const services = {
+    standInApi: { binding, lifecycle, personalGet } as unknown as StandInExecutorApi,
+    personalAssistantAccountApi: { get: async () => makeAccount('remote') },
+    getLocalRuntimeSidebarIdentity: async () =>
+      ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
+  } as unknown as WorkbenchServices
+  const { result } = renderHook(() =>
+    useStandInInstance(services, account.userId, devices, true, true, account.backendUrl, {
+      legacyOnly: true,
+    })
+  )
+  await waitFor(() => expect(result.current.binding).toEqual(sourceBinding))
+  expect(lifecycle).not.toHaveBeenCalled()
+  const configure = vi.fn(async () => {})
+  await act(async () => {
+    expect(await result.current.initializeOnDevice(destination, configure)).toBe('initialized')
+  })
+  expect(binding.mock.calls).toEqual([['local'], ['local', 'beginStop', 1], ['local', 'get']])
+  expect(lifecycle.mock.calls).toEqual([
+    [account.userId, 'remote', 'stop'],
+    [account.userId, 'local', 'start', 5],
+  ])
+  expect(configure).toHaveBeenCalledOnce()
+  expect(result.current.binding).toEqual(stoppingBinding)
+})

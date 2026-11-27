@@ -1,4 +1,5 @@
 import { useDialogRequests } from '@/components/common/useDialogRequests'
+import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import type { WorkbenchMessage } from '@/types/workbench'
 import type { DesktopWorkbenchPaneProps } from './desktopWorkbenchMainHelpers'
 import { useDesktopPaneBrowserActions } from './useDesktopPaneBrowserActions'
@@ -97,6 +98,8 @@ interface Input {
   setEnvironmentInfoOpen: (open: boolean) => void
   effectiveRightPanelTabs: RightWorkspacePanelTab[]
   workspacePanelTarget: WorkspaceTarget | null
+  workspacePanelPrefersLocalTerminal: boolean
+  bottomPanelOpen: boolean
   bottomPanelWorkspaceKey: string
   rememberActiveBottomPanelContext: () => void
   paneMessages: WorkbenchMessage[]
@@ -157,6 +160,8 @@ export function useDesktopPanePanelActions({
   setEnvironmentInfoOpen,
   effectiveRightPanelTabs,
   workspacePanelTarget,
+  workspacePanelPrefersLocalTerminal,
+  bottomPanelOpen,
   bottomPanelWorkspaceKey,
   rememberActiveBottomPanelContext,
   paneMessages,
@@ -166,6 +171,10 @@ export function useDesktopPanePanelActions({
   closeSmartAppDevelopmentPreviewBrowser,
   loadSmartAppDevelopmentPreview,
 }: Input) {
+  const remindOnUse = useWorkbenchCloudDeviceRestarts()?.remindOnUse
+  const terminalDeviceId = workspacePanelPrefersLocalTerminal
+    ? null
+    : workspacePanelTarget?.deviceId
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
@@ -499,7 +508,8 @@ export function useDesktopPanePanelActions({
   }, [openBrowserTab])
   const selectTerminalView = useCallback(() => {
     openRightPanelTab(allocateTerminalTab())
-  }, [allocateTerminalTab, openRightPanelTab])
+    remindOnUse?.(terminalDeviceId)
+  }, [allocateTerminalTab, openRightPanelTab, remindOnUse, terminalDeviceId])
   const selectChatView = useCallback(() => {
     openTemporaryChatTab()
   }, [openTemporaryChatTab])
@@ -530,6 +540,7 @@ export function useDesktopPanePanelActions({
     setRightPanelExpanded(expanded => !expanded)
   }
   const toggleBottomPanel = () => {
+    if (!bottomPanelOpen) remindOnUse?.(terminalDeviceId)
     rememberActiveBottomPanelContext()
     onPaneResourceRetained(paneKey, 'bottom-panel', true)
     setBottomPanelOpenByKey(current => {

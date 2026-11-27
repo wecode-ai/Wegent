@@ -5,12 +5,8 @@ import {
   type StandInSourceConnection,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
-import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { createContext } from 'react'
-
-export const StandInSourceNavigationContext = createContext<string | undefined>(undefined)
 
 export type StandInOverviewProfile = 'primary' | 'role' | 'create' | 'memory' | null
 interface OverviewObservation {
@@ -37,7 +33,6 @@ interface OverviewObservation {
 interface OverviewSnapshot {
   roleId?: string
   profile: StandInOverviewProfile
-  openConnectionSettings: boolean | MessageCenterSource
   calendarRequest: number
   focusRequest: number
   exampleDraft?: { id: number; text: string }
@@ -67,7 +62,6 @@ export function createStandInOverviewSource(initial: {
   let snapshot: OverviewSnapshot = {
     roleId: initial.roleId,
     profile: initial.profile,
-    openConnectionSettings: false,
     calendarRequest: initial.calendarRequest,
     focusRequest: 0,
     proposal: null,
@@ -199,13 +193,9 @@ export function createStandInOverviewSource(initial: {
     }
     void poll()
   }
-  const setProfile = (
-    profile: StandInOverviewProfile,
-    openConnectionSettings: boolean | MessageCenterSource = false
-  ) =>
+  const setProfile = (profile: StandInOverviewProfile) =>
     publish({
       profile,
-      openConnectionSettings,
       focusRequest:
         snapshot.focusRequest +
         (observation?.active && snapshot.profile !== null && profile === null ? 1 : 0),

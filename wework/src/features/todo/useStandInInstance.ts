@@ -25,11 +25,15 @@ export function useStandInInstance(
     publishAccount,
     readAccount,
     newAccount,
+    legacyOnly = false,
+    accountNavigationOnly = false,
   }: {
     initialDeviceId?: string
     entryRequestKey?: number
     requireSetupConfirmation?: boolean
     entry?: StandInEntry
+    legacyOnly?: boolean
+    accountNavigationOnly?: boolean
     entryApi?: Pick<StandInExecutorApi, 'personalGet'>
     account?: PersonalAssistantAccount
     publishAccount?: (account: PersonalAssistantAccount) => void
@@ -49,8 +53,20 @@ export function useStandInInstance(
         requireSetupConfirmation,
         initialDeviceId,
         accountMode,
+        legacyOnly,
+        accountNavigationOnly,
       }),
-    [services, api, userId, backendUrl, requireSetupConfirmation, initialDeviceId, accountMode]
+    [
+      services,
+      api,
+      userId,
+      backendUrl,
+      requireSetupConfirmation,
+      initialDeviceId,
+      accountMode,
+      legacyOnly,
+      accountNavigationOnly,
+    ]
   )
   const subscribe = useCallback(
     (listener: () => void) =>

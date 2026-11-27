@@ -16,6 +16,7 @@ use wegent_resource_store::crd;
 use wegent_task_store::task_store;
 
 pub mod cloud_device_deletion;
+mod cloud_upgrade_threshold;
 pub mod device_command;
 pub mod device_commands;
 pub mod device_identity_lock;

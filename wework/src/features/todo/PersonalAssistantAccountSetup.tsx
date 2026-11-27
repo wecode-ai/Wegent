@@ -26,11 +26,9 @@ import {
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   hasSavedStandIn,
-  initializeStandInTarget,
   isLocalDesktopDeviceId,
   normalizeStandInBindingTarget,
 } from './standInInstanceSource'
-import { initializePersonalAssistantOnDevice } from './personalAssistantDeviceSettings'
 import { resolveStandInEntry, type StandInEntry } from './standInEntry'
 import { availableStandInDevices } from './standInDevices'
 
@@ -44,11 +42,12 @@ interface SetupObservation {
 interface SetupData {
   account: PersonalAssistantAccount | null
   local?: PersonalStandInSettings
-  newAccount: boolean
   waitingForCatalog?: boolean
+  recoveryDevice?: string
+  unavailableDevice?: string
 }
 
-const waitForCatalog: SetupData = { account: null, newAccount: false, waitingForCatalog: true }
+const waitForCatalog: SetupData = { account: null, waitingForCatalog: true }
 const catalogPending = (status: CloudWorkCheckStatus) => status === 'idle' || status === 'syncing'
 const explicitPrimaryEntry = (entry: StandInEntry | undefined) =>
   entry?.kind === 'identity' && entry.profileId === '@primary' && entry.deviceId
@@ -60,7 +59,7 @@ async function verifyInitialEntryDevice(
   observation: SetupObservation,
   localDeviceId: string,
   userId: number,
-  signal: AbortSignal,
+  signal?: AbortSignal,
   localProfile?: PersonalStandInSettings
 ): Promise<string | null | undefined> {
   const explicit = explicitPrimaryEntry(observation.initialEntry)
@@ -90,7 +89,7 @@ async function verifyInitialEntryDevice(
     new Set([requested]),
     { unbound: true }
   )
-  signal.throwIfAborted()
+  signal?.throwIfAborted()
   if (result.kind !== 'ready')
     throw Object.assign(new Error(), {
       code: result.error === 'forbidden' ? 'permission_denied' : 'executor_unavailable',
@@ -115,7 +114,7 @@ async function loadSetup(
       throw new Error('cloud_assistant_api_unavailable', { cause })
     throw new Error(getStandInErrorMessage(cause, 'load_cloud_assistant_failed'), { cause })
   })
-  if (account) return { account, local: undefined, newAccount: false }
+  if (account) return { account, local: undefined }
   signal.throwIfAborted()
   const requestedEntry = explicitPrimaryEntry(readObservation().initialEntry)
   if (requestedEntry?.userId && requestedEntry.userId !== String(userId))
@@ -123,10 +122,23 @@ async function loadSetup(
   const api = services.standInApi
   if (!services.getLocalRuntimeSidebarIdentity || !api) {
     if (requestedEntry) throw Object.assign(new Error(), { code: 'executor_unavailable' })
-    return { account: await cloud.initialize(name), local: undefined, newAccount: true }
+    return { account: await cloud.initialize(name), local: undefined }
   }
   const device = await services.getLocalRuntimeSidebarIdentity()
   if (!device) throw new Error('Executor identity is unavailable')
+  const [owned, local] = await Promise.all([
+    api.personalGet(userId, device.deviceId),
+    api.personalGet(LOCAL_USER.id, device.deviceId),
+  ])
+  signal.throwIfAborted()
+  const legacy = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
+  if (legacy) {
+    const legacyOwner = legacy === owned ? userId : LOCAL_USER.id
+    if (legacy.userId !== legacyOwner || legacy.executionDeviceId !== device.deviceId)
+      throw Object.assign(new Error(), { code: 'permission_denied' })
+    return { account: null, local: legacy }
+  }
+
   const binding = await api.binding(device.deviceId)
   const observed = readObservation()
   const savedTarget = binding.target
@@ -146,68 +158,24 @@ async function loadSetup(
     ? normalizeStandInBindingTarget(binding.target, device.deviceId, observed.devices)
     : null
   signal.throwIfAborted()
-  if (
-    target &&
-    (target.userId === userId ||
-      (target.userId === LOCAL_USER.id && target.deviceId === device.deviceId))
-  ) {
+  if (target?.userId === userId && target.deviceId !== device.deviceId) {
     let profile
     try {
       profile = await api.personalGet(target.userId, target.deviceId)
     } catch (cause) {
       signal.throwIfAborted()
-      if (!isStandInDeviceUnreachable(cause) || target.deviceId === device.deviceId) throw cause
-      const latest = readObservation()
-      const entryDevice = await verifyInitialEntryDevice(
-        api,
-        latest,
-        device.deviceId,
-        userId,
-        signal
-      )
-      signal.throwIfAborted()
-      if (entryDevice === null) return waitForCatalog
-      if (entryDevice === target.deviceId) throw cause
-      const targetDevice =
-        entryDevice ??
-        (latest.preferredDevice && latest.preferredDevice !== target.deviceId
-          ? latest.preferredDevice
-          : device.deviceId)
-      const account = await initializeStandInTarget(
-        api,
-        device.deviceId,
-        binding,
-        { userId, deviceId: targetDevice, backendUrl: target.backendUrl },
-        async () => {
-          signal.throwIfAborted()
-          return initializePersonalAssistantOnDevice(cloud, name, targetDevice)
-        }
-      )
-      return { account, local: undefined, newAccount: false }
+      if (!isStandInDeviceUnreachable(cause)) throw cause
+      return {
+        account: null,
+        recoveryDevice: device.deviceId,
+        unavailableDevice: target.deviceId,
+      }
     }
     signal.throwIfAborted()
-    if (hasSavedStandIn(profile)) return { account: null, local: profile, newAccount: false }
-    const explicit = explicitPrimaryEntry(readObservation().initialEntry)
-    if (
-      explicit &&
-      (explicit.deviceId !== target.deviceId ||
-        profile.userId !== target.userId ||
-        profile.executionDeviceId !== target.deviceId)
-    )
+    if (profile.userId !== target.userId || profile.executionDeviceId !== target.deviceId)
       throw Object.assign(new Error(), { code: 'permission_denied' })
-    return {
-      account: await cloud.initialize(name, undefined, target.deviceId),
-      local: undefined,
-      newAccount: false,
-    }
+    if (hasSavedStandIn(profile)) return { account: null, local: profile }
   }
-  const [owned, local] = await Promise.all([
-    api.personalGet(userId, device.deviceId),
-    api.personalGet(LOCAL_USER.id, device.deviceId),
-  ])
-  signal.throwIfAborted()
-  const legacy = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
-  if (legacy) return { account: null, local: legacy, newAccount: false }
 
   const entryDevice = await verifyInitialEntryDevice(
     api,
@@ -223,7 +191,6 @@ async function loadSetup(
   return {
     account: await cloud.initialize(name, undefined, initialDevice),
     local: undefined,
-    newAccount: true,
   }
 }
 
@@ -248,8 +215,7 @@ export function PersonalAssistantAccountSetup({
     account: PersonalAssistantAccount | undefined,
     publish: (account: PersonalAssistantAccount) => void,
     readAccount: () => PersonalAssistantAccount | undefined,
-    reloadAccount?: () => void,
-    newAccount?: boolean
+    reloadAccount?: () => void
   ): ReactNode
 }) {
   const { t } = useTranslation('common')
@@ -309,7 +275,7 @@ export function PersonalAssistantAccountSetup({
   const publish = useCallback(
     (account: PersonalAssistantAccount) => {
       if (!invalidatesExperienceRead(resource.getSnapshot().error))
-        resource.update(() => ({ account, local: undefined, newAccount: false }))
+        resource.update(() => ({ account, local: undefined }))
     },
     [resource]
   )
@@ -351,7 +317,7 @@ export function PersonalAssistantAccountSetup({
             {retry}
           </section>
         )}
-        {children(data.account, publish, readAccount, reloadAccount, data.newAccount)}
+        {children(data.account, publish, readAccount, reloadAccount)}
         <TransientNotice
           message={migrationNotice ? t('standIn.account.migration_complete') : null}
           onClear={clearMigrationNotice}
@@ -363,14 +329,42 @@ export function PersonalAssistantAccountSetup({
   }
 
   const initialize = async () => {
-    if (!data?.local || inFlight.current) return
+    if ((!data?.local && !data?.recoveryDevice) || inFlight.current) return
     inFlight.current = true
     setPending(true)
     setError(undefined)
     try {
       const source = data.local
-      const local = await services.standInApi!.personalGet(source.userId, source.executionDeviceId)
-      const account = await services.personalAssistantAccountApi!.initialize(name, local)
+      const api = services.standInApi!
+      const local = source
+        ? await api.personalGet(source.userId, source.executionDeviceId)
+        : undefined
+      if (
+        source &&
+        (local?.userId !== source.userId || local.executionDeviceId !== source.executionDeviceId)
+      )
+        throw Object.assign(new Error(), { code: 'permission_denied' })
+      const cloud = services.personalAssistantAccountApi!
+      let account
+      if (data.recoveryDevice) {
+        const observation = readObservation()
+        const entryDevice = await verifyInitialEntryDevice(
+          api,
+          observation,
+          data.recoveryDevice,
+          userId
+        )
+        if (entryDevice === null) throw Object.assign(new Error(), { code: 'executor_unavailable' })
+        const preferred = observation.preferredDevice
+        account = await cloud.initialize(
+          name,
+          undefined,
+          entryDevice ??
+            (preferred && preferred !== data.unavailableDevice ? preferred : data.recoveryDevice)
+        )
+      } else {
+        account = await cloud.initialize(name, local)
+      }
       setMigrationNotice(Boolean(local))
       publish(account)
     } catch (cause) {
@@ -393,6 +387,27 @@ export function PersonalAssistantAccountSetup({
       >
         {failure ? (
           retry
+        ) : data?.recoveryDevice ? (
+          <>
+            <p role="status">{t('standIn.account.legacy_device_unavailable')}</p>
+            <Button
+              size="sm"
+              data-testid="personal-assistant-recover-unreachable-device"
+              disabled={pending}
+              onClick={() => void initialize()}
+            >
+              {t('standIn.account.initialize_replacement')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="personal-assistant-retry-legacy-device"
+              disabled={pending}
+              onClick={reloadAccount}
+            >
+              {t('standIn.reload')}
+            </Button>
+          </>
         ) : data?.local ? (
           <>
             <span className="text-sm text-text-secondary">

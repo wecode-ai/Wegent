@@ -1,11 +1,15 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
-import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import {
+  assistantDefinitionInputs,
+  type PersonalAssistantAccount,
+} from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import type { CloudWorkCheckStatus } from '@/types/workbench'
+import { createAssistantSourcesModel } from '@/features/collaboration-exp/assistant/assistantSourcesModel'
 import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
 import {
   collectPersonalAssistantDefinitionBackups,
@@ -15,11 +19,20 @@ import { usePersonalStandIn } from './usePersonalStandIn'
 import type { StandInEntry } from './standInEntry'
 
 const account: PersonalAssistantAccount = {
-  defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
+  defaultTeamRef: { name: 'primary', namespace: 'personal-assistant' },
   revision: 'current',
   retiredRoleIds: [],
   definitions: [],
 }
+const makeTeam = (displayName?: string) => ({
+  metadata: { ...account.defaultTeamRef, displayName },
+  spec: {
+    collaborationModel: 'solo' as const,
+    members: [{ botRef: account.defaultTeamRef, role: 'leader' }] as [
+      { botRef: typeof account.defaultTeamRef; role: 'leader' },
+    ],
+  },
+})
 const blank: PersonalStandInSettings = {
   userId: 7,
   executionDeviceId: 'mac',
@@ -51,7 +64,9 @@ function setup(
   const binding = vi.fn(async () => ({
     target: boundDevice ? { userId: 7, deviceId: boundDevice, backendUrl: 'https://cloud' } : null,
   }))
-  const initialize = vi.fn(async () => account)
+  const initialize = vi.fn<
+    NonNullable<WorkbenchServices['personalAssistantAccountApi']>['initialize']
+  >(async () => account)
   const services = {
     personalAssistantAccountApi: { get, initialize },
     standInApi: { personalGet, binding },
@@ -72,14 +87,12 @@ function setup(
       devices={devices}
       deviceCatalogStatus={status}
     >
-      {(assistant, publish, read, reloadAccount, newAccount) => {
+      {(assistant, publish, read, reloadAccount) => {
         publishAccount = publish
         readAccount = read
         return (
           <>
-            <p data-new-account={String(newAccount)}>
-              {assistant?.defaultBotRef.name ?? 'local workspace'}
-            </p>
+            <p>{assistant?.defaultTeamRef.name ?? 'local workspace'}</p>
             <button type="button" data-testid="test-account-reload" onClick={reloadAccount}>
               Refresh account
             </button>
@@ -112,9 +125,41 @@ test('an initialized cloud account opens without probing a legacy profile', asyn
   const { personalGet, initialize } = setup(account)
   const primary = await screen.findByText('primary')
   expect(primary).toBeVisible()
-  expect(primary).toHaveAttribute('data-new-account', 'false')
   expect(personalGet).not.toHaveBeenCalled()
   expect(initialize).not.toHaveBeenCalled()
+})
+
+test('the assistant source opens on its cloud device while legacy binding reads are stalled', async () => {
+  const binding = vi.fn(() => new Promise<never>(() => {}))
+  const personalGet = vi.fn(async () => ({ ...blank, executionDeviceId: 'cloud' }))
+  const get = vi.fn(async () => ({
+    ...account,
+    definitions: [
+      {
+        roleId: '@primary',
+        team: makeTeam('Default'),
+        bot: {
+          metadata: account.defaultTeamRef,
+          spec: { execution_policy: { mode: 'fixed', environment_id: 'cloud' } },
+        },
+        ghost: { spec: { systemPrompt: '' } },
+      },
+    ],
+  }))
+  const services = {
+    personalAssistantAccountApi: { get },
+    standInApi: { binding, personalGet },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
+  } as unknown as WorkbenchServices
+  const model = createAssistantSourcesModel(services, services.standInApi, 7, 'account')
+  const unsubscribe = model.subscribe(() => {}, false, [], false)
+  try {
+    await waitFor(() => expect(model.getSnapshot().source?.deviceId).toBe('cloud'))
+    expect(personalGet).toHaveBeenCalledWith(7, 'cloud')
+    expect(binding).not.toHaveBeenCalled()
+  } finally {
+    unsubscribe()
+  }
 })
 
 test('device inventory changes keep the loaded cloud assistant mounted', async () => {
@@ -177,6 +222,28 @@ test('a saved legacy profile requires confirmation before import', async () => {
   expect(initialize).toHaveBeenCalledWith(expect.any(String), edited)
 })
 
+test('imports a local profile before probing an old remote binding and keeps local execution', async () => {
+  const legacy = {
+    ...blank,
+    userId: 0,
+    version: 1,
+    primary: { enabled: true, prompt: 'Handle support requests', preferences: '' },
+  }
+  const { personalGet, binding, initialize } = setup(null, blank, 'docker')
+  personalGet.mockImplementation(async user => (user === 0 ? legacy : blank))
+  const confirm = await screen.findByTestId('personal-assistant-account-migrate-confirm')
+  expect(initialize).not.toHaveBeenCalled()
+
+  fireEvent.click(confirm)
+  expect(await screen.findByText('primary')).toBeVisible()
+  const [name, settings, device] = initialize.mock.calls[0]
+  expect(assistantDefinitionInputs(name, settings, device)[0]).toMatchObject({
+    prompt: legacy.primary.prompt,
+    executionDeviceId: 'mac',
+  })
+  expect(binding).not.toHaveBeenCalled()
+})
+
 test('imports the bound remote profile after confirmation on the current computer', async () => {
   const remote = { ...blank, version: 1, executionDeviceId: 'docker' }
   const { personalGet, initialize } = setup(null, remote, 'docker')
@@ -185,6 +252,8 @@ test('imports the bound remote profile after confirmation on the current compute
   fireEvent.click(confirm)
   expect(await screen.findByText('primary')).toBeVisible()
   expect(personalGet.mock.calls).toEqual([
+    [7, 'mac'],
+    [0, 'mac'],
     [7, 'docker'],
     [7, 'docker'],
   ])
@@ -207,11 +276,30 @@ test('a registered peer binding is preserved even when that device is offline', 
     ],
   })
   const confirm = await screen.findByTestId('personal-assistant-account-migrate-confirm')
-  expect(personalGet.mock.calls).toEqual([[7, remote.executionDeviceId]])
+  expect(personalGet.mock.calls).toEqual([
+    [7, 'mac'],
+    [0, 'mac'],
+    [7, remote.executionDeviceId],
+  ])
   expect(initialize).not.toHaveBeenCalled()
   fireEvent.click(confirm)
   expect(await screen.findByText('primary')).toBeVisible()
   expect(initialize).toHaveBeenCalledWith(expect.any(String), remote)
+})
+
+test('an unreachable legacy executor requires a choice before initializing on another device', async () => {
+  const { binding, initialize, personalGet } = setup(null, blank, 'docker')
+  personalGet.mockImplementation(async (_user, device) => {
+    if (device === 'docker') throw Object.assign(new Error('Offline'), { code: 'device_offline' })
+    return blank
+  })
+  const recover = await screen.findByTestId('personal-assistant-recover-unreachable-device')
+  expect(initialize).not.toHaveBeenCalled()
+
+  fireEvent.click(recover)
+  expect(await screen.findByText('primary')).toBeVisible()
+  expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
+  expect(binding.mock.calls).toHaveLength(1)
 })
 
 test('a legacy binding is not normalized to the local device before the peer catalog resolves', async () => {
@@ -223,11 +311,20 @@ test('a legacy binding is not normalized to the local device before the peer cat
     { devices: [], deviceCatalogStatus: 'syncing' }
   )
   await waitFor(() => expect(binding).toHaveBeenCalledTimes(1))
-  expect(personalGet).not.toHaveBeenCalled()
+  expect(personalGet.mock.calls).toEqual([
+    [7, 'mac'],
+    [0, 'mac'],
+  ])
   expect(initialize).not.toHaveBeenCalled()
   changeDeviceCatalog([peer], 'available')
   expect(await screen.findByTestId('personal-assistant-account-migrate-confirm')).toBeVisible()
-  expect(personalGet.mock.calls).toEqual([[7, remote.executionDeviceId]])
+  expect(personalGet.mock.calls).toEqual([
+    [7, 'mac'],
+    [0, 'mac'],
+    [7, 'mac'],
+    [0, 'mac'],
+    [7, remote.executionDeviceId],
+  ])
   expect(initialize).not.toHaveBeenCalled()
 })
 
@@ -235,7 +332,6 @@ test('a missing cloud and legacy profile takes ordinary initialization', async (
   const { initialize } = setup(null, blank, undefined, { deviceCatalogStatus: 'syncing' })
   const primary = await screen.findByText('primary')
   expect(primary).toBeVisible()
-  expect(primary).toHaveAttribute('data-new-account', 'true')
   expect(screen.queryByTestId('personal-assistant-account-migrate-confirm')).toBeNull()
   expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
 })
@@ -252,7 +348,7 @@ test('first-use primary identity link initializes on the verified local device',
       scheduled: false,
     },
   })
-  expect(await screen.findByText('primary')).toHaveAttribute('data-new-account', 'true')
+  expect(await screen.findByText('primary')).toBeVisible()
   expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
 })
 
@@ -305,7 +401,7 @@ test.each([
         resolve(null)
         await lookup
       })
-    expect(await screen.findByText('primary')).toHaveAttribute('data-new-account', 'true')
+    expect(await screen.findByText('primary')).toBeVisible()
     expect(initialize.mock.calls).toEqual([[expect.any(String), undefined, peer.device_id]])
     expect(personalGet).toHaveBeenCalledWith(7, peer.device_id)
   }
@@ -348,8 +444,9 @@ test('keeps a conflicting device definition in the local backup and projects the
     definitions: [
       {
         roleId: original.id,
+        team: makeTeam('Cloud name'),
         bot: {
-          metadata: { ...account.defaultBotRef, displayName: 'Cloud name' },
+          metadata: { ...account.defaultTeamRef, displayName: 'Cloud name' },
           spec: { execution_policy: { mode: 'fixed', environment_id: 'old-dev' } },
         },
         ghost: { spec: { systemPrompt: 'Cloud prompt' } },
@@ -405,7 +502,8 @@ test('saving and retrying a new shared role never uploads a device-only profile'
     definitions: [
       {
         roleId: '@primary',
-        bot: { metadata: { ...account.defaultBotRef, displayName: 'Default' } },
+        team: makeTeam('Default'),
+        bot: { metadata: { ...account.defaultTeamRef, displayName: 'Default' } },
         ghost: { spec: { systemPrompt: 'Default prompt' } },
       },
     ],
@@ -417,7 +515,8 @@ test('saving and retrying a new shared role never uploads a device-only profile'
       ...current.definitions,
       {
         roleId: newRole.id,
-        bot: { metadata: { ...account.defaultBotRef, displayName: newRole.name } },
+        team: makeTeam(newRole.name),
+        bot: { metadata: { ...account.defaultTeamRef, displayName: newRole.name } },
         ghost: { spec: { systemPrompt: newRole.prompt } },
       },
     ],
@@ -468,13 +567,15 @@ test.each([false, true])(
       definitions: [
         {
           roleId: '@primary',
-          bot: { metadata: { ...account.defaultBotRef, displayName: 'Default' } },
+          team: makeTeam('Default'),
+          bot: { metadata: { ...account.defaultTeamRef, displayName: 'Default' } },
           ghost: { spec: { systemPrompt: 'Default instructions' } },
         },
         {
           roleId: role.id,
+          team: makeTeam(role.name),
           bot: {
-            metadata: { ...account.defaultBotRef, displayName: role.name },
+            metadata: { ...account.defaultTeamRef, displayName: role.name },
             spec: { execution_policy: { mode: 'fixed' as const, environment_id: 'mac' } },
           },
           ghost: { spec: { systemPrompt: role.prompt } },
@@ -488,8 +589,9 @@ test.each([false, true])(
         originalAccount.definitions[0],
         {
           roleId: role.id,
+          team: makeTeam(role.name),
           bot: {
-            metadata: { ...account.defaultBotRef, displayName: role.name },
+            metadata: { ...account.defaultTeamRef, displayName: role.name },
             spec: { execution_policy: { mode: 'fixed' as const, environment_id: 'cloud-1' } },
           },
           ghost: { spec: { systemPrompt: 'Review peer changes' } },

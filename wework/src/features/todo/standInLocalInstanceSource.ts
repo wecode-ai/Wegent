@@ -22,6 +22,7 @@ import {
 } from '@/lib/stand-in-error-message'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
+import { findWorkbenchDevice, getWorkbenchDeviceIds } from '@/lib/workbench-device'
 
 export interface InstanceSnapshot {
   binding?: StandInInstanceBinding
@@ -58,6 +59,30 @@ export const sameTarget = (
   left: StandInBindingTarget | null | undefined,
   right: StandInBindingTarget | null | undefined
 ) => left?.userId === right?.userId && left?.deviceId === right?.deviceId
+
+export const localStopGeneration = (
+  saved: StandInInstanceBinding,
+  target: StandInBindingTarget
+) => {
+  const key = `${target.userId}:${target.deviceId}`
+  if (
+    saved.stoppingTargets?.includes(key) ||
+    (saved.status === 'stopping' && sameTarget(saved.target, target))
+  ) {
+    return saved.stoppingTargetGenerations?.[key] ?? 0
+  }
+  return undefined
+}
+
+export function getStandInAccountStopIntent(
+  account: PersonalAssistantAccount | undefined,
+  deviceId: string,
+  devices: DeviceInfo[]
+) {
+  const device = findWorkbenchDevice(devices, deviceId)
+  const ids = device ? getWorkbenchDeviceIds(device) : [deviceId]
+  return account?.stopIntents?.find(intent => ids.includes(intent.deviceId))
+}
 
 export async function activateStandInBinding(
   api: StandInExecutorApi,
@@ -129,12 +154,14 @@ export function createLocalStandInInstanceSource({
   userId,
   backendUrl,
   requireSetupConfirmation = true,
+  legacyOnly = false,
 }: {
   services: WorkbenchServices
   api: StandInExecutorApi | undefined
   userId: number
   backendUrl: string
   requireSetupConfirmation?: boolean
+  legacyOnly?: boolean
 }) {
   let snapshot: InstanceSnapshot = { localDeviceId: '', busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -280,6 +307,11 @@ export function createLocalStandInInstanceSource({
         abandonedActivation = undefined
         if (!current()) return
       }
+      if (legacyOnly && binding.status !== 'stopped') {
+        publishBinding(binding)
+        publish({ error: null })
+        return
+      }
       if (binding.status === 'unbound') {
         publishBinding(binding)
         const entry = owner.entry
@@ -355,6 +387,7 @@ export function createLocalStandInInstanceSource({
     publish({ busy: true, error: null })
     try {
       if (operation === 'setup') {
+        if (legacyOnly) return
         const target = snapshot.setupTarget
         if (!api || !localDeviceId || binding?.status !== 'unbound' || !target) return
         readRevision++
@@ -372,7 +405,12 @@ export function createLocalStandInInstanceSource({
       if (operation === 'stop' && (!ownsSource || binding.status === 'stopped')) return
       if (operation === 'bind' && binding.status !== 'stopped') return
       if (operation === 'migrate' || operation === 'initialize') {
-        if (!ownsSource || !target || binding.status === 'unbound')
+        if (
+          !ownsSource ||
+          !target ||
+          binding.status === 'unbound' ||
+          (legacyOnly && target.userId !== userId)
+        )
           throw new StandInMigrationError('not_stopped')
         if (source.deviceId === target.deviceId) throw new StandInMigrationError('same_device')
       }
@@ -382,6 +420,32 @@ export function createLocalStandInInstanceSource({
       const initializeDestination = async () => {
         if (!target || !input.initializeTarget) throw new StandInMigrationError('not_stopped')
         assertObserved(revision, localDeviceId)
+        if (legacyOnly) {
+          const settings = await api.personalGet(target.userId, target.deviceId, {
+            deviceSettingsOnly: true,
+          })
+          const saved = await api.binding(localDeviceId, 'get')
+          const account = await services.personalAssistantAccountApi?.get()
+          assertObserved(revision, localDeviceId)
+          if (
+            settings.lifecycle?.status === 'stopping' ||
+            localStopGeneration(saved, target) !== undefined ||
+            getStandInAccountStopIntent(account ?? undefined, target.deviceId, owner.devices)
+          )
+            throw new StandInMigrationError('not_stopped')
+          if (settings.lifecycle?.status === 'stopped') {
+            const started = await api.lifecycle(
+              target.userId,
+              target.deviceId,
+              'start',
+              settings.version
+            )
+            if (started.lifecycle?.status) throw new Error('Stand-in start was not confirmed')
+          }
+          assertObserved(revision, localDeviceId)
+          await input.initializeTarget()
+          return 'initialized' as const
+        }
         await initializeStandInTarget(
           api,
           localDeviceId,
@@ -459,6 +523,7 @@ export function createLocalStandInInstanceSource({
         }
       }
       assertObserved(revision, localDeviceId)
+      if (legacyOnly) return role
       const next = await api.binding(localDeviceId, 'prepareBind', current.version, target)
       assertObserved(revision, localDeviceId)
       publishBinding(next)

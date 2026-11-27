@@ -3,10 +3,13 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import { createAccountStandInInstanceSource } from './standInAccountInstanceSource'
 import { createLocalStandInInstanceSource } from './standInLocalInstanceSource'
 
-export { hasSavedStandIn, initializeStandInTarget } from './standInLocalInstanceSource'
+export {
+  getStandInAccountStopIntent,
+  hasSavedStandIn,
+  initializeStandInTarget,
+} from './standInLocalInstanceSource'
 export {
   configuredPrimaryStandInDevice,
-  getStandInAccountStopIntent,
   isLocalDesktopDeviceId,
   normalizeStandInBindingTarget,
   resolvePrimaryStandInDevice,
@@ -22,8 +25,10 @@ export function createStandInInstanceSource(options: {
   accountMode?: boolean
   initialDeviceId?: string
   requireSetupConfirmation?: boolean
+  legacyOnly?: boolean
+  accountNavigationOnly?: boolean
 }) {
-  return options.accountMode
+  return options.accountMode && !options.legacyOnly
     ? createAccountStandInInstanceSource(options)
     : createLocalStandInInstanceSource(options)
 }
