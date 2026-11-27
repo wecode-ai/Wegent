@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import time
+from threading import Event, Lock
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -307,6 +308,85 @@ class TestSandboxManager:
         assert result["deleted"] == []
         assert result["failed"][0]["reason"] == "archive_failed"
         terminate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_cannot_renew_a_sandbox_during_stale_deletion(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - 25 * 3600
+        current = sample_sandbox
+        mutex = Lock()
+        loop = asyncio.get_running_loop()
+        deleting = asyncio.Event()
+        renewal_waiting = asyncio.Event()
+        release_delete = Event()
+
+        def acquire(_name, _ttl):
+            if mutex.acquire(blocking=False):
+                return "owner"
+            loop.call_soon_threadsafe(renewal_waiting.set)
+            return None
+
+        def save(sandbox):
+            nonlocal current
+            current = copy.copy(sandbox)
+            return True
+
+        def delete_record(_sandbox_id):
+            nonlocal current
+            current = None
+
+        def delete_container(_sandbox):
+            loop.call_soon_threadsafe(deleting.set)
+            assert release_delete.wait(3)
+
+        mocker.patch.object(
+            manager._lifecycle_lock, "acquire_owned", side_effect=acquire
+        )
+        mocker.patch.object(
+            manager._lifecycle_lock,
+            "release_owned",
+            side_effect=lambda *_: mutex.release(),
+        )
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=lambda _: copy.copy(current),
+        )
+        save_sandbox = mocker.patch.object(
+            manager._repository, "save_sandbox", side_effect=save
+        )
+        mocker.patch.object(
+            manager._repository, "delete_sandbox", side_effect=delete_record
+        )
+        mocker.patch.object(
+            manager, "_delete_sandbox_container", side_effect=delete_container
+        )
+        mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=_SandboxArchiveOutcome.EMPTY,
+        )
+
+        cleanup = asyncio.create_task(manager.cleanup_stale_sandboxes())
+        try:
+            await asyncio.wait_for(deleting.wait(), timeout=2)
+            keep_alive = asyncio.create_task(manager.keep_alive("12345"))
+            await asyncio.wait_for(renewal_waiting.wait(), timeout=2)
+            assert not keep_alive.done()
+        finally:
+            release_delete.set()
+
+        result = await asyncio.wait_for(cleanup, timeout=2)
+        renewed, error = await asyncio.wait_for(keep_alive, timeout=2)
+        assert result["deleted"][0]["sandbox_id"] == "12345"
+        assert renewed is None
+        assert error == "Sandbox 12345 not found"
+        save_sandbox.assert_called_once()
 
     # ----- create_sandbox Tests -----
 

@@ -242,8 +242,7 @@ class SandboxManager(metaclass=SingletonMeta):
             )
         except DistributedLockUnavailableError as exc:
             logger.error(
-                "[SandboxManager] Lifecycle lock unavailable during heartbeat "
-                "check task_id=%s error=%s",
+                "[SandboxManager] Lifecycle lock unavailable task_id=%s error=%s",
                 task_key,
                 exc,
             )
@@ -717,6 +716,8 @@ class SandboxManager(metaclass=SingletonMeta):
         sandbox = self._repository.load_sandbox(sandbox_id)
         if sandbox is None:
             return None
+        if sandbox.status in (SandboxStatus.TERMINATING, SandboxStatus.TERMINATED):
+            return sandbox
 
         # Optionally check health via HTTP
         if check_health and sandbox.base_url:
@@ -782,9 +783,26 @@ class SandboxManager(metaclass=SingletonMeta):
 
         # Mark as terminating
         sandbox.set_terminating()
-        self._repository.save_sandbox(sandbox)
+        if not self._repository.save_sandbox(sandbox):
+            return False, f"Could not mark sandbox {sandbox_id} as terminating"
 
-        # Delete container
+        # Let the event loop renew a caller-owned lifecycle lease during deletion.
+        deletion = asyncio.create_task(
+            asyncio.to_thread(self._delete_sandbox_container, sandbox)
+        )
+        try:
+            await asyncio.shield(deletion)
+        except asyncio.CancelledError:
+            await deletion
+            raise
+        finally:
+            sandbox.set_terminated()
+            self._repository.delete_sandbox(sandbox_id)
+
+        logger.info(f"[SandboxManager] Sandbox terminated: {sandbox_id}")
+        return True, f"Sandbox {sandbox_id} terminated successfully"
+
+    def _delete_sandbox_container(self, sandbox: Sandbox) -> None:
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
             result = executor.delete_executor(sandbox.container_name)
@@ -793,9 +811,9 @@ class SandboxManager(metaclass=SingletonMeta):
             if result.get("status") == "not_found":
                 logger.info(
                     f"[SandboxManager] Pod not found by name '{sandbox.container_name}', "
-                    f"trying to delete by task_id: {sandbox_id}"
+                    f"trying to delete by task_id: {sandbox.sandbox_id}"
                 )
-                result = executor.delete_executor_by_task_id(sandbox_id)
+                result = executor.delete_executor_by_task_id(sandbox.sandbox_id)
 
             if result.get("status") not in ("success", "not_found"):
                 logger.warning(
@@ -803,15 +821,6 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
         except Exception as e:
             logger.warning(f"[SandboxManager] Error deleting container: {e}")
-
-        # Mark as terminated
-        sandbox.set_terminated()
-
-        # Clean up Redis storage via repository
-        self._repository.delete_sandbox(sandbox_id)
-
-        logger.info(f"[SandboxManager] Sandbox terminated: {sandbox_id}")
-        return True, f"Sandbox {sandbox_id} terminated successfully"
 
     async def cleanup_stale_sandboxes(
         self,
@@ -859,28 +868,35 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 continue
 
-            # Keep-alive and sandbox recreation can run while awaiting the archive.
-            refreshed = self._repository.load_sandbox(sandbox_id)
-            if refreshed is None:
+            lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
+            if lease is None:
                 result["skipped"].append(
-                    {"sandbox_id": sandbox_id, "reason": "sandbox_not_found"}
-                )
-                continue
-            if (
-                refreshed.created_at != sandbox.created_at
-                or refreshed.container_name != sandbox.container_name
-            ):
-                result["skipped"].append(
-                    {"sandbox_id": sandbox_id, "reason": "sandbox_replaced"}
-                )
-                continue
-            if refreshed.last_activity_at > cutoff:
-                result["skipped"].append(
-                    self._recent_sandbox_cleanup_result(refreshed, max_age_seconds)
+                    {"sandbox_id": sandbox_id, "reason": "lifecycle_busy"}
                 )
                 continue
 
-            success, message = await self.terminate_sandbox(sandbox.sandbox_id)
+            try:
+                # The archive does not hold the lease. Validate again before deletion.
+                refreshed = self._repository.load_sandbox(sandbox_id)
+                if refreshed is None:
+                    result["skipped"].append(
+                        {"sandbox_id": sandbox_id, "reason": "sandbox_not_found"}
+                    )
+                    continue
+                if not self._same_sandbox_runtime(sandbox, refreshed):
+                    result["skipped"].append(
+                        {"sandbox_id": sandbox_id, "reason": "sandbox_replaced"}
+                    )
+                    continue
+                if refreshed.last_activity_at > cutoff:
+                    result["skipped"].append(
+                        self._recent_sandbox_cleanup_result(refreshed, max_age_seconds)
+                    )
+                    continue
+                success, message = await self.terminate_sandbox(sandbox_id)
+            finally:
+                await self._release_task_lifecycle_lease(lease)
+
             if success:
                 result["deleted"].append(
                     {
@@ -910,6 +926,13 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox.last_activity_at + max_age_seconds
             ),
         }
+
+    @staticmethod
+    def _same_sandbox_runtime(previous: Sandbox, current: Sandbox) -> bool:
+        return (
+            previous.created_at == current.created_at
+            and previous.container_name == current.container_name
+        )
 
     async def cleanup_sandbox_by_task_id(
         self,
@@ -1197,26 +1220,55 @@ class SandboxManager(metaclass=SingletonMeta):
         """
         if additional_timeout is None:
             additional_timeout = self._config.timeout.sandbox_default
-
-        sandbox = self._repository.load_sandbox(sandbox_id)
-        if sandbox is None:
-            return None, f"Sandbox {sandbox_id} not found"
-
-        if not sandbox.is_active():
-            return (
-                None,
-                f"Sandbox {sandbox_id} is not active (status: {sandbox.status.value})",
-            )
-
-        sandbox.extend_timeout(additional_timeout)
-        self._repository.save_sandbox(sandbox)
-
-        logger.info(
-            f"[SandboxManager] Sandbox keep-alive: {sandbox_id}, "
-            f"new expiry={sandbox.expires_at}"
+        sandbox, error = await self.refresh_sandbox_activity(
+            sandbox_id, additional_timeout=additional_timeout, require_active=True
         )
+        if sandbox is not None:
+            logger.info(
+                "[SandboxManager] Sandbox keep-alive: %s, new expiry=%s",
+                sandbox_id,
+                sandbox.expires_at,
+            )
+        return sandbox, error
 
-        return sandbox, None
+    async def refresh_sandbox_activity(
+        self,
+        sandbox_id: str,
+        *,
+        expected_runtime: Sandbox | None = None,
+        additional_timeout: int | None = None,
+        require_active: bool = False,
+    ) -> Tuple[Optional[Sandbox], Optional[str]]:
+        """Persist activity only while the current runtime is protected from cleanup."""
+        lease, error = await self._acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            return None, error
+        try:
+            sandbox = self._repository.load_sandbox(sandbox_id)
+            if sandbox is None:
+                return None, f"Sandbox {sandbox_id} not found"
+            if expected_runtime is not None and not self._same_sandbox_runtime(
+                expected_runtime, sandbox
+            ):
+                return None, f"Sandbox {sandbox_id} was replaced"
+            if sandbox.status in (
+                SandboxStatus.TERMINATING,
+                SandboxStatus.TERMINATED,
+            ) or (require_active and not sandbox.is_active()):
+                return (
+                    None,
+                    f"Sandbox {sandbox_id} is not active (status: {sandbox.status.value})",
+                )
+
+            if additional_timeout is None:
+                sandbox.touch()
+            else:
+                sandbox.extend_timeout(additional_timeout)
+            if not self._repository.save_sandbox(sandbox):
+                return None, f"Could not update sandbox {sandbox_id} activity"
+            return sandbox, None
+        finally:
+            await self._release_task_lifecycle_lease(lease)
 
     async def pause_sandbox(self, sandbox_id: str) -> Tuple[bool, str]:
         """Pause a running sandbox (E2B standard).
@@ -1354,6 +1406,12 @@ class SandboxManager(metaclass=SingletonMeta):
         if subtask_id is None:
             return None, "subtask_id is required in metadata"
 
+        sandbox, error = await self.refresh_sandbox_activity(
+            sandbox_id, expected_runtime=sandbox, require_active=True
+        )
+        if sandbox is None:
+            return None, error
+
         execution = Execution.create(
             sandbox_id=sandbox.sandbox_id,
             prompt=prompt,
@@ -1362,7 +1420,6 @@ class SandboxManager(metaclass=SingletonMeta):
 
         # Add to sandbox and save
         sandbox.add_execution(execution)
-        self._repository.save_sandbox(sandbox)
         save_result = self._repository.save_execution(execution, update_activity=True)
 
         logger.info(
@@ -1403,21 +1460,18 @@ class SandboxManager(metaclass=SingletonMeta):
         def on_error(exec: Execution):
             self._repository.save_execution(exec)
 
-        def on_complete(exec: Execution):
-            # Update sandbox touch time
-            sandbox.touch()
-            self._repository.save_sandbox(sandbox)
-
         success = await self._execution_runner.run_with_timeout(
             sandbox=sandbox,
             execution=execution,
             timeout=timeout,
             on_running=on_running,
-            on_complete=on_complete,
             on_error=on_error,
         )
 
         if success:
+            await self.refresh_sandbox_activity(
+                sandbox.sandbox_id, expected_runtime=sandbox
+            )
             logger.info(
                 f"[SandboxManager] Execution accepted: execution_id={execution.execution_id}"
             )
@@ -1744,21 +1798,28 @@ class SandboxManager(metaclass=SingletonMeta):
             )
             return
 
-        # Archiving can take minutes; a new execution may have renewed the
-        # sandbox in the meantime. Re-read the record before deleting it.
-        refreshed = self._repository.load_sandbox(task_id_str)
-        if refreshed is None:
-            self._repository.remove_from_active_set(task_id_str)
+        lease = await self._try_acquire_task_lifecycle_lease(task_id_str)
+        if lease is None:
             return
-        idle_seconds = time.time() - (refreshed.last_activity_at or 0)
-        if idle_seconds < self._config.timeout.redis_ttl:
-            logger.info(
-                "[SandboxManager] Sandbox %s became active during archiving; "
-                "skipping termination",
-                task_id_str,
-            )
-            return
-        await self.terminate_sandbox(task_id_str)
+        try:
+            # Archiving can take minutes. Re-check activity before deleting.
+            refreshed = self._repository.load_sandbox(task_id_str)
+            if refreshed is None:
+                self._repository.remove_from_active_set(task_id_str)
+                return
+            idle_seconds = time.time() - (refreshed.last_activity_at or 0)
+            if not self._same_sandbox_runtime(sandbox, refreshed):
+                return
+            if idle_seconds < self._config.timeout.redis_ttl:
+                logger.info(
+                    "[SandboxManager] Sandbox %s became active during archiving; "
+                    "skipping termination",
+                    task_id_str,
+                )
+                return
+            await self.terminate_sandbox(task_id_str)
+        finally:
+            await self._release_task_lifecycle_lease(lease)
 
     async def _delete_orphaned_executor(self, task_id: str) -> bool:
         """Delete a Pod whose sandbox record is gone but is still tracked.

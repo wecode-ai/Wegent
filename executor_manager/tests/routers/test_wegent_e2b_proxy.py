@@ -12,19 +12,20 @@ from fastapi import FastAPI, HTTPException
 from executor_manager.routers import wegent_e2b_proxy
 
 
-def test_touch_sandbox_activity_persists_proxy_activity(mocker):
+@pytest.mark.asyncio
+async def test_touch_sandbox_activity_rejects_a_terminated_runtime(mocker):
     """Proxied E2B SDK calls should refresh sandbox activity for GC."""
-    repository = MagicMock()
-    manager = SimpleNamespace(_repository=repository)
+    refresh = mocker.AsyncMock(return_value=(None, "Sandbox 1385 not found"))
+    manager = SimpleNamespace(refresh_sandbox_activity=refresh)
     sandbox = MagicMock()
     sandbox.sandbox_id = "1385"
 
     mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
 
-    wegent_e2b_proxy._touch_sandbox_activity(sandbox)
-
-    sandbox.touch.assert_called_once_with()
-    repository.save_sandbox.assert_called_once_with(sandbox)
+    with pytest.raises(HTTPException) as exc_info:
+        await wegent_e2b_proxy._touch_sandbox_activity(sandbox)
+    assert exc_info.value.status_code == 503
+    refresh.assert_awaited_once_with("1385", expected_runtime=sandbox)
 
 
 def test_legacy_process_start_keeps_default_read_timeout():

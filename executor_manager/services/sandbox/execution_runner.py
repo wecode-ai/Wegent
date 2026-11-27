@@ -200,7 +200,6 @@ class ExecutionRunner(metaclass=SingletonMeta):
         execution: Execution,
         timeout: int,
         on_running: Optional[callable] = None,
-        on_complete: Optional[callable] = None,
         on_error: Optional[callable] = None,
     ) -> bool:
         """Run execution with timeout control.
@@ -213,7 +212,6 @@ class ExecutionRunner(metaclass=SingletonMeta):
             execution: Execution to run
             timeout: Timeout in seconds
             on_running: Callback when execution starts running
-            on_complete: Callback when execution is accepted
             on_error: Callback when execution fails
 
         Returns:
@@ -230,8 +228,6 @@ class ExecutionRunner(metaclass=SingletonMeta):
         )
 
         if success:
-            if on_complete:
-                on_complete(execution)
             return True
         else:
             execution.set_failed(error_message or "Unknown error")
