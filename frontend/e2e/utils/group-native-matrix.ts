@@ -373,6 +373,20 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
   })
 
   const native = cases.filter(cell => cell.mode === 'coordinate')
+  const nativeCaptures = async () =>
+    Promise.all(
+      native.map(async cell => ({
+        teamId: cell.teamId,
+        leader: (await getScenarioModelBodies(request, cell.leadPrompt)).length,
+        worker: (
+          await getScenarioModelBodies(
+            request,
+            cell.shell === 'Codex' ? cell.assignment : cell.workerPrompt
+          )
+        ).length,
+      }))
+    )
+  const beforeRejection = await nativeCaptures()
   for (const cell of native) {
     const updated = await ctx.client.put(`/api/bots/${cell.bots[1].bot_id}`, worker.config)
     expect(updated.status).toBe(200)
@@ -416,6 +430,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     })
     .toBe(native.length)
   const rejected = await failures()
+  expect(await nativeCaptures()).toEqual(beforeRejection)
   for (const cell of native) {
     const rows = rejected.filter(row => row.agentId === cell.agentId)
     expect(rows).toHaveLength(1)
@@ -425,7 +440,12 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     )
   }
   await info.attach('native-group-role-grant-rejections', {
-    body: JSON.stringify({ groupId, issueId: denied.id, rejected }),
+    body: JSON.stringify({
+      groupId,
+      issueId: denied.id,
+      rejected,
+      unchangedModelCalls: beforeRejection,
+    }),
     contentType: 'application/json',
   })
   for (const row of await ctx.executions(denied.id)) {
