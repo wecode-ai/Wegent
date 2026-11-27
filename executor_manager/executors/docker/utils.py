@@ -274,7 +274,7 @@ def get_running_task_details(
         # Base command with owner filter
         cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
         if include_stopped:
-            cmd.append("--all")
+            cmd.extend(["--all", "--no-trunc"])
 
         # Add additional label selector if provided
         if label_selector:
@@ -288,6 +288,8 @@ def get_running_task_details(
                 '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}',
             ]
         )
+        if include_stopped:
+            cmd[-1] += "|{{.ID}}"
 
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -301,6 +303,15 @@ def get_running_task_details(
 
             parts = line.strip().split("|")
 
+            if include_stopped and (
+                len(parts) != 6
+                or not parts[4]
+                or not re.fullmatch(r"[0-9a-f]{64}", parts[5])
+            ):
+                return {
+                    "status": "failed",
+                    "error_msg": "Docker returned incomplete container identity",
+                }
             if len(parts) >= 5:
                 task_id = parts[0]
                 subtask_id = parts[1]
@@ -315,6 +326,8 @@ def get_running_task_details(
                     "subtask_next_id": subtask_next_id,
                     "task_type": task_type,
                 }
+                if include_stopped:
+                    container_info["container_id"] = parts[5]
 
                 containers.append(container_info)
 

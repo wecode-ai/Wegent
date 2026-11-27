@@ -1738,7 +1738,8 @@ class DockerExecutor(Executor):
                 container_name = container.get("container_name")
                 if not container_name:
                     continue
-                delete_result = delete_container(container_name)
+                container_id = container["container_id"]
+                delete_result = delete_container(container_id)
                 status = delete_result.get("status")
                 if status == "success":
                     deleted_containers.append(container_name)

@@ -231,6 +231,25 @@ class TestDockerUtils:
         assert len(result["task_ids"]) == 0
         assert len(result["containers"]) == 0
 
+    @pytest.mark.parametrize("container_id", ["a" * 64, ""])
+    @patch("subprocess.run")
+    def test_cleanup_inventory_requires_full_container_id(self, mock_run, container_id):
+        mock_run.return_value = MagicMock(
+            stdout=f"123|456|789|sandbox|container1|{container_id}\n", returncode=0
+        )
+
+        result = get_running_task_details(
+            label_selector="task_id=123", include_stopped=True
+        )
+
+        assert "--no-trunc" in mock_run.call_args.args[0]
+        assert mock_run.call_args.args[0][-1].endswith("|{{.ID}}")
+        if container_id:
+            assert result["status"] == "success"
+            assert result["containers"][0]["container_id"] == container_id
+        else:
+            assert result["status"] == "failed"
+
     @patch("subprocess.run")
     def test_get_running_task_details_error(self, mock_run):
         """Test getting running task details with error"""

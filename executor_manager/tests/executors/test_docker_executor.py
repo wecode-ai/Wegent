@@ -595,8 +595,16 @@ class TestDockerExecutor:
             return_value={
                 "status": "success",
                 "containers": [
-                    {"container_name": "regular", "task_type": "online"},
-                    {"container_name": "sandbox", "task_type": "sandbox"},
+                    {
+                        "container_name": "regular",
+                        "container_id": "a" * 64,
+                        "task_type": "online",
+                    },
+                    {
+                        "container_name": "sandbox",
+                        "container_id": "b" * 64,
+                        "task_type": "sandbox",
+                    },
                 ],
             },
         )
@@ -614,7 +622,7 @@ class TestDockerExecutor:
         inventory.assert_called_once_with(
             label_selector="task_id=123", include_stopped=True
         )
-        delete.assert_called_once_with("sandbox")
+        delete.assert_called_once_with("b" * 64)
         assert result["status"] == delete_status
         assert result["deleted_containers"] == (
             ["sandbox"] if delete_status == "success" else []
