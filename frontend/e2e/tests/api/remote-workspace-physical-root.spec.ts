@@ -48,7 +48,10 @@ test('Rust workspace API browses a real Executor repository using returned physi
       apiVersion: 'agent.wecode.io/v1',
       kind: 'Model',
       metadata: { name: modelName, namespace: 'default' },
-      spec: { modelConfig: {}, isCustomConfig: true },
+      spec: {
+        modelConfig: { env: { model: 'openai', model_id: modelName } },
+        isCustomConfig: true,
+      },
     })
     expect(model.status, JSON.stringify(model.data)).toBe(201)
     modelCreated = true

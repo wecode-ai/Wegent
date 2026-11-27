@@ -118,8 +118,15 @@ test('a failed retry stays retryable until the device reconnects', async ({ hist
       replacement.once('task:execute', resolve)
     )
     const acceptedBeforeRetry = await metricTotal('wegent_chat_requests_total', 'accepted')
-    expect(await socket.timeout(10_000).emitWithAck('chat:retry', turn)).toEqual({ success: true })
-    expect(await nextDelivery).toMatchObject(turn)
+    const retry = await socket.timeout(10_000).emitWithAck('chat:retry', turn)
+    expect(retry).toEqual({
+      success: true,
+      execution_attempt_id: expect.stringMatching(/^[a-f0-9]{32}$/),
+    })
+    expect(await nextDelivery).toMatchObject({
+      ...turn,
+      execution_attempt_id: retry.execution_attempt_id,
+    })
     await expect.poll(state).toEqual(['RUNNING', 'RUNNING'])
     await expect
       .poll(() => metricTotal('wegent_chat_requests_total', 'accepted'))
