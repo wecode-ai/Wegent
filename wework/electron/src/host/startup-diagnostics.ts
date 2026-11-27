@@ -3,7 +3,6 @@ import { basename, join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 
 import { redactLog } from '../runtime/rotating-log.js'
-import { CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME } from './runtime-diagnostics-log.js'
 import type { StartupProgressUpdate } from './startup-progress.js'
 
 export interface StartupFailureSnapshot {
@@ -58,7 +57,6 @@ const PRIORITY_LOG_NAMES = [
   'app-update.log',
   'wework-startup-bootstrap.log',
   'runtime-launch.log',
-  CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME,
 ] as const
 const ERROR_LINE_PATTERN =
   /\b(error|failed|failure|fatal|exception|timeout|timed out|refused|crash|exit(?:ed)? code|EADDRINUSE|ENOENT|EACCES)\b/i

@@ -16,10 +16,7 @@ import {
 } from './host/cloud-connection-profile.js'
 import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import { SchemeQueue } from './host/scheme-queue.js'
-import {
-  CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME,
-  RuntimeDiagnosticsLog,
-} from './host/runtime-diagnostics-log.js'
+import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { buildStartupDiagnostics, type StartupFailureSnapshot } from './host/startup-diagnostics.js'
 import { startupFailureSnapshot } from './host/startup-failure.js'
 import {
@@ -415,7 +412,6 @@ let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let pythonRuntimeManagerPromise: Promise<PythonRuntimeManager> | null = null
 let quitting = false
-let shutdownPrepared = false
 let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
@@ -552,10 +548,6 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'conversation-search.log'),
   '[Wework] Conversation search diagnostic '
 )
-const conversationRowDiagnosticsLog = new RuntimeDiagnosticsLog(
-  join(app.getPath('logs'), CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME),
-  '[Wework] Conversation row measurement diagnostic '
-)
 const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'local-workspace-catalog.log'),
   '[Wework] Local workspace catalog '
@@ -673,9 +665,6 @@ app.on('web-contents-created', (_event, contents) => {
     })
     void conversationSearchDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write conversation search diagnostics', error)
-    })
-    void conversationRowDiagnosticsLog.record(contents.id, message).catch(error => {
-      console.warn('[Wework] Failed to write conversation row diagnostics', error)
     })
     void localWorkspaceCatalogLog.record(contents.id, message).catch(() => {
       console.warn('[Wework] Failed to write local workspace catalog diagnostics')
@@ -2074,7 +2063,6 @@ async function startupDiagnosticsText(): Promise<string> {
     mainProcessLog.flush(),
     startupRendererLog.flush(),
     runtimeDiagnosticsLog.flush(),
-    conversationRowDiagnosticsLog.flush(),
     localWorkspaceCatalogLog.flush(),
   ])
   return buildStartupDiagnostics({
@@ -2423,16 +2411,6 @@ function prepareApplicationShutdown(): Promise<void> {
   rendererStartupReady.cancel()
   presentStartupWindow.cancel()
   shutdownPromise = traceShutdownStep('application', shutdown)
-    .finally(() =>
-      traceShutdownStep('conversation-row-diagnostics-log', () =>
-        conversationRowDiagnosticsLog.close()
-      ).catch(() => {
-        console.warn('[Wework] Failed to drain conversation row diagnostics')
-      })
-    )
-    .finally(() => {
-      shutdownPrepared = true
-    })
   return shutdownPromise
 }
 
@@ -3737,7 +3715,7 @@ registerApplicationActivation(app, {
 })
 
 app.on('before-quit', event => {
-  if (shutdownPrepared) return
+  if (quitting) return
   event.preventDefault()
   requestApplicationShutdown(() => app.quit())
 })

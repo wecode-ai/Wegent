@@ -16,9 +16,6 @@ import {
 
 const initialBounds = new WeakMap<HTMLElement, DOMRect>()
 const MEASUREMENT_FRAME_BUDGET_MS = 8
-const MEASUREMENT_RUN_GAP_MS = 100
-const MEASUREMENT_WARNING_AFTER_MS = 2000
-const MEASUREMENT_WARNING_INTERVAL_MS = 30000
 
 /** TanStack owns the observer, resize batching, and the only size writer. */
 export function useMessageRowMeasure(
@@ -96,12 +93,6 @@ export function useMessageRowMeasurements(
 ) {
   const pending = useRef<MeasurementBatch | null>(null)
   const scheduledFrame = useRef<SafeAnimationFrameHandle | null>(null)
-  const measurementRun = useRef({
-    startedAt: 0,
-    lastBatchAt: 0,
-    batches: 0,
-    lastWarningAt: -Infinity,
-  })
   const initializedList = useRef<HTMLDivElement | null>(null)
   const measureRows = useCallback(
     (rows: HTMLElement[], onComplete?: () => void) => {
@@ -117,12 +108,6 @@ export function useMessageRowMeasurements(
         completions: new Set(onComplete ? [onComplete] : []),
       }
       pending.current = batch
-      const run = measurementRun.current
-      const now = performance.now()
-      if (now - run.lastBatchAt > MEASUREMENT_RUN_GAP_MS || run.startedAt === 0) {
-        run.startedAt = now
-        run.batches = 0
-      }
       let frameStartedAt: number
       // New rows can enter the range after every measurement. Finish the React
       // commit before publishing sizes, then yield between batches when needed.
@@ -135,9 +120,7 @@ export function useMessageRowMeasurements(
         }
         const attached = [...batch.rows].filter(row => list.contains(row))
         batch.rows.clear()
-        if (attached.length) {
-          const totalSizeBefore = virtualizer.getTotalSize()
-          const scrollOffsetBefore = virtualizer.scrollOffset
+        if (attached.length)
           flushSync(() => {
             if (batch.completions.size === 0) {
               measureAttachedRows(attached, list, virtualizer)
@@ -163,30 +146,6 @@ export function useMessageRowMeasurements(
               })
             }
           })
-          run.lastBatchAt = performance.now()
-          run.batches++
-          if (
-            run.lastBatchAt - run.startedAt >= MEASUREMENT_WARNING_AFTER_MS &&
-            run.lastBatchAt - run.lastWarningAt >= MEASUREMENT_WARNING_INTERVAL_MS
-          ) {
-            run.lastWarningAt = run.lastBatchAt
-            console.warn(
-              '[Wework] Conversation row measurement diagnostic ' +
-                JSON.stringify({
-                  durationMs: Math.round(run.lastBatchAt - run.startedAt),
-                  batches: run.batches,
-                  rows: attached.length,
-                  firstIndex: Number(attached[0].dataset.index),
-                  lastIndex: Number(attached[attached.length - 1].dataset.index),
-                  itemCount: virtualizer.options.count,
-                  scrollOffsetBefore,
-                  scrollOffsetAfter: virtualizer.scrollOffset,
-                  totalSizeBefore,
-                  totalSizeAfter: virtualizer.getTotalSize(),
-                })
-            )
-          }
-        }
         if (pending.current !== batch) return
         // Measurements can expose more rows in the synchronous commit. Keep the
         // same batch open until those rows have also been measured.

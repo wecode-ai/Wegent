@@ -72,26 +72,6 @@ test('persists interaction failure context and redacts credentials in exception 
   }
 })
 
-test('drains accepted diagnostics before closing and ignores later entries', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'wework-measurement-log-'))
-  try {
-    const path = join(directory, 'conversation-row-measurement.log')
-    const prefix = '[Wework] Conversation row measurement diagnostic '
-    const log = new RuntimeDiagnosticsLog(path, prefix)
-    const pending = log.record(1, prefix + '{"batches":42}')
-    const closed = log.close()
-    await log.record(1, prefix + '{"batches":43}')
-    await closed
-
-    const contents = await readFile(path, 'utf8')
-    expect(contents).toContain('"batches":42')
-    expect(contents).not.toContain('"batches":43')
-    await pending
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-})
-
 test('persists local catalog lifecycle messages without unrelated renderer output', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-local-catalog-log-'))
   try {
