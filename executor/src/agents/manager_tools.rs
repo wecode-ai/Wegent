@@ -147,3 +147,39 @@ pub(super) fn check_shell_values<'a>(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task_runtime::LocalTaskStore;
+
+    #[tokio::test]
+    async fn codex_manager_dispatches_only_calls_from_the_active_root_turn() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let manager = ManagerTools {
+            runtime: TaskRuntime::new(store).unwrap(),
+            context: Default::default(),
+            tools: BTreeMap::from([("get_current_context".to_owned(), json!({}))]),
+        };
+        let root_call = json!({"threadId":"root", "turnId":"current",
+            "namespace":mcp::SPACE_MCP_SERVER_NAME, "tool":"get_current_context", "arguments":{}});
+        let invoke =
+            |params, cancelled| respond(Some(&manager), params, "root", Some("current"), cancelled);
+        assert_eq!(invoke(&root_call, false).await["success"], true);
+        for (field, value) in [
+            ("threadId", "child"),
+            ("turnId", "previous"),
+            ("namespace", "other"),
+            ("tool", "ungranted"),
+        ] {
+            let mut call = root_call.clone();
+            call[field] = json!(value);
+            assert_eq!(
+                respond(Some(&manager), &call, "root", Some("current"), false).await["success"],
+                false
+            );
+        }
+        assert_eq!(invoke(&root_call, true).await["success"], false);
+    }
+}
