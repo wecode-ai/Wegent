@@ -331,7 +331,7 @@ def test_discover_oauth_connector_requires_authorization(
 
 
 @pytest.mark.parametrize(
-    "mode", ["manual", "external", "disconnect_before_late_callback"]
+    "mode", ["manual", "external", "disconnect_before_late_callback", "declined"]
 )
 def test_github_oauth_api_flow_connects_polls_and_disconnects(
     test_client: TestClient,
@@ -342,7 +342,7 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
     monkeypatch,
     mode: str,
 ):
-    external = mode != "manual"
+    external = mode in {"external", "disconnect_before_late_callback"}
     app = _create_app(
         test_db,
         test_admin_user,
@@ -404,11 +404,12 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         assert response.status_code == 200
         pending.append(response.json())
 
-    def complete(session: dict):
+    def complete(session: dict, **result: str):
         state = parse_qs(urlsplit(session["authorize_url"]).query)["state"][0]
         return test_client.get(
             "/api/connector-apps/oauth/callback",
-            params={"state": state, "code": "provider-code"},
+            params={"state": state, **(result or {"code": "provider-code"})},
+            headers={"Accept-Language": "en;q=0.5, zh-CN;q=0.9"} if external else {},
         )
 
     def poll(session: dict):
@@ -429,7 +430,23 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         assert response.status_code == 204
 
     first = pending[0]
-    assert complete(first).status_code == 200
+    if mode == "declined":
+        declined = complete(first, error="access_denied")
+        assert declined.status_code == 200
+        assert "<h1>Authorization declined</h1>" in declined.text
+        assert poll(first)["status"] == "declined"
+        return
+
+    completed = complete(first)
+    assert completed.status_code == 200
+    assert completed.headers["content-type"].startswith("text/html")
+    assert completed.headers["cache-control"] == "no-store"
+    if external:
+        assert completed.headers["content-language"] == "zh-CN"
+        assert "<h1>连接器已连接</h1>" in completed.text
+    else:
+        assert completed.headers["content-language"] == "en"
+        assert "<h1>Connector connected</h1>" in completed.text
     assert poll(first)["status"] == "success"
     assert poll(first)["connection"]["external_account_name"] == "octocat"
 
@@ -780,6 +797,7 @@ def test_apps_projection_lists_and_reads_callable_connector(
     )
 
 
+@pytest.mark.parametrize("refresh_token", ["refresh-token", None])
 def test_expired_oauth_connector_remains_visible_but_not_callable(
     test_client: TestClient,
     test_db: Session,
@@ -787,6 +805,7 @@ def test_expired_oauth_connector_remains_visible_but_not_callable(
     test_user: User,
     test_token: str,
     monkeypatch,
+    refresh_token: str | None,
 ):
     app = _create_app(
         test_db,
@@ -812,7 +831,7 @@ def test_expired_oauth_connector_remains_visible_but_not_callable(
         slug=app.slug,
         user_id=test_user.id,
         access_token="expired-token",
-        refresh_token="refresh-token",
+        refresh_token=refresh_token,
         token_type="bearer",
         granted_scopes=["user"],
         external_account_name="dingtalk-user",
@@ -830,6 +849,15 @@ def test_expired_oauth_connector_remains_visible_but_not_callable(
     ][0]
     assert installed["connection"]["status"] == "expired"
     assert installed["callable"] is False
+
+    catalog = test_client.get("/api/connector-apps", headers=_admin_headers(test_token))
+    assert catalog.status_code == 200
+    listed = next(item for item in catalog.json() if item["slug"] == app.slug)
+    assert listed["connection"]["status"] == "expired"
+    assert listed["can_refresh"] is bool(refresh_token)
+
+    if refresh_token is None:
+        return
 
     class Response:
         def raise_for_status(self) -> None:

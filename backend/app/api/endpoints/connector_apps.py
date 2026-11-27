@@ -4,11 +4,12 @@
 
 """User-facing connector app catalog and authorization endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints.connector_oauth_page import connector_oauth_result_page
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.connector import (
@@ -82,20 +83,20 @@ async def poll_connector_oauth_session(
 
 @router.get("/oauth/callback", response_class=HTMLResponse)
 async def connector_oauth_callback(
+    request: Request,
     state: str = Query(...),
     code: str | None = Query(default=None),
     error: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    message = await connector_oauth_service.complete_callback(
+    outcome = await connector_oauth_service.complete_callback(
         db,
         code=code,
         state_token=state,
         provider_error=error,
     )
-    return HTMLResponse(
-        "<!doctype html><html><body><p>" + message + "</p></body></html>",
-        headers={"Cache-Control": "no-store"},
+    return connector_oauth_result_page(
+        outcome, request.headers.get("accept-language", "")
     )
 
 

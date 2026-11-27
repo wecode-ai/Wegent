@@ -296,7 +296,7 @@ describe('ConnectorAppConnections', () => {
     })
   })
 
-  it('explains an upstream failure and offers a retry', async () => {
+  it('explains an upstream failure and offers a refresh', async () => {
     mockedAdminApis.getUserConnectorApps.mockResolvedValue([
       {
         ...baseApp,
@@ -321,19 +321,18 @@ describe('ConnectorAppConnections', () => {
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith({
         variant: 'destructive',
-        title: 'common:integrations.connector_apps.retry_failed',
+        title: 'common:integrations.connector_apps.refresh_failed',
         description: 'upstream 502',
       })
     )
   })
 
-  it('reports recovery only when the upstream probe succeeds', async () => {
-    mockedAdminApis.getUserConnectorApps.mockResolvedValue([
-      {
-        ...baseApp,
-        connection: { status: 'connected', last_error: 'upstream 502' },
-      },
-    ])
+  it('returns a renewable expired app to authorized after a successful refresh', async () => {
+    mockedAdminApis.getUserConnectorApps
+      .mockResolvedValueOnce([{ ...baseApp, connection: { status: 'expired' }, can_refresh: true }])
+      .mockResolvedValueOnce([
+        { ...baseApp, connection: { status: 'connected' }, can_refresh: true },
+      ])
     mockedAdminApis.refreshConnectorApp.mockResolvedValue({
       status: 'connected',
       last_error: null,
@@ -343,13 +342,52 @@ describe('ConnectorAppConnections', () => {
 
     fireEvent.click(await screen.findByTestId('retry-connector-app-dingtalk-mcp-generic'))
 
+    expect(
+      await screen.findByText('common:integrations.connector_apps.status.connected')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('retry-connector-app-dingtalk-mcp-generic')).not.toBeInTheDocument()
     await waitFor(() =>
       expect(mockToast).toHaveBeenCalledWith({
         variant: undefined,
-        title: 'common:integrations.connector_apps.retry_succeeded',
+        title: 'common:integrations.connector_apps.refresh_succeeded',
         description: undefined,
       })
     )
+  })
+
+  it('refreshes a renewable expired grant and offers OAuth only after the provider rejects it', async () => {
+    let resolveCatalog!: (apps: Awaited<ReturnType<typeof adminApis.getUserConnectorApps>>) => void
+    mockedAdminApis.getUserConnectorApps
+      .mockResolvedValueOnce([{ ...baseApp, connection: { status: 'expired' }, can_refresh: true }])
+      .mockImplementationOnce(() => new Promise(resolve => (resolveCatalog = resolve)))
+    mockedAdminApis.refreshConnectorApp.mockRejectedValue(new Error('Authorization was rejected'))
+
+    render(<ConnectorAppConnections />)
+
+    const refresh = await screen.findByRole('button', {
+      name: 'common:integrations.connector_apps.refresh',
+    })
+    const authorizeId = 'authorize-connector-app-dingtalk-mcp-generic'
+    expect(screen.queryByTestId(authorizeId)).not.toBeInTheDocument()
+    expect(
+      screen.getByText('common:integrations.connector_apps.refresh_needed')
+    ).toBeInTheDocument()
+    const hint = screen.getByText('common:integrations.connector_apps.refresh_hint')
+    expect(hint).toBeInTheDocument()
+
+    fireEvent.click(refresh)
+
+    await waitFor(() => expect(mockedAdminApis.getUserConnectorApps).toHaveBeenCalledTimes(2))
+    expect(refresh).toBeDisabled()
+    expect(screen.queryByTestId(authorizeId)).not.toBeInTheDocument()
+    await act(async () => {
+      resolveCatalog([{ ...baseApp, connection: { status: 'expired' }, can_refresh: false }])
+    })
+    expect(await screen.findByTestId(authorizeId)).toBeInTheDocument()
+    expect(refresh).not.toBeInTheDocument()
+    expect(hint).not.toBeInTheDocument()
+    expect(mockedAdminApis.refreshConnectorApp).toHaveBeenCalledWith(baseApp.slug)
+    expect(mockedAdminApis.createConnectorOAuthSession).not.toHaveBeenCalled()
   })
 
   it('completes the OAuth flow and reloads apps', async () => {
