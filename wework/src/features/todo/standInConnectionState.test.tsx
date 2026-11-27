@@ -23,6 +23,92 @@ it('matches account IDs and preserves the installation-local owner', () => {
   expect(isStandInBindingOwner(0, 2)).toBe(true)
 })
 
+it.each([true, false])(
+  'preserves the binding behavior for requireSetupConfirmation=%s',
+  async requireSetupConfirmation => {
+    const settings: PersonalStandInSettings = {
+      version: 1,
+      executionDeviceId: 'local',
+      userId: account.userId,
+      roles: [],
+    }
+    const binding = vi
+      .fn<StandInExecutorApi['binding']>()
+      .mockResolvedValueOnce({ status: 'unbound', version: 2, target: null })
+      .mockResolvedValueOnce({
+        status: 'active',
+        version: 3,
+        target: { ...account, deviceId: 'local' },
+      })
+    const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>().mockResolvedValue(settings)
+    const services = {
+      standInApi: { binding, lifecycle, personalGet: async () => settings },
+      getLocalRuntimeSidebarIdentity: async () =>
+        ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useStandInInstance(services, account.userId, devices, true, true, account.backendUrl, {
+        requireSetupConfirmation,
+      })
+    )
+
+    if (requireSetupConfirmation) {
+      await waitFor(() => expect(result.current.setupTarget?.deviceId).toBe('local'))
+      expect(result.current.binding?.status).toBe('unbound')
+      expect(binding.mock.calls).toEqual([['local']])
+      expect(lifecycle).not.toHaveBeenCalled()
+      await act(() => result.current.setup())
+    }
+
+    await waitFor(() => expect(result.current.binding?.status).toBe('active'))
+    expect(lifecycle).toHaveBeenCalledExactlyOnceWith(account.userId, 'local', 'start')
+  }
+)
+
+it.each([
+  ['local', 'local'],
+  ['unknown', 'cloud'],
+])('initializes a legacy device-only entry for %s on %s', async (requested, expected) => {
+  const settings: PersonalStandInSettings = {
+    version: 0,
+    executionDeviceId: 'local',
+    userId: account.userId,
+    roles: [],
+  }
+  const binding = vi
+    .fn<StandInExecutorApi['binding']>()
+    .mockResolvedValueOnce({ status: 'unbound', version: 0, target: null })
+    .mockImplementationOnce(async (_id, _action, _version, target) => ({
+      status: 'active',
+      version: 1,
+      target: target ?? null,
+    }))
+  const services = {
+    standInApi: { binding, lifecycle: async () => settings, personalGet: async () => settings },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const cloudDevices: DeviceInfo[] = [
+    {
+      id: 2,
+      device_id: 'cloud',
+      name: 'Cloud',
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      status: 'online',
+      is_default: true,
+    },
+  ]
+  const { result } = renderHook(() =>
+    useStandInInstance(services, account.userId, cloudDevices, true, true, account.backendUrl, {
+      requireSetupConfirmation: false,
+      legacyEntryDeviceId: requested,
+    })
+  )
+
+  await waitFor(() => expect(result.current.binding?.status).toBe('active'))
+  expect(result.current.binding?.target).toEqual({ ...account, deviceId: expected })
+})
+
 it('keeps old inbox items hidden while the same owner and device load on a new connection', async () => {
   const item: StandInInboxWork = {
     id: 'work',

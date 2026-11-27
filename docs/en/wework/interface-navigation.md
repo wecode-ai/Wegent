@@ -161,7 +161,7 @@ Internal routes below support version maintenance and automated checks; they are
 
 ### Space and auxiliary feature links
 
-Enable the preview, open **top tab strip → + → Collaboration exp**, or roll back: [Collaboration experience preview](./collaboration-experience.md). In the preview sidebar, select **Assistant**, then open **My assistants → Manage assistants** to view or configure assistants.
+With the preview on, use **top tab strip → + → Collaboration exp** for tasks and projects. Open **Wework sidebar → My assistants → Manage assistants** to view or configure assistants in the new assistant center. See the [Collaboration experience preview](./collaboration-experience.md) for setup and rollback.
 
 Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
 

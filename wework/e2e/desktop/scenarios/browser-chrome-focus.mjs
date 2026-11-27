@@ -10,9 +10,9 @@ import {
 } from '../modules/focus-paint.mjs'
 import {
   activateLinuxMainWindow,
-  clickLinuxPointer,
   moveLinuxWindowPointer,
   moveWindowsWindowPointer,
+  sendLinuxPointerButton,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -124,7 +124,6 @@ async function verifySearchOverlay(
     return command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
   }
   const pressAndRelease = point => {
-    if (linuxWindow) return clickLinuxPointer()
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     return clickPoint(command, point)
   }
@@ -132,7 +131,7 @@ async function verifySearchOverlay(
     if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point, 1)
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     await movePointer(point)
-    await pressAndRelease(point)
+    await clickPoint(command, point)
   }
   const pagePath = join(resultDir, 'search-overlay-page.html')
   await writeFile(
@@ -225,7 +224,24 @@ async function verifySearchOverlay(
       5_000
     )
     console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
-    await pressAndRelease(ready.point)
+    if (linuxWindow) {
+      const waitForTriggerEvent = type =>
+        waitForValue(
+          () => read(`window.__weworkSearchTriggerMotion.clicks[${JSON.stringify(type)}] ?? null`),
+          event => event?.trusted && event.target === 'runtime-search-button',
+          `Native ${type} must reach the search trigger`,
+          5_000
+        )
+      try {
+        await sendLinuxPointerButton('down')
+        await waitForTriggerEvent('pointerdown')
+      } finally {
+        await sendLinuxPointerButton('up')
+      }
+      await waitForTriggerEvent('pointerup')
+    } else {
+      await pressAndRelease(ready.point)
+    }
     await waitForValue(
       () =>
         read(`(() => {

@@ -20,6 +20,7 @@ import {
 } from '../modules/collaboration-exp-issue-flows.mjs'
 import { verifyCollaborationExpViewports } from '../modules/collaboration-exp-viewport-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { finishStandInOnboarding } from '../modules/stand-in-instance-flows.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
 import {
   COLLABORATION_EXP_RHYTHM_MARKER,
@@ -28,6 +29,7 @@ import {
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const APP = `${ACTIVE} [data-testid="collaboration-exp-app"]`
+const ASSISTANT = `${ACTIVE} [data-testid="stand-in-experience"]`
 const TAB = '[data-testid="workspace-tab-select-fixed-collaboration-exp"]'
 const PROMPT = 'COLLABORATION_EXP_NATIVE_PRIVATE_CONVERSATION'
 const DRAFT = 'COLLABORATION_EXP_UNSENT_PRIVATE_DRAFT'
@@ -641,18 +643,38 @@ export function createDesktopScenario({
         })
 
         await control.command('navigate', 'body', { value: '/collaboration-exp?view=assistant' })
-        const assistantInput = testId('collaboration-exp-assistant-input')
+        const onboardingModel = '[data-testid="stand-in-onboarding-model"]'
+        await control.command('waitFor', onboardingModel, { visible: true })
+        const redirected = JSON.parse(await control.command('snapshot', 'body')).location
+        assert.ok(new URL(redirected).pathname.endsWith('/stand-in'))
+        await selectE2EModel(control, undefined, undefined, onboardingModel)
+        await finishStandInOnboarding(control)
+
+        await control.command('navigate', 'body', { value: '/' })
+        await click(control, `${ACTIVE} [data-testid="personal-stand-in-button"]`)
+        const assistantInput = `${ASSISTANT} [data-testid="collaboration-exp-assistant-input"]`
         await control.command('waitFor', assistantInput, { visible: true })
-        await selectE2EModel(control, undefined, undefined, APP)
+        const assistantLocation = JSON.parse(await control.command('snapshot', 'body')).location
+        assert.ok(new URL(assistantLocation).pathname.endsWith('/stand-in'))
+        await control.command('navigate', 'body', {
+          value: '/collaboration-exp?view=assistant&profileId=missing-assistant',
+        })
+        await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-route-error"]`)
+        await click(control, `${ACTIVE} [data-testid="stand-in-route-return"]`)
+        await control.command('waitFor', assistantInput, { visible: true })
         const beforeLocal = await localIssueIdentities()
         const beforeCloud = await request(`/api/v1/cloud-projects/${cloudProject.id}/loop-items`)
         const beforeShared = await comments()
         await control.command('fill', assistantInput, { value: ORDINARY })
-        await click(control, testId('collaboration-exp-assistant-send'))
-        await control.command('waitFor', testId('collaboration-exp-assistant-conversation'), {
-          text: `${ORDINARY}_COMPLETE`,
-          timeoutMs: modelResponseTimeoutMs,
-        })
+        await click(control, `${ASSISTANT} [data-testid="collaboration-exp-assistant-send"]`)
+        await control.command(
+          'waitFor',
+          `${ASSISTANT} [data-testid="collaboration-exp-assistant-conversation"]`,
+          {
+            text: `${ORDINARY}_COMPLETE`,
+            timeoutMs: modelResponseTimeoutMs,
+          }
+        )
         assert.deepEqual(
           await localIssueIdentities(),
           beforeLocal,
