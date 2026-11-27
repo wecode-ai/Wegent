@@ -674,7 +674,7 @@ def admit_collaboration_batch(
                     environment="local",
                     execution_device_id=None,
                     priority=item.priority,
-                    instruction=f"{command.title}\n\n{command.instructions}",
+                    instruction=f"任务标题：{command.title}\n\n执行要求：{command.instructions}",
                     automation_context={
                         "dispatch_kind": "collaboration_group",
                         **(
@@ -686,7 +686,7 @@ def admit_collaboration_batch(
                         ),
                         "dispatch_role": "member",
                         "dispatch_task_id": item.id,
-                        "manager_agent_id": values.manager_agent_id,
+                        "manager_agent_id": manager.id if manager else None,
                         "dispatch_protocol_version": 2,
                         "assignment_key": item.metadata_json[
                             "collaboration_group_assignment_key"
