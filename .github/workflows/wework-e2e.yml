@@ -563,6 +563,17 @@ jobs:
             node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
+      - name: Upload assistant Team binding screenshots
+        if: success() && contains(format(',{0},', steps.core-e2e.outputs.checkpoints), ',stand-in-profile-settings,')
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-team-binding-${{ matrix.id }}
+          path: |
+            wework/test-results/desktop-e2e/*/assistant-team-options.png
+            wework/test-results/desktop-e2e/*/assistant-team-saved.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Compare idle workbench CPU
         if: ${{ !cancelled() && contains(format(',{0},', steps.core-e2e.outputs.checkpoints), ',idle-executor-requests,') }}
         uses: ./.github/actions/compare-wework-cpu-benchmark

@@ -780,16 +780,19 @@ async function captureVerificationScreenshot(control, name, selector = 'body', o
     )
   }
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
-  const requiredAppearanceEvidence = name.startsWith('appearance-')
+  const requiredEvidence =
+    name.startsWith('appearance-') ||
+    name === 'assistant-team-options.png' ||
+    name === 'assistant-team-saved.png'
   if (
-    !requiredAppearanceEvidence &&
+    !requiredEvidence &&
     screenshotMode === 'final' &&
     !name.endsWith('04-task-completed-after-reopen.png')
   ) {
     return null
   }
   if (
-    !requiredAppearanceEvidence &&
+    !requiredEvidence &&
     screenshotMode === 'harness-milestones' &&
     !HARNESS_MILESTONE_SCREENSHOTS.has(name)
   ) {
