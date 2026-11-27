@@ -45,8 +45,8 @@ async fn native_partial_text_and_thinking_are_emitted_before_snapshots_and_eof()
         reader,
         RecordingSink(sender),
         ResponsesEventBuilder::new("1", "2", "test"),
-        "1".into(),
-        "2".into(),
+        ("1".into(), "2".into()),
+        None,
         None,
         None,
     ));
@@ -177,8 +177,8 @@ async fn assert_native_partial_boundaries(omit_root_ids: bool) {
         stdout.as_bytes(),
         RecordingSink(sender),
         ResponsesEventBuilder::new("1", "2", "test"),
-        "1".into(),
-        "2".into(),
+        ("1".into(), "2".into()),
+        None,
         None,
         None,
     )

@@ -81,6 +81,20 @@ where
     S: EventSink,
 {
     let (task_id, subtask_id) = task;
+    let approval = if crate::permission::interactive(&spec) {
+        match crate::permission::handler() {
+            Some(handler) => Some(handler),
+            None => {
+                return CommandOutcome::Failure {
+                    stderr: "Claude approval handler is unavailable".into(),
+                    stdout: String::new(),
+                    exit_code: None,
+                }
+            }
+        }
+    } else {
+        None
+    };
     let mut command = command_from_spec(&spec, environment);
     command
         .stdin(Stdio::piped())
@@ -127,7 +141,7 @@ where
             builder,
             (task_id.clone(), subtask_id.clone()),
             debug_stdout_path,
-            session,
+            (session, approval),
         ),
     )
     .await
@@ -173,12 +187,16 @@ pub(super) async fn run_prepared_streaming_command<S>(
     builder: ResponsesEventBuilder,
     task_ids: (String, String),
     debug_stdout_path: Option<PathBuf>,
-    session: stream_session::SessionRecorder,
+    session: (
+        stream_session::SessionRecorder,
+        Option<Arc<dyn crate::permission::ToolApproval>>,
+    ),
 ) -> CommandOutcome
 where
     S: EventSink,
 {
     let (task_id, subtask_id) = task_ids;
+    let (session, approval) = session;
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -191,9 +209,22 @@ where
     };
     let mut process_tree = ProcessTreeGuard::new(child.id());
 
+    let (session_tx, mut session_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let permission =
+        approval.map(|owner| crate::permission::PermissionSession::new(owner, session_tx));
+    let interactive = permission.is_some();
     let writer = stdin.and_then(|input| {
         child.stdin.take().map(|mut child_stdin| {
-            tokio::spawn(async move { child_stdin.write_all(input.as_bytes()).await })
+            tokio::spawn(async move {
+                child_stdin.write_all(input.as_bytes()).await?;
+                if interactive {
+                    while let Some(response) = session_rx.recv().await {
+                        let line = format!("{response}\n");
+                        child_stdin.write_all(line.as_bytes()).await?;
+                    }
+                }
+                Ok::<(), std::io::Error>(())
+            })
         })
     });
     let stdout = child.stdout.take();
@@ -205,10 +236,10 @@ where
             stdout,
             sink,
             builder,
-            stdout_task_id,
-            stdout_subtask_id,
+            (stdout_task_id, stdout_subtask_id),
             debug_stdout_path,
             Some(session.clone()),
+            permission,
         ))
     });
     let _stdout_guard = stdout_task
@@ -280,15 +311,16 @@ pub(super) async fn read_streaming_stdout<R, S>(
     stdout: R,
     sink: S,
     builder: ResponsesEventBuilder,
-    task_id: String,
-    subtask_id: String,
+    task: (String, String),
     debug_stdout_path: Option<PathBuf>,
     session: Option<stream_session::SessionRecorder>,
+    mut permission: Option<crate::permission::PermissionSession>,
 ) -> StreamingStdoutOutcome
 where
     R: AsyncRead + Unpin,
     S: EventSink,
 {
+    let (task_id, subtask_id) = task;
     let mut output = String::new();
     let mut debug_stdout_file =
         debug_stdout_path.and_then(|path| open_debug_claude_stdout_file(&path).ok());
@@ -331,6 +363,11 @@ where
         }) else {
             continue;
         };
+        if value["type"] == "result" {
+            permission.take();
+        } else if let Some(permission) = permission.as_mut() {
+            permission.observe(&value);
+        }
         if let Some(session) = &session {
             session.observe(&value);
         }
