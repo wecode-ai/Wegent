@@ -132,7 +132,7 @@ async function verifySearchOverlay(
     if (linuxWindow) return moveLinuxWindowPointer(linuxWindow, point, 1)
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     await movePointer(point)
-    await pressAndRelease(point)
+    await clickPoint(command, point)
   }
   const pagePath = join(resultDir, 'search-overlay-page.html')
   await writeFile(
@@ -239,6 +239,13 @@ async function verifySearchOverlay(
         5_000
       )
     )
+    if (linuxWindow)
+      await waitForValue(
+        () => read('window.__weworkSearchTriggerMotion.clicks.pointerup ?? null'),
+        release => release?.trusted && release.target === 'runtime-search-button',
+        'Native pointer release must reach the search trigger',
+        5_000
+      )
     await waitForValue(
       () =>
         read(`(() => {

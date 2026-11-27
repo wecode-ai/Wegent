@@ -137,6 +137,29 @@ test('publishes the canonical receipt when the saved draft has not changed', asy
   expect(result.current.draft?.roles[0].prompt).toBe('Canonical')
 })
 
+test('creates a role alongside changes committed to the profile after opening the editor', async () => {
+  const { services, personalGet, personalSave, settings } = fixture()
+  const { result } = renderHook(() => usePersonalStandIn(services, 7, 'old-device', 'mac'))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  const added = { ...settings.roles[0], id: 'new-role', name: 'Reviewer' }
+  const latest = {
+    ...settings,
+    version: 2,
+    roles: [{ ...settings.roles[0], prompt: 'Updated on another surface' }],
+  }
+  personalGet.mockResolvedValueOnce(latest)
+  const change = { kind: 'create', roleId: added.id } as const
+  await act(() => result.current.save({ ...settings, roles: [...settings.roles, added] }, change))
+
+  expect(personalSave).toHaveBeenCalledExactlyOnceWith(
+    7,
+    { ...latest, roles: [...latest.roles, added] },
+    'old-device',
+    undefined,
+    change
+  )
+})
+
 test('accepts only one save when called twice before React rerenders', async () => {
   const { services, personalSave, settings } = fixture()
   const pending = deferred<PersonalStandInSettings>()

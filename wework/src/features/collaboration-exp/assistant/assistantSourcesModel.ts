@@ -1,5 +1,10 @@
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import { isStandInBindingOwner, type StandInExecutorApi, type StandInProposal } from '@/api/standIn'
+import {
+  isStandInBindingOwner,
+  type StandInBindingTarget,
+  type StandInExecutorApi,
+  type StandInProposal,
+} from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 
@@ -13,6 +18,7 @@ export interface AssistantSourceData {
   proposals: StandInProposal[]
   proposalsReady: boolean
 }
+const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
 interface SourceSnapshot {
   source?: AssistantSourceData
   failure?: { cause: unknown }
@@ -26,7 +32,8 @@ export function createAssistantSourcesModel(
   services: WorkbenchServices,
   api: StandInExecutorApi | undefined,
   userId: number,
-  scope: string
+  scope: string,
+  expectedBinding?: Pick<StandInBindingTarget, 'userId' | 'deviceId'>
 ) {
   let snapshot: SourceSnapshot = {}
   const listeners = new Set<() => void>()
@@ -99,6 +106,13 @@ export function createAssistantSourcesModel(
       const binding = await api.binding(identity.deviceId)
       if (!current()) return
       const target = binding.target
+      if (
+        expectedBinding &&
+        (binding.status !== 'active' ||
+          target?.userId !== expectedBinding.userId ||
+          target.deviceId !== expectedBinding.deviceId)
+      )
+        throw Object.assign(new Error(), { code: 'permission_denied' })
       if (target && !isStandInBindingOwner(target.userId, userId)) {
         throw Object.assign(new Error(), { code: 'permission_denied' })
       }
@@ -149,6 +163,7 @@ export function createAssistantSourcesModel(
       listeners.add(listener)
       includeProposals = proposals
       if (listeners.size === 1) {
+        if (e2e) performance.mark('wework:assistant-source-subscribe')
         unsubscribe = subscribePersonalStandIn(settings => {
           const source = snapshot.source
           if (
@@ -163,6 +178,7 @@ export function createAssistantSourcesModel(
       return () => {
         listeners.delete(listener)
         if (!listeners.size) {
+          if (e2e) performance.mark('wework:assistant-source-unsubscribe')
           sourceRevision++
           proposalRevision++
           clearTimeout(timer)
