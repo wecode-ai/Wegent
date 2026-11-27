@@ -23,6 +23,7 @@ import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
 import {
   COLLABORATION_EXP_RHYTHM_MARKER,
+  COLLABORATION_EXP_RHYTHM_ROLE,
   createCollaborationExpRhythmFixture,
 } from '../modules/collaboration-exp-rhythm.mjs'
 
@@ -37,6 +38,72 @@ const PRIVATE_MESSAGE = 'COLLABORATION_EXP_PRIVATE_ORDINARY_NO_SHARED_WRITE'
 const PUBLIC = 'COLLABORATION_EXP_EXPLICIT_EDITED_SHARED_CONCLUSION'
 const PRIVATE_INPUT = `${APP} [data-testid="collaboration-exp-private-conversation"] [data-testid="chat-message-input"]`
 const testId = id => `${APP} [data-testid=${JSON.stringify(id)}]`
+
+/** Complete real account onboarding before testing management of a native-only team. */
+export async function migrateCollaborationExpAssistant({
+  control,
+  request,
+  settings,
+  returnRoute,
+  nativeTaskIdentities,
+  localIssueIdentities,
+}) {
+  const tasks = await nativeTaskIdentities()
+  const issues = await localIssueIdentities()
+  assert.equal((await request('/api/v1/personal-assistant')).assistant, null)
+  await control.command('navigate', 'body', { value: '/stand-in' })
+  const confirm = '[data-testid="personal-assistant-account-migrate-confirm"]'
+  await control.command('waitFor', confirm, { visible: true })
+  await control.command('clickWhenEnabled', confirm)
+  await control.command('waitFor', '[data-testid="personal-assistant-account-setup"]', {
+    visible: false,
+  })
+  await control.command('waitFor', '[data-testid="stand-in-overview"]', { visible: true })
+  const { assistant } = await request('/api/v1/personal-assistant')
+  assert.ok(assistant, 'The confirmed migration must initialize the real cloud account')
+  assert.deepEqual(
+    assistant.definitions.map(definition => definition.roleId).sort(),
+    ['@primary', ...settings.roles.map(role => role.id)].sort(),
+    'Cloud migration must preserve every native role ID'
+  )
+  for (const role of settings.roles) {
+    const definition = assistant.definitions.find(definition => definition.roleId === role.id)
+    assert.deepEqual(
+      {
+        name: definition.bot.metadata.displayName,
+        prompt: definition.ghost.spec.systemPrompt,
+        device: definition.bot.spec.execution_policy,
+      },
+      {
+        name: role.name,
+        prompt: role.prompt,
+        device: { mode: 'fixed', environment_id: role.executionDeviceId },
+      },
+      'Cloud migration must preserve the role definition'
+    )
+  }
+  const primary = assistant.definitions.find(definition => definition.roleId === '@primary')
+  assert.deepEqual(assistant.defaultBotRef, {
+    name: primary.bot.metadata.name,
+    namespace: primary.bot.metadata.namespace,
+  })
+  assert.equal(primary.ghost.spec.systemPrompt, settings.primary?.prompt ?? '')
+  assert.deepEqual(primary.bot.spec.execution_policy, {
+    mode: 'fixed',
+    environment_id: settings.executionDeviceId,
+  })
+  assert.deepEqual(
+    await nativeTaskIdentities(),
+    tasks,
+    'Cloud migration must preserve native task identities'
+  )
+  assert.deepEqual(
+    await localIssueIdentities(),
+    issues,
+    'Cloud migration must preserve local Issue identities'
+  )
+  await control.command('navigate', 'body', { value: returnRoute })
+}
 
 export const COLLABORATION_EXP_USER_STORIES = [
   'default-off-preserves-baseline-and-makes-no-targeted-business-requests',
@@ -668,11 +735,26 @@ export function createDesktopScenario({
           'Ordinary assistant conversation must remain private'
         )
 
-        const { runningIssue, address: runningAddress } = await rhythm.prepare(
-          localProject,
-          secondIssue,
-          cloudUser.id
-        )
+        const {
+          runningIssue,
+          ownerId,
+          address: runningAddress,
+        } = await rhythm.prepare(localProject, secondIssue, cloudUser.id)
+
+        const settings = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
+        const runningRole = settings.roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
+        assert.ok(runningRole, 'The running native role must be available for account migration')
+        assert.equal(runningRole.name, 'Integration assistant')
+        assert.equal(runningRole.prompt, COLLABORATION_EXP_RHYTHM_MARKER)
+        assert.equal(runningRole.executionDeviceId, runningAddress.deviceId)
+        await migrateCollaborationExpAssistant({
+          control,
+          request,
+          settings,
+          returnRoute: route(),
+          nativeTaskIdentities,
+          localIssueIdentities,
+        })
 
         const logPath = join(resultDir, 'app.log')
         const logOffset = (await readFile(logPath, 'utf8')).length
