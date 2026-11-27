@@ -362,6 +362,15 @@ other platforms retain OS write-denial checks. All platforms still verify explic
 authorized writes, native approval denial of private reads, and no private data
 disclosure. The network probe declares a text response type so PowerShell does not
 enumerate response bytes.
+On Windows, role delegation and Dots enable the unelevated sandbox in their
+isolated Codex configurations. Role delegation verifies actual writes in
+workspace-write mode and write denial after switching the task to read-only.
+The embedded-browser download scenario uses UI Automation to operate the native
+context menu and Save As dialog for the isolated Electron process, then verifies
+the file outcomes for cancel and save. Windows Core scheduling uses five newly
+measured checkpoint durations and shares DingTalk protocol fixture setup. Stand-in
+task preparation and creation reuse the boxed Future boundary to limit nested
+Windows worker stack use.
 The subscription model fixture rejects every upgrade path with HTTP 426 and
 handles `ECONNRESET` throughout the socket lifetime; other socket errors still
 fail. Node regressions cover different paths, repeated resets, and unexpected errors, preventing
