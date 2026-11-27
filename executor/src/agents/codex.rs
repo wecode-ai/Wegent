@@ -149,6 +149,7 @@ mod stand_in_approval;
 mod stand_in_plugin_cli;
 #[path = "codex/writer_diagnostics.rs"]
 mod writer_diagnostics;
+pub(crate) use stand_in_approval::managed_mcp_keeps_native_policy;
 use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/child.rs"]
 mod child;

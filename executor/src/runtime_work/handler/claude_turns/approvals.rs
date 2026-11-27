@@ -169,6 +169,10 @@ impl Drop for ApprovalLease<'_> {
 }
 
 impl ToolApproval for ClaudeRuntimeEventSink {
+    fn native_mcp_policy(&self, server: &str, tool: &str) -> bool {
+        crate::agents::managed_mcp_keeps_native_policy(&self.request, server, tool)
+    }
+
     fn decide(
         &self,
         id: String,

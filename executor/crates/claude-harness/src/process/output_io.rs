@@ -210,13 +210,32 @@ where
     let mut process_tree = ProcessTreeGuard::new(child.id());
 
     let (session_tx, mut session_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
-    let permission =
+    let mut permission =
         approval.map(|owner| crate::permission::PermissionSession::new(owner, session_tx));
     let interactive = permission.is_some();
     let writer = stdin.and_then(|input| {
         child.stdin.take().map(|mut child_stdin| {
+            let startup = permission.as_mut().map(|session| {
+                let (init, prompt, ack) = session.initialize(&input);
+                (init, prompt.to_owned(), ack)
+            });
             tokio::spawn(async move {
-                child_stdin.write_all(input.as_bytes()).await?;
+                if let Some((init, prompt, ack)) = startup {
+                    child_stdin
+                        .write_all(format!("{init}\n").as_bytes())
+                        .await?;
+                    if !timeout(Duration::from_secs(30), ack)
+                        .await
+                        .is_ok_and(|result| result == Ok(true))
+                    {
+                        return Err(std::io::Error::other(
+                            "Claude did not initialize tool approval",
+                        ));
+                    }
+                    child_stdin.write_all(prompt.as_bytes()).await?;
+                } else {
+                    child_stdin.write_all(input.as_bytes()).await?;
+                }
                 if interactive {
                     while let Some(response) = session_rx.recv().await {
                         let line = format!("{response}\n");
@@ -336,6 +355,18 @@ where
     let dispatcher = StreamingEventDispatcher::new(sink);
     while let Ok(Some(line)) = lines.next_line().await {
         line_number += 1;
+        // Catalog responses may contain full MCP transport configurations. Keep
+        // control frames out of transcripts, diagnostics and raw stdout captures.
+        if let Some(session) = permission.as_mut() {
+            if line.contains("\"control_response\"") {
+                if let Ok(frame) = serde_json::from_str::<Value>(&line) {
+                    if frame["type"] == "control_response" {
+                        session.observe_response(&frame["response"]);
+                        continue;
+                    }
+                }
+            }
+        }
         let line = match compact_claude_stdout_line(&line, line_number) {
             Ok(line) => line,
             Err(error) => {

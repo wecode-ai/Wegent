@@ -16,7 +16,8 @@ mod codex;
 pub(crate) use codex::turn_context_for_test;
 pub(crate) use codex::{codex_error_type, codex_guidance_input, CodexTurnConnection};
 pub(crate) use codex::{
-    prepare_provider_migration, provider_state_is_current, redact_diagnostic_text,
+    managed_mcp_keeps_native_policy, prepare_provider_migration, provider_state_is_current,
+    redact_diagnostic_text,
 };
 mod completed_file_changes;
 #[cfg(test)]

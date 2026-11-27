@@ -132,64 +132,71 @@ pub(super) fn stand_in_mcp_approval_overrides(
             ));
         }
     }
-    if request
-        .extra
-        .get("origin")
-        .is_some_and(|origin| origin["type"] == "stand_in_coordinator")
-    {
-        // Batch commands only persist scoped intents; dispatch revalidates every source.
-        // Ordinary task operations and external tools retain native review above.
-        for tool in [
-            "read_intake",
-            "read_work",
-            "create_work",
-            "continue_work",
-            "ignore_events",
-            "defer_events",
-            "schedule_followup",
-            "suggest_action",
-        ] {
-            result.push(format!(
-                "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"approve\""
-            ));
-        }
-    }
-    if request.extra.get("origin").is_some_and(|origin| {
-        origin["type"] == "stand_in_task" && origin["roleDelegation"].is_object()
-    }) {
-        // A specialist may start another restricted personal task. The host
-        // checks its owner, role, lineage and execution budget before dispatch.
-        result.push(
-            "mcp_servers.wework_stand_in.tools.delegate_role_task.approval_mode=\"approve\"".into(),
-        );
-    }
-    // Schedule changes execute directly rather than producing a profile proposal.
-    // Keep their native mutation confirmation even in an identity conversation.
-    if request
-        .extra
-        .get("origin")
-        .is_some_and(|origin| origin["type"] == "stand_in_identity")
-    {
-        for tool in [
-            "schedule_task",
-            "update_schedule",
-            "cancel_schedule",
-            "configure_git_webhook",
-        ] {
-            result.push(format!(
-                "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"writes\""
-            ));
-        }
-    }
-    if super::external_work::git_work(request) {
-        result.push(
-            "mcp_servers.wework_stand_in.tools.prepare_git_workspace.approval_mode=\"approve\""
-                .into(),
-        );
-        result.push("mcp_servers.wework_stand_in.tools.git_read.approval_mode=\"approve\"".into());
-        result.push("mcp_servers.wework_stand_in.tools.git_write.approval_mode=\"prompt\"".into());
+    for (tool, mode) in stand_in_tool_modes(request) {
+        result.push(format!(
+            "mcp_servers.wework_stand_in.tools.{tool}.approval_mode={}",
+            toml_value(mode)
+        ));
     }
     Ok(result)
+}
+
+fn stand_in_tool_modes(
+    request: &ExecutionRequest,
+) -> impl Iterator<Item = (&'static str, &'static str)> {
+    let origin = request.extra.get("origin").unwrap_or(&Value::Null);
+    let scoped: &[(&str, &str)] = match origin["type"].as_str() {
+        Some("stand_in_coordinator") => &[
+            ("read_intake", "approve"),
+            ("read_work", "approve"),
+            ("create_work", "approve"),
+            ("continue_work", "approve"),
+            ("ignore_events", "approve"),
+            ("defer_events", "approve"),
+            ("schedule_followup", "approve"),
+            ("suggest_action", "approve"),
+        ],
+        Some("stand_in_task") if origin["roleDelegation"].is_object() => {
+            &[("delegate_role_task", "approve")]
+        }
+        Some("stand_in_identity") => &[
+            ("schedule_task", "writes"),
+            ("update_schedule", "writes"),
+            ("cancel_schedule", "writes"),
+            ("configure_git_webhook", "writes"),
+        ],
+        _ => &[],
+    };
+    let git: &[(&str, &str)] = if super::external_work::git_work(request) {
+        &[
+            ("prepare_git_workspace", "approve"),
+            ("git_read", "approve"),
+            ("git_write", "prompt"),
+        ]
+    } else {
+        &[]
+    };
+    scoped.iter().chain(git).copied()
+}
+
+pub(crate) fn managed_mcp_keeps_native_policy(
+    request: &ExecutionRequest,
+    server: &str,
+    tool: &str,
+) -> bool {
+    match server {
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME => true,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME => stand_in_tool_modes(request)
+            .find(|(name, _)| *name == tool)
+            .map(|(_, mode)| mode == "approve")
+            .unwrap_or_else(|| {
+                request
+                    .extra
+                    .get("origin")
+                    .is_some_and(|origin| origin["type"] == "stand_in_identity")
+            }),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
