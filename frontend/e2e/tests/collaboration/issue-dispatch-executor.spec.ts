@@ -340,7 +340,11 @@ test.describe('Collaboration group Executor coordination', () => {
         'in_review'
       )
       const activity = page.locator('[data-testid^="cloud-task-activity-card-"]')
-      await expect(activity.filter({ hasText: instruction })).toContainText('Release reviewer')
+      const assignment = activity.filter({
+        hasText: `assigned “${instruction}” to Release reviewer`,
+      })
+      await expect(assignment).toHaveCount(1)
+      await expect(assignment).toBeVisible()
       await expect(activity.filter({ hasText: 'Release log checked.' })).toContainText(
         'Release reviewer'
       )
