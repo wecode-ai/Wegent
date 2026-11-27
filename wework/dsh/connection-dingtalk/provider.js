@@ -20,11 +20,22 @@ const DELEGATION_CATCH_UP_MESSAGES = 50
 // or a missed poll when the process could not persist a transient error.
 const DELEGATION_MISSED_POLLS_MS = 60_000
 const MAX_DELEGATION_CATCH_UP_PAGES = 8
+const COMPONENT_ERROR_CODES = new Set([
+  'connection_cli_unavailable',
+  'connection_cli_request_unavailable',
+  'connection_cli_request_failed',
+  'connection_cli_failed',
+  'dingtalk_component_unavailable',
+  'dependency_missing',
+  'component_update_required',
+  'component_update_failed',
+])
 const READINESS_ERRORS = new Map([
   ['connector_auth_required', 'auth_required'],
   ['dingtalk_credentials_unavailable', 'auth_required'],
   ['dingtalk_account_changed', 'identity_required'],
   ['dingtalk_permissions_required', 'permissions_required'],
+  ...[...COMPONENT_ERROR_CODES].map(code => [code, 'component_unavailable']),
 ])
 
 export function createProvider() {
@@ -268,7 +279,9 @@ async function collectDelegatedMessages(ctx, source, from, now, ownId, checkpoin
       ownId,
       { readTool, validateNativePage, normalizeMessages }
     )
-    return reason ? gap(reason) : { events, hasMore: false, nextCheckpoint }
+    return reason
+      ? gap(reason)
+      : { events: chronologicalEvents(events), hasMore: false, nextCheckpoint }
   }
 
   const events = new Map()
@@ -290,10 +303,21 @@ async function collectDelegatedMessages(ctx, source, from, now, ownId, checkpoin
       events.set(event.id, event)
       if (events.size > DELEGATION_CATCH_UP_MESSAGES) return gap('volume')
     }
-    if (!result.hasMore) return { events: [...events.values()], nextCheckpoint, hasMore: false }
+    if (!result.hasMore)
+      return {
+        events: chronologicalEvents([...events.values()]),
+        nextCheckpoint,
+        hasMore: false,
+      }
     cursor = result.nextCursor
   }
   throw invalid('DingTalk delegation collection could not complete within the page limit')
+}
+
+function chronologicalEvents(events) {
+  return [...events].sort(
+    (left, right) => Date.parse(left.at) - Date.parse(right.at) || left.id.localeCompare(right.id)
+  )
 }
 
 function messageSentAt(message) {
@@ -776,10 +800,12 @@ async function connectionReadiness(ctx, { profile, sources }) {
     details.authTarget = await ctx.cli.describe('dingtalk')
     const component = await readTool(ctx, 'componentInfo')
     if (!['managed', 'bundled', 'external'].includes(component.componentSource))
-      throw invalid('Missing component source')
+      throw componentUnavailable('Missing component source')
+    if (typeof component.version !== 'string' || !component.version.trim())
+      throw componentUnavailable('Missing component version')
     details.component = {
       source: component.componentSource,
-      version: required(component, 'version'),
+      version: component.version,
     }
 
     const profiles = accountProfiles(await readTool(ctx, 'listProfiles'))
@@ -903,6 +929,10 @@ function required(value, key) {
 
 function invalid(message) {
   return Object.assign(new Error(message), { code: 'dingtalk_response_invalid' })
+}
+
+function componentUnavailable(message) {
+  return Object.assign(new Error(message), { code: 'dingtalk_component_unavailable' })
 }
 
 async function readTool(ctx, tool, args = {}) {

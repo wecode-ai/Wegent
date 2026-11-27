@@ -1,6 +1,8 @@
 import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import type { AppUpdateError } from '@/features/app-update/app-update-error'
+import { AppUpdateErrorDetailsDialog } from '@/features/app-update/AppUpdateErrorDetailsDialog'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
@@ -158,6 +160,10 @@ export function DesktopSidebarAccount({
         t('workbench.account_fallback', '当前账号')
       )
   const [menuOpen, setMenuOpen] = useState(false)
+  const [updateFailure, setUpdateFailure] = useState<{
+    error: AppUpdateError
+    retry: () => Promise<void>
+  } | null>(null)
   const [cloudDialogOpen, setCloudDialogOpen] = useState(false)
   const internalContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = containerRefProp ?? internalContainerRef
@@ -244,6 +250,10 @@ export function DesktopSidebarAccount({
               <DesktopSettingsMenu
                 user={user}
                 showLogout={usesCloudAccount ? cloud.isConnected : undefined}
+                onShowUpdateError={(error, retry) => {
+                  setMenuOpen(false)
+                  setUpdateFailure({ error, retry })
+                }}
                 onOpenSettings={() => {
                   setMenuOpen(false)
                   onOpenSettings()
@@ -273,6 +283,18 @@ export function DesktopSidebarAccount({
           </div>
         </div>
       </Popover>
+
+      {updateFailure && (
+        <AppUpdateErrorDetailsDialog
+          open
+          error={updateFailure.error}
+          onClose={() => setUpdateFailure(null)}
+          onRetry={async () => {
+            setUpdateFailure(null)
+            await updateFailure.retry()
+          }}
+        />
+      )}
 
       {cloudDialogOpen && (
         <CloudConnectionDialog

@@ -5733,6 +5733,8 @@
     "stand_in_reply_action": "回复",
     "stand_in_send": "发送给助理",
     "stand_in_unavailable": "执行设备不可用，请检查设备连接。",
+    "delegated_needs_user_title": "Dots 需要你的决定",
+    "delegated_needs_user_body": "{{source}}：{{message}}",
     "title": "通知",
     "settings": "通知设置",
     "settings_requires_cloud": "任务动态可在本地修改；协作通知和其他通知需连接云端。",

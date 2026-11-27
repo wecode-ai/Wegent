@@ -15,6 +15,8 @@ import enHooks from './locales/en/hooks.json'
 import zhHooks from './locales/zh-CN/hooks.json'
 import enCollaborationExp from './locales/en/collaborationExp.json'
 import zhCollaborationExp from './locales/zh-CN/collaborationExp.json'
+import enStandInMessageCenter from './locales/en/standInMessageCenter.json'
+import zhStandInMessageCenter from './locales/zh-CN/standInMessageCenter.json'
 import { extensionI18nResources } from '@extensions/i18n'
 import { personalIssueMessages } from '@wegent/collaboration/platform'
 
@@ -39,6 +41,7 @@ i18n
         hooks: enHooks,
         modelConnections: enModelConnections,
         collaborationExp: enCollaborationExp,
+        standInMessageCenter: enStandInMessageCenter,
         ...(extensionI18nResources.en ?? {}),
       },
       'zh-CN': {
@@ -53,6 +56,7 @@ i18n
         hooks: zhHooks,
         modelConnections: zhModelConnections,
         collaborationExp: zhCollaborationExp,
+        standInMessageCenter: zhStandInMessageCenter,
         ...(extensionI18nResources['zh-CN'] ?? {}),
       },
     },
@@ -68,6 +72,7 @@ i18n
       'hooks',
       'modelConnections',
       'collaborationExp',
+      'standInMessageCenter',
       ...extensionNamespaces,
     ],
     interpolation: { escapeValue: false },

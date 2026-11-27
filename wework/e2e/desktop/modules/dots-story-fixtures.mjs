@@ -128,7 +128,7 @@ const prelude = `const fs=require('fs'),p=require('path'),cp=require('child_proc
 // Linux's network-restricted sandbox denies the socket queries Node uses to
 // identify spawnSync's pipe streams. Capture nested Node output using files.
 const captureNodeOutput = `
-function runNode(args) {
+function runProcess(executable, args) {
   const outputDirectory = fs.mkdtempSync(p.join(dir, '.dots-node-'));
   const stdout = p.join(outputDirectory, 'stdout');
   const stderr = p.join(outputDirectory, 'stderr');
@@ -136,7 +136,7 @@ function runNode(args) {
   try {
     descriptors.push(fs.openSync(stdout, 'w'));
     descriptors.push(fs.openSync(stderr, 'w'));
-    const result = cp.spawnSync(process.execPath, args, {cwd:dir, stdio:['ignore', ...descriptors]});
+    const result = cp.spawnSync(executable, args, {cwd:dir, stdio:['ignore', ...descriptors]});
     assert.ifError(result.error);
     return {status:result.status, stdout:fs.readFileSync(stdout, 'utf8'), stderr:fs.readFileSync(stderr, 'utf8')};
   } finally {
@@ -144,13 +144,14 @@ function runNode(args) {
     fs.rmSync(outputDirectory, {recursive:true, force:true});
   }
 }
+const runNode = args => runProcess(process.execPath, args);
 `
 // The single test file already runs in its own Node invocation. Keep its TAP
 // reporter on those file descriptors instead of creating another socket pair.
 const runCartTests = `const runCartTests=()=>runNode(['--test','--test-isolation=none','--test-reporter=tap','cart.test.mjs']);`
 const checkedTests = `const tested=runCartTests();assert.equal(tested.status,0,tested.stdout+tested.stderr);fs.writeFileSync(p.join(dir,'passed-tests.txt'),tested.stdout);`
 const declare = name =>
-  String.raw`const artifact=p.join(dir,${JSON.stringify(name)});const declared=cp.spawnSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path',artifact],{encoding:'utf8'});assert.equal(declared.status,0,declared.stdout+declared.stderr);const line=declared.stdout.split(/\r?\n/).find(value=>value.startsWith('[WEGENT_ARTIFACT]'));assert.ok(line,'The real declaration must return artifact metadata');const metadata=JSON.parse(line.slice('[WEGENT_ARTIFACT]'.length));const comparePath=${comparableDotsPath.toString()};assert.equal(comparePath(metadata.local_path),comparePath(fs.realpathSync(artifact)));assert.equal(metadata.name,p.basename(artifact));assert.equal(metadata.file_size,fs.statSync(artifact).size);assert.match(metadata.sha256,/^[a-f0-9]{64}$/);console.log(declared.stdout);`
+  String.raw`const artifact=p.join(dir,${JSON.stringify(name)});const declared=runProcess(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path',artifact]);assert.equal(declared.status,0,declared.stdout+declared.stderr);const line=declared.stdout.split(/\r?\n/).find(value=>value.startsWith('[WEGENT_ARTIFACT]'));assert.ok(line,'The real declaration must return artifact metadata');const metadata=JSON.parse(line.slice('[WEGENT_ARTIFACT]'.length));const comparePath=${comparableDotsPath.toString()};assert.equal(comparePath(metadata.local_path),comparePath(fs.realpathSync(artifact)));assert.equal(metadata.name,p.basename(artifact));assert.equal(metadata.file_size,fs.statSync(artifact).size);assert.match(metadata.sha256,/^[a-f0-9]{64}$/);console.log(declared.stdout);`
 
 export function cartProgram(root, phase) {
   const setup = `${prelude}const dir=${JSON.stringify(join(root, 'cart-fixture'))};${captureNodeOutput}${runCartTests}`
@@ -171,7 +172,7 @@ export function launchProgram(root, phase) {
     '- 2026-11-20: beta users only\n- Verify CSV export\n- Automatic scheduling deferred\n- Internal review only; no external publication\n'
   const summary =
     'scope-v1.md promised general availability and scheduling; scope-v2.md limits delivery to CSV export beta.\nOwner decision: Keep November 20, beta users only. Automatic scheduling deferred.\n'
-  return `${prelude}const dir=${JSON.stringify(join(root, 'launch-fixture'))};assert.match(fs.readFileSync(p.join(dir,'scope-v2.md'),'utf8'),/Date not specified/);fs.writeFileSync(p.join(dir,'announcement.md'),${JSON.stringify(announcement)});fs.writeFileSync(p.join(dir,'launch-checklist.md'),${JSON.stringify(checklist)});fs.writeFileSync(p.join(dir,'scope-change-summary.md'),${JSON.stringify(summary)});${declare('announcement.md')}console.log('DOTS_LAUNCH_V${phase}_VERIFIED');`
+  return `${prelude}const dir=${JSON.stringify(join(root, 'launch-fixture'))};${captureNodeOutput}assert.match(fs.readFileSync(p.join(dir,'scope-v2.md'),'utf8'),/Date not specified/);fs.writeFileSync(p.join(dir,'announcement.md'),${JSON.stringify(announcement)});fs.writeFileSync(p.join(dir,'launch-checklist.md'),${JSON.stringify(checklist)});fs.writeFileSync(p.join(dir,'scope-change-summary.md'),${JSON.stringify(summary)});${declare('announcement.md')}console.log('DOTS_LAUNCH_V${phase}_VERIFIED');`
 }
 
 const analysisScript = String.raw`import fs from 'node:fs'
@@ -204,8 +205,10 @@ console.log(JSON.stringify(totals))
 
 export function revenueProgram(root, phase) {
   const setup = `${prelude}const dir=${JSON.stringify(join(root, 'revenue-fixture'))};`
+  // Phase three runs read-only. Forward the analyzer's stderr to the outer
+  // native command so the scenario can check it without creating capture files.
   if (phase === 3)
-    return `${setup}const before=fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8');const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,encoding:'utf8'});assert.equal(result.status,1,result.stdout+result.stderr);assert.match(result.stderr,/Invalid amount: not-a-number/);assert.equal(fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8'),before);console.log(result.stderr);console.log('DOTS_REVENUE_INVALID_AMOUNT');`
+    return `${setup}const before=fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8');const result=cp.spawnSync(process.execPath,['analyze.mjs'],{cwd:dir,stdio:['ignore','inherit','inherit']});assert.ifError(result.error);assert.equal(result.status,1);assert.equal(fs.readFileSync(p.join(dir,'revenue-report.md'),'utf8'),before);console.log('DOTS_REVENUE_INVALID_AMOUNT');`
   if (phase === 1)
     return `${setup}${captureNodeOutput}fs.writeFileSync(p.join(dir,'analyze.mjs'),${JSON.stringify(analysisScript)});const result=runNode(['analyze.mjs']);assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:30000,refunded:0,pending:5000,total:35000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V1_VERIFIED');`
   return `${setup}${captureNodeOutput}const result=runNode(['analyze.mjs']);assert.equal(result.status,0,result.stdout+result.stderr);assert.deepEqual(JSON.parse(result.stdout),{paid:10000,refunded:20000,pending:35000,total:65000});${declare('revenue-report.md')}console.log('DOTS_REVENUE_V${phase}_VERIFIED');`
@@ -214,7 +217,7 @@ export function revenueProgram(root, phase) {
 export function followupProgram(root) {
   const plan =
     '1. Review Cedar order O4: 30000 cents pending.\n2. Prepare internal collection checklist.\n3. Investigate Birch order O2 refund after Cedar.\nInternal draft only. No customer has been contacted.\n'
-  return `${prelude}const dir=${JSON.stringify(join(root, 'revenue-fixture'))};const csv=fs.readFileSync(p.join(dir,'orders.csv'),'utf8');assert.ok(csv.includes('O4,Cedar,30000,pending'));fs.writeFileSync(p.join(dir,'followup-plan.md'),${JSON.stringify(plan)});${declare('followup-plan.md')}console.log('DOTS_REVENUE_DECISION_IMPLEMENTED');`
+  return `${prelude}const dir=${JSON.stringify(join(root, 'revenue-fixture'))};${captureNodeOutput}const csv=fs.readFileSync(p.join(dir,'orders.csv'),'utf8');assert.ok(csv.includes('O4,Cedar,30000,pending'));fs.writeFileSync(p.join(dir,'followup-plan.md'),${JSON.stringify(plan)});${declare('followup-plan.md')}console.log('DOTS_REVENUE_DECISION_IMPLEMENTED');`
 }
 
 export async function assertLaunchUnchanged(root) {

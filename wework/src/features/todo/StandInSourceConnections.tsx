@@ -19,10 +19,11 @@ import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { MessageSquare, Plus, Search, X } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createSourceConnectionsModel } from './sourceConnectionsModel'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
+import { StandInSourceNavigationContext } from './standInOverviewSource'
 
 type SourceConnectionsProps = {
   role: StandInRole
@@ -67,6 +68,29 @@ function StandInSourceConnectionsContent({
   delegatedDingTalk = false,
 }: SourceConnectionsProps) {
   const { t, i18n } = useTranslation('common')
+  const requestedSourceId = useContext(StandInSourceNavigationContext)
+  const focusedRequestedSource = useRef(false)
+  const focusTarget = (target: HTMLElement) => {
+    if (focusedRequestedSource.current) return
+    focusedRequestedSource.current = true
+    target.scrollIntoView?.({ block: 'center' })
+    target.focus({ preventScroll: true })
+  }
+  const focusRequestedSource = (node: HTMLDivElement | null) => {
+    if (!node || !requestedSourceId || focusedRequestedSource.current) return
+    const target = node.querySelector<HTMLElement>('[role="checkbox"], button')
+    if (target) focusTarget(target)
+  }
+  const focusRequestedSourceFallback = (node: HTMLElement | null) => {
+    if (
+      !node ||
+      !requestedSourceId ||
+      focusedRequestedSource.current ||
+      !rows.some(row => row.id === requestedSourceId)
+    )
+      return
+    focusTarget(node)
+  }
   const input = useMemo(
     () => ({
       role,
@@ -163,6 +187,7 @@ function StandInSourceConnectionsContent({
       {rows.map(row => (
         <div
           key={`${row.profile}:${row.kind}:${row.id}`}
+          ref={row.id === requestedSourceId ? focusRequestedSource : undefined}
           className="flex flex-wrap items-center gap-2 border-b border-border/50 py-2"
         >
           <div className="min-w-0 flex-1">
@@ -321,6 +346,8 @@ function StandInSourceConnectionsContent({
   if (authorizationRequired)
     return (
       <section
+        ref={focusRequestedSourceFallback}
+        tabIndex={requestedSourceId ? -1 : undefined}
         className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
         data-testid={`${prefix}-authorization`}
       >
@@ -355,6 +382,8 @@ function StandInSourceConnectionsContent({
   const showAdding = excluding || adding || rows.length === 0
   return (
     <section
+      ref={focusRequestedSourceFallback}
+      tabIndex={requestedSourceId ? -1 : undefined}
       className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
       data-testid={`${prefix}-connections`}
     >

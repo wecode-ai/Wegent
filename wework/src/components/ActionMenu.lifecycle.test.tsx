@@ -13,6 +13,7 @@ const items = [
   {
     label: 'Parent',
     testId: 'parent',
+    shortcut: 'mod+K',
     children: [
       { label: 'Unavailable', testId: 'unavailable', disabled: true, onSelect: vi.fn() },
       { label: 'Child', testId: 'child' },
@@ -28,7 +29,11 @@ it('focuses keyboard entry and enabled submenu items, then returns to the parent
   await user.keyboard('{ArrowUp}')
   await waitFor(() => expect(screen.getByTestId('last')).toHaveFocus())
   await user.keyboard('{ArrowUp}')
-  expect(screen.getByTestId('parent')).toHaveFocus()
+  const parent = screen.getByTestId('parent')
+  expect(parent).toHaveFocus()
+  const shortcuts = parent.querySelectorAll('[data-slot="menu-shortcut"]')
+  expect(shortcuts).toHaveLength(1)
+  expect(shortcuts[0]).toHaveTextContent(/⌘K|Ctrl\+K/)
   await user.keyboard('{ArrowRight}')
   await waitFor(() => expect(screen.getByTestId('unavailable')).toHaveFocus())
   await user.keyboard('{Enter}')

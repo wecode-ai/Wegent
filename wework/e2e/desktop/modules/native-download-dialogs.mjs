@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
@@ -13,6 +14,49 @@ const POPUP_MENU_WINDOW_TYPES = new Set([
 ])
 
 let diagnosticSequence = 0
+
+async function windowsDownloadDialog(control, action, { timeoutMs, signal, args = [], env = {} }) {
+  const { stdout } = await execute(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-File',
+      fileURLToPath(new URL('./windows-download-dialog.ps1', import.meta.url)),
+      '-AppProcessId',
+      String(control.applicationProcessId),
+      '-Action',
+      action,
+      '-TimeoutMs',
+      String(timeoutMs),
+      ...args,
+    ],
+    {
+      encoding: 'utf8',
+      timeout: timeoutMs + 4_000,
+      signal,
+      env: {
+        ...process.env,
+        WEWORK_E2E_DOWNLOAD_FIXTURE_ORIGIN: new URL(control.url).origin,
+        ...env,
+      },
+    }
+  )
+  return stdout.trim() ? JSON.parse(stdout) : undefined
+}
+
+function downloadDialogsForApp(control, timeoutMs = 2_000) {
+  return process.platform === 'win32'
+    ? windowsDownloadDialog(control, 'list', { timeoutMs })
+    : listVisibleDialogsForPid(control.applicationProcessId, timeoutMs)
+}
+
+export function moveWindowsWindowPointer(control, { x, y }, click = false) {
+  return windowsDownloadDialog(control, click ? 'click-pointer' : 'move-pointer', {
+    timeoutMs: 2_000,
+    args: ['-X', String(Math.round(x)), '-Y', String(Math.round(y))],
+  })
+}
 
 function isVanishedX11Window(error) {
   return error?.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? '')
@@ -155,11 +199,17 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   await execute('xdotool', args, { encoding: 'utf8', timeout: 3_000 })
   if (clickButton !== undefined) {
     try {
+      const { stdout } = await execute(
+        'xdotool',
+        ['getactivewindow', 'getmouselocation', '--shell'],
+        { encoding: 'utf8', timeout: 1_000 }
+      )
       console.info('[desktop-e2e-native-click]', {
-        ...(await inspectLinuxPointer(windowId)),
+        windowId,
         x,
         y,
         clickButton,
+        state: stdout.trim(),
       })
     } catch (error) {
       console.info('[desktop-e2e-native-click]', {
@@ -174,11 +224,30 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
 }
 
 export async function inspectLinuxPointer(windowId) {
-  const { stdout } = await execute('xdotool', ['getactivewindow', 'getmouselocation', '--shell'], {
+  const [{ stdout: activeWindow }, { stdout: location }] = await Promise.all([
+    execute('xdotool', ['getactivewindow'], { encoding: 'utf8', timeout: 1_000 }),
+    execute('xdotool', ['getmouselocation', '--shell'], { encoding: 'utf8', timeout: 1_000 }),
+  ])
+  return {
+    windowId,
+    activeWindow: activeWindow.trim(),
+    state: location.trim(),
+    capturedAt: new Date().toISOString(),
+  }
+}
+
+export async function pressLinuxPointer(button = 1) {
+  await execute('xdotool', ['mousedown', '--clearmodifiers', String(button)], {
     encoding: 'utf8',
-    timeout: 1_000,
+    timeout: 3_000,
   })
-  return { windowId, state: stdout.trim(), capturedAt: new Date().toISOString() }
+}
+
+export async function releaseLinuxPointer(button = 1) {
+  await execute('xdotool', ['mouseup', '--clearmodifiers', String(button)], {
+    encoding: 'utf8',
+    timeout: 3_000,
+  })
 }
 
 export async function clickLinuxPointer(button = 1) {
@@ -238,9 +307,9 @@ async function waitForWindowToClose(pid, windowId, timeoutMs) {
   return false
 }
 
-export async function assertNoNativeSaveDialog(pid, existingDialogIds = new Set()) {
-  if (process.platform !== 'linux') return
-  const dialogs = await listVisibleDialogsForPid(pid)
+export async function assertNoNativeSaveDialog(control, existingDialogIds = new Set()) {
+  if (!['linux', 'win32'].includes(process.platform)) return
+  const dialogs = await downloadDialogsForApp(control)
   const unexpected = dialogs.filter(dialog => !existingDialogIds.has(dialog.windowId))
   assert.deepEqual(
     unexpected.map(dialog => ({ windowId: dialog.windowId, title: dialog.title })),
@@ -253,18 +322,16 @@ export async function triggerEmbeddedBrowserContextMenuItem({
   bridgeCall,
   control,
   downCount,
+  windowsMenuLabels,
   resultDir,
   stepName,
   targetSelector,
   timeoutMs = 8_000,
 }) {
-  assert.equal(
-    process.platform,
-    'linux',
-    'Native context-menu E2E automation currently expects Linux Xvfb'
-  )
   const pid = control.applicationProcessId
-  const mainWindowId = await activateLinuxMainWindow(control, timeoutMs)
+  const onWindows = process.platform === 'win32'
+  if (onWindows) await control.command('focusMainWindow', 'body')
+  const mainWindowId = onWindows ? null : await activateLinuxMainWindow(control, timeoutMs)
 
   const webviewMetrics = JSON.parse(
     await control.command('getElementMetrics', ACTIVE_WEBVIEW_SELECTOR)
@@ -294,6 +361,14 @@ export async function triggerEmbeddedBrowserContextMenuItem({
 
   const x = Math.round(webviewRect.left + elementRect.left + elementRect.width / 2)
   const y = Math.round(webviewRect.top + elementRect.top + elementRect.height / 2)
+  if (onWindows) {
+    assert.ok(windowsMenuLabels?.length, 'The native menu item must have a Windows label')
+    return windowsDownloadDialog(control, 'context-menu', {
+      timeoutMs,
+      args: ['-X', String(x), '-Y', String(y)],
+      env: { WEWORK_E2E_DOWNLOAD_MENU_LABELS: JSON.stringify(windowsMenuLabels) },
+    })
+  }
   const existingPopups = new Set(await listVisiblePopupMenus(pid))
 
   await moveLinuxWindowPointer(mainWindowId, { x, y }, 3)
@@ -459,32 +534,45 @@ export async function withNativeSaveDialog(
   triggerDownload,
   { action, savePath = null, resultDir = null, stepName, timeoutMs = 10_000 }
 ) {
-  assert.equal(
-    process.platform,
-    'linux',
-    'Native save-dialog E2E automation currently expects Linux Xvfb'
+  assert.ok(
+    ['linux', 'win32'].includes(process.platform),
+    'Native save-dialog E2E automation requires Linux or Windows'
   )
   const pid = control.applicationProcessId
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
 
   const existingDialogIds = new Set(
-    (await listVisibleDialogsForPid(pid)).map(dialog => dialog.windowId)
+    (await downloadDialogsForApp(control)).map(dialog => dialog.windowId)
   )
   const abort = new AbortController()
-  const dialogPromise = handleNativeSaveDialogWindow({
-    action,
-    existingDialogIds,
-    pid,
-    resultDir,
-    savePath,
-    signal: abort.signal,
-    stepName,
-    timeoutMs,
-  })
+  const dialogPromise =
+    process.platform === 'win32'
+      ? windowsDownloadDialog(control, action, {
+          timeoutMs,
+          signal: abort.signal,
+          env: {
+            WEWORK_E2E_DOWNLOAD_EXISTING_DIALOGS: JSON.stringify([...existingDialogIds]),
+            WEWORK_E2E_DOWNLOAD_SAVE_PATH: savePath ?? '',
+          },
+        })
+      : handleNativeSaveDialogWindow({
+          action,
+          existingDialogIds,
+          pid,
+          resultDir,
+          savePath,
+          signal: abort.signal,
+          stepName,
+          timeoutMs,
+        })
   try {
     const [, dialog] = await Promise.all([triggerDownload(), dialogPromise])
     assert.ok(dialog, `Native OS save dialog did not complete (${stepName})`)
     return dialog
+  } catch (error) {
+    throw new Error(`Native OS save dialog step failed (${stepName}): ${error.message}`, {
+      cause: error,
+    })
   } finally {
     abort.abort()
     await dialogPromise.catch(() => {})

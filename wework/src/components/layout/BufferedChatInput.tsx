@@ -166,6 +166,7 @@ export function ScopedDraftChatInput({
   draftStore,
   draftScope,
   writeDraft,
+  onDraftEdit,
   ...props
 }: ScopedDraftChatInputProps) {
   const draft = useScopedDraft(draftStore, draftScope)
@@ -176,6 +177,13 @@ export function ScopedDraftChatInput({
     },
     [draftScope, writeDraft]
   )
+  const persistDraftEdit = useCallback(
+    (value: string) => {
+      draftStore.persistDraft(draftScope, value)
+      onDraftEdit?.(value)
+    },
+    [draftScope, draftStore, onDraftEdit]
+  )
   return (
     <BufferedChatInput
       {...props}
@@ -183,6 +191,7 @@ export function ScopedDraftChatInput({
       draftScope={draftScope}
       replaceDraftKey={draft.replacement}
       onChange={onChange}
+      onDraftEdit={persistDraftEdit}
     />
   )
 }

@@ -62,6 +62,13 @@ export function useStandInNotifications(
           trackedItems,
           source,
           systemEnabled,
+          delegatedMessage: record => ({
+            title: t('notifications.delegated_needs_user_title'),
+            body: t('notifications.delegated_needs_user_body', {
+              source: record.sourceName,
+              message: record.message.replace(/\s+/g, ' ').trim().slice(0, 160),
+            }),
+          }),
           message: status => t(`notifications.stand_in_${status}`),
         },
         listener

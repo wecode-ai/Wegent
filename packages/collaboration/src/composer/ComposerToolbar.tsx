@@ -150,7 +150,7 @@ export function ComposerToolbar({
     t('workbench.model_picker_title', 'Select model')
   const displayedSelectedModel =
     selectedModel ?? (activeModel?.compatibilityDisabled ? activeModel : null)
-  const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'Command+Enter'
+  const primarySendShortcut = sendKey === 'enter' ? 'Enter' : 'mod+Enter'
   const primaryBusyLabel =
     followUpBehavior === 'guide'
       ? t('workbench.guide_current_turn', '引导当前回复')
@@ -358,7 +358,7 @@ export function ComposerToolbar({
                     icon: Zap,
                     testId: 'interrupt-and-send-option',
                     onSelect: () => onSubmit({ interruptWhenBusy: true }),
-                    shortcut: 'Command+Shift+Enter',
+                    shortcut: 'mod+Shift+Enter',
                   },
                 ]}
               />

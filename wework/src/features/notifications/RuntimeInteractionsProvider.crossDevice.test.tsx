@@ -83,6 +83,37 @@ async function discoverQuestions(focused: boolean) {
 }
 
 describe('cross-device human input', () => {
+  it('rediscovers tasks only when their relevant fields change', async () => {
+    vi.useFakeTimers()
+    try {
+      const task = {
+        ...interactionTask,
+        task: { ...interactionTask.task, updatedAt: null },
+      }
+      const rendered = view(interactionQuestion, task)
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(harness.list).toHaveBeenCalledTimes(1)
+      expect(context!.loading).toBe(false)
+
+      const renamedTask = {
+        ...task,
+        task: { ...task.task, title: 'Renamed task', updatedAt: undefined },
+      }
+      rendered.rerenderSource({ ...rendered.taskSource, items: [renamedTask] })
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(harness.list).toHaveBeenCalledTimes(1)
+
+      rendered.rerenderSource({
+        ...rendered.taskSource,
+        items: [{ ...renamedTask, task: { ...renamedTask.task, updatedAt: 123 } }],
+      })
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      expect(harness.list).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the visible state stable when background discovery finds no changes', async () => {
     vi.useFakeTimers()
     try {
