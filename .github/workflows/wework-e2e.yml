@@ -571,6 +571,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/*/assistant-team-options.png
             wework/test-results/desktop-e2e/*/assistant-team-saved.png
+            wework/test-results/desktop-e2e/*/assistant-team-delivery.png
           if-no-files-found: error
           retention-days: 7
 

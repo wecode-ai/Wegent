@@ -349,6 +349,8 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
       humanId: '',
       leader: { id: String(leader.wegentTeamId), type: 'agent' },
     })
+    const groupDetail = page.getByTestId(`collaboration-group-detail-${group}`)
+    await capture(groupDetail, testInfo, '04a-group-configuration')
     const title = `Sign off release ${suffix}`
     const grouped = await apiRequest<{ id: string }>(
       request,
@@ -484,6 +486,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
             status: assigned.status,
           },
           group: {
+            groupId: group,
             issueId: grouped.id,
             status: 'in_review',
             managerId: leader.id,
