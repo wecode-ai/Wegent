@@ -16,6 +16,8 @@ import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/
 import {
   sharedCapability,
   botMcpReceipt,
+  coordinateAuditPath,
+  verifyCoordinateAudit,
   sharedBotGrants,
   sharedCodexProbe,
 } from '../../utils/standalone-bot-capabilities'
@@ -890,7 +892,8 @@ test.describe('Agent conversation regression', () => {
     const childResult = `Reviewed by worker ${name}`
     const result = `Review complete ${name}`
     const sharedGrants = await sharedBotGrants(
-      await resolveSkillRef(request, sharedCapability.skill)
+      await resolveSkillRef(request, sharedCapability.skill),
+      CODEX_MODEL_SERVER_URL + coordinateAuditPath(name)
     )
     const cleanup: string[] = []
     try {
@@ -1015,6 +1018,12 @@ test.describe('Agent conversation regression', () => {
           leaderBotId: bots[0].bot_id,
           leaderReceipt,
           workerReceipt,
+          calls: await verifyCoordinateAudit(
+            request,
+            MOCK_MODEL_SERVER_URL + coordinateAuditPath(name),
+            leaderReceipt,
+            workerReceipt
+          ),
           workerBotId: bots[1].bot_id,
           nativeRole: role,
           skillHeading: sharedCapability.heading,

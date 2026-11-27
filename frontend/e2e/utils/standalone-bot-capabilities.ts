@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { expect, type APIRequestContext } from '@playwright/test'
 import type { PhaseRegressionStep } from './codex-phase-regression'
 
 export const sharedCapability = {
@@ -8,7 +9,7 @@ export const sharedCapability = {
   result: 'result: 84',
 }
 
-export async function sharedBotGrants(skillRef: object) {
+export async function sharedBotGrants(skillRef: object, auditUrl: string) {
   const program = await readFile(
     resolve(__dirname, '../../../wework/e2e/utils/tool-details-mcp-server.mjs'),
     'utf8'
@@ -21,7 +22,7 @@ export async function sharedBotGrants(skillRef: object) {
       capability: {
         type: 'stdio',
         command: 'node',
-        args: ['--input-type=module', '-e', program, 'probe', 'node_repl', 'receipts'],
+        args: ['--input-type=module', '-e', program, 'probe', 'node_repl', 'receipts', auditUrl],
       },
     },
   }
@@ -70,4 +71,26 @@ export function botMcpReceipt(bodies: unknown[], marker: string): string {
       'Expected one distinct MCP receipt for ' + marker + ', received ' + receipts.size
     )
   return [...receipts][0]
+}
+
+export function coordinateAuditPath(run: string) {
+  return '/mcp-control/probe-calls/' + run
+}
+
+export async function verifyCoordinateAudit(
+  request: APIRequestContext,
+  url: string,
+  leaderReceipt: string,
+  workerReceipt: string
+) {
+  const response = await request.get(url)
+  expect(response.ok(), await response.text()).toBe(true)
+  const calls = await response.json()
+  expect(calls).toEqual(
+    [leaderReceipt, workerReceipt].map(id => ({
+      tool: 'js',
+      receipt: 'MCP_RECEIPT:' + id,
+    }))
+  )
+  return calls
 }

@@ -5,6 +5,8 @@ import {
   sharedCapability,
   sharedBotGrants,
   botMcpReceipt,
+  coordinateAuditPath,
+  verifyCoordinateAudit,
 } from '../../utils/standalone-bot-capabilities'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import {
@@ -29,6 +31,7 @@ type Capture = {
   body: { messages: unknown[]; system?: unknown }
 }
 type TaskDetail = {
+  device_id?: string | null
   status: string
   model_id?: string
   subtasks: Array<{
@@ -139,6 +142,11 @@ test.describe('Real Claude background subagent lifecycle', () => {
           const parentWaiting = scenario.requests.find(capture => capture.kind === 'parent-1')!
           const childDone = scenario.requests.find(capture => capture.kind === 'child-1')!
           if (workerName) {
+            expect(detail.device_id).toBeFalsy()
+            expect(assistants[0]).toMatchObject({
+              team_id: teamId,
+              executor_name: expect.stringMatching(/^wegent-task-/),
+            })
             expect(subagentType).toBeTruthy()
             const blocks = scenario.requests
               .filter(r => r.kind.startsWith('child-'))
@@ -172,6 +180,12 @@ test.describe('Real Claude background subagent lifecycle', () => {
                 subagentType,
                 primaryReceipt,
                 childReceipt,
+                calls: await verifyCoordinateAudit(
+                  request,
+                  MOCK_URL + coordinateAuditPath(model),
+                  primaryReceipt,
+                  childReceipt
+                ),
               }),
               contentType: 'application/json',
             })
@@ -188,6 +202,12 @@ test.describe('Real Claude background subagent lifecycle', () => {
           await expect(page.getByTestId('messages-container')).toContainText(
             `BG_PARENT_DONE_${model}`
           )
+          if (workerName) {
+            await testInfo.attach('claude-coordinate-delivery', {
+              body: await page.screenshot(),
+              contentType: 'image/png',
+            })
+          }
         } else {
           expect(scenario.childFinished).toBe(false)
           const afterStop = scenario.requests.find(capture => capture.kind === 'parent-3')!
@@ -563,11 +583,14 @@ async function createAgent(
       (s: { metadata: { name: string } }) => s.metadata.name === sharedCapability.skill
     )?.metadata
     expect(Number(metadata?.labels.id)).toBeGreaterThan(0)
-    grants = await sharedBotGrants({
-      skill_id: Number(metadata.labels.id),
-      namespace: metadata.namespace,
-      is_public: metadata.labels.user_id === '0',
-    })
+    grants = await sharedBotGrants(
+      {
+        skill_id: Number(metadata.labels.id),
+        namespace: metadata.namespace,
+        is_public: metadata.labels.user_id === '0',
+      },
+      PROVIDER_URL + coordinateAuditPath(model)
+    )
   }
   const botId = await createBot(request, headers, model, shellName, botName, grants)
   const workerId = workerName
