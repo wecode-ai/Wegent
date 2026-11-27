@@ -160,15 +160,20 @@ export function useKnowledgeBindingValidation(
   const enabled =
     userId !== undefined && Boolean(idKey) && Boolean(bindingGroup || organizationOnly)
   const [attempt, setAttempt] = useState(0)
-  const key = JSON.stringify([scope, idKey, attempt])
+  const key = enabled ? JSON.stringify([scope, idKey, attempt]) : null
+  const [activeKey, setActiveKey] = useState(key)
   const [validation, setValidation] = useState<{
     scope: string
-    key: string
+    key: string | null
     invalidIds: ReadonlySet<number>
     status: 'ready' | 'failed'
   }>()
+  if (activeKey !== key) {
+    setActiveKey(key)
+    if (validation?.key) setValidation({ ...validation, key: null })
+  }
   useEffect(() => {
-    if (!enabled) return
+    if (key === null) return
     const ids = idKey.split(',').map(Number)
     const controller = new AbortController()
     const requests = []
@@ -209,7 +214,7 @@ export function useKnowledgeBindingValidation(
         }))
       })
     return () => controller.abort()
-  }, [bindingGroup, enabled, idKey, key, organizationOnly, scope])
+  }, [bindingGroup, idKey, key, organizationOnly, scope])
 
   const status = !enabled ? 'ready' : validation?.key === key ? validation.status : 'pending'
   const invalidIds =

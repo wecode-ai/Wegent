@@ -57,7 +57,15 @@ test('revalidates default knowledge bindings when the Agent source team changes'
     const picker = dialog.getByTestId('default-knowledge-base-trigger')
     const option = (id: number) => page.getByTestId(`default-knowledge-base-option-${id}`)
 
-    await target(libraryA.group).press('Space')
+    const groupA = target(libraryA.group)
+    await expect(groupA).toBeVisible()
+    const initialTarget = dialog.getByTestId('capability-scope-groups').getByRole('checkbox', {
+      checked: true,
+    })
+    if ((await initialTarget.count()) && !(await groupA.isChecked())) {
+      await initialTarget.uncheck()
+    }
+    await groupA.check()
     await expect(target(libraryA.group)).toBeChecked()
     await capabilities.press('Enter')
     await picker.press('Enter')
@@ -71,7 +79,7 @@ test('revalidates default knowledge bindings when the Agent source team changes'
 
     await capabilities.press('Enter')
     await expect(picker).toBeHidden()
-    await target(libraryB.group).press('Space')
+    await target(libraryB.group).check()
     await expect(target(libraryB.group)).toBeChecked()
     const switched = page.waitForResponse(response => {
       const url = new URL(response.url())
@@ -81,7 +89,7 @@ test('revalidates default knowledge bindings when the Agent source team changes'
         url.searchParams.getAll('candidate_ids').includes(String(libraryA.id))
       )
     })
-    await target(libraryA.group).press('Space')
+    await groupA.uncheck()
     expect((await switched).status()).toBe(200)
     await expect(save).toBeDisabled()
 
