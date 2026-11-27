@@ -12,6 +12,7 @@
 mod anthropic;
 mod chat;
 mod fork;
+mod gateway_credentials;
 mod harness_protocol;
 mod history;
 mod image_budget;
@@ -51,6 +52,7 @@ use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
+pub use gateway_credentials::GatewayCredentials;
 pub use official_http::{official_http_route, OFFICIAL_HTTP_ROUTE};
 pub use request_policy::CodexRequestMode;
 
@@ -178,6 +180,12 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
     let token = registry
         .tokens_by_scope
         .get(route_scope)
+        .filter(|token| {
+            registry
+                .routes
+                .get(*token)
+                .map_or(true, |route| route.gateway_credentials.is_none())
+        })
         .cloned()
         .unwrap_or_else(|| {
             let token = generate_registration_token(&registry);
@@ -190,6 +198,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
         token.clone(),
         RegisteredUpstream {
             upstream,
+            gateway_credentials: None,
             vision_sidecar: None,
             text_only: false,
             history: Default::default(),
@@ -225,7 +234,7 @@ struct ResponsesToolCapabilities {
 }
 
 impl LocalModelProxyUpstream {
-    fn resolved_request_url(&self) -> String {
+    pub fn resolved_request_url(&self) -> String {
         self.request_url.clone().unwrap_or_else(|| {
             let path = match self.api_format.as_str() {
                 "anthropic-messages" => "/messages",
@@ -332,6 +341,12 @@ pub fn upstream_from_model_config(
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
+    let mut default_headers = header_pairs(model_config.get("default_headers"));
+    if codex_request_mode == CodexRequestMode::Passthrough
+        && model_config["wework_model_kind"] == "cloud"
+    {
+        default_headers.push(("X-Wegent-Request-Mode".to_owned(), "passthrough".to_owned()));
+    }
     Ok(Some(LocalModelProxyUpstream {
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_string(model_config, "responses_url")
@@ -350,7 +365,7 @@ pub fn upstream_from_model_config(
             .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
             .unwrap_or(false),
         api_key,
-        default_headers: header_pairs(model_config.get("default_headers")),
+        default_headers,
         proxy_url: model_config
             .get("proxy")
             .and_then(|proxy| {
@@ -438,6 +453,7 @@ pub struct VisionSidecarUpstream {
 struct RegisteredUpstream {
     text_only: bool,
     upstream: LocalModelProxyUpstream,
+    gateway_credentials: Option<GatewayCredentials>,
     vision_sidecar: Option<VisionSidecarUpstream>,
     history: std::sync::Arc<history::CodexToolHistory>,
     thread_ids: HashSet<String>,
@@ -470,10 +486,24 @@ pub fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String 
 
 pub fn register_with_vision_sidecar(
     route_scope: &str,
+    upstream: LocalModelProxyUpstream,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) -> String {
+    register_codex_route(route_scope, upstream, vision_sidecar, None)
+}
+
+pub fn register_codex_route(
+    route_scope: &str,
     mut upstream: LocalModelProxyUpstream,
     mut vision_sidecar: Option<VisionSidecarUpstream>,
+    gateway_credentials: Option<GatewayCredentials>,
 ) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    let gateway_credentials =
+        gateway_credentials.filter(|credentials| credentials.matches(&upstream));
+    if gateway_credentials.is_some() {
+        upstream.api_key.clear();
+    }
     apply_wework_headers(&mut upstream.default_headers);
     if let Some(sidecar) = &mut vision_sidecar {
         apply_wework_headers(&mut sidecar.default_headers);
@@ -491,7 +521,10 @@ pub fn register_with_vision_sidecar(
             "routing_model_id",
             upstream.routing_model_id.clone().unwrap_or_default(),
         ),
-        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "auth_present",
+            (gateway_credentials.is_some() || !upstream.api_key.is_empty()).to_string(),
+        ),
         (
             "default_headers",
             upstream.default_headers.len().to_string(),
@@ -504,6 +537,16 @@ pub fn register_with_vision_sidecar(
     let token = registry
         .tokens_by_scope
         .get(route_scope)
+        .filter(|token| {
+            // A route token cannot change the credential source of a concurrent turn.
+            registry.routes.get(*token).map_or(true, |route| {
+                match (&route.gateway_credentials, &gateway_credentials) {
+                    (Some(previous), Some(current)) => previous.same_connection(current),
+                    (None, None) => true,
+                    _ => false,
+                }
+            })
+        })
         .cloned()
         .unwrap_or_else(|| {
             let token = generate_registration_token(&registry);
@@ -543,6 +586,7 @@ pub fn register_with_vision_sidecar(
         token.clone(),
         RegisteredUpstream {
             upstream,
+            gateway_credentials,
             vision_sidecar,
             text_only: false,
             history,

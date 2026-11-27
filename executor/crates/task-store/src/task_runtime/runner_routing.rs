@@ -44,7 +44,8 @@ fn invalid(message: &str) -> TaskRuntimeError {
     TaskRuntimeError::Invalid(message.to_owned())
 }
 
-pub(crate) fn validate_policies(
+/// Validate portable policy shape before resolving it against a specific runner catalog.
+pub fn validate_policies(
     environment: Option<&Value>,
     model: Option<&Value>,
 ) -> Result<(), TaskRuntimeError> {

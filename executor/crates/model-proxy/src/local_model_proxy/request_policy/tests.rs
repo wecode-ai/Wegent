@@ -61,7 +61,7 @@ fn codex_request() -> Value {
 async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
     let upstream = super::super::upstream_from_model_config(&json!({
         "base_url": super::super::OFFICIAL_CHATGPT_CODEX_BASE_URL,
-        "codex_request_mode": "passthrough",
+        "codex_request_mode": "auto",
         "tool_profile": "custom",
         "native_tool_search": true,
         "native_namespace_tools": true
@@ -113,10 +113,10 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
 }
 
 #[tokio::test]
-async fn official_chatgpt_passthrough_still_removes_old_provider_state_on_switch() {
+async fn official_chatgpt_auto_removes_old_provider_state_on_switch() {
     let upstream = super::super::upstream_from_model_config(&json!({
         "base_url": super::super::OFFICIAL_CHATGPT_CODEX_BASE_URL,
-        "codex_request_mode": "passthrough"
+        "codex_request_mode": "auto"
     }))
     .unwrap()
     .unwrap();
@@ -192,7 +192,11 @@ async fn passthrough_preserves_every_field_except_the_routed_model() {
 async fn passthrough_without_model_mapping_preserves_request_bytes() {
     let mut config = upstream("passthrough");
     config.model_id = None;
-    let original = b"{ \"model\": \"actual-model\", \"input\": [], \"store\": true }";
+    let original = br#"{ "model": "actual-model", "input": [
+        {"type":"function_call","call_id":"x","name":"exec","arguments":"{}"},
+        {"type":"function_call_output","call_id":"x","output":"running"},
+        {"type":"function_call_output","call_id":"x","name":"exec","output":"queued"}
+    ], "store": true }"#;
     let prepared = prepare(
         &config,
         original,
@@ -240,7 +244,16 @@ async fn responses_omits_mismatched_history_ids_and_keeps_call_pairing() {
         .await
         .unwrap();
         let request: Value = serde_json::from_slice(&prepared.body).unwrap();
-        assert_eq!(request["input"], expected, "mode {mode}");
+        assert_eq!(
+            request["input"],
+            if mode == "passthrough" {
+                &original["input"]
+            } else {
+                &expected
+            }
+            .clone(),
+            "mode {mode}"
+        );
     }
 }
 
@@ -422,8 +435,7 @@ async fn passthrough_http_forwards_business_fields_and_raw_response_with_provide
             post(move |headers: HeaderMap, body: Bytes| {
                 let capture = Arc::clone(&capture);
                 async move {
-                    *capture.lock().await =
-                        Some((headers, serde_json::from_slice::<Value>(&body).unwrap()));
+                    *capture.lock().await = Some((headers, body));
                     (
                         [(header::CONTENT_TYPE, "text/event-stream")],
                         raw_response.as_slice(),
@@ -449,28 +461,20 @@ async fn passthrough_http_forwards_business_fields_and_raw_response_with_provide
             "x-codex-forked-from-thread-id",
             HeaderValue::from_static("parent-thread"),
         );
-        let original = codex_request();
-        let response =
-            super::super::handle(headers, Bytes::from(serde_json::to_vec(&original).unwrap()))
-                .await
-                .expect("proxy response");
+        let mut original = codex_request();
+        original["tools"][2]["name"] = json!("exec");
+        let encoded = serde_json::to_string_pretty(&original).unwrap();
+        let response = super::super::handle(headers, Bytes::from(encoded.clone()))
+            .await
+            .expect("proxy response");
         assert_eq!(
             to_bytes(response.into_body(), usize::MAX).await.unwrap(),
             raw_response.as_slice()
         );
-        let (headers, mut received) = captured.lock().await.take().expect("upstream request");
+        let (headers, received) = captured.lock().await.take().expect("upstream request");
         assert_eq!(headers[header::AUTHORIZATION], "Bearer model-key");
-        received["model"] = original["model"].clone();
-        let mut expected = original.clone();
-        if text_only {
-            expected["tools"] = json!([]);
-            expected["tool_choice"] = json!("none");
-            expected
-                .as_object_mut()
-                .unwrap()
-                .remove("parallel_tool_calls");
-        }
-        assert_eq!(received, expected);
+        let mapped = encoded.replace("wework-gpt-5.6-sol", "moonshot-kimi-k3");
+        assert_eq!(received.as_ref(), mapped.as_bytes());
         super::super::unregister(&token);
         server.abort();
     }

@@ -40,12 +40,7 @@ import {
   type DiffCommentSelection,
   type FileChangesReviewMode,
 } from './fileChangesReviewUtils'
-import {
-  getDiffStats,
-  getSectionsDiffStats,
-  parseUnifiedDiff,
-  type DiffFileSection,
-} from './parseUnifiedDiff'
+import { getDiffStats, parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
 
 const COPY_FEEDBACK_DURATION_MS = 1500
 const REFRESH_FEEDBACK_DURATION_MS = 600
@@ -77,6 +72,7 @@ export interface FileChangesReviewViewOption {
 }
 
 type ReviewMode = FileChangesReviewMode
+type ReviewSection = DiffFileSection & { stats: ReturnType<typeof getDiffStats> }
 
 export function FileChangesReviewPanel({
   loading,
@@ -131,7 +127,16 @@ export function FileChangesReviewPanel({
   )
   const diffLinesRef = useRef<HTMLDivElement>(null)
 
-  const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
+  const { sections, diffStats } = useMemo(() => {
+    const diffStats = { additions: 0, deletions: 0 }
+    const sections = parseUnifiedDiff(diff).map(section => {
+      const stats = getDiffStats(section.lines)
+      diffStats.additions += stats.additions
+      diffStats.deletions += stats.deletions
+      return { ...section, stats }
+    })
+    return { sections, diffStats }
+  }, [diff])
   const focusSectionIndex = useMemo(
     () => (focusFilePath ? findSectionIndexForPath(sections, focusFilePath) : -1),
     [focusFilePath, sections]
@@ -143,7 +148,6 @@ export function FileChangesReviewPanel({
       : -1
   const selectedIndex = selectedPathIndex >= 0 ? selectedPathIndex : defaultSelectedIndex
   const selectedSection = sections[selectedIndex] ?? sections[0]
-  const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
 
   const scrollToSection = useCallback((section: DiffFileSection, behavior: ScrollBehavior) => {
     const container = diffLinesRef.current
@@ -222,7 +226,8 @@ export function FileChangesReviewPanel({
     : undefined
 
   return (
-    <>
+    // Keep the highlighter alive across loading and refresh, and start it while the diff is fetched.
+    <PierreCodeProvider>
       {' '}
       {requestDialogs}{' '}
       <div
@@ -350,7 +355,7 @@ export function FileChangesReviewPanel({
           </div>
         )}
       </div>{' '}
-    </>
+    </PierreCodeProvider>
   )
 }
 
@@ -589,7 +594,7 @@ function AllDiffSections({
   themeType,
 }: {
   codeLineHeight: number
-  sections: DiffFileSection[]
+  sections: ReviewSection[]
   ariaLabel: string
   wrapLines: boolean
   diffLinesRef: RefObject<HTMLDivElement | null>
@@ -623,41 +628,40 @@ function AllDiffSections({
         data-diff-style={diffStyle}
         className="pierre-diff-view min-h-0 flex-1 overflow-hidden bg-background text-xs"
       >
-        <PierreCodeProvider>
-          <Virtualizer
-            className="scrollbar-soft h-full overflow-auto"
-            contentClassName="min-h-full"
-          >
-            {sections.map((section, index) => {
-              const sectionKey = getDiffSectionKey(section, index)
-              const collapsed = collapsedSections.has(sectionKey)
+        <Virtualizer
+          className="scrollbar-soft h-full overflow-auto"
+          contentClassName="min-h-full"
+          layoutRevision={codeLineHeight}
+        >
+          {sections.map((section, index) => {
+            const sectionKey = getDiffSectionKey(section, index)
+            const collapsed = collapsedSections.has(sectionKey)
 
-              return (
-                <FileDiffSection
-                  codeLineHeight={codeLineHeight}
-                  key={sectionKey}
-                  section={section}
-                  index={index}
-                  collapsed={collapsed}
-                  wrapLines={wrapLines}
-                  diffStyle={diffStyle}
-                  hunksCollapsed={hunksCollapsed}
-                  expandFileLabel={expandFileLabel}
-                  collapseFileLabel={collapseFileLabel}
-                  onToggle={() => onToggleSectionCollapsed(section, index)}
-                  reviewMode={reviewMode}
-                  pendingAction={pendingAction}
-                  onApplyPatch={onApplyPatch}
-                  onOpenSourceFile={onOpenSourceFile}
-                  canComment={canComment}
-                  commentSelection={commentSelection}
-                  onCommentSelectionChange={onCommentSelectionChange}
-                  themeType={themeType}
-                />
-              )
-            })}
-          </Virtualizer>
-        </PierreCodeProvider>
+            return (
+              <FileDiffSection
+                codeLineHeight={codeLineHeight}
+                key={sectionKey}
+                section={section}
+                index={index}
+                collapsed={collapsed}
+                wrapLines={wrapLines}
+                diffStyle={diffStyle}
+                hunksCollapsed={hunksCollapsed}
+                expandFileLabel={expandFileLabel}
+                collapseFileLabel={collapseFileLabel}
+                onToggle={() => onToggleSectionCollapsed(section, index)}
+                reviewMode={reviewMode}
+                pendingAction={pendingAction}
+                onApplyPatch={onApplyPatch}
+                onOpenSourceFile={onOpenSourceFile}
+                canComment={canComment}
+                commentSelection={commentSelection}
+                onCommentSelectionChange={onCommentSelectionChange}
+                themeType={themeType}
+              />
+            )
+          })}
+        </Virtualizer>
       </div>
     </section>
   )
@@ -684,7 +688,7 @@ function FileDiffSection({
   themeType,
 }: {
   codeLineHeight: number
-  section: DiffFileSection
+  section: ReviewSection
   index: number
   collapsed: boolean
   wrapLines: boolean
@@ -702,12 +706,15 @@ function FileDiffSection({
   onCommentSelectionChange: (selection: DiffCommentSelection | null) => void
   themeType: 'light' | 'dark'
 }) {
-  const stats = useMemo(() => getDiffStats(section.lines), [section.lines])
+  const { stats } = section
   const patchChunks = useMemo(() => getPierrePatchChunks([section]), [section])
   const actionLabel = collapsed ? expandFileLabel : collapseFileLabel
-  const filePatch = useMemo(() => ensureTrailingNewline(section.lines.join('\n')), [section.lines])
-  const firstChangedLine = useMemo(() => getFirstChangedLine(section.lines), [section.lines])
   const fileActions = getReviewActions(reviewMode)
+  const filePatch = useMemo(
+    () => (fileActions.length > 0 ? ensureTrailingNewline(section.lines.join('\n')) : ''),
+    [section.lines, fileActions.length]
+  )
+  const firstChangedLine = useMemo(() => getFirstChangedLine(section.lines), [section.lines])
 
   return (
     <article

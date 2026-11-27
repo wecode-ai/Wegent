@@ -96,9 +96,12 @@ export async function startPerformanceRecording(
   let profiling = false
   let tracing = false
   try {
-    for (const domain of ['Runtime', 'Log', 'Network', 'Debugger', 'Performance', 'Profiler']) {
+    for (const domain of ['Runtime', 'Log', 'Network', 'Performance', 'Profiler']) {
       await command(`${domain}.enable`)
     }
+    // Retain execution contexts and other enablement events before recording traffic
+    // fills the event buffer. Script metadata is replayed after measurement.
+    const enabled = await collectProtocolEvents(client, target, initial.cursor)
     const baseline = await command('Performance.getMetrics')
     if (samplingIntervalUs !== undefined) {
       await command('Profiler.setSamplingInterval', { interval: samplingIntervalUs })
@@ -120,11 +123,13 @@ export async function startPerformanceRecording(
     tracing = true
     await writeDiagnosticFile(statePath, {
       target,
-      after: initial.cursor,
-      metadata: initial.events.filter(event =>
+      after: enabled.cursor,
+      events: enabled.events,
+      lostEvents: enabled.lost,
+      metadata: [...initial.events, ...enabled.events].filter(event =>
         ['Debugger.scriptParsed', 'Runtime.executionContextCreated'].includes(event.method)
       ),
-      metadataLostEvents: initial.lost,
+      metadataLostEvents: initial.lost + enabled.lost,
       baseline,
       startedAt: Date.now(),
     })
@@ -177,6 +182,28 @@ async function loadSourceMaps(command, events, profile) {
     }
   }
   return { maps, errors }
+}
+
+export async function resolveCpuProfileLocations(client, target, profile) {
+  const command = method => client({ action: 'command', target, method })
+  await command('Runtime.enable')
+  await command('Debugger.enable')
+  const { events, lost } = await collectProtocolEvents(client, target)
+  const { maps, errors } = await loadSourceMaps(
+    (method, params) => client({ action: 'command', target, method, params }),
+    events,
+    profile
+  )
+  return {
+    locations: Object.fromEntries(
+      profile.nodes.flatMap(({ id, callFrame }) => {
+        const location = sourceLocation(callFrame, maps)
+        return location.mapped ? [[id, location]] : []
+      })
+    ),
+    lostEvents: lost,
+    sourceMapErrors: errors,
+  }
 }
 
 export function sourceLocation(frame, maps = new Map()) {
@@ -348,9 +375,9 @@ export async function stopPerformanceRecording(client, directory, target, output
 }
 
 async function finishPerformanceRecording(client, command, target, state, profile, outputPath) {
-  const events = []
+  const events = [...(state.events ?? [])]
   let cursor = state.after
-  let lost = 0
+  let lost = state.lostEvents ?? 0
   let complete
   const deadline = Date.now() + 30_000
   while (!complete) {
@@ -366,12 +393,21 @@ async function finishPerformanceRecording(client, command, target, state, profil
   if (!complete.params.stream) throw new Error('Trace did not return a stream')
   const trace = JSON.parse(await readProtocolStream(command, complete.params.stream))
   const metrics = await command('Performance.getMetrics')
-  await writeDiagnosticFile(outputPath + '.evidence.json', {
-    profile,
-    trace,
-    events,
-    metadata: state.metadata,
-  })
+  // Read source maps after measurement so the debugging domain does not affect
+  // the recorded workload or lose its script metadata to later stream traffic.
+  try {
+    await command('Debugger.enable')
+    const scripts = await collectProtocolEvents(client, target, cursor)
+    events.push(...scripts.events)
+    lost += scripts.lost
+  } finally {
+    await writeDiagnosticFile(outputPath + '.evidence.json', {
+      profile,
+      trace,
+      events,
+      metadata: state.metadata,
+    })
+  }
   const { maps, errors } = await loadSourceMaps(command, [...state.metadata, ...events], profile)
   const report = {
     target,

@@ -24,6 +24,17 @@
   font: inherit;
 }
 
+.collaboration-platform-sidebar-surface,
+.collaboration-platform-sidebar {
+  background: rgb(var(--color-bg-subtle));
+  border-right: 1px solid rgb(var(--color-border));
+}
+
+.collaboration-platform-sidebar-surface .collaboration-platform-sidebar {
+  background: transparent;
+  border: 0;
+}
+
 .collaboration-platform-sidebar {
   display: flex;
   min-width: 0;
@@ -32,8 +43,6 @@
   overflow-x: hidden;
   overflow-y: hidden;
   padding: 12px 8px 8px;
-  border-right: 1px solid rgb(var(--color-border));
-  background: rgb(var(--color-bg-subtle));
 }
 
 .collaboration-platform-sidebar > *,
@@ -5354,5 +5363,18 @@ button.collaboration-project-offline:hover {
     flex-basis: 44px;
     opacity: 1;
     pointer-events: auto;
+  }
+}
+
+@media (min-width: 768px) {
+  .collaboration-personal-home-detail:has([data-has-conversation='true']) {
+    width: min(75%, 72rem);
+  }
+}
+
+@media (max-width: 767px) {
+  .collaboration-personal-home-detail .task-detail-comment-bar {
+    position: relative;
+    bottom: auto;
   }
 }

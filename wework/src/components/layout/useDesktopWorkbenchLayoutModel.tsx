@@ -26,7 +26,7 @@ import {
   useWorkbenchShellEventHandlers,
   type ProjectCreateRequestOptions,
 } from './workbenchShellEvents'
-import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkbenchSidebarReminders } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
@@ -116,7 +116,6 @@ export function useDesktopWorkbenchLayoutModel({
     getImNotificationSettings: onGetImNotificationSettings,
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
-    runtimeTaskReminders,
     projectChat,
     sendRuntimePaneMessage,
     services,
@@ -294,7 +293,7 @@ export function useDesktopWorkbenchLayoutModel({
     ? availableProjectSpaceApis.length > 0
     : Boolean(services.deliveryApi)
   const activeItem: 'stand-in' | 'chat' = standInOpen ? 'stand-in' : 'chat'
-  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const taskReminders = useWorkbenchSidebarReminders()
   const toggleMyWork = useCallback(() => {
     if (standInOpen) {
       navigateTo(defaultProjectSpaceContentRoute())

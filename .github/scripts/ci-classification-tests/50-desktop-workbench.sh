@@ -31,6 +31,14 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/task-flow.e2e.mjs" \
   "wework/src/components/chat/MessageList.tsx"
 
+assert_desktop_case "conversation view changes cover streaming panel resizing" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-conversation-switching"},{"id":"core-6","name":"Core / shard 6","segments":"model-sse-parsing"},{"id":"core-8","name":"Core / shard 8","segments":"task-share-as-issue"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/layout/DesktopWorkbenchConversationView.tsx"
+
 assert_desktop_case "turn lifecycle changes select supervisor, resilience and sidebar coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

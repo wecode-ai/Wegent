@@ -164,6 +164,7 @@ function IndependentIssueDialogContent({
   const ref = useRef<HTMLDivElement>(null)
   const opener = useRef(typeof document === 'undefined' ? null : document.activeElement)
   const discardClosesEditor = useRef(false)
+  const attachmentRequestId = useRef<string | undefined>(undefined)
   const restoreCreateFocus = !issueId && !shareDraft
   const getCreateOpener = () =>
     opener.current instanceof HTMLElement &&
@@ -298,7 +299,7 @@ function IndependentIssueDialogContent({
               aria-labelledby={reading ? undefined : 'independent-issue-dialog-title'}
               inert={deleting}
               data-testid="independent-issue-dialog"
-              className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${modal ? 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]' : 'h-full max-w-none rounded-none border-0 shadow-none'} ${modal && !issueId && !issue ? '[@media(max-height:740px)]:h-[calc(100dvh-2rem)]' : ''}`}
+              className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${modal ? 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]' : 'h-full max-w-none rounded-none border-0 shadow-none'} ${modal && !issueId && !issue ? 'min-h-[min(480px,calc(100dvh-2rem))]' : ''}`}
             />
           }
         >
@@ -394,26 +395,28 @@ function IndependentIssueDialogContent({
                 titleSlot={titleSlot}
                 onDirtyChange={setDirty}
                 onCancel={cancelEditing}
-                onSave={(input, shareFiles, fileIds) =>
-                  state.save(
+                onSave={(input, shareFiles, fileIds) => {
+                  if (!issue && !shareDraft && shareFiles.length && !attachmentRequestId.current) {
+                    attachmentRequestId.current = crypto.randomUUID()
+                  }
+                  const requestId = shareDraft?.requestId ?? attachmentRequestId.current
+                  return state.save(
                     input,
-                    !issue && shareDraft
+                    !issue && requestId
                       ? async (body, projectId, projectStatus) =>
                           api.createShared(
-                            shareDraft.requestId,
-                            shareDraft.source,
+                            requestId,
+                            shareDraft?.source,
                             body,
                             [
                               ...shareFiles,
                               ...(await Promise.all(
-                                shareDraft.conversationFiles
+                                (shareDraft?.conversationFiles ?? [])
                                   .filter(file => fileIds.includes(file.id))
                                   .map(file =>
                                     file.load().catch(() => {
                                       throw new Error(
-                                        t('taskIssueShare.fileUnavailable', {
-                                          name: file.name,
-                                        })
+                                        t('taskIssueShare.fileUnavailable', { name: file.name })
                                       )
                                     })
                                   )
@@ -424,7 +427,7 @@ function IndependentIssueDialogContent({
                           )
                       : undefined
                   )
-                }
+                }}
               />
             ) : issue?.detail ? (
               <SharedIssueDetailEditor

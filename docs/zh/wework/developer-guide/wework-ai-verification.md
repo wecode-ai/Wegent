@@ -251,6 +251,7 @@ pnpm --filter wework profile:renderer --processes
 - 会话面板按当前任务订阅生命周期，切换会话时更新订阅。侧栏在输入属性未变时跳过重渲染，排序控件的无障碍名称仅在标签或语言变化时重新翻译。
 - 项目侧栏复用任务列表对应的生命周期键。通知和协作事项待答问题轮询会保留内容相同的收件箱快照，避免在空闲时刷新界面。
 - `--capture` 复用上面的性能录制，额外生成 `renderer-performance.json` 和原始证据。原生调用的 `caller` 字段可以定位到触发布局等操作的 JavaScript 代码。录制以 100 µs 请求 V8 采样间隔，在 trace 中标注空闲窗口和两个并发测量窗口。录制本身会增加开销，阈值验收用 `--check` 单独复测。测量报告统一保存在控制台列出的测试目录下，文件名为 `renderer-threshold-measurements.json`。
+- `--check` 在同一轮单任务验证中按 2 ms 间隔请求 CPU 采样，空闲和十任务阶段不采样。回合更新违反长任务阈值时，CI 保留 `renderer-turn-long-task-profile.json`。用 `navigationStartUs + longTaskStartMs × 1000` 对齐超限区间与 CPU 采样时间，并用 `longTaskMs` 确定区间长度。`singleTaskWindow` 记录测量起止的进程用户态和内核态 CPU 计数、系统负载以及 Chromium 性能指标，用于区分脚本、布局和其他进程开销。
 - `--history` 在测量前依次完成 16 个真实持久化会话，逐个记录堆使用量，然后在同一 Renderer 启动基准任务。它使用可复现的测试模型结果，报告中的 `historicalTasks` 标明会话数量。
 - `--processes` 记录空闲、流式中段和任务完成后的进程树快照。用 `processSamples` 分别检查主进程、Renderer、GPU、执行器及其子进程。进程快照 CPU 为操作系统或 Electron 的采样值，阈值验收使用单独运行的 `--check`。共享内存页可能出现在多个进程的统计中，进程内存应逐项阅读。
 - 排查堆峰值时，先按 `heapSamples` 的阶段定位触发操作。自然 GC 后迅速回落的峰值，可以用 Chromium Memory 面板的 Allocation sampling 按调用栈查找短寿命的大量分配；阈值仍使用未开启分配采样的峰值复测。

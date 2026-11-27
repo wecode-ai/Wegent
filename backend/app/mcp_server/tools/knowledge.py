@@ -163,7 +163,7 @@ async def search_knowledge_base(
                 sources.append(
                     {
                         "document_id": chunk.get("document_id"),
-                        "document_name": chunk.get("document_name", "Unknown"),
+                        "document_name": chunk["title"],
                         "knowledge_base_id": chunk.get("knowledge_base_id"),
                         "knowledge_base_name": chunk.get(
                             "knowledge_base_name", "Unknown"

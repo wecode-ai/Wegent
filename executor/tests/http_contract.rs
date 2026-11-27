@@ -26,6 +26,9 @@ use wegent_executor::{
 };
 use wegent_model_proxy::local_model_proxy::{self, LocalModelProxyUpstream};
 
+#[path = "http_contract/file_upload.rs"]
+mod file_upload;
+
 #[path = "http_contract/skill_sync.rs"]
 mod skill_sync;
 
@@ -1034,6 +1037,7 @@ async fn envd_process_start_runs_foreground_command_via_connect_stream() {
                 .method(Method::POST)
                 .uri("/process.Process/Start")
                 .header(header::CONTENT_TYPE, "application/connect+json")
+                .header("connect-timeout-ms", "30000")
                 .body(Body::from(connect_envelope(0, payload.as_bytes())))
                 .unwrap(),
         )
@@ -1054,6 +1058,81 @@ async fn envd_process_start_runs_foreground_command_via_connect_stream() {
     assert!(messages
         .iter()
         .any(|message| message["event"]["end"]["exitCode"] == json!(0)));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn envd_process_start_returns_a_connect_error_on_deadline() {
+    let _lock = env_lock().lock().await;
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let payload = json!({
+        "process": {"cmd": "/bin/bash", "args": ["-c", "sleep 30; exit 0"]}
+    })
+    .to_string();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/process.Process/Start")
+        .header(header::CONTENT_TYPE, "application/connect+json")
+        .header("connect-timeout-ms", "100")
+        .body(Body::from(connect_envelope(0, payload.as_bytes())))
+        .unwrap();
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), app.oneshot(request))
+        .await
+        .expect("envd must return before the foreground command exits")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/connect+json"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let error = json!({"error": {
+        "code": "deadline_exceeded",
+        "message": "Sandbox command exceeded its 100 ms deadline"
+    }});
+    assert_eq!(
+        body.as_ref(),
+        connect_envelope(2, error.to_string().as_bytes())
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn envd_process_start_expires_while_receiving_the_request_body() {
+    use std::{convert::Infallible, time::Duration};
+    use tokio::time::{sleep, timeout, Instant};
+
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let body_delay = Duration::from_secs(1);
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        sleep(body_delay).await;
+        let payload = br#"{"process":{"cmd":"/bin/true"}}"#;
+        Ok::<_, Infallible>(axum::body::Bytes::from(connect_envelope(0, payload)))
+    }));
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/process.Process/Start")
+        .header(header::CONTENT_TYPE, "application/connect+json")
+        .header("connect-timeout-ms", "100")
+        .body(body)
+        .unwrap();
+
+    let started = Instant::now();
+    let response = timeout(Duration::from_secs(2), app.oneshot(request))
+        .await
+        .expect("envd must answer during the request body read")
+        .unwrap();
+    assert!(started.elapsed() < body_delay);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let error = json!({"error": {
+        "code": "deadline_exceeded",
+        "message": "Sandbox command exceeded its 100 ms deadline"
+    }});
+    assert_eq!(
+        body.as_ref(),
+        connect_envelope(2, error.to_string().as_bytes())
+    );
 }
 
 #[tokio::test]

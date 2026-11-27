@@ -11,6 +11,9 @@ export function createElementFrameSampler(root: HTMLElement, selector: string) {
       const trackStyle = track ? getComputedStyle(track) : null
       return {
         identity: identities.get(element),
+        anchorId: element.dataset.e2eAnchorId ?? null,
+        markdownPlaceholder: element.hasAttribute('data-markdown-window-placeholder'),
+        conversationVirtualizerEnabled: element.dataset.conversationVirtualizerEnabled ?? null,
         className: element.className,
         left: rect.left,
         right: rect.right,

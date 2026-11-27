@@ -10,7 +10,7 @@ import type { RuntimePaneTranscript } from '@/types/workbench'
 import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
 import { readStoredTaskKeys, serializeTaskKeys } from './taskKeyStorage'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
-import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
+import { suppressesRuntimeTaskCompletionReminder } from '@/lib/runtime-task-visibility'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   emptyRuntimeTaskSummary,
@@ -691,8 +691,8 @@ export class RuntimeTaskLifecycleStore {
     }
     if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
     else this.previousRunningTaskKeys.delete(key)
-    if (isStandInMemoryReviewTask(next.task ?? next.address)) {
-      return this.clearMemoryReviewUnread(key, machine) || changed
+    if (suppressesRuntimeTaskCompletionReminder(next.task ?? next.address)) {
+      return this.clearCompletionUnread(key, machine) || changed
     }
     // A task is read only while its pane is open and the window is focused.
     // Background completion of the open task still needs an unread reminder.
@@ -851,8 +851,8 @@ export class RuntimeTaskLifecycleStore {
 
   private restoreMachineUnread(key: string, machine: RuntimeTaskMachine): void {
     const snapshot = machine.getSnapshot()
-    if (isStandInMemoryReviewTask(snapshot.task ?? snapshot.address)) {
-      this.clearMemoryReviewUnread(key, machine)
+    if (suppressesRuntimeTaskCompletionReminder(snapshot.task ?? snapshot.address)) {
+      this.clearCompletionUnread(key, machine)
       return
     }
     const currentTaskVisible = key === this.currentTaskKey && this.windowFocused
@@ -879,7 +879,7 @@ export class RuntimeTaskLifecycleStore {
     }
   }
 
-  private clearMemoryReviewUnread(key: string, machine: RuntimeTaskMachine): boolean {
+  private clearCompletionUnread(key: string, machine: RuntimeTaskMachine): boolean {
     this.deferredGoalUnreadTaskKeys.delete(key)
     if (this.unreadStateByTask.get(key)?.unread) this.recordUnreadState(key, false)
     return machine.dispatch({ type: 'marked_read' })
@@ -1010,12 +1010,10 @@ export class RuntimeTaskLifecycleStore {
 
   private persistUnreadKeys(): void {
     if (typeof window === 'undefined') return
-    const keys = new Set(
-      [...this.unreadStateByTask].filter(([, state]) => state.unread).map(([key]) => key)
-    )
-    for (const key of keys) {
-      const machine = this.machines.get(key)
-      if (machine && !machine.getSnapshot().derived.shouldShowUnread) keys.delete(key)
+    const { tasks, unreadTaskKeys } = this.snapshot
+    const keys = new Set<string>()
+    for (const [key, state] of this.unreadStateByTask) {
+      if (state.unread && (!tasks.has(key) || unreadTaskKeys.has(key))) keys.add(key)
     }
     const serialized = serializeTaskKeys(keys)
     if (serialized === this.persistedUnreadSerialized) return

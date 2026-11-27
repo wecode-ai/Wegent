@@ -1,7 +1,7 @@
-import { getRuntimeConfig } from '@/config/runtime'
+import { getRuntimeConfig, getRuntimeDesktopHost } from '@/config/runtime'
 
 export function isElectronRuntime(): boolean {
-  return typeof window !== 'undefined' && getRuntimeConfig().desktopHost === 'electron'
+  return getRuntimeDesktopHost() === 'electron'
 }
 
 export function isDesktopRuntime(): boolean {

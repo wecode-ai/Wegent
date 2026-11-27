@@ -6,6 +6,7 @@ import { createCollaborationTranslator } from '../i18n'
 import { ConversationTranslationProvider } from './ConversationTranslation'
 import { AssistantMessage } from './AssistantMessage'
 import * as presentation from './assistantMessagePresentation'
+import * as references from './codexReferences'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import * as activity from './blocks/ProcessingActivity'
@@ -107,6 +108,57 @@ describe('processing clock render isolation', () => {
     expect(container.textContent).toContain('Searched code')
   })
 
+  it('keeps completed tool history stable while answer text streams', () => {
+    const classify = vi.spyOn(activity, 'countProcessingActivityKinds')
+    const collectReferences = vi.spyOn(references, 'getAssistantReferences')
+    const images = { identity: () => '', load: vi.fn(), download: vi.fn() }
+    const command = tool()
+    const update = (content: string, block = command) => {
+      const message: WorkbenchMessage = {
+        id: 'reply',
+        role: 'assistant',
+        status: 'streaming',
+        content,
+        createdAt: new Date().toISOString(),
+        blocks: [block],
+        runtimeDisplayItems: [
+          { id: block.id, type: 'block' },
+          { id: 'answer', type: 'assistant_text', content },
+        ],
+      }
+      render(<AssistantMessage message={message} imageServices={images} devices={[]} />)
+    }
+    update('The workspace is ready')
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="processing-summary-toggle"]')!
+        .click()
+    )
+    const detail = container.querySelector<HTMLButtonElement>('[data-tool-detail-toggle]')!
+    act(() => detail.click())
+    expect(container.textContent).toContain('result')
+    classify.mockClear()
+    collectReferences.mockClear()
+
+    update('The workspace is ready for review')
+
+    expect(container.textContent).toContain('The workspace is ready for review')
+    expect(collectReferences).toHaveBeenCalledTimes(1)
+    expect(classify).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-tool-detail-toggle]')).toBe(detail)
+
+    update('The workspace is ready for review', {
+      ...command,
+      toolInput: { command: 'printf updated' },
+      toolOutput: 'updated output',
+    })
+    expect(classify).toHaveBeenCalled()
+    expect(container.textContent).toContain('printf updated')
+    expect(container.querySelector('[data-testid="shell-tool-output"]')?.textContent).toContain(
+      'updated output'
+    )
+  })
+
   it('follows a burst of tool rows with one layout read in the next frame', () => {
     const first = tool()
     const second = { ...first, id: 'second' }
@@ -171,9 +223,9 @@ describe('processing clock render isolation', () => {
     expect(label.mock.calls.filter(([block]) => block === command)).toHaveLength(0)
     expect(preview?.querySelector('[data-tool-detail-toggle]')).toBe(toggle)
     expect(preview?.textContent).toContain('result')
-    expect(preview?.querySelector('[data-testid="tool-thinking-indicator"]')?.textContent).toContain(
-      nextReasoning.content
-    )
+    expect(
+      preview?.querySelector('[data-testid="tool-thinking-indicator"]')?.textContent
+    ).toContain(nextReasoning.content)
   })
 
   it('does no clock work for the hidden summary duration while waiting after a tool', () => {

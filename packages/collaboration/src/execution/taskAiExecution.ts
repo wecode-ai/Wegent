@@ -124,6 +124,7 @@ export interface StartTaskAiRunInput<ExecutionProject, Task extends CommentExecu
     task: RuntimeTaskAddress
     project: { projectId: string; projectStore: 'local' | 'backend' }
     type: 'bound' | 'unbound'
+    itemId: string
   }): void
   startFailedText: string
 }
@@ -524,6 +525,7 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
         task: nextAddress,
         project: projectRef,
         type: 'bound',
+        itemId: String(task.id),
       })
       const rollback = async () => {
         await deliveryApi.unbindTask(task.id, nextAddress)
@@ -531,6 +533,7 @@ export async function startTaskAiRun<ExecutionProject, Task extends CommentExecu
           task: nextAddress,
           project: projectRef,
           type: 'unbound',
+          itemId: String(task.id),
         })
       }
       try {

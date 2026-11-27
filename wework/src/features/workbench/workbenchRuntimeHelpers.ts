@@ -234,13 +234,22 @@ export function updateRuntimeWorkTask(
     return { ...workspace, tasks }
   }
 
+  const projects = runtimeWork.projects.map(project => {
+    const deviceWorkspaces = project.deviceWorkspaces.map(updateWorkspace)
+    return deviceWorkspaces.every(
+      (workspace, index) => workspace === project.deviceWorkspaces[index]
+    )
+      ? project
+      : { ...project, deviceWorkspaces }
+  })
+  const chats = runtimeWork.chats.map(updateWorkspace)
+  const projectsChanged = projects.some((project, index) => project !== runtimeWork.projects[index])
+  const chatsChanged = chats.some((workspace, index) => workspace !== runtimeWork.chats[index])
+  if (!projectsChanged && !chatsChanged) return runtimeWork
   return {
     ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
+    projects: projectsChanged ? projects : runtimeWork.projects,
+    chats: chatsChanged ? chats : runtimeWork.chats,
   }
 }
 

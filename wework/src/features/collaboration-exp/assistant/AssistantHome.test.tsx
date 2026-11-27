@@ -42,6 +42,10 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => mocks.workbench }))
+vi.mock('@/features/workbench/runtimeTaskReminders', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/workbench/runtimeTaskReminders')>()),
+  useWorkbenchTaskReminders: () => mocks.workbench.runtimeTaskReminders,
+}))
 vi.mock('./useAssistantSources', () => ({ useAssistantSources: () => mocks.source }))
 vi.mock('@/lib/navigation', () => ({ navigateTo: (...args: unknown[]) => mocks.navigate(...args) }))
 vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({

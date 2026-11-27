@@ -27,7 +27,8 @@ pub(super) fn normalize_official_reasoning_history(
         .get("store")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let mut changed = 0usize;
+    let mut changed =
+        usize::from(super::request_policy::strip_incompatible_responses_history_ids(&mut request));
     let mut normalized_reasoning_items = 0usize;
     let mut new_foreign_keys = HashSet::new();
     let previous_response_key = request

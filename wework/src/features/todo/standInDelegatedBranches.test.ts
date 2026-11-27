@@ -1,7 +1,10 @@
 import { expect, test } from 'vitest'
+import type { RemoteStandInRoleBranch } from '@/api/standIn'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import {
   activeStandInBranchRows,
   groupStandInDelegations,
+  selectStandInDelegatedWork,
   standInDelegationsByMessage,
   type Branch,
 } from './standInDelegatedBranches'
@@ -62,4 +65,109 @@ test('a delegated parent stays in the active list until its child finishes', () 
     'running',
   ])
   expect(activeStandInBranchRows([parent, { ...child, status: 'completed' }])).toEqual([])
+  expect(
+    activeStandInBranchRows([{ ...parent, completionConfirmed: true }, child]).map(
+      row => row.status
+    )
+  ).toEqual(['running'])
+})
+
+function delegatedTask(
+  status: 'running' | 'done' | 'failed',
+  attempt = 0,
+  remote = false
+): RuntimeTaskReminderItem {
+  const deviceId = remote ? 'worker' : 'dispatcher'
+  const taskId = 'delegated'
+  return {
+    key: taskId,
+    address: { deviceId, taskId },
+    task: {
+      taskId,
+      title: 'Delegated task',
+      runtime: 'codex',
+      workspacePath: '',
+      status,
+      running: status === 'running',
+      runtimeHandle: {
+        origin: {
+          type: 'stand_in_task',
+          userId: 7,
+          deviceId,
+          sourceTaskId: 'assistant',
+          ...(remote ? { sourceDeviceId: 'dispatcher' } : {}),
+          roleDelegation: { root: 'root', ancestors: ['assistant'], rootDevice: 'dispatcher' },
+        },
+        executionRequest: { standInDelegation: { attempt } },
+      },
+    },
+    workspace: { deviceId, available: true, workspacePath: '', tasks: [] },
+    projectName: '',
+  }
+}
+
+const dispatcherBranch: RemoteStandInRoleBranch = {
+  taskId: 'delegated',
+  createdAt: new Date(time(10)).toISOString(),
+  root: 'root',
+  title: 'Delegated task',
+  deviceId: 'dispatcher',
+  parentTaskId: 'assistant',
+  ancestors: ['assistant'],
+  taskAddress: { deviceId: 'dispatcher', taskId: 'delegated' },
+  status: 'done',
+  attempt: 0,
+  retryAllowed: false,
+}
+
+function select(item: RuntimeTaskReminderItem, remote: RemoteStandInRoleBranch) {
+  return selectStandInDelegatedWork([item], [remote], 7, 'dispatcher', 'assistant', new Map())[0]
+}
+
+test('preserves dispatcher completion despite a stale task reminder', () => {
+  expect(select(delegatedTask('running'), dispatcherBranch)).toMatchObject({
+    status: 'completed',
+    completionConfirmed: true,
+  })
+  expect(
+    select(delegatedTask('running', 0, true), {
+      ...dispatcherBranch,
+      deviceId: 'worker',
+      taskAddress: { deviceId: 'worker', taskId: 'delegated' },
+    })
+  ).toMatchObject({ status: 'completed', completionConfirmed: true })
+})
+
+test('uses the current local execution status while preserving old dispatcher compatibility', () => {
+  const running = { ...dispatcherBranch, status: 'running' as const }
+  expect(
+    select(delegatedTask('done'), { ...running, statusSource: 'local_execution' }).status
+  ).toBe('running')
+  const waiting = select(delegatedTask('done'), {
+    ...running,
+    statusSource: 'local_execution',
+    waitingForChildren: true,
+  })
+  expect(activeStandInBranchRows([waiting]).map(row => row.status)).toEqual(['waitingChildren'])
+  expect(select(delegatedTask('done'), { ...running, status: 'dispatched' }).status).toBe(
+    'completed'
+  )
+})
+
+test('does not overwrite a newer retry with results from the previous attempt', () => {
+  expect(
+    select(delegatedTask('done'), {
+      ...dispatcherBranch,
+      attempt: 1,
+      status: 'retrying',
+    })
+  ).toMatchObject({ status: 'retrying', attempt: 1 })
+  expect(
+    select(delegatedTask('running', 1), { ...dispatcherBranch, retryAllowed: true })
+  ).toMatchObject({
+    status: 'running',
+    attempt: 1,
+    retryAllowed: false,
+    completionConfirmed: undefined,
+  })
 })

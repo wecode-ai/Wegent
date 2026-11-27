@@ -145,7 +145,11 @@ pub fn source_provider(source: &Value) -> &str {
 
 pub fn source_namespace(source: &Value) -> Value {
     if source_provider(source) == DINGTALK_PROVIDER {
-        source["profile"].clone()
+        if source["delegated"] == true {
+            json!({"providerId":DINGTALK_PROVIDER,"profile":source["profile"],"accountId":source["accountId"]})
+        } else {
+            source["profile"].clone()
+        }
     } else {
         let mut namespace =
             json!({"providerId":source_provider(source),"profile":source["profile"]});
@@ -167,7 +171,11 @@ pub fn source_collection_namespace(source: &Value) -> Value {
 
 pub fn connection_memory_scope(source: &Value) -> Value {
     if source_provider(source) == DINGTALK_PROVIDER {
-        json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]})
+        let mut scope = json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]});
+        if source["delegated"] == true {
+            scope["accountId"] = source["accountId"].clone();
+        }
+        scope
     } else {
         json!({"kind":"connection","providerId":source_provider(source),"id":source["id"],"profile":source["profile"],"resourceKind":source["kind"]})
     }

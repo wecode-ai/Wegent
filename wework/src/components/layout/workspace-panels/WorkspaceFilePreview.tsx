@@ -3,7 +3,7 @@ import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
 import { captureDiagramArtifact } from '@/components/chat/diagramImageExport'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import { Button } from '@/components/ui/button'
-import { getRuntimeConfig } from '@/config/runtime'
+import { getRuntimeConfig, joinAppPath } from '@/config/runtime'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useCodeTheme } from '@/features/appearance/useCodeTheme'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -168,15 +168,18 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   const viewerType = workspaceFileViewerType(file.name, file.file.type)
   const isDiagram = viewerType === 'mermaid' || viewerType === 'plantuml'
   const diagramFilename = `${file.name.replace(/\.[^.]+$/, '')}.png`
-  const viewerOptions = useMemo(
-    () => ({
+  const viewerOptions = useMemo(() => {
+    const { appBasePath, plantumlServerUrl } = getRuntimeConfig()
+    return {
       preset: [officeRenderers, liteRenderers, engineeringRenderers],
-      drawing: { plantumlServerUrl: getRuntimeConfig().plantumlServerUrl },
+      archive: {
+        workerUrl: joinAppPath(appBasePath, '/vendor/libarchive/worker-bundle.js'),
+      },
+      drawing: { plantumlServerUrl },
       spreadsheet: { worker: false },
       theme: themeType,
-    }),
-    [themeType]
-  )
+    }
+  }, [themeType])
 
   const bindBinaryPreview = useCallback(
     (container: HTMLElement | null) => {

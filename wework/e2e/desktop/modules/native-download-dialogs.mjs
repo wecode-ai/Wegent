@@ -153,6 +153,24 @@ export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
   const args = ['mousemove', '--window', windowId, String(Math.round(x)), String(Math.round(y))]
   if (clickButton !== undefined) args.push('click', '--clearmodifiers', String(clickButton))
   await execute('xdotool', args, { encoding: 'utf8', timeout: 3_000 })
+  if (clickButton !== undefined) {
+    try {
+      const { stdout } = await execute(
+        'xdotool',
+        ['getactivewindow', 'getmouselocation', '--shell'],
+        { encoding: 'utf8', timeout: 1_000 }
+      )
+      console.info('[desktop-e2e-native-click]', {
+        windowId,
+        x,
+        y,
+        clickButton,
+        state: stdout.trim(),
+      })
+    } catch (error) {
+      console.info('[desktop-e2e-native-click]', { windowId, x, y, clickButton, error: String(error) })
+    }
+  }
 }
 
 export async function clickLinuxPointer(button = 1) {

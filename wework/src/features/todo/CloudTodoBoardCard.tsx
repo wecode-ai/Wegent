@@ -1,6 +1,6 @@
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { isRuntimeChatStreamDebugEnabled } from '@/api/runtime/runtimeChatStream'
+import { isRuntimeChatStreamDebugEnabled } from '@/stream/runtimeStreamDiagnostics'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
