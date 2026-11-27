@@ -9,9 +9,29 @@ import {
   requestPluginExecutor,
 } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
 import { verifyPluginEnabledState } from '../e2e/desktop/modules/plugin-inventory-state.mjs'
-import { assertRecoveredPluginInventory } from '../e2e/desktop/modules/plugin-partial-inventory-resilience.mjs'
+import {
+  assertRecoveredPluginInventory,
+  localCatalogParamsKeyMatchesScope,
+} from '../e2e/desktop/modules/plugin-partial-inventory-resilience.mjs'
 
 const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
+
+test('matches only the current account-scoped local catalog snapshot key', () => {
+  const scope = JSON.stringify(['https://backend.example', 7])
+  const key = (selection, cloudScope = scope) => JSON.stringify([selection, cloudScope])
+  assert.equal(localCatalogParamsKeyMatchesScope(key('|all|local'), scope), true)
+  for (const other of [
+    '|all|local',
+    key('|all|local', null),
+    key('|all|local', JSON.stringify(['https://other.example', 7])),
+    key('|all|local', JSON.stringify(['https://backend.example', 8])),
+    key('|all|all-kinds'),
+    JSON.stringify(['|all|local', scope, 'extra']),
+    'invalid-json',
+  ]) {
+    assert.equal(localCatalogParamsKeyMatchesScope(other, scope), false)
+  }
+})
 
 test.each([200, 401, 403, 500])(
   'uses the Electron session for plugin RPC and preserves HTTP %s',

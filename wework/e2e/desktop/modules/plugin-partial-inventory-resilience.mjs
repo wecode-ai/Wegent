@@ -25,6 +25,21 @@ const mutation = request =>
   ) ||
     /^\/api\/plugins\/installed\/\d+\/sync-device$/.test(request.path))
 
+export function localCatalogParamsKeyMatchesScope(paramsKey, cloudScope) {
+  try {
+    const key = JSON.parse(paramsKey)
+    return (
+      Array.isArray(key) &&
+      key.length === 2 &&
+      typeof key[0] === 'string' &&
+      key[0].endsWith('|local') &&
+      key[1] === cloudScope
+    )
+  } catch {
+    return false
+  }
+}
+
 function within(root, target) {
   const suffix = relative(root, target)
   return suffix && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`)
@@ -212,6 +227,12 @@ export async function verifyPluginPartialInventoryResilience({
   }
 
   async function snapshot(partial, since) {
+    const connection = JSON.parse(
+      await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
+    )
+    assert.ok(typeof connection?.backendUrl === 'string' && connection.backendUrl)
+    assert.ok(Number.isSafeInteger(connection.user?.id) && connection.user.id > 0)
+    const cloudScope = JSON.stringify([connection.backendUrl, connection.user.id])
     const raw = await control.command('getLocalStorageItem', 'body', { value: cacheKey })
     const store = raw ? JSON.parse(raw) : { entries: {} }
     const entries = Object.values(store.entries ?? {})
@@ -219,7 +240,7 @@ export async function verifyPluginPartialInventoryResilience({
         entry =>
           entry.state?.deviceId === deviceId &&
           entry.cachedAt >= since &&
-          entry.paramsKey.endsWith('|local')
+          localCatalogParamsKeyMatchesScope(entry.paramsKey, cloudScope)
       )
       .sort((left, right) => right.cachedAt - left.cachedAt)
     const matching = entries.find(entry => Boolean(entry.state.partial) === partial)
