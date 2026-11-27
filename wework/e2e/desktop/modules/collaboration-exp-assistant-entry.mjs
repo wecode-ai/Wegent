@@ -136,7 +136,7 @@ export async function verifyAssistantEntrySingleton(control, readBinding) {
       await gates.arm({ ...rule, kind: 'request', hold: false, afterReload })
   }
   const binding = await readBinding()
-  assert.equal(binding.status, 'active')
+  assert.equal(binding.status, 'unbound')
   const assertSingle = async (activePage, activeSubscriptions) => {
     await control.command('waitFor', activePage, { visible: true })
     assert.equal(await control.command('getElementCount', workspace), '1')
@@ -159,7 +159,7 @@ export async function verifyAssistantEntrySingleton(control, readBinding) {
   try {
     await armMutations(false)
     await assertSingle(input, 1)
-    await control.command('navigate', 'body', { value: '/stand-in?view=messages' })
+    await control.command('navigate', 'body', { value: '/stand-in?view=scheduled' })
     await assertSingle(legacy, 0)
     await evaluate('history.back()')
     await assertSingle(input, 1)

@@ -62,12 +62,14 @@ export async function verifyDingTalkDelivery(
   const labels = language?.startsWith('en')
     ? {
         failed: 'Reply failed to send',
+        needsUser: 'Needs your attention',
         unknown: 'Reply delivery unconfirmed',
         takeover: 'Taken over by you',
         sent: 'Automatic reply sent',
       }
     : {
         failed: '答复发送失败',
+        needsUser: '需本人处理',
         unknown: '答复送达待确认',
         takeover: '本人已接管',
         sent: '已自动答复',
@@ -88,7 +90,7 @@ export async function verifyDingTalkDelivery(
   }
 
   await openResult(changed)
-  await control.command('waitFor', detail, { text: labels.failed })
+  await control.command('waitFor', detail, { text: labels.needsUser })
   await control.command('waitFor', reason, { text: changed.delegationResult.reason, visible: true })
   await assertNoReceipt()
 

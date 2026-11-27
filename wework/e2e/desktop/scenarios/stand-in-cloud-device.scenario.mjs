@@ -217,7 +217,7 @@ export function createDesktopScenario({
       assert.ok(completed.task.threadId)
       const localTasks = await rpc(control, 'runtime.tasks.list', {})
       assert.equal(localTasks.coverage.authorized_index_complete, true)
-      assert.equal(findRuntimeWorkTask(localTasks.workspaces, taskId), undefined)
+      assert.equal(findRuntimeWorkTask(localTasks, taskId), undefined)
 
       await sendChat(HOLD)
       await until(

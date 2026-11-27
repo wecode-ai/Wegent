@@ -582,7 +582,7 @@ export function StandInOverviewPage({
             onSettings={() => {
               setDetailsAnchor(null)
               setCalendarRequest(0)
-              openProfile(role ? 'role' : 'primary')
+              openProfile(role ? 'role' : 'primary', detailsAnchor)
             }}
             onGuide={() => {
               setDetailsAnchor(null)

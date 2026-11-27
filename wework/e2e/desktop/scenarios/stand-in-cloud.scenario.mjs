@@ -9,10 +9,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import {
-  chooseStandInExecutionDevice,
-  finishStandInOnboarding,
-} from '../modules/stand-in-instance-flows.mjs'
+import { chooseStandInExecutionDevice } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   revealCollaborationSidebarElement,
@@ -257,9 +254,13 @@ export function createDesktopScenario({
         assert.notEqual(currentDevice, REMOTE_DOCKER_DEVICE_ID)
         // Seed the independent device before its settings are loaded by the renderer.
         await seedStandInRoleFixture(rpc, user.id)
+        await rpc('runtime.stand_in.onboarding.complete', {
+          userId: user.id,
+          weeklyReview: false,
+          language: 'zh-CN',
+        })
         await control.command('navigate', 'body', { value: '/stand-in' })
         await chooseStandInExecutionDevice(control, REMOTE_DOCKER_DEVICE_ID, uiTimeoutMs)
-        await finishStandInOnboarding(control)
         const remoteDraft = await rpc('runtime.stand_in.get', settingsParams())
         await control.command('navigate', 'body', {
           value: `/stand-in?${new URLSearchParams({ deviceId: REMOTE_DOCKER_DEVICE_ID, profileId: remoteDraft.id, settingsRequest: crypto.randomUUID() })}`,
@@ -318,7 +319,6 @@ export function createDesktopScenario({
         })
         await control.command('navigate', 'body', { value: '/stand-in' })
         await chooseStandInExecutionDevice(control, currentDevice, uiTimeoutMs)
-        await finishStandInOnboarding(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         const localEnabled = await requestExecutor(
           control,

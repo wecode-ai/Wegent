@@ -108,6 +108,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('waitFor', confirmMigration, { visible: false, timeoutMs: uiTimeoutMs })
       assert.equal(await readCloudAssistant(), null, 'Cancelling must leave cloud data untouched')
       assert.deepEqual(await readStandInBinding(control, uiTimeoutMs), before)
+      assert.equal(await control.command('getElementCount', composer), '0')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="personal-assistant-account-initialize"]',
