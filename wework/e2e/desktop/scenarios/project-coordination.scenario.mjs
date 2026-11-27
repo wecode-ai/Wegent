@@ -356,6 +356,7 @@ export function createDesktopScenario({
       )
       const acceptSelector = `[data-testid="cloud-task-activity-accept-${issue.id}"]`
       await control.command('scrollIntoView', acceptSelector)
+      await captureScreenshot(control, 'project-coordination-05b-human-accept-action.png')
       await control.command('clickWhenEnabled', acceptSelector)
       await until(
         () => rpc(control, 'todos.get', { project_id: project.id, task_id: issue.id }),
