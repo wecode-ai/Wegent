@@ -146,10 +146,10 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
 
     await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
     await page.goto(`/chat?teamId=${team.id}`, { waitUntil: 'domcontentloaded' })
-    await expect(page.getByTestId('message-input')).toBeEditable({ timeout: 30_000 })
-    await page
-      .getByTestId('message-input')
-      .fill('Draft the release notes and ask the reviewer to check them.')
+    const input = page.getByTestId('message-input')
+    await expect(input).toHaveAttribute('data-team-id', String(team.id), { timeout: 30_000 })
+    await expect(input).toHaveAttribute('contenteditable', 'true')
+    await input.fill('Draft the release notes and ask the reviewer to check them.')
     const send = page.getByTestId('send-button')
     await expect(send).toBeEnabled()
     await capture(page, testInfo, '01-direct-team-input')
