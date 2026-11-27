@@ -25,20 +25,41 @@ async function clickWithNativeMouse(control, selector, timeoutMs) {
     target = await mainRendererTarget(client)
     assert.ok(target, 'The main renderer is unavailable for a native mouse click')
     const command = (method, params) => client({ action: 'command', target, method, params })
+    await command('Page.bringToFront')
     await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    const hitTarget = await command('Runtime.evaluate', {
+      expression: `(() => {
+        const element = document.querySelector(${JSON.stringify(selector)})
+        const hit = document.elementFromPoint(${x}, ${y})
+        return {
+          hit: Boolean(element && hit && (hit === element || element.contains(hit))),
+          tag: hit?.tagName ?? null,
+          testId: hit?.closest?.('[data-testid]')?.getAttribute('data-testid') ?? null,
+        }
+      })()`,
+      returnByValue: true,
+    })
+    assert.ok(
+      hitTarget.result.value.hit,
+      `${selector} center must receive the pointer: ${JSON.stringify(hitTarget.result.value)}`
+    )
     await command('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x,
       y,
       button: 'left',
+      buttons: 1,
       clickCount: 1,
+      pointerType: 'mouse',
     })
     await command('Input.dispatchMouseEvent', {
       type: 'mouseReleased',
       x,
       y,
       button: 'left',
+      buttons: 0,
       clickCount: 1,
+      pointerType: 'mouse',
     })
   } finally {
     if (target) await client({ action: 'detach', target }).catch(() => {})
@@ -240,6 +261,7 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
 
   await clickWithNativeMouse(control, taskTab, timeoutMs)
   await control.command('waitFor', `${taskTab}[aria-selected="true"]`, { timeoutMs })
+  await control.command('waitFor', boardTab, { stableMs: 300, timeoutMs })
   await clickWithNativeMouse(control, boardTab, timeoutMs)
   await control.command('waitFor', `${boardTab}[aria-selected="true"]`, { timeoutMs })
   await control.command('waitFor', detail, { visible: true, timeoutMs })
