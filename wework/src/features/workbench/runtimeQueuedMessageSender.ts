@@ -60,6 +60,7 @@ export async function sendRuntimeQueuedMessage(
 ): Promise<RuntimeQueuedMessageSendResult> {
   const operation = options.isCurrent ? null : beginRuntimeConversationOperation(address)
   const isCurrent = options.isCurrent ?? operation!.isCurrent
+  const appendAcceptedMessage = options.appendAcceptedMessage ?? message.appendAcceptedMessage
   try {
     if (!isCurrent()) return { accepted: false, queued: false }
     const messageAttachments = message.attachments ?? []
@@ -68,7 +69,7 @@ export async function sendRuntimeQueuedMessage(
     const terminalContext = readRuntimeTerminalAdditionalContext(address)
     const additionalContext = { ...message.additionalContext, ...terminalContext }
     const turnIdsBeforeSend =
-      options.appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
+      appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
     let queued = false
     let queuePosition: number | null | undefined
     let guidanceTurnId: string | undefined
@@ -77,6 +78,7 @@ export async function sendRuntimeQueuedMessage(
         address,
         message: message.content,
         clientUserMessageId: message.id,
+        ...(message.guidanceCorrection ? { guidanceCorrection: message.guidanceCorrection } : {}),
         ...(message.requestUserInputResponse
           ? { requestUserInputResponse: message.requestUserInputResponse }
           : {}),
@@ -113,7 +115,9 @@ export async function sendRuntimeQueuedMessage(
     )
     if (!isCurrent()) return { accepted: false, queued: false }
     if (accepted && guidanceTurnId) {
-      appendOptimisticRuntimeConversationGuidance(address, guidanceTurnId, message)
+      if (appendAcceptedMessage !== false) {
+        appendOptimisticRuntimeConversationGuidance(address, guidanceTurnId, message)
+      }
     } else if (accepted && !queued && turnIdsBeforeSend !== null) {
       logRuntimeQueueStage(address, 'queue-send-writeback', {
         messageId: message.id,
