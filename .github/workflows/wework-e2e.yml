@@ -563,13 +563,17 @@ jobs:
             node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
-      - name: Upload assistant Team binding screenshots
+      - name: Upload assistant Team creation and execution screenshots
         if: success() && contains(format(',{0},', steps.core-e2e.outputs.checkpoints), ',stand-in-profile-settings,')
         uses: actions/upload-artifact@v4
         with:
           name: assistant-team-binding-${{ matrix.id }}
           path: |
-            wework/test-results/desktop-e2e/*/assistant-team-options.png
+            wework/test-results/desktop-e2e/*/assistant-create-new.png
+            wework/test-results/desktop-e2e/*/assistant-reference-existing.png
+            wework/test-results/desktop-e2e/*/assistant-copy-team-confirmation.png
+            wework/test-results/desktop-e2e/*/assistant-copied-team-saved.png
+            wework/test-results/desktop-e2e/*/assistant-team-environment.png
             wework/test-results/desktop-e2e/*/assistant-team-saved.png
             wework/test-results/desktop-e2e/*/assistant-team-delivery.png
           if-no-files-found: error
