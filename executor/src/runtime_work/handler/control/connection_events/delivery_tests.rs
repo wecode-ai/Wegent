@@ -3,6 +3,71 @@ use super::super::tests::{context, seed, EnvGuard};
 use super::*;
 
 #[test]
+fn repeated_event_reuses_guidance_receipt_after_the_conversation_is_idle() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env = EnvGuard::home(root.path().to_str().unwrap());
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let mut link = seed(&handler, "caller");
+            link.runtime_handle["executionRequest"]["user_id"] = json!(7);
+            handler.store.upsert_task(link.clone());
+            let key = "a".repeat(64);
+            let event = json!({"id":"ci-terminal","topicId":"pr","at":chrono::Utc::now().to_rfc3339()});
+            let subscription_id = handler.subscription_id("caller", "repeat");
+            let pending = json!({
+                "subscription_key":"repeat","task_id":"caller","device_id":"control-test-device",
+                "session":session::binding(&link).unwrap(),"source":{"name":"Repository","enabledAfter":"2026-01-01T00:00:00Z"},
+                "status":"pending","continuation":"Inspect the CI result","events":[event],
+                "resource_event_keys":[key],"observation_id":"observation"
+            });
+            let mut original = pending.clone();
+            original["subscription_key"] = json!("original");
+            original["status"] = json!("delivered");
+            original["operation_id"] = json!("original-operation");
+            original["native_guidance"] = json!("accepted");
+            let original_id = handler.subscription_id("caller", "original");
+            handler.save_event_subscription(&original_id, &original).unwrap();
+            handler.save_event_subscription(&subscription_id, &pending).unwrap();
+            event_store::transact(&handler.event_subscription_path(), |state| {
+                state["observations"]["observation"] = json!({
+                    "source":pending["source"],"checkpoint":{},
+                    "sequence":1,"events":[{"key":key,"sequence":1,"event":event}]
+                });
+                Ok(())
+            }).unwrap();
+
+            assert!(!handler.is_busy_local_task("caller"));
+            handler.collect_conversation_subscription(&subscription_id, pending).await.unwrap();
+
+            let saved = event_store::read(
+                &handler.event_subscription_path(),
+                event_store::Scope::Row("operations", &subscription_id),
+                |state| Ok(state["operations"][&subscription_id].clone()),
+            ).unwrap();
+            let projected = public_subscription(&saved);
+            assert_eq!(projected["status"], "delivered");
+            assert_eq!(saved["reused_operation_id"], "original-operation");
+            let admission_operation = super::super::execution::continuation_operation_id(
+                "control-test-device", "caller", &format!("connection-event:{subscription_id}"),
+            );
+            assert_eq!(projected["operation_id"], admission_operation);
+            let receipt = handler.control_get_operation(
+                &context("caller"), &json!({"operation_id":admission_operation}),
+            ).await.unwrap();
+            assert_eq!(receipt["operation"]["delivery_status"], "accepted");
+            assert_eq!(receipt["operation"]["result"]["commandId"], "original-operation");
+            assert!(projected["error_code"].is_null());
+            assert!(handler.command_journal.lock().unwrap().is_empty());
+            assert!(handler.turn_scheduler.lock().unwrap().queued_turns.is_empty());
+        });
+}
+
+#[test]
 fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
     let _lock = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -77,10 +142,26 @@ fn already_failed_pr_status_starts_one_turn_in_the_original_conversation() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(verify_preexisting_pr_failure_delivery());
+        .block_on(verify_preexisting_pr_failure_delivery(Value::Null));
 }
 
-async fn verify_preexisting_pr_failure_delivery() {
+#[test]
+fn personal_issue_conversation_receives_pr_status_in_its_existing_session() {
+    let _lock = crate::test_env::lock();
+    let origin = json!({
+        "type": "issue_dispatch", "projectStore": "local",
+        "cloudProjectId": "project", "loopItemId": "issue",
+        "dispatchId": "direct-human:assignment", "roundId": "direct",
+        "assignmentId": "assignment", "humanAssignmentId": "human"
+    });
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(verify_preexisting_pr_failure_delivery(origin));
+}
+
+async fn verify_preexisting_pr_failure_delivery(origin: Value) {
     use crate::runtime_work::handler::tests::install_native_history;
     use std::fs;
     let root = tempfile::tempdir().unwrap();
@@ -121,12 +202,14 @@ async fn verify_preexisting_pr_failure_delivery() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
     install_native_history(&mut handler, root.path(), vec![], None);
+    let mut resumed = json!({"thread":{"id":thread,"modelProvider":"~"}});
+    if origin.is_object() {
+        resumed["activePermissionProfile"] = json!({"id":"wework-source-project"});
+        resumed["approvalsReviewer"] = json!("auto_review");
+    }
     for (method, response) in [
         ("thread_goal_get", json!({"goal":null})),
-        (
-            "thread_resume",
-            json!({"thread":{"id":thread,"modelProvider":"~"}}),
-        ),
+        ("thread_resume", resumed),
         ("turn_start", json!({"turn":{"id":"resumed"}})),
     ] {
         fs::write(
@@ -158,6 +241,15 @@ async fn verify_preexisting_pr_failure_delivery() {
     link.workspace_path = root.path().to_string_lossy().into_owned();
     link.runtime_handle = json!({"runtime":"codex","executionRequest":{"user_id":7,
         "bot":[{"shell_type":"Codex"}],"model_config":{"model_id":"gpt-test","api_key":"synthetic-key"}}});
+    link.runtime_handle["origin"] = origin;
+    let mut execution = runtime_event_request_from_link(&link);
+    crate::runtime_work::api_context::inject_current_session(
+        &mut execution,
+        "control-test-device",
+        "caller",
+    );
+    let control = ControlContext::from_request(&execution)
+        .expect("The existing conversation must have personal control");
     handler.store.upsert_task(link);
 
     let goal = handler
@@ -173,18 +265,14 @@ async fn verify_preexisting_pr_failure_delivery() {
         "continuation":"Inspect the CI failure"
     });
     let subscribed = handler
-        .control_operation(
-            &context("caller"),
-            "subscribe_connection_events",
-            request.clone(),
-        )
+        .control_operation(&control, "subscribe_connection_events", request.clone())
         .await
         .unwrap();
     assert_eq!(subscribed["subscription"]["status"], "armed");
     assert!(subscribed.get("conflict_subscription").is_none());
     let observer_source = request["source"].clone();
     let replay = handler
-        .control_operation(&context("caller"), "subscribe_connection_events", request)
+        .control_operation(&control, "subscribe_connection_events", request)
         .await
         .unwrap();
     assert_eq!(replay, subscribed);
@@ -209,11 +297,7 @@ async fn verify_preexisting_pr_failure_delivery() {
         .await
         .unwrap();
     let subscriptions = handler
-        .control_operation(
-            &context("caller"),
-            "list_connection_event_subscriptions",
-            json!({}),
-        )
+        .control_operation(&control, "list_connection_event_subscriptions", json!({}))
         .await
         .unwrap();
     let items = subscriptions["items"].as_array().unwrap();

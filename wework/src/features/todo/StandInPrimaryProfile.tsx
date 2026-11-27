@@ -1,13 +1,11 @@
 import type { PersonalStandInSettings, StandInIdentity } from '@/api/personalStandIn'
-import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
-import type { StandInExecutorApi } from '@/api/standIn'
-import type { MessageCenterSource } from '@/api/standInMessageCenter'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
-  defaultDingTalkDelegation,
-  dingTalkDelegationModel,
-  isDingTalkSource,
-} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+  connectionChangeEnablesIdentity,
+  newStandInPrimaryRole,
+  primaryWithConnectionMode,
+} from '@/api/personalStandIn'
+import type { StandInExecutorApi } from '@/api/standIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -34,49 +32,17 @@ import {
   type StandInSettingsShortcut,
 } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import {
+  connectionConfigurationChanges,
+  hasConnectionDraft,
+  rebaseConnectionDraft,
+} from './standInConnectionSettingsModel'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 
 type NormalizedPrimary = StandInIdentity & {
   collaboration: NonNullable<StandInIdentity['collaboration']>
   connections: NonNullable<StandInIdentity['connections']>
-}
-
-const primaryDraftFields = [
-  'enabled',
-  'prompt',
-  'preferences',
-  'selfLearningEnabled',
-  'workspace',
-  'taskPermissions',
-  'calendar',
-  'collaboration',
-] as const
-
-function rebasePrimaryDraft(
-  current: NormalizedPrimary,
-  previous: NormalizedPrimary,
-  saved: NormalizedPrimary
-): NormalizedPrimary {
-  const draft = { ...saved }
-  const keepEdit = <Field extends keyof NormalizedPrimary>(field: Field) => {
-    if (!dequal(current[field], previous[field])) draft[field] = current[field]
-  }
-  primaryDraftFields.forEach(keepEdit)
-  if (dequal(previous.model, saved.model) && dequal(previous.modelOptions, saved.modelOptions)) {
-    keepEdit('model')
-    keepEdit('modelOptions')
-  }
-  const otherConnections = current.connections.filter(row => !isDingTalkSource(row))
-  const previousOtherConnections = previous.connections.filter(row => !isDingTalkSource(row))
-  const savedOtherConnections = saved.connections.filter(row => !isDingTalkSource(row))
-  if (
-    !dequal(otherConnections, previousOtherConnections) &&
-    !dequal(otherConnections, savedOtherConnections)
-  ) {
-    draft.connections = [...otherConnections, ...saved.connections.filter(isDingTalkSource)]
-  }
-  return draft
 }
 
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
@@ -97,12 +63,10 @@ export function StandInPrimaryProfile({
   onSelectDevice,
   deviceReadOnly = false,
   initialCalendar = false,
-  initialConnections = false,
   onCalendarViewChange,
   onReload,
   shortcuts,
   footerLeading,
-  dingtalkSourceProblem,
 }: {
   settings: PersonalStandInSettings
   executionDeviceId?: string
@@ -123,32 +87,18 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
-  initialConnections?: boolean | MessageCenterSource
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
-  dingtalkSourceProblem?: string
 }) {
   const { t } = useTranslation('common')
-  const initialSource =
-    initialConnections && typeof initialConnections === 'object' ? initialConnections : undefined
   const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
-  const [receipt, setReceipt] = useState<PersonalStandInSettings | null>(null)
-  const settings =
-    receipt?.userId === incomingSettings.userId &&
-    receipt.executionDeviceId === incomingSettings.executionDeviceId &&
-    receipt.version > incomingSettings.version
-      ? receipt
-      : incomingSettings
-  if (receipt && settings === incomingSettings) setReceipt(null)
+  const settings = incomingSettings
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
-  const defaultRole = newStandInRole(executionDeviceId, '@primary')
-  const defaultCollaboration = {
-    ...defaultRole.collaboration,
-    policy: { automatic: true, askBeforeAct: true, immediate: false },
-  }
+  const defaultRole = newStandInPrimaryRole(executionDeviceId)
+  const defaultCollaboration = defaultRole.collaboration
   const usesSeparatePrompt = (primary: StandInIdentity) =>
     settings.cloudDefinitionRevision !== undefined || primary.selfLearningEnabled !== undefined
   const separatePrompt = usesSeparatePrompt(saved)
@@ -157,6 +107,7 @@ export function StandInPrimaryProfile({
     return {
       ...primary,
       delegation: primary.delegation,
+      dingTalkConnectionMode: primary.dingTalkConnectionMode,
       collaboration: primary.collaboration ?? defaultCollaboration,
       calendar: primary.calendar,
       connections: primary.connections ?? [],
@@ -175,7 +126,7 @@ export function StandInPrimaryProfile({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar || initialConnections ? 'connections' : 'main')
+  >(initialCalendar ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -183,6 +134,16 @@ export function StandInPrimaryProfile({
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
+  const [connectionView, setConnectionView] = useState<string | null>(null)
+  const [connectionScopeTitle, setConnectionScopeTitle] = useState<string | null>(null)
+  const connectionTitleChanged = useCallback(
+    (title: string | null, view: string | null, scopeTitle: string | null) => {
+      setConnectionTitle(title)
+      setConnectionView(view)
+      setConnectionScopeTitle(scopeTitle)
+    },
+    []
+  )
   const calendarViewChanged = useCallback(
     (open: boolean) => {
       setCalendarOpen(open)
@@ -197,6 +158,7 @@ export function StandInPrimaryProfile({
     view === 'advanced'
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false)
   const [tagOwner, setTagOwner] = useState(() => ({
     api,
     userId: settings.userId,
@@ -208,7 +170,6 @@ export function StandInPrimaryProfile({
     tagOwner.userId !== settings.userId ||
     tagOwner.deviceId !== settings.executionDeviceId
   ) {
-    setReceipt(null)
     setDraft(original)
     setBaseline(original)
     setTagOwner({
@@ -224,44 +185,46 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot,
     tagDraft.getDirtySnapshot
   )
-  const profileDirty = !dequal(
-    { ...original, delegation: original.delegation ?? defaultDingTalkDelegation },
-    { ...draft, delegation: draft.delegation ?? defaultDingTalkDelegation }
-  )
+  const scopeView = connections && connectionScopeTitle ? connectionView : null
+  const profileDirty = !dequal(original, draft)
   const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
     draft.selfLearningEnabled === true &&
     draft.preferences === original.preferences
-  const ordinarySubmission = dingTalkDelegationModel(original, draft).submission()
-  const savePrimary = (submission: typeof ordinarySubmission) =>
-    onSave({
-      ...settings,
-      primary: {
-        ...submission,
-        ...(preserveLegacyInstructions
-          ? { prompt: saved.prompt, preferences: saved.preferences }
-          : {}),
-        collaboration:
-          saved.collaboration || !dequal(draft.collaboration, original.collaboration)
-            ? draft.collaboration
-            : undefined,
-      },
-    })
-  const saveDingTalk = async (value: StandInIdentity) => {
-    const next = await onSave(
-      {
-        ...settings,
-        primary: value,
-      },
-      true
-    )
-    const primary = next?.primary
-    if (!primary) return false
-    const accepted = normalizePrimary(primary)
-    setReceipt(next)
-    setDraft(current => rebasePrimaryDraft(current, original, accepted))
-    return true
+  const savePrimary = async () => {
+    const updated = scopeView
+      ? { ...saved, ...connectionConfigurationChanges(saved, draft, scopeView) }
+      : {
+          ...draft,
+          ...(preserveLegacyInstructions
+            ? { prompt: saved.prompt, preferences: saved.preferences }
+            : {}),
+          collaboration:
+            saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+              ? draft.collaboration
+              : undefined,
+        }
+    const primary = scopeView
+      ? primaryWithConnectionMode(saved, {
+          ...updated,
+          enabled: saved.enabled || connectionChangeEnablesIdentity(saved, updated),
+        })
+      : updated
+    const result = await onSave({ ...settings, primary }, Boolean(scopeView))
+    if (result?.primary && scopeView) {
+      const accepted = normalizePrimary(result.primary)
+      const remaining = {
+        ...rebaseConnectionDraft(draft, original, accepted, scopeView),
+        dingTalkConnectionMode: accepted.dingTalkConnectionMode,
+      }
+      setBaseline(accepted)
+      setDraft({
+        ...remaining,
+        enabled: accepted.enabled || connectionChangeEnablesIdentity(accepted, remaining),
+      })
+      connectionRef.current?.returnToScopeList()
+    }
   }
   const role = {
     ...defaultRole,
@@ -302,14 +265,13 @@ export function StandInPrimaryProfile({
           {
             label: t('standIn.workspace.primary_profile'),
             testId: 'stand-in-path-settings',
-            onClick: view === 'main' ? undefined : backToSettings,
+            onClick: view === 'main' || connections ? undefined : backToSettings,
           },
           ...(connections
             ? [
                 {
                   label: t('standIn.workspace.connections'),
                   testId: 'stand-in-path-connections',
-                  onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
                 },
               ]
             : view === 'advanced'
@@ -324,6 +286,9 @@ export function StandInPrimaryProfile({
                 : []),
           ...(connections && connectionTitle
             ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
+            : []),
+          ...(connections && connectionScopeTitle
+            ? [{ label: connectionScopeTitle, testId: 'stand-in-path-scope' }]
             : []),
         ]}
         title={t(
@@ -406,7 +371,7 @@ export function StandInPrimaryProfile({
             initialCalendar={calendarEntry}
             onCalendarViewChange={calendarViewChanged}
             onDetailViewChange={setConnectionDetailOpen}
-            onDetailTitleChange={setConnectionTitle}
+            onDetailTitleChange={connectionTitleChanged}
             role={role}
             projectScopeConfigured={Boolean(
               saved.collaboration || !dequal(draft.collaboration, original.collaboration)
@@ -417,40 +382,28 @@ export function StandInPrimaryProfile({
               calendar: original.calendar,
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
-            initialSource={initialSource}
             onScheduleDirtyChange={setScheduleDirty}
+            onScheduleEditorOpenChange={setScheduleEditorOpen}
             tagDraft={tagDraft}
             projects={projects}
             api={api}
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
             disabled={blocked}
-            dingTalk={{
-              saved: settings.primary ?? { enabled: false, prompt: '', preferences: '' },
-              services,
-              devices,
-              primaryStopped: Boolean(settings.lifecycle),
-              sourceProblem: dingtalkSourceProblem,
-              onSave: saveDingTalk,
-            }}
             onChange={value =>
-              setDraft({
-                ...draft,
-                enabled:
-                  original.enabled ||
-                  connectionChangeEnablesIdentity(
-                    {
-                      ...original,
-                      connections: original.connections.filter(row => !isDingTalkSource(row)),
-                    },
-                    {
-                      ...value,
-                      connections: value.connections?.filter(row => !isDingTalkSource(row)),
-                    }
-                  ),
-                collaboration: value.collaboration,
-                calendar: value.calendar,
-                connections: value.connections ?? [],
+              setDraft(current => {
+                const changed = hasConnectionDraft(value, original)
+                const source = changed ? value : original
+                return primaryWithConnectionMode(saved, {
+                  ...current,
+                  dingTalkConnectionMode: original.dingTalkConnectionMode,
+                  enabled:
+                    original.enabled ||
+                    (changed && connectionChangeEnablesIdentity(original, value)),
+                  collaboration: source.collaboration,
+                  calendar: source.calendar,
+                  connections: source.connections ?? [],
+                })
               })
             }
           />
@@ -548,25 +501,31 @@ export function StandInPrimaryProfile({
           onOpenReport={() => setView('revision')}
         />
       )}
-      {!scheduleDirty && !shortcutPage && (
+      {!scheduleDirty && !scheduleEditorOpen && !shortcutPage && (
         <StandInSettingsActions
           prefix="stand-in-primary"
-          leading={footerLeading}
+          leading={connectionDetailOpen ? undefined : footerLeading}
           busy={blocked}
-          saveLabel={saving ? t('standIn.saving') : loading ? t('standIn.loading') : undefined}
+          saveLabel={
+            saving
+              ? t('standIn.saving')
+              : loading
+                ? t('standIn.loading')
+                : scopeView
+                  ? t('standIn.personal.save_receive_scope')
+                  : undefined
+          }
           disabled={blocked}
           saveDisabled={
             blocked ||
-            !profileDirty ||
             scheduleDirty ||
             connectionDraftDirty ||
-            dequal(original, ordinarySubmission)
+            !(scopeView ? hasConnectionDraft(draft, original, scopeView) : profileDirty)
           }
-          onCancel={close}
+          cancelLabel={scopeView ? t('standIn.personal.discard') : undefined}
+          onCancel={scopeView ? back : close}
           onSave={() => {
-            const save = () => void savePrimary(ordinarySubmission)
-            if (connectionRef.current) connectionRef.current.requestLeaveDingTalk(save)
-            else save()
+            void savePrimary()
           }}
         >
           {error && (

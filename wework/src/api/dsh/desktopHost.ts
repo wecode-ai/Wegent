@@ -1,6 +1,6 @@
 import { dshRpcTimeoutMs, scheduleDshRequest, executorRequestPriority } from './backgroundRequests'
 import { createRequestId } from '@/lib/request-id'
-import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
+import { deliverRuntimeTransport, gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export interface DesktopHostErrorPayload {
   code: string
@@ -124,6 +124,10 @@ async function performDesktopHostRequest<Result>(
   try {
     let response: Response
     try {
+      if (e2e && capability === 'preferences.get' && params.requireReadable === true)
+        await new Promise<void>(resolve =>
+          deliverRuntimeTransport('request', capability, { params }, resolve)
+        )
       response = await fetch('/wework/electron-host/v1/invoke', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-request-id': requestId },

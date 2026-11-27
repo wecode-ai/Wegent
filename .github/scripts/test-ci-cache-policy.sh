@@ -715,6 +715,18 @@ jobs = YAML.load_file(ARGV[0])['jobs']
   ['workbench-mode', 'startup-fault-isolation'].each do |segment|
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
+  expected_commands = if name == 'wework-desktop-core-e2e'
+    [
+      'node wework/scripts/prepare-electron.mjs',
+      %q{electron_bin="$(node -p "require('./wework/electron/node_modules/electron')")"},
+      %q{test -f "$electron_bin" && test -x "$electron_bin"}
+    ]
+  else
+    [
+      'pnpm --dir wework prepare:electron',
+      %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
+    ]
+  end
   commands = step['run'].lines.map(&:strip).reject(&:empty?)
   abort "#{name} must install the locked Electron toolchain" unless commands.first == 'pnpm --dir wework prepare:electron'
   if name.include?('windows')

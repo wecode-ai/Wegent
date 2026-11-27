@@ -184,6 +184,8 @@ export function UserMessage({
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
+  const canEditEmptyGuidance =
+    message.runtimeGuidance === true && documentAttachments.length + imageAttachments.length > 0
 
   if (isStandInActivityMessage(message)) return null
   if (message.source?.source === 'connection_event') {
@@ -300,12 +302,14 @@ export function UserMessage({
             ))}
           </div>
         )}
-        {displayContent && editing ? (
+        {editing && (displayContent || canEditEmptyGuidance) ? (
           <UserMessageEditForm
             editorServices={services.editor}
             transferServices={services.transfers}
             onOpenMentionPlugin={services.onOpenPlugin}
             initialContent={displayContent}
+            correction={message.runtimeGuidance === true}
+            allowEmpty={canEditEmptyGuidance}
             submitting={editSubmitting}
             onCancel={onCancelEdit}
             onSubmit={onSubmitEdit}

@@ -153,3 +153,21 @@ fn independent_issue_intake_keeps_its_own_enable_boundary() {
     stamp_project_enabled(&mut renamed, &paused);
     assert_ne!(renamed["independentIssuesEnabledAfter"], OLD);
 }
+
+#[test]
+fn enabling_a_previous_trigger_keeps_its_boundary_separate_from_the_existing_trigger() {
+    let mut saved = role();
+    saved["collaboration"]["projectTrigger"] = json!("assignment");
+    saved["collaboration"]["participatingTrigger"] = json!("mention");
+    let mut changed = saved.clone();
+    changed["collaboration"]["projectTrigger"] = json!("both");
+    changed["issueTriggerBoundaries"]["projectTrigger"]["mention"] = json!(OLD);
+    stamp_project_enabled(&mut changed, &saved);
+
+    let boundaries = &changed["issueTriggerBoundaries"];
+    assert!(boundaries["projectTrigger"]["assignment"].is_null());
+    assert!(boundaries["projectTrigger"]["mention"].is_string());
+    assert_ne!(boundaries["projectTrigger"]["mention"], OLD);
+    assert!(boundaries["participatingTrigger"].is_null());
+    assert_eq!(boundary(&changed, "existing", "local"), OLD);
+}

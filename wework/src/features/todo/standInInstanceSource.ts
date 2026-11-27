@@ -8,11 +8,24 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { availableStandInDevices } from './standInDevices'
-import { migrateStandIn, StandInMigrationError } from './migrateStandIn'
+import { resolveStandInEntry, type StandInEntry, type StandInEntryError } from './standInEntry'
+import {
+  migrateStandIn,
+  StandInMigrationError,
+  StandInMigrationSourceUnavailable,
+} from './migrateStandIn'
+import { raceWithTimeout } from '@/lib/promise-timeout'
+import {
+  isStandInDeviceUnreachable,
+  reportStandInError,
+  requiresStandInUpgrade,
+} from '@/lib/stand-in-error-message'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 
 interface InstanceSnapshot {
   binding?: StandInInstanceBinding
+  setupTarget?: StandInBindingTarget
+  entryFailure?: { entry: StandInEntry; error: StandInEntryError }
   stoppedProfile?: PersonalStandInSettings
   localDeviceId: string
   busy: boolean
@@ -23,6 +36,8 @@ interface InstanceObservation {
   connected: boolean
   active: boolean
   entryRequestKey?: number
+  entry?: StandInEntry
+  entryApi?: Pick<StandInExecutorApi, 'personalGet'>
 }
 export const hasSavedStandIn = (settings: PersonalStandInSettings) =>
   Boolean(
@@ -39,19 +54,60 @@ const sameTarget = (
   right: StandInBindingTarget | null | undefined
 ) => left?.userId === right?.userId && left?.deviceId === right?.deviceId
 
+async function activateStandInBinding(
+  api: StandInExecutorApi,
+  localDeviceId: string,
+  binding: StandInInstanceBinding
+) {
+  const target = binding.target!
+  await api.lifecycle(target.userId, target.deviceId, 'start')
+  try {
+    return await api.binding(localDeviceId, 'completeActivation', binding.version)
+  } catch (cause) {
+    const saved = await api.binding(localDeviceId)
+    if (saved.status === 'active' && sameTarget(saved.target, target)) return saved
+    throw cause
+  }
+}
+
+export async function initializeStandInTarget<T>(
+  api: StandInExecutorApi,
+  localDeviceId: string,
+  binding: StandInInstanceBinding,
+  target: StandInBindingTarget,
+  initializeAccount: () => Promise<T>,
+  onBound?: (binding: StandInInstanceBinding) => void
+) {
+  const settings = await api.personalGet(target.userId, target.deviceId)
+  if (settings.lifecycle?.status === 'stopping') throw new StandInMigrationError('not_stopped')
+  const account = await initializeAccount()
+  const next = await api.binding(
+    localDeviceId,
+    binding.status === 'stopped' ? 'prepareBind' : 'prepareReplacement',
+    binding.version,
+    target
+  )
+  onBound?.(next)
+  const ready = await activateStandInBinding(api, localDeviceId, next)
+  onBound?.(ready)
+  return account
+}
+
 /** The local instance binding owns initialization, cancellation and rebind transactions. */
 export function createStandInInstanceSource({
   services,
   api,
   userId,
   backendUrl,
-  initialDeviceId,
+  requireSetupConfirmation = true,
+  legacyOnly = false,
 }: {
   services: WorkbenchServices
   api: StandInExecutorApi | undefined
   userId: number
   backendUrl: string
-  initialDeviceId?: string
+  requireSetupConfirmation?: boolean
+  legacyOnly?: boolean
 }) {
   let snapshot: InstanceSnapshot = { localDeviceId: '', busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -59,13 +115,8 @@ export function createStandInInstanceSource({
   let readRevision = 0
   let activation = 0
   let lifetime = 0
-  let initialization:
-    | {
-        deviceId: string
-        activation: number
-        lifetime: number
-        request: Promise<{ binding: StandInInstanceBinding; error?: unknown }>
-      }
+  let activating:
+    | { deviceId: string; version: number; result: Promise<StandInInstanceBinding> }
     | undefined
   const publish = (patch: Partial<InstanceSnapshot>) => {
     snapshot = { ...snapshot, ...patch }
@@ -74,6 +125,7 @@ export function createStandInInstanceSource({
   const publishBinding = (binding: StandInInstanceBinding) =>
     publish({
       binding,
+      ...(binding.status !== 'unbound' ? { setupTarget: undefined, entryFailure: undefined } : {}),
       ...(binding.status !== 'stopped' ||
       binding.version !== snapshot.binding?.version ||
       !sameTarget(snapshot.binding?.target, binding.target) ||
@@ -89,32 +141,60 @@ export function createStandInInstanceSource({
     if (!observed(revision, deviceId))
       throw new DOMException('Stand-in instance owner changed', 'AbortError')
   }
+  const discoverSetupTarget = async (deviceId: string, owner: InstanceObservation) => {
+    const owned = await api!.personalGet(userId, deviceId)
+    const available = owner.connected ? availableStandInDevices(owner.devices) : []
+    const preferred = available.find(device => device.is_default) ?? available[0]
+    return setupBindingTarget(
+      hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)
+    )
+  }
+  const setupBindingTarget = (deviceId: string): StandInBindingTarget => ({
+    userId,
+    backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
+    deviceId,
+  })
+  const resolveSetupEntry = (
+    deviceId: string,
+    owner: InstanceObservation,
+    entry: Extract<StandInEntry, { kind: 'identity' }>
+  ) =>
+    resolveStandInEntry(
+      owner.entryApi ?? api!,
+      entry,
+      { userId, deviceId: entry.deviceId ?? deviceId },
+      new Set([
+        deviceId,
+        ...(owner.connected
+          ? availableStandInDevices(owner.devices).map(device => device.device_id)
+          : []),
+      ]),
+      { unbound: true }
+    )
   const initialize = async (
     deviceId: string,
     unbound: StandInInstanceBinding,
-    owner: InstanceObservation,
+    target: StandInBindingTarget,
     epoch: number,
     revision: number
   ) => {
-    const owned = await api!.personalGet(userId, deviceId)
     const mayBind = () =>
-      observed(revision, deviceId) && observation?.active && activation === epoch
+      observed(revision, deviceId) &&
+      observation?.active &&
+      activation === epoch &&
+      (target.deviceId === deviceId ||
+        (observation.connected &&
+          availableStandInDevices(observation.devices).some(
+            device => device.device_id === target.deviceId
+          )))
     if (!mayBind()) return { binding: unbound }
-    const available = owner.connected ? availableStandInDevices(owner.devices) : []
-    const preferred = available.find(device => device.is_default) ?? available[0]
-    const target = {
-      userId,
-      backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
-      deviceId:
-        initialDeviceId || (hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)),
-    }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)
       if (!mayBind()) return { binding: unbound }
     }
     let bound: StandInInstanceBinding
     try {
-      bound = await api!.binding(deviceId, 'bind', unbound.version, target)
+      bound = await api!.binding(deviceId, 'prepareBind', unbound.version, target)
     } catch (cause) {
       if (
         !cause ||
@@ -126,14 +206,12 @@ export function createStandInInstanceSource({
       // A competing initializer owns its target; never start it on this transaction's behalf.
       return { binding: await api!.binding(deviceId) }
     }
-    // Once persisted, a failed start remains bound and recoverable only by stopping.
     if (!observed(revision, deviceId)) return { binding: bound }
     try {
-      await api!.lifecycle(target.userId, target.deviceId, 'start')
+      return { binding: await activateStandInBinding(api!, deviceId, bound) }
     } catch (error) {
       return { binding: bound, error }
     }
-    return { binding: bound }
   }
   const read = async () => {
     const owner = observation
@@ -153,12 +231,39 @@ export function createStandInInstanceSource({
         publish({
           localDeviceId: identity.deviceId,
           ...(snapshot.localDeviceId && snapshot.localDeviceId !== identity.deviceId
-            ? { binding: undefined, stoppedProfile: undefined }
+            ? { binding: undefined, stoppedProfile: undefined, setupTarget: undefined }
             : {}),
         })
-      // Finish the admitted binding read; only the current owner may initialize or publish it.
       let binding = await api.binding(identity.deviceId)
       if (!current()) return
+      if (legacyOnly && binding.status !== 'stopped') {
+        publishBinding(binding)
+        publish({ error: null })
+        return
+      }
+      if (binding.status === 'unbound') {
+        publishBinding(binding)
+        const entry = owner.entry
+        if (entry && entry.kind !== 'home') {
+          publish({ setupTarget: undefined, entryFailure: undefined, error: null })
+          if (requireSetupConfirmation || entry.kind !== 'identity') return
+          const resolved = await resolveSetupEntry(identity.deviceId, owner, entry)
+          if (!current()) return
+          if (resolved.kind === 'error') {
+            publish({ entryFailure: { entry, error: resolved.error } })
+            return
+          }
+          publish({ setupTarget: setupBindingTarget(resolved.deviceId) })
+          await mutate('setup', {})
+          return
+        }
+        if (snapshot.setupTarget) return
+        const setupTarget = await discoverSetupTarget(identity.deviceId, owner)
+        if (!current()) return
+        publish({ setupTarget, entryFailure: undefined, error: null })
+        if (!requireSetupConfirmation) await mutate('setup', {})
+        return
+      }
       if (
         binding.status === 'stopped' &&
         binding.target &&
@@ -170,40 +275,19 @@ export function createStandInInstanceSource({
         if (current()) publish({ stoppedProfile, error: null })
         return
       }
-      if (binding.status === 'unbound') {
-        if (initialization?.deviceId !== identity.deviceId) {
-          const request = initialize(identity.deviceId, binding, owner, epoch, ownerRevision)
-          initialization = {
-            deviceId: identity.deviceId,
-            activation: epoch,
-            lifetime: ownerRevision,
-            request,
-          }
-          void request.then(
-            value => {
-              if (value.binding.status === 'unbound' && initialization?.request === request)
-                initialization = undefined
-            },
-            () => {
-              if (initialization?.request === request) initialization = undefined
-            }
-          )
+      if (
+        binding.status === 'activating' &&
+        binding.target &&
+        isStandInBindingOwner(binding.target.userId, userId)
+      ) {
+        publishBinding(binding)
+        if (activating?.deviceId !== identity.deviceId || activating.version !== binding.version) {
+          const result = activateStandInBinding(api, identity.deviceId, binding).finally(() => {
+            if (activating?.result === result) activating = undefined
+          })
+          activating = { deviceId: identity.deviceId, version: binding.version, result }
         }
-        const transaction = initialization
-        const initialized = await transaction.request
-        if (
-          current() &&
-          initialized.binding.status === 'unbound' &&
-          (transaction.activation !== epoch || transaction.lifetime !== ownerRevision)
-        ) {
-          void read()
-          return
-        }
-        binding = initialized.binding
-        if (initialized.error) {
-          if (current()) publishBinding(binding)
-          throw initialized.error
-        }
+        binding = await activating.result
       }
       if (current()) {
         publishBinding(binding)
@@ -214,88 +298,161 @@ export function createStandInInstanceSource({
     }
   }
   const mutate = async (
-    operation: 'stop' | 'bind' | 'migrate',
+    operation: 'setup' | 'stop' | 'bind' | 'migrate' | 'initialize',
     input: {
       version?: number
       target?: StandInBindingTarget
       roleId?: string
       primaryName?: string
       targetApi?: StandInExecutorApi
+      initializeTarget?(): Promise<void>
     }
   ) => {
-    if (!listeners.size || !observation?.active || snapshot.busy) return
+    const owner = observation
+    if (!listeners.size || !owner?.active || snapshot.busy) return
     const binding = snapshot.binding
     const localDeviceId = snapshot.localDeviceId
     const revision = lifetime
     publish({ busy: true, error: null })
     try {
-      if (operation === 'stop') {
-        if (
-          !api ||
-          !binding?.target ||
-          !isStandInBindingOwner(binding.target.userId, userId) ||
-          !localDeviceId
-        )
-          return
+      if (operation === 'setup') {
+        const target = snapshot.setupTarget
+        if (!api || !localDeviceId || binding?.status !== 'unbound' || !target) return
         readRevision++
-        activation++
-        const stopping = await api.binding(localDeviceId, 'beginStop', input.version!)
-        assertObserved(revision, localDeviceId)
-        publishBinding(stopping)
-        const target = stopping.target!
-        const stopped = await api.lifecycle(target.userId, target.deviceId, 'stop')
-        assertObserved(revision, localDeviceId)
-        if (stopped.lifecycle?.status !== 'stopped')
-          throw Object.assign(new Error('Stand-in cancellation is incomplete'), {
-            code: 'stand_in_stop_incomplete',
-          })
-        const complete = await api.binding(localDeviceId, 'completeStop', stopping.version)
+        const result = await initialize(localDeviceId, binding, target, ++activation, revision)
         if (observed(revision, localDeviceId)) {
-          publishBinding(complete)
-          publish({ stoppedProfile: stopped })
+          publishBinding(result.binding)
+          if (result.error) throw result.error
         }
         return
       }
-      if (!api || !binding || !localDeviceId || binding.status !== 'stopped' || !input.target) {
-        if (operation === 'migrate') throw new StandInMigrationError('not_stopped')
-        return
+      if (!api || !binding || !localDeviceId) return
+      const source = binding.target
+      const ownsSource = source && isStandInBindingOwner(source.userId, userId)
+      const target = input.target
+      if (operation === 'stop' && (!ownsSource || binding.status === 'stopped')) return
+      if (operation === 'bind' && binding.status !== 'stopped') return
+      if (operation === 'migrate' || operation === 'initialize') {
+        if (!ownsSource || !target || binding.status === 'unbound')
+          throw new StandInMigrationError('not_stopped')
+        if (source.deviceId === target.deviceId) throw new StandInMigrationError('same_device')
       }
-      if (
-        operation === 'migrate' &&
-        (!binding.target || !isStandInBindingOwner(binding.target.userId, userId))
-      )
-        throw new StandInMigrationError('not_stopped')
       readRevision++
       activation++
-      const target = input.target
-      const role =
-        operation === 'migrate'
-          ? await migrateStandIn(api, {
-              sourceUser: binding.target!.userId,
-              sourceDevice: binding.target!.deviceId,
-              roleId: input.roleId,
-              targetUser: target.userId,
-              targetDevice: target.deviceId,
-              primaryName: input.primaryName!,
-              targetApi: input.targetApi,
-              assertOwnership: () => assertObserved(revision, localDeviceId),
+      let current = binding
+      const initializeDestination = async () => {
+        if (!target || !input.initializeTarget) throw new StandInMigrationError('not_stopped')
+        assertObserved(revision, localDeviceId)
+        if (legacyOnly) {
+          const settings = await api.personalGet(target.userId, target.deviceId)
+          if (settings.lifecycle?.status === 'stopping')
+            throw new StandInMigrationError('not_stopped')
+          if (settings.lifecycle?.status === 'stopped')
+            await api.lifecycle(target.userId, target.deviceId, 'start')
+          assertObserved(revision, localDeviceId)
+          await input.initializeTarget()
+          return 'initialized' as const
+        }
+        await initializeStandInTarget(
+          api,
+          localDeviceId,
+          current,
+          target,
+          async () => {
+            assertObserved(revision, localDeviceId)
+            await input.initializeTarget!()
+            assertObserved(revision, localDeviceId)
+          },
+          next => {
+            if (observed(revision, localDeviceId)) publishBinding(next)
+          }
+        )
+        return 'initialized' as const
+      }
+      if (operation !== 'bind' && source && binding.status !== 'stopped') {
+        current = await api.binding(localDeviceId, 'beginStop', input.version ?? binding.version)
+        assertObserved(revision, localDeviceId)
+        publishBinding(current)
+        let stopped
+        try {
+          stopped = await raceWithTimeout(
+            api.lifecycle(source.userId, source.deviceId, 'stop'),
+            operation === 'initialize' ? 15_000 : undefined,
+            () =>
+              Object.assign(new Error('Stopping the source device timed out'), {
+                code: 'runtime_rpc_timeout',
+              })
+          )
+          if (stopped.lifecycle?.status !== 'stopped')
+            throw Object.assign(new Error('Stand-in cancellation is incomplete'), {
+              code: 'stand_in_stop_incomplete',
             })
-          : undefined
+        } catch (cause) {
+          reportStandInError('stop-instance', cause, source.deviceId)
+          const stopIncomplete =
+            cause &&
+            typeof cause === 'object' &&
+            'code' in cause &&
+            cause.code === 'stand_in_stop_incomplete'
+          if (
+            !target ||
+            !input.initializeTarget ||
+            !(stopIncomplete || isStandInDeviceUnreachable(cause) || requiresStandInUpgrade(cause))
+          )
+            throw cause
+          return await initializeDestination()
+        }
+        assertObserved(revision, localDeviceId)
+        current = await api.binding(localDeviceId, 'completeStop', current.version)
+        assertObserved(revision, localDeviceId)
+        publishBinding(current)
+        publish({ stoppedProfile: stopped })
+      }
+      if (operation === 'initialize') return await initializeDestination()
+      if (operation === 'stop' || !target) return
+      let role
+      if (operation === 'migrate') {
+        try {
+          role = await migrateStandIn(api, {
+            sourceUser: source!.userId,
+            sourceDevice: source!.deviceId,
+            roleId: input.roleId,
+            targetUser: target.userId,
+            targetDevice: target.deviceId,
+            primaryName: input.primaryName!,
+            targetApi: input.targetApi,
+            assertOwnership: () => assertObserved(revision, localDeviceId),
+          })
+        } catch (cause) {
+          if (!(cause instanceof StandInMigrationSourceUnavailable) || !input.initializeTarget)
+            throw cause
+          return await initializeDestination()
+        }
+      }
       assertObserved(revision, localDeviceId)
-      const next = await api.binding(localDeviceId, 'bind', binding.version, target)
+      if (legacyOnly) return role
+      const next = await api.binding(localDeviceId, 'prepareBind', current.version, target)
       assertObserved(revision, localDeviceId)
-      try {
-        await api.lifecycle(target.userId, target.deviceId, 'start')
-        if (observed(revision, localDeviceId)) return role
-      } finally {
-        if (observed(revision, localDeviceId)) publishBinding(next)
+      publishBinding(next)
+      const ready = await activateStandInBinding(api, localDeviceId, next)
+      if (observed(revision, localDeviceId)) {
+        publishBinding(ready)
+        return role
       }
     } catch (cause) {
-      if (observed(revision, localDeviceId))
+      if (observed(revision, localDeviceId) && !(cause instanceof StandInMigrationError))
         publish({ error: { cause, fallback: 'save_settings_failed' } })
-      if (operation === 'migrate') throw cause
+      if (operation === 'migrate' || operation === 'initialize') throw cause
     } finally {
-      if (observed(revision, localDeviceId)) publish({ busy: false })
+      if (observed(revision, localDeviceId)) {
+        const setupScopeChanged =
+          operation === 'setup' &&
+          (owner.entry !== observation?.entry ||
+            owner.connected !== observation?.connected ||
+            owner.devices !== observation?.devices)
+        publish({ busy: false, ...(setupScopeChanged ? { setupTarget: undefined } : {}) })
+        if (setupScopeChanged) void read()
+      }
     }
   }
   return {
@@ -309,8 +466,11 @@ export function createStandInInstanceSource({
         previous.active !== owner.active ||
         previous.connected !== owner.connected ||
         previous.devices !== owner.devices ||
+        previous.entry !== owner.entry ||
+        previous.entryApi !== owner.entryApi ||
         previous.entryRequestKey !== owner.entryRequestKey
-      if (!previous || previous.active !== owner.active) activation++
+      if (!previous || previous.active !== owner.active || previous.entry !== owner.entry)
+        activation++
       if (changed) {
         readRevision++
         if (owner.active && !snapshot.busy) void read()
@@ -330,6 +490,15 @@ export function createStandInInstanceSource({
     stop: async (version: number) => {
       await mutate('stop', { version })
     },
+    setup: async () => {
+      const target = snapshot.setupTarget
+      await mutate('setup', {})
+      return (
+        !snapshot.error &&
+        snapshot.binding?.status === 'active' &&
+        sameTarget(snapshot.binding.target, target)
+      )
+    },
     bind: async (target: StandInBindingTarget) => {
       await mutate('bind', { target })
     },
@@ -337,8 +506,11 @@ export function createStandInInstanceSource({
       target: StandInBindingTarget,
       roleId: string | undefined,
       primaryName: string,
-      targetApi?: StandInExecutorApi
-    ) => mutate('migrate', { target, roleId, primaryName, targetApi }),
+      targetApi?: StandInExecutorApi,
+      initializeTarget?: () => Promise<void>
+    ) => mutate('migrate', { target, roleId, primaryName, targetApi, initializeTarget }),
+    initializeOnDevice: (target: StandInBindingTarget, initializeTarget: () => Promise<void>) =>
+      mutate('initialize', { target, initializeTarget }),
     reload: () => {
       void read()
     },

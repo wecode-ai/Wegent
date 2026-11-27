@@ -17,8 +17,31 @@ use crate::{AppState, task_store_maintenance::MaintenanceScan};
 
 const JOB: &str = "executor_cleanup";
 const CURSOR: &str = "executor_cleanup_cursor";
+pub(crate) const COMPLETION_CLEANUP: &str = "completion_executor_cleanup";
 
 pub(super) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> Result<()> {
+    let completion_state = state.clone();
+    registry.register(COMPLETION_CLEANUP, move |context, _| {
+        let state = completion_state.clone();
+        async move {
+            Ok(with_lock_watchdog(
+                &state.background_jobs,
+                &context,
+                "wegent:lock:completion_cleanup_cursor",
+                Duration::from_secs(30),
+                async {
+                    crate::internal_callback::completion::SubscriptionCleanupJob::retry_pending(
+                        &state,
+                    )
+                    .await?;
+                    Ok(json!({"status":"ok"}))
+                },
+            )
+            .await?
+            .unwrap_or_else(|| json!({"skipped":"lock_busy"})))
+        }
+    })?;
+    registry.interval(COMPLETION_CLEANUP, Duration::from_secs(60), true)?;
     registry.register(JOB, move |context, _| {
         let state = state.clone();
         async move {

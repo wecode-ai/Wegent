@@ -10,6 +10,7 @@ export function IssueCommentActionPicker({
   placeholder = label,
   icon: Icon,
   currentLabel,
+  unavailableLabel,
   value,
   options,
   disabled,
@@ -23,6 +24,7 @@ export function IssueCommentActionPicker({
   placeholder?: string
   icon?: LucideIcon
   currentLabel?: string
+  unavailableLabel?: string
   value: string
   options: SearchableSelectOption[]
   disabled: boolean
@@ -32,7 +34,7 @@ export function IssueCommentActionPicker({
   onChange(value: string): void
 }) {
   const selected = options.find(option => option.value === value)
-  const name = value ? (selected?.label ?? value) : currentLabel
+  const name = value ? (unavailableLabel ?? selected?.label ?? value) : currentLabel
   return (
     <span
       className={`task-detail-comment-action-chip${value ? ' is-selected' : ''}${name ? ' has-action-value' : ''}`}
@@ -40,7 +42,9 @@ export function IssueCommentActionPicker({
       <SearchableSelect
         testId={testId}
         accessibleLabel={name ? `${label}: ${name}` : placeholder}
+        triggerTitle={unavailableLabel}
         value={value}
+        activateSelected={Boolean(unavailableLabel)}
         onChange={onChange}
         disabled={disabled}
         searchPlaceholder={searchLabel}

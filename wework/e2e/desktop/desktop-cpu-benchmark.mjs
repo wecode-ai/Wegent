@@ -40,7 +40,11 @@ async function readProcessCpu({ pid }) {
 }
 
 async function sampleCpu(control) {
-  const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+  const snapshot = JSON.parse(
+    await control.command('getOwnedProcessSnapshot', 'body', {
+      value: JSON.stringify({ fresh: true }),
+    })
+  )
   const renderers = snapshot.processes.filter(
     record => record.source === 'electron' && record.kind === 'window'
   )
@@ -76,15 +80,6 @@ export function desktopCpuMetrics(before, after, ticksPerSecond, startTicks) {
     assert.equal(initial.size, 0, `${role} process disappeared during measurement`)
     return { name: `${role} CPU time`, unit: 'ms', value: (ticks * 1000) / ticksPerSecond }
   })
-}
-
-async function observeCpu(checkpoint, collect) {
-  try {
-    return await collect()
-  } catch (error) {
-    console.warn(`[desktop-e2e] CPU benchmark unavailable for ${checkpoint}: ${error.message}`)
-    return null
-  }
 }
 
 function logCpuSample(checkpoint, phase, sample) {
@@ -124,37 +119,32 @@ export function instrumentDesktopCpuBenchmark(scenario, checkpoint) {
 
   const verify = scenario.verify
   scenario.verify = async function (control) {
-    const before = await observeCpu(checkpoint, async () => {
-      // The startup splash owns a short-lived renderer outside these workloads.
-      await waitForClosedStartupSplash(control)
-      const { stdout } = await execute('getconf', ['CLK_TCK'], { timeout: 2000 })
-      const ticksPerSecond = Number(stdout.trim())
-      const uptime = Number((await readFile('/proc/uptime', 'utf8')).split(' ')[0])
-      const startTicks = Math.ceil(uptime * ticksPerSecond)
-      return { sample: await sampleCpu(control), ticksPerSecond, startTicks }
-    })
-    if (!before) return verify.call(this, control)
+    // The startup splash owns a transient renderer outside these workloads.
+    await waitForClosedStartupSplash(control)
+    const { stdout } = await execute('getconf', ['CLK_TCK'], { timeout: 2000 })
+    const ticksPerSecond = Number(stdout.trim())
+    const uptime = Number((await readFile('/proc/uptime', 'utf8')).split(' ')[0])
+    const startTicks = Math.ceil(uptime * ticksPerSecond)
+    const before = { sample: await sampleCpu(control), ticksPerSecond, startTicks }
 
     logCpuSample(checkpoint, 'before', { ...before, cpuModel: cpus()[0]?.model })
     const controller = new AbortController()
-    const tracing = observeCpu(checkpoint, () =>
-      traceCpu(checkpoint, before.sample, controller.signal)
-    )
+    const tracing = traceCpu(checkpoint, before.sample, controller.signal).catch(error => {
+      console.warn(`[desktop-e2e] CPU trace unavailable for ${checkpoint}: ${error.message}`)
+    })
     try {
       const result = await verify.call(this, control)
-      await observeCpu(checkpoint, async () => {
-        const after = await sampleCpu(control)
-        logCpuSample(checkpoint, 'after', { sample: after })
-        const metrics = desktopCpuMetrics(
-          before.sample,
-          after,
-          before.ticksPerSecond,
-          before.startTicks
-        )
-        await mkdir(directory, { recursive: true })
-        await writeFile(join(directory, `${checkpoint}.json`), `${JSON.stringify(metrics)}\n`, {
-          flag: 'wx',
-        })
+      const after = await sampleCpu(control)
+      logCpuSample(checkpoint, 'after', { sample: after })
+      const metrics = desktopCpuMetrics(
+        before.sample,
+        after,
+        before.ticksPerSecond,
+        before.startTicks
+      )
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, `${checkpoint}.json`), `${JSON.stringify(metrics)}\n`, {
+        flag: 'wx',
       })
       return result
     } finally {

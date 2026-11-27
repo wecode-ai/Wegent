@@ -40,6 +40,7 @@ pub(crate) fn register_public_jobs(
         Arc::new(crate::runtime_observations::job_state(state.clone())),
     )?;
     project::register(registry, state.clone())?;
+    crate::external_agents::register_jobs(registry, state.clone())?;
     robot::register(registry, state.clone())?;
     subscription::register(registry, state.clone())?;
     wegent_knowledge_jobs::register(

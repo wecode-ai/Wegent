@@ -75,6 +75,13 @@ export class ProcessExplorerService implements ProcessExplorerClient {
     const now = this.currentTime()
     const minimumInterval = this.options.minimumSampleIntervalMs ?? 1000
     const complete = options.waitForSystemProcesses !== false
+    const fresh = options.fresh === true
+    if (fresh) {
+      const system = complete
+        ? await this.readFreshSystemTable(this.options.systemTable ?? null)
+        : null
+      return this.collectNow(this.currentTime(), system, true)
+    }
     if (
       this.cached &&
       now - this.lastCollectedAt < minimumInterval &&
@@ -104,7 +111,8 @@ export class ProcessExplorerService implements ProcessExplorerClient {
 
   private async collectNow(
     now: number,
-    system: SystemProcessTableResult | null
+    system: SystemProcessTableResult | null,
+    fresh = false
   ): Promise<ProcessSnapshot> {
     // Captured before the first await: a slower collection that resumes after a
     // newer one must not write exit state from its older table.
@@ -112,11 +120,16 @@ export class ProcessExplorerService implements ProcessExplorerClient {
     const tableReadAt = this.systemTableReadAt
     const systemTable = this.options.systemTable ?? null
     const minimumInterval = this.options.minimumSampleIntervalMs ?? 1000
-    if (!this.cachedMetrics || now - this.lastMetricsAt >= minimumInterval) {
-      this.cachedMetrics = this.options.metrics()
-      this.lastMetricsAt = now
+    let metrics: readonly ElectronProcessMetric[]
+    if (fresh) {
+      metrics = this.options.metrics()
+    } else {
+      if (!this.cachedMetrics || now - this.lastMetricsAt >= minimumInterval) {
+        this.cachedMetrics = this.options.metrics()
+        this.lastMetricsAt = now
+      }
+      metrics = this.cachedMetrics
     }
-    const metrics = this.cachedMetrics
 
     const windows = readOptional(this.options.windows, 'renderer-labels-failed')
     const hostProcesses = await readOptionalAsync(
@@ -153,10 +166,19 @@ export class ProcessExplorerService implements ProcessExplorerClient {
       this.lastCompleteReadAt = tableReadAt
       this.completeSequence = sequence
     }
-    snapshot.recentlyExited = [...this.recentlyExited.values()]
+    if (this.recentlyExited.size > 0) {
+      // A complete sample can rediscover a process omitted by an earlier read.
+      // Never publish the same identity as both running and exited.
+      const liveIds = new Set(snapshot.processes.map(record => record.id))
+      snapshot.recentlyExited = [...this.recentlyExited.values()].filter(record => {
+        if (!liveIds.has(record.id)) return true
+        if (exits.complete) this.recentlyExited.delete(record.id)
+        return false
+      })
+    }
     snapshot.collectingSystemProcesses = Boolean(systemTable && !system)
     // A slower preview must not replace a completed table's cached snapshot.
-    if (system === this.systemTableResult) {
+    if (!fresh && system === this.systemTableResult) {
       this.cached = snapshot
       this.lastCollectedAt = now
     }
@@ -238,6 +260,28 @@ export class ProcessExplorerService implements ProcessExplorerClient {
 
   private currentTime(): number {
     return (this.options.now ?? Date.now)()
+  }
+
+  private async readFreshSystemTable(
+    systemTable: SystemProcessTable | null
+  ): Promise<SystemProcessTableResult | null> {
+    if (!systemTable) return null
+    const timeoutMs = this.options.systemTableTimeoutMs ?? 10_000
+    const pending = this.pendingSystemTableRead
+    if (pending) {
+      try {
+        // Discard a read started before this request; keep one external collector at a time.
+        await withTimeout(pending, timeoutMs, 'Previous system process table read timed out')
+      } catch (error) {
+        if (this.pendingSystemTableRead === pending) {
+          return {
+            processes: [],
+            degraded: [{ code: 'system-process-table-failed', detail: describeError(error) }],
+          }
+        }
+      }
+    }
+    return this.readSystemTable(systemTable, timeoutMs)
   }
 
   private refreshSystemTable(systemTable: SystemProcessTable | null): Promise<void> {

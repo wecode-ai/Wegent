@@ -407,6 +407,7 @@ export interface SharedIssueAssignmentHistoryEntry {
   to_id: string | null;
   to_name?: string | null;
   action: "assign" | "reassign" | "unassign";
+  redeliver?: boolean;
   at: string;
 }
 

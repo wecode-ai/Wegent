@@ -1,7 +1,7 @@
 import { buildCollaborationExpScheme } from '@/features/collaboration-exp/integration/deepLinks'
 import { createDingTalkMessageCenterApi } from '@/features/todo/dingTalkMessageCenterApi'
 import type { MessageCenterRecord } from '@/api/standInMessageCenter'
-import { messageCenterCategory } from '@/features/todo/message-center/messageCenterModel'
+import { standInDelegationCategory } from '@/features/todo/standInDelegationRecords'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { TaskSource } from './NotificationTaskSourceContext'
@@ -45,7 +45,7 @@ function writeDelivered(accountKey: string, delivered: ReadonlySet<string>) {
 }
 
 function needsDecision(record: MessageCenterRecord) {
-  return messageCenterCategory(record) === 'needs_user' && !record.takenOver
+  return standInDelegationCategory(record) === 'needs_user' && !record.takenOver
 }
 
 /** Alerts for delegated messages that stopped before any runtime conversation existed. */

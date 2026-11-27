@@ -13,7 +13,9 @@ fn project_stand_ins_keep_independent_tag_rules_and_versions() {
     ] {
         store.save_stand_in_settings("project", 7, json!({"id":id,"name":id,"tags":tags,"projectStore":"cloud","enabled":true,"prompt":id,"executionDeviceId":"mac","version":0})).unwrap();
     }
-    let mut review = store.stand_in_settings("project", 7, "review").unwrap();
+    let mut review = store
+        .stand_in_settings("project", "cloud", 7, "review")
+        .unwrap();
     review["enabled"] = json!(false);
     store.save_stand_in_settings("project", 7, review).unwrap();
     drop(store);
@@ -28,17 +30,50 @@ fn project_stand_ins_keep_independent_tag_rules_and_versions() {
         2
     );
     assert_eq!(
-        store.stand_in_settings("project", 7, "default").unwrap()["version"],
+        store
+            .stand_in_settings("project", "cloud", 7, "default")
+            .unwrap()["version"],
         1
     );
     assert_eq!(
-        store.stand_in_settings("project", 7, "review").unwrap()["version"],
+        store
+            .stand_in_settings("project", "cloud", 7, "review")
+            .unwrap()["version"],
         2
     );
     assert_eq!(
-        store.stand_in_settings("project", 7, "docs").unwrap()["tags"],
+        store
+            .stand_in_settings("project", "cloud", 7, "docs")
+            .unwrap()["tags"],
         json!(["docs"])
     );
+}
+
+#[test]
+fn saving_from_one_project_keeps_other_project_filters() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Stand-in"})).unwrap())
+        .unwrap();
+    let draft = json!({
+        "id": "review", "name": "Review", "projectStore": "cloud", "enabled": true,
+        "prompt": "Review", "executionDeviceId": "mac", "version": 0, "tags": ["cloud-tag"]
+    });
+    store.save_stand_in_settings(&project.id, 7, draft).unwrap();
+    let mut local = store
+        .stand_in_settings(&project.id, "local", 7, "review")
+        .unwrap();
+    assert_eq!(local["tags"], json!([]));
+    local["tags"] = json!(["local-tag"]);
+    store.save_stand_in_settings(&project.id, 7, local).unwrap();
+
+    for (kind, tag) in [("cloud", "cloud-tag"), ("local", "local-tag")] {
+        let settings = store
+            .stand_in_settings(&project.id, kind, 7, "review")
+            .unwrap();
+        assert_eq!(settings["tags"], json!([tag]));
+    }
 }
 
 #[test]
@@ -50,7 +85,9 @@ fn settings_are_device_local_versioned_and_do_not_create_a_separate_execution() 
         .create_project(serde_json::from_value(json!({"name":"Stand-in"})).unwrap())
         .unwrap();
     assert_eq!(
-        store.stand_in_settings(&project.id, 7, "default").unwrap()["enabled"],
+        store
+            .stand_in_settings(&project.id, "local", 7, "default")
+            .unwrap()["enabled"],
         false
     );
     let input = json!({"projectStore":"local","enabled":true,"prompt":"Verify results","executionDeviceId":"mac","version":0});
@@ -72,13 +109,13 @@ fn settings_are_device_local_versioned_and_do_not_create_a_separate_execution() 
     let reopened = LocalTaskStore::open(&path).unwrap();
     assert_eq!(
         reopened
-            .stand_in_settings(&project.id, 7, "default")
+            .stand_in_settings(&project.id, "local", 7, "default")
             .unwrap(),
         saved
     );
     assert_eq!(
         reopened
-            .stand_in_settings(&project.id, 8, "default")
+            .stand_in_settings(&project.id, "local", 8, "default")
             .unwrap()["enabled"],
         false
     );
@@ -135,7 +172,9 @@ fn workspace_settings_round_trip_and_reject_invalid_modes() {
         .save_stand_in_settings("project", 7, settings.clone())
         .unwrap();
     assert_eq!(
-        store.stand_in_settings("project", 7, "default").unwrap()["workspace"],
+        store
+            .stand_in_settings("project", "cloud", 7, "default")
+            .unwrap()["workspace"],
         json!({"projectKey":"repo","executionMode":"git_worktree","branch":"develop"})
     );
     settings["version"] = saved["version"].clone();

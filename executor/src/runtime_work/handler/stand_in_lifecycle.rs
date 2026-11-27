@@ -15,9 +15,12 @@ fn stand_in_owner(origin: &Value) -> Option<i64> {
 impl RuntimeWorkRpcHandler {
     pub(super) fn stand_in_binding(&self, payload: Value) -> Result<Value, AppIpcError> {
         let operation = payload["operation"].as_str().unwrap_or("get");
+        let instance_device = (std::env::var("WEWORK_DEVELOPMENT_ISOLATED").as_deref() == Ok("1"))
+            .then_some(self.device_id.as_str());
         LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(settings_error)?
             .stand_in_binding(
+                instance_device,
                 operation,
                 payload["version"].as_i64().unwrap_or(-1),
                 payload["target"].clone(),

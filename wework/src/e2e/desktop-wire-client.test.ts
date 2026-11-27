@@ -15,10 +15,12 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
   const startedAt = performance.now()
   let stage = 'create temporary checkout'
   let cleaningUp = false
+  const pendingPreparation = new Set<string>()
   onTestFailed(() => {
     console.error('Desktop wire client test failed', {
       stage,
       cleaningUp,
+      pendingPreparation: [...pendingPreparation],
       elapsedMs: Math.round(performance.now() - startedAt),
     })
   })
@@ -26,34 +28,56 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
   const directory = await mkdtemp(join(tmpdir(), 'wework-e2e-client-'))
   try {
     const bundleDir = join(directory, 'e2e-client')
-    stage = 'bundle desktop clients'
-    await execute(process.execPath, [
-      join(weworkDir, 'scripts/build-desktop-e2e-client.mjs'),
-      bundleDir,
-    ])
-    stage = 'copy isolated runtime files'
-    await cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
-      recursive: true,
-    })
-    await mkdir(join(directory, 'wework/scripts/lib'), { recursive: true })
-    await cp(
-      join(weworkDir, 'scripts/lib/desktop-package-target.mjs'),
-      join(directory, 'wework/scripts/lib/desktop-package-target.mjs')
+    stage = 'prepare isolated runtime'
+    // Preparation writes independent destinations; settle every write before cleanup.
+    const preparation = [
+      {
+        name: 'bundle desktop clients',
+        operation: execute(process.execPath, [
+          join(weworkDir, 'scripts/build-desktop-e2e-client.mjs'),
+          bundleDir,
+        ]),
+      },
+      {
+        name: 'copy desktop runtime',
+        operation: cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
+          recursive: true,
+        }),
+      },
+      {
+        name: 'create desktop package target library',
+        operation: mkdir(join(directory, 'wework/scripts/lib'), { recursive: true }),
+      },
+      {
+        name: 'copy desktop package target library',
+        operation: cp(
+          join(weworkDir, 'scripts/lib/desktop-package-target.mjs'),
+          join(directory, 'wework/scripts/lib/desktop-package-target.mjs')
+        ),
+      },
+      ...[
+        '.github/scripts/node-async-resource-diagnostics.mjs',
+        'wework/electron/src/runtime/release-preparation-progress.mjs',
+        'wework/scripts/ai-verify-devtools.mjs',
+        'wework/scripts/desktop-control-queue.mjs',
+        'wework/scripts/lib/extract-runtime-archive.mjs',
+        'wework/scripts/lib/windows-native-runtime.mjs',
+        'packages/chat-core/package.json',
+        'packages/chat-core/src/runtime-user-message.js',
+        'packages/chat-core/test-fixtures/conversation-search-contract.json',
+      ].map(runtimePath => ({
+        name: `copy ${runtimePath}`,
+        operation: cp(resolve(weworkDir, '..', runtimePath), join(directory, runtimePath)),
+      })),
+    ]
+    for (const { name } of preparation) pendingPreparation.add(name)
+    const prepared = await Promise.allSettled(
+      preparation.map(({ name, operation }) =>
+        operation.finally(() => pendingPreparation.delete(name))
+      )
     )
-    // CI reads these runtime files from its checkout without installing workspace packages.
-    for (const runtimePath of [
-      '.github/scripts/node-async-resource-diagnostics.mjs',
-      'wework/electron/src/runtime/release-preparation-progress.mjs',
-      'wework/scripts/ai-verify-devtools.mjs',
-      'wework/scripts/desktop-control-queue.mjs',
-      'wework/scripts/lib/extract-runtime-archive.mjs',
-      'wework/scripts/lib/windows-native-runtime.mjs',
-      'packages/chat-core/package.json',
-      'packages/chat-core/src/runtime-user-message.js',
-      'packages/chat-core/test-fixtures/conversation-search-contract.json',
-    ]) {
-      await cp(resolve(weworkDir, '..', runtimePath), join(directory, runtimePath))
-    }
+    const failed = prepared.find(result => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
     stage = 'run isolated WebSocket handshake'
     const { stdout } = await execute(
       process.execPath,

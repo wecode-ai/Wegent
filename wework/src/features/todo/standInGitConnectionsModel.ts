@@ -5,9 +5,13 @@ import { isGitlabCliTarget } from '@/api/local/gitlabCli'
 import type { LocalConnectorAuthTarget } from '@/api/local/localConnectorAuth'
 
 export const GIT_CONNECTION_PREFIX = '@wegent/dsh-connection-git/'
-type Resource = Pick<StandInSourceConnection, 'id' | 'name' | 'profile' | 'kind' | 'providerId'>
+type Resource = Pick<
+  StandInSourceConnection,
+  'id' | 'name' | 'profile' | 'kind' | 'providerId' | 'configurationSummary'
+>
 interface GitInput {
   role: StandInRole
+  savedConnections?: readonly StandInSourceConnection[]
   disabled: boolean
   onChange(role: StandInRole): void
 }
@@ -16,9 +20,10 @@ interface GitState {
   kind: string
   query: string
   items: Resource[]
-  selection: Resource[]
   cursor?: string
   busy: boolean
+  accountStatus: 'checking' | 'ready' | 'signed_out' | 'unavailable'
+  accounts: Resource[]
   searchState: 'idle' | 'loading' | 'ready' | 'error'
   error?: { kind: 'instance' } | { kind: 'request'; code: string }
   auth?: LocalConnectorAuthTarget
@@ -48,15 +53,32 @@ export function createGitConnectionsModel(
   initial: GitInput
 ) {
   const platform = providerId.slice(GIT_CONNECTION_PREFIX.length)
+  const configuredInstances = new Set(
+    (initial.role.connections ?? [])
+      .filter(row => row.providerId === providerId)
+      .map(row => instanceOrigin(profileInstance(row.profile)))
+      .filter(value => value !== null)
+  )
+  const hasPersonalScope = initial.role.connections?.some(
+    row => row.providerId === providerId && row.kind === 'personal'
+  )
+  const hasRepositoryScope = initial.role.connections?.some(
+    row => row.providerId === providerId && row.kind === 'repository'
+  )
   let input = initial
+  const removedDraftRows = new Map<string, StandInSourceConnection>()
   let sequence = 0
+  let accountSequence = 0
   let state: GitState = {
-    instance: `https://${platform}.com`,
-    kind: 'personal',
+    instance:
+      (configuredInstances.size === 1 ? [...configuredInstances][0] : null) ??
+      `https://${platform}.com`,
+    kind: hasRepositoryScope && !hasPersonalScope ? 'repository' : 'personal',
     query: '',
     items: [],
-    selection: [],
     busy: false,
+    accountStatus: 'checking',
+    accounts: [],
     searchState: 'idle',
   }
   const listeners = new Set<() => void>()
@@ -73,7 +95,6 @@ export function createGitConnectionsModel(
     sequence += 1
     publish({
       items: [],
-      selection: [],
       cursor: undefined,
       error: undefined,
       searchState: 'idle',
@@ -81,11 +102,61 @@ export function createGitConnectionsModel(
       auth: undefined,
     })
   }
+  const readResources = (address: string, kind: string, query: string, page?: string) =>
+    api.searchConnectionResources(
+      deviceId,
+      providerId,
+      kind,
+      JSON.stringify({ instance: address, search: query }),
+      page
+    )
+  const checkAccount = async () => {
+    const address = instanceOrigin(state.instance)
+    const request = ++accountSequence
+    resetSearch()
+    if (!address) {
+      publish({ accountStatus: 'unavailable', accounts: [] })
+      return
+    }
+    publish({ accountStatus: 'checking', accounts: [] })
+    const isCurrentAccount = () =>
+      listeners.size > 0 &&
+      request === accountSequence &&
+      instanceOrigin(state.instance) === address
+    try {
+      const { items, availability } = await readResources(address, 'personal', '')
+      if (!isCurrentAccount()) return
+      const accounts = items.filter(
+        row =>
+          row.providerId === providerId &&
+          row.kind === 'personal' &&
+          profileInstance(row.profile) === address
+      )
+      if (availability?.status === 'auth_required') {
+        publish({ accountStatus: 'signed_out' })
+      } else if ((!availability || availability.status === 'ready') && accounts.length) {
+        publish({ accountStatus: 'ready', accounts })
+      } else {
+        publish({ accountStatus: 'unavailable' })
+        if (availability) report(availability)
+      }
+    } catch (cause) {
+      const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined
+      if (!isCurrentAccount()) return
+      publish({ accountStatus: code === 'connector_auth_required' ? 'signed_out' : 'unavailable' })
+      if (code !== 'connector_auth_required') report(cause)
+    }
+  }
   return {
     getSnapshot: () => state,
     subscribe(listener: () => void, next: GitInput) {
       input = next
       listeners.add(listener)
+      if (listeners.size === 1 && accountSequence === 0 && !input.disabled) {
+        queueMicrotask(() => {
+          if (listeners.size && accountSequence === 0 && !input.disabled) void checkAccount()
+        })
+      }
       return () => {
         listeners.delete(listener)
         queueMicrotask(() => {
@@ -99,6 +170,12 @@ export function createGitConnectionsModel(
       }
     },
     resetSearch,
+    checkAccount,
+    setInstance(instance: string) {
+      accountSequence += 1
+      resetSearch()
+      publish({ instance, accountStatus: 'unavailable', accounts: [] })
+    },
     set<K extends keyof GitState>(
       key: K,
       value: GitState[K] | ((current: GitState[K]) => GitState[K])
@@ -123,22 +200,20 @@ export function createGitConnectionsModel(
       const request = ++sequence
       publish({ busy: true, searchState: 'loading', error: undefined })
       try {
-        const result = await api.searchConnectionResources(
-          deviceId,
-          providerId,
-          kind,
-          JSON.stringify({ instance: address, search: query }),
-          page
-        )
+        const result = await readResources(address, kind, query, page)
         if (!current(request)) return
         const availability = result.availability
         if (availability && availability.status !== 'ready') {
-          publish({ searchState: 'error', items: [], selection: [], cursor: undefined })
+          publish({ searchState: 'error', items: [], cursor: undefined })
           if (availability.status !== 'auth_required') {
             report(availability)
             return
           }
-          publish({ error: { kind: 'request', code: 'connector_auth_required' } })
+          publish({
+            accountStatus: 'signed_out',
+            accounts: [],
+            error: { kind: 'request', code: 'connector_auth_required' },
+          })
           const target = availability.authTarget
           if (target && platform === 'github' && isGithubCliTarget(target))
             publish({ auth: GITHUB_CLI_TARGET })
@@ -164,8 +239,12 @@ export function createGitConnectionsModel(
           }
           return
         }
+        const profiles = new Set(state.accounts.map(account => account.profile))
+        const items = result.items.filter(
+          row => row.providerId === providerId && row.kind === kind && profiles.has(row.profile)
+        )
         publish({
-          items: page ? [...state.items, ...result.items] : result.items,
+          items: page ? [...state.items, ...items] : items,
           cursor: result.hasMore ? result.nextCursor : undefined,
           searchState: 'ready',
         })
@@ -206,44 +285,66 @@ export function createGitConnectionsModel(
         if (current(request)) publish({ busy: false })
       }
     },
-    add() {
+    changeScope(remove: readonly Resource[], add: readonly Resource[] = []) {
       if (!listeners.size || input.disabled || state.busy) return
-      sequence += 1
-      publish({ busy: true, error: undefined })
-      try {
-        for (const item of state.selection) {
-          if (
-            (input.role.connections ?? []).some(
-              row =>
-                row.providerId === item.providerId &&
-                row.profile === item.profile &&
-                row.kind === item.kind &&
-                row.id === item.id
-            )
+      const authorized = state.accountStatus === 'ready' ? state.accounts : []
+      const available = new Set(
+        [...authorized, ...(authorized.length ? state.items : [])].map(resourceKey)
+      )
+      const removed = new Set(remove.map(resourceKey))
+      const connections = (input.role.connections ?? []).filter(row => {
+        const key = resourceKey(row)
+        if (row.providerId !== providerId || !removed.has(key)) return true
+        removedDraftRows.set(key, row)
+        return false
+      })
+      const saved = new Map(
+        input.savedConnections
+          ?.filter(row => row.providerId === providerId)
+          .map(row => [resourceKey(row), row])
+      )
+      const existing = new Set(
+        connections.filter(row => row.providerId === providerId).map(resourceKey)
+      )
+      for (const item of add) {
+        const key = resourceKey(item)
+        if (item.providerId === providerId && available.has(key) && !existing.has(key)) {
+          const previous = removedDraftRows.get(key) ?? saved.get(key)
+          connections.push(
+            previous ?? {
+              ...item,
+              transport: 'cli',
+              policy: {
+                automatic: true,
+                askBeforeAct: true,
+                immediate: input.role.id !== '@primary',
+              },
+            }
           )
-            continue
-          const connection: StandInSourceConnection = {
-            ...item,
-            transport: 'cli',
-            policy: {
-              automatic: true,
-              askBeforeAct: true,
-              immediate: input.role.id !== '@primary',
-            },
-          }
-          const updated = {
-            ...input.role,
-            connections: [...(input.role.connections ?? []), connection],
-          }
-          input = { ...input, role: updated }
-          input.onChange(updated)
+          existing.add(key)
         }
-        publish({ selection: [] })
-      } catch (cause) {
-        report(cause)
-      } finally {
-        publish({ busy: false })
       }
+      if (
+        connections.length === (input.role.connections?.length ?? 0) &&
+        connections.every((row, index) => row === input.role.connections?.[index])
+      )
+        return
+      const next = { ...input.role, connections }
+      input = { ...input, role: next }
+      input.onChange(next)
     },
+  }
+}
+
+export function resourceKey(resource: Resource) {
+  return JSON.stringify([resource.profile, resource.kind, resource.id])
+}
+
+export function profileInstance(profile: string): string {
+  try {
+    const value: unknown = JSON.parse(profile)
+    return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : ''
+  } catch {
+    return ''
   }
 }

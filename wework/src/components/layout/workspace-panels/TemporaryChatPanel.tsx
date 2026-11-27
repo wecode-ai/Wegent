@@ -124,7 +124,7 @@ export function TemporaryChatPanel({
   showExecutionTools = true,
   showModelSelector = true,
   hideProcessing = false,
-  showActivityDots = false,
+  isAssistantView = false,
   markReadWhenActive = false,
   nativeConversation = false,
   allowMessagesDuringApproval = false,
@@ -944,7 +944,7 @@ export function TemporaryChatPanel({
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   const messageGaps = renderMessageGaps?.(presentation.messages)
   const showReplyWaitingIndicator =
-    (hideProcessing || showActivityDots) &&
+    (hideProcessing || isAssistantView) &&
     !readOnly &&
     !pendingRequest &&
     !taskLifecycle?.interactionStatus &&
@@ -957,9 +957,9 @@ export function TemporaryChatPanel({
         message.role === 'user' ||
         (message.role === 'assistant' && getAssistantContentPresentation(message).content.trim())
     )?.role !== 'assistant'
-  const showWaitingDots = showActivityDots && showReplyWaitingIndicator
+  const showWaitingDots = isAssistantView && showReplyWaitingIndicator
   const isWaitingForAssistant =
-    hideProcessing || showActivityDots
+    hideProcessing || isAssistantView
       ? showReplyWaitingIndicator
       : nativeConversation
         ? sending
@@ -1091,7 +1091,9 @@ export function TemporaryChatPanel({
                   value={input}
                   replaceDraftKey={replaceDraftKey}
                   onChange={value => {
-                    setInput(value)
+                    // The editor can flush after the conversation view has unsubscribed.
+                    if (draft) draft.onChange(value)
+                    else setInput(value)
                     return { appliedSynchronously: true }
                   }}
                   onDraftEdit={() => {
@@ -1130,7 +1132,7 @@ export function TemporaryChatPanel({
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
                   isStreaming={busy}
-                  showPauseButton={!showActivityDots || showWaitingDots}
+                  showPauseButton={!isAssistantView || showWaitingDots}
                   onPause={pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
@@ -1163,7 +1165,7 @@ export function TemporaryChatPanel({
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
         isWaitingForAssistant={isWaitingForAssistant}
-        waitingIndicatorStyle={showActivityDots ? 'dots' : undefined}
+        waitingIndicatorStyle={isAssistantView ? 'dots' : undefined}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"

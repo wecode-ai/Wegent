@@ -240,6 +240,46 @@ checkpoint 并发上限保持 4。保留的 Core 性能基准分片以及 Cloud 
 共享准备组继续共同调度。共享 runner 池仍可能引入外部排队，扩容也会增加环境准备成本；
 历史耗时回放只预测测试阶段，不能当作新 CI 的实测提速。
 
+### 复用桌面 E2E 基础设施
+
+- 通过检查点 runner 启动桌面应用。场景需要在启动前准备应用配置时使用
+  `prepareApp`，需要重启时用 runner 通过 `setRestartDesktopApp` 提供的函数。
+  该函数会等控制器重新连接并检查设备身份。普通发布包冷启动使用分阶段就绪检查。
+- 在 `e2e/desktop/modules/workspace-flows.mjs` 中复用
+  `createLocalCollaborationProject` 准备已有的本地项目，或用
+  `completeLocalCollaborationFolderImport` 驱动目录导入界面。两个入口共用隔离的 Git 仓库准备。
+  验证云协作项目时，可以用 `workspace-agent-setup.mjs` 的
+  `createWorkspaceAndProject` 完成创建并等到看板就绪。
+- 创建资源后立即记录对应的清理动作。需要逐项释放资源时，从
+  `e2e/desktop/modules/cleanup.mjs` 导入 `collectCleanupErrors`，按依赖顺序传入操作。
+  它会执行全部操作并返回错误，调用方负责记录每个清理失败、保留已有的场景错误，
+  以及在仅清理失败时让检查点失败。场景的 `cleanup` 执行时，控制器、代理和 Backend 仍可用。
+
+#### 模型 fixture
+
+- 普通场景使用 runner 提供的回环模型端点。通过场景的 `handleHttp` 钩子
+  提供场景需要的模型响应，应用、运行时和工具调用仍走真实链路。
+- 从 `e2e/desktop/modules/model-sse.mjs` 导入 `sse(events)` 编码一批事件，
+  或用 `writeSseEvents(response, events)` 逐帧写入。需要复用 Responses 协议的
+  终态输出合并逻辑时，用 `response-protocol.mjs` 中的 `createSse`。
+- 从 `e2e/desktop/modules/model-response-gates.mjs` 导入 `createModelResponseGates()`，
+  每段需要暂停的响应调用一次 `gates.pause()`。模型写出部分响应后等待
+  `gate.promise`，场景观测到目标状态后调用 `gate.resolve()`。在场景清理时调用
+  `gates.cleanup()`，统一释放仍在等待的响应。
+
+#### 等待可观测状态
+
+- 等界面出现、可点击或刷新时，优先使用桌面控制器的 `waitFor`、
+  `clickWhenEnabled` 或已有的 `waitForSnapshot`。
+- 需要重复读取 API 或运行时状态时，从 `e2e/desktop/modules/wait.mjs`
+  导入 `waitForValue(load, predicate, message, timeoutMs)`。条件返回
+  `true` 时得到本次读取的值，也可直接返回匹配项，例如
+  `items => items.find(item => item.id === taskId)`。轮询耗尽时会附上最后一次读取结果，
+  因此只读取可以写入 CI 日志的状态。
+- 等待已注册的事件或已有的异步操作时，使用同一模块的
+  `withTimeout(promise, timeoutMs, message)`。事件监听先于触发动作注册。
+  超时会结束等待，操作的取消和资源清理由场景负责。
+
 ### 测试专用轮询和退避时间
 
 - `stand-in`、`stand-in-cloud`、`stand-in-assignment-notifications` 默认设置

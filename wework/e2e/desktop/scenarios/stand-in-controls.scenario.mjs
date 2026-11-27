@@ -3,8 +3,8 @@ import {
   openProjectStandIn,
   discardStandInDraft,
   editProjectSource,
+  saveRoleScopeAndReturn,
 } from '../modules/stand-in-flows.mjs'
-import { stopBoundStandIn } from '../modules/stand-in-instance-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -20,7 +20,7 @@ const USER_ID = 9001
 const PROMPT = '[data-testid="stand-in-prompt"]'
 const SAVE = '[data-testid="stand-in-save"]'
 
-/** Source configuration saves atomically; stopping uses the one native lifecycle confirmation. */
+/** Source configuration saves atomically; stopping uses the device’s native lifecycle. */
 export function createDesktopScenario({ uiTimeoutMs }) {
   return {
     async verify(control) {
@@ -89,25 +89,21 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('fill', PROMPT, { value: 'Confirmed new settings' })
       await editProjectSource(control, true)
       assert.equal((await read()).enabled, false, 'Pending edits require explicit save and enable')
-      await control.command('clickWhenEnabled', SAVE)
+      await saveRoleScopeAndReturn(control)
       await control.command('waitFor', PROMPT)
-      await control.command('click', '[data-testid="stand-in-close"]')
+      await control.command('clickWhenEnabled', SAVE)
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       saved = await read()
       assert.equal(saved.enabled, true)
       assert.equal(saved.prompt, 'Confirmed new settings')
 
-      await open()
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-instance-stop"]')
-      await control.command('waitFor', '[data-testid="stand-in-instance-stop-confirm"]')
-      assert.equal((await read()).enabled, true, 'Opening confirmation must not stop intake')
-      await control.command('click', '[data-testid="stand-in-instance-stop-cancel"]')
-      assert.equal(
-        (await read()).enabled,
-        true,
-        'Cancelling native stop must retain enabled settings'
+      const stopped = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.lifecycle',
+        { userId: USER_ID, operation: 'stop' },
+        uiTimeoutMs
       )
-      assert.equal(await control.command('getValue', PROMPT), 'Confirmed new settings')
-      await stopBoundStandIn(control, uiTimeoutMs)
+      assert.equal(stopped.lifecycle.status, 'stopped')
       saved = await read()
       assert.equal(saved.enabled, false)
       assert.equal(saved.prompt, 'Confirmed new settings')

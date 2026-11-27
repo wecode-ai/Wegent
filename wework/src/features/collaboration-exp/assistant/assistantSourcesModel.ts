@@ -1,5 +1,9 @@
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import { isStandInBindingOwner, type StandInExecutorApi, type StandInProposal } from '@/api/standIn'
+import {
+  type StandInBindingTarget,
+  type StandInExecutorApi,
+  type StandInProposal,
+} from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 
@@ -13,6 +17,7 @@ export interface AssistantSourceData {
   proposals: StandInProposal[]
   proposalsReady: boolean
 }
+const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
 interface SourceSnapshot {
   source?: AssistantSourceData
   failure?: { cause: unknown }
@@ -26,7 +31,8 @@ export function createAssistantSourcesModel(
   services: WorkbenchServices,
   api: StandInExecutorApi | undefined,
   userId: number,
-  scope: string
+  scope: string,
+  configuredTarget?: Pick<StandInBindingTarget, 'userId' | 'deviceId'>
 ) {
   let snapshot: SourceSnapshot = {}
   const listeners = new Set<() => void>()
@@ -96,14 +102,21 @@ export function createAssistantSourcesModel(
         throw Object.assign(new Error(), { code: 'executor_unavailable' })
       }
       if (snapshot.source && snapshot.source.localDeviceId !== identity.deviceId) clearSource()
-      const binding = await api.binding(identity.deviceId)
+      const account = configuredTarget
+        ? undefined
+        : await services.personalAssistantAccountApi?.get()
       if (!current()) return
-      const target = binding.target
-      if (target && !isStandInBindingOwner(target.userId, userId)) {
+      if (configuredTarget && configuredTarget.userId !== userId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
+      const ownerId = userId
+      const deviceId =
+        configuredTarget?.deviceId ??
+        account?.definitions.find(definition => definition.roleId === '@primary')?.bot.spec
+          ?.execution_policy?.environment_id
+      if (!deviceId) {
+        clearSource()
+        throw Object.assign(new Error(), { code: 'executor_unavailable' })
       }
-      const ownerId = target?.userId ?? userId
-      const deviceId = target?.deviceId ?? identity.deviceId
       if (
         snapshot.source &&
         (snapshot.source.ownerId !== ownerId || snapshot.source.deviceId !== deviceId)
@@ -149,6 +162,7 @@ export function createAssistantSourcesModel(
       listeners.add(listener)
       includeProposals = proposals
       if (listeners.size === 1) {
+        if (e2e) performance.mark('wework:assistant-source-subscribe')
         unsubscribe = subscribePersonalStandIn(settings => {
           const source = snapshot.source
           if (
@@ -163,6 +177,7 @@ export function createAssistantSourcesModel(
       return () => {
         listeners.delete(listener)
         if (!listeners.size) {
+          if (e2e) performance.mark('wework:assistant-source-unsubscribe')
           sourceRevision++
           proposalRevision++
           clearTimeout(timer)

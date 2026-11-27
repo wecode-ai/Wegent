@@ -75,6 +75,7 @@ export type WorkbenchMessage = Omit<
   runtimeGoalRequest?: boolean | null;
   runtimeClientUserMessageId?: string | null;
   runtimeGuidance?: boolean | null;
+  suppressedUserMessage?: boolean | null;
   runtimeGuidanceSplitBefore?: boolean | null;
   runtimeGuidanceContinuation?: boolean | null;
   codeComments?: CodeCommentContext[] | null;

@@ -380,6 +380,7 @@ export function useTaskActivityController({
     return [card.root, ...card.replies].some(
       message =>
         message.sender.type === 'agent' &&
+        message.metadata.externalInvocation !== true &&
         (message.metadata.execution_dispatch !== 'comment_only' ||
           message.metadata.collaboration_turn_start === true)
     )
@@ -775,7 +776,10 @@ export function useTaskActivityController({
       const prepared = await prepareComment(text, attachments)
       if (!isCurrent()) return false
       const executionProject = effectiveCommentProject
-      const explicitMentions = commentAgentMentions(text, agents)
+      const selectedAgents = mentions.filter(mention => mention.type === 'agent')
+      const explicitMentions = selectedAgents.length
+        ? selectedAgents
+        : commentAgentMentions(text, agents)
       const activeMentions: ProjectChatMention[] = [
         ...(submission?.commentOnly
           ? []

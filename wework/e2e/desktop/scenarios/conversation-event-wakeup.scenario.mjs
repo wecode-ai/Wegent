@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
-import { cp, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createDesktopScenario as createBridgeScenario } from './stand-in-plugin-bridge.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  CONVERSATION_EVENT_PROVIDER as PROVIDER,
+  createConversationEventSource,
+} from '../modules/conversation-event-source.mjs'
 import {
   createConversationEventModel,
   findEventFact as find,
@@ -12,7 +15,6 @@ import {
   WORKFLOW_CONFLICT_TOPIC,
 } from '../modules/conversation-event-model.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
-import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { setNativeCatalogOverride } from '../modules/model-catalog-recovery.mjs'
 import { createEventHumanWait } from '../modules/conversation-event-human-wait.mjs'
@@ -36,7 +38,6 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const MARKER = 'WEWORK_CONVERSATION_EVENT'
-const PROVIDER = '@test/connection-source/records'
 const CONTROL_MCP_IDLE_TTL_MS = 1000
 
 function latestWaitingSubscriptions(body) {
@@ -52,10 +53,9 @@ function latestWaitingSubscriptions(body) {
 }
 
 export function createDesktopScenario(options, { controlContextOnly = false } = {}) {
-  const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
+  const source = createConversationEventSource(options)
   const {
     resultDir,
-    electronUserDataDirectory,
     executorHome,
     workspacePath,
     uiTimeoutMs,
@@ -64,7 +64,6 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
     captureScreenshot,
     restartDesktopApp,
   } = options
-  let codexHome
   let active = false
   let phase = 'ordinary'
   let modelRequests = 0
@@ -85,9 +84,6 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
     )
   }
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-  const codex = (control, method, params) =>
-    rpc(control, 'runtime.codex.app_server.request', { method, params })
-  const recordsPath = join(resultDir, 'records.json')
   const human = createEventHumanWait({ ...options, rpc })
   const { events: modelEvents, completed } = createConversationEventModel({
     markerPrefix: MARKER,
@@ -116,21 +112,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
       },
     },
   }
-  const saveEvents = async () => {
-    // Background MCP readers must see a complete snapshot during event publication.
-    const pendingPath = `${recordsPath}.pending`
-    await writeFile(
-      pendingPath,
-      JSON.stringify([
-        ...['archive-record', 'long-archive-record'].map(id => ({
-          id,
-          value: JSON.stringify(events),
-        })),
-        { id: 'preexisting-checks-record', value: JSON.stringify([failedChecks]) },
-      ])
-    )
-    await rename(pendingPath, recordsPath)
-  }
+  const saveEvents = () => source.publishEvents(events, [failedChecks])
   const event = (
     id,
     text,
@@ -256,28 +238,12 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
 
   return {
     appEnvironment: {
-      ...base.appEnvironment,
+      ...source.appEnvironment,
       ...(controlContextOnly
         ? { WEWORK_E2E_CONTROL_MCP_IDLE_TTL_MS: String(CONTROL_MCP_IDLE_TTL_MS) }
         : {}),
     },
-    async prepareApp(context) {
-      await base.prepareApp(context)
-      codexHome = context.codexHome
-      await saveEvents()
-      for (const adapter of [
-        join(resultDir, 'connection-adapter'),
-        join(
-          electronUserDataDirectory,
-          'dsh-core/profiles/wework-core/node_modules/@test/connection-source'
-        ),
-      ]) {
-        await cp(
-          new URL('../fixtures/conversation-events-provider.mjs', import.meta.url),
-          join(adapter, 'index.js')
-        )
-      }
-    },
+    prepareApp: context => source.prepareApp(context, [failedChecks]),
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -371,12 +337,7 @@ export function createDesktopScenario(options, { controlContextOnly = false } = 
         },
         workbenchReadyTimeoutMs
       )
-      await waitForBundledMarketplaceRegistration(codexHome)
-      await codex(control, 'marketplace/add', { source: join(resultDir, 'connection-marketplace') })
-      await rpc(control, 'runtime.connections.dependencies.install', {
-        providerId: PROVIDER,
-        aliases: ['source'],
-      })
+      await source.install(control)
       if (controlContextOnly) return verifyResumedGoalControlContext(control)
       await createSingleRootLocalProject(control, workspacePath, 'conversation-events')
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)

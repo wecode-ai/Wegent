@@ -158,7 +158,9 @@ fn migration_preserves_project_scopes_agent_permissions_and_assignment_cutoff() 
     for (index, project) in ["first", "second"].into_iter().enumerate() {
         assert_eq!(roles[index]["enabledAfter"], timestamp);
         assert_eq!(roles[index]["version"], 4);
-        let project_view = store.stand_in_settings(project, 7, "default").unwrap();
+        let project_view = store
+            .stand_in_settings(project, "cloud", 7, "default")
+            .unwrap();
         assert_eq!(project_view["id"], roles[index]["id"]);
         assert!(project_view.get("agentProject").is_none());
         assert!(project_view.get("agentId").is_none());
@@ -290,8 +292,9 @@ fn project_role_save_keeps_primary_device_while_preserving_the_role_device() {
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let personal = store.personal_stand_in(7, "mac").unwrap();
     store.save_personal_stand_in(7, "mac", personal).unwrap();
-    let mut draft = store.stand_in_settings("project", 7, "default").unwrap();
-    draft["projectStore"] = json!("cloud");
+    let mut draft = store
+        .stand_in_settings("project", "cloud", 7, "default")
+        .unwrap();
     draft["executionDeviceId"] = json!("remote");
     store.save_stand_in_settings("project", 7, draft).unwrap();
     let saved = store.personal_stand_in(7, "").unwrap();

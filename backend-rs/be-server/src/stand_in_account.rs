@@ -13,7 +13,7 @@ use crate::{
 const NAMESPACE: &str = "personal-assistant";
 const ACCOUNT_KIND: &str = "PersonalAssistantSettings";
 const DEFAULT_NAME: &str = "primary";
-const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Bot','Ghost') AND is_active=true";
+const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Team','Bot','Ghost') AND is_active=true";
 
 #[derive(FromMysqlRow)]
 struct Row {
@@ -94,7 +94,23 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
     let definitions = identities
         .iter()
         .map(|identity| {
-            let name = identity["botRef"]["name"]
+            let team_name = identity["teamRef"]["name"]
+                .as_str()
+                .ok_or(MysqlError::RowNotFound)?;
+            let team = resources
+                .get(&("Team", team_name))
+                .ok_or(MysqlError::RowNotFound)?;
+            let [member] = team["spec"]["members"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            else {
+                return Err(MysqlError::RowNotFound);
+            };
+            if team["spec"]["collaborationModel"] != "solo" {
+                return Err(MysqlError::RowNotFound);
+            }
+            let name = member["botRef"]["name"]
                 .as_str()
                 .ok_or(MysqlError::RowNotFound)?;
             let bot = resources
@@ -106,7 +122,7 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
             let ghost = resources
                 .get(&("Ghost", ghost_name))
                 .ok_or(MysqlError::RowNotFound)?;
-            Ok(json!({"roleId":identity["roleId"],"bot":bot,"ghost":ghost}))
+            Ok(json!({"roleId":identity["roleId"],"team":team,"bot":bot,"ghost":ghost}))
         })
         .collect::<MysqlResult<Vec<_>>>()?;
     let retired = spec["retiredRoleIds"]
@@ -115,7 +131,7 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
         .unwrap_or_default();
     let revision = crate::hex_sha256(json!([definitions, retired]).to_string().as_bytes());
     Ok(
-        json!({"assistant":{"defaultBotRef":spec["defaultBotRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}}),
+        json!({"assistant":{"defaultTeamRef":spec["defaultTeamRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}}),
     )
 }
 
@@ -129,7 +145,7 @@ fn resource(kind: &str, name: &str, display_name: &str, spec: Value) -> Value {
     })
 }
 
-fn definition_documents(definition: Definition) -> (Value, Value, Value) {
+fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     let name = if definition.role_id == "@primary" {
         DEFAULT_NAME.to_string()
     } else {
@@ -155,10 +171,19 @@ fn definition_documents(definition: Definition) -> (Value, Value, Value) {
     if let Some(device) = definition.execution_device_id {
         bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
     }
+    let team = resource(
+        "Team",
+        &name,
+        &definition.name,
+        json!({
+            "collaborationModel":"solo",
+            "members":[{"botRef":reference,"role":"leader"}],
+            "bind_mode":["task"]
+        }),
+    );
     (
-        json!({"roleId":definition.role_id,"botRef":reference}),
-        bot,
-        ghost,
+        json!({"roleId":definition.role_id,"teamRef":reference}),
+        [ghost, bot, team],
     )
 }
 
@@ -168,10 +193,10 @@ async fn create_definitions(
     request: Initialize,
 ) -> MysqlResult<()> {
     let mut identities = Vec::with_capacity(request.definitions.len());
-    let mut records = Vec::with_capacity(2 * request.definitions.len() + 1);
+    let mut records = Vec::with_capacity(3 * request.definitions.len() + 1);
     for definition in request.definitions {
-        let (identity, bot, ghost) = definition_documents(definition);
-        records.extend([ghost, bot]);
+        let (identity, documents) = definition_documents(definition);
+        records.extend(documents);
         identities.push(identity);
     }
     let account = resource(
@@ -179,7 +204,7 @@ async fn create_definitions(
         DEFAULT_NAME,
         "",
         json!({
-            "defaultBotRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
+            "defaultTeamRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
             "identities":identities
         }),
     );
@@ -320,14 +345,19 @@ async fn replace_definitions(
         for desired in body.desired.definitions {
             retired.remove(&desired.role_id);
             if let Some(entry) = previous.remove(desired.role_id.as_str()) {
+                let mut team = entry["team"].clone();
                 let mut bot = entry["bot"].clone();
                 let mut ghost = entry["ghost"].clone();
                 if let Some(device) = desired.execution_device_id {
                     bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
                 }
-                bot["metadata"]["displayName"] = json!(desired.name);
+                team["metadata"]["displayName"] = json!(desired.name);
+                bot["metadata"]["displayName"] = team["metadata"]["displayName"].clone();
                 ghost["metadata"]["displayName"] = bot["metadata"]["displayName"].clone();
                 ghost["spec"]["systemPrompt"] = json!(desired.prompt);
+                if team != entry["team"] {
+                    update_document(tx, user, &team).await?;
+                }
                 if bot != entry["bot"] {
                     update_document(tx, user, &bot).await?;
                 }
@@ -336,18 +366,18 @@ async fn replace_definitions(
                 }
                 identities.push(json!({
                     "roleId":desired.role_id,
-                    "botRef":{"name":bot["metadata"]["name"],"namespace":NAMESPACE}
+                    "teamRef":{"name":team["metadata"]["name"],"namespace":NAMESPACE}
                 }));
             } else {
-                let (identity, bot, ghost) = definition_documents(desired);
+                let (identity, documents) = definition_documents(desired);
                 identities.push(identity);
-                additions.extend([ghost, bot]);
+                additions.extend(documents);
             }
         }
         for entry in previous.into_values() {
             let role_id = entry["roleId"].as_str().ok_or(MysqlError::RowNotFound)?;
             retired.insert(role_id.to_string());
-            for resource in ["bot", "ghost"] {
+            for resource in ["team", "bot", "ghost"] {
                 let document = &entry[resource];
                 let (kind, name) = document_key(document)?;
                 tx.execute(
@@ -424,7 +454,21 @@ pub(crate) async fn verify_concurrent_initialization(
         2
     );
     let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 7);
+    let assistant = &first["assistant"];
+    for definition in assistant["definitions"].as_array().unwrap() {
+        assert_eq!(definition["team"]["spec"]["collaborationModel"], "solo");
+        let members = definition["team"]["spec"]["members"].as_array().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(
+            members[0]["botRef"]["name"],
+            definition["bot"]["metadata"]["name"]
+        );
+    }
+    assert_eq!(
+        assistant["defaultTeamRef"]["name"],
+        assistant["definitions"][0]["team"]["metadata"]["name"]
+    );
     assert_eq!(view(&rows)?, first);
     let revision = first["assistant"]["revision"].as_str().unwrap();
     let changes = || {

@@ -82,7 +82,9 @@ pub(crate) async fn after_status<M: Mysql, R: Redis>(
     else {
         return Ok(None);
     };
-    state::emit(ctx.mysql, ctx.redis, &execution).await?;
+    if let Err(error) = state::emit(ctx.mysql, ctx.redis, &execution).await {
+        tracing::warn!(%error, execution_id = execution.id, "subscription completion publication failed");
+    }
     let status = result.status;
     if execution.inbox_message_id > 0
         && let Err(error) = writeback(

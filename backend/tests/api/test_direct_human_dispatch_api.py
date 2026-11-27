@@ -16,6 +16,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.services.issue_assignments import issue_assignment_service
 from tests.utils.collaboration import authorize_project
 
 
@@ -214,3 +215,100 @@ def test_direct_human_assignment_notification_opens_original_issue(
     assert notification.url == (
         f"wework://boards/{direct_human_project.id}/issues/{created.json()['id']}"
     )
+
+
+def test_explicit_redelivery_replaces_only_current_human_assignment(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+    test_db: Session,
+    direct_human_project: CloudProject,
+) -> None:
+    headers = _auth(test_token)
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{direct_human_project.id}/loop-items",
+        headers=headers,
+        json={
+            "title": "Review changes",
+            "status": "pending",
+            "assignee_user_id": test_user.id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    issue_id = issue["id"]
+    original_id = issue["human_task_binding"]["assignmentId"]
+    url = f"/api/v1/loop-items/{issue_id}"
+    repeated = test_client.patch(
+        url,
+        headers=headers,
+        json={"version": issue["version"], "assignee_user_id": test_user.id},
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["human_task_binding"]["assignmentId"] == original_id
+    assert repeated.json()["assignment_history"][-1]["action"] == "reassign"
+    assert "redeliver" not in repeated.json()["assignment_history"][-1]
+
+    workflow, _ = issue_assignment_service.record(
+        test_db,
+        project_id=direct_human_project.id,
+        issue_id=issue_id,
+        member_type="human",
+        member_id=str(test_user.id),
+        assigned_by_user_id=test_user.id,
+        workflow_step="review",
+        notify=False,
+        trigger="manual",
+    )
+    test_db.commit()
+    redelivery = {
+        "version": repeated.json()["version"],
+        "assignee_user_id": test_user.id,
+        "notify_assignee": True,
+        "redeliver": True,
+    }
+    response = test_client.patch(url, headers=headers, json=redelivery)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == issue_id
+    assert response.json()["assignee_user_id"] == test_user.id
+    assert response.json()["status"] == issue["status"]
+    assert response.json()["title"] == issue["title"]
+    history = response.json()["assignment_history"]
+    assert history[:-1] == repeated.json()["assignment_history"]
+    assert history[-1]["action"] == "reassign"
+    assert history[-1]["redeliver"] is True
+    assert history[-1]["to_id"] == str(test_user.id)
+    assert (
+        test_client.get(url, headers=headers).json()["assignment_history"][-1]
+        == history[-1]
+    )
+    assert test_client.patch(url, headers=headers, json=redelivery).status_code == 409
+    test_db.expire_all()
+    active = issue_assignment_service.active_for_issue(test_db, issue_id)
+    direct = next(event for event in active if not event.workflow_step)
+    assert direct.id != original_id
+    assert direct.metadata["trigger"] == "redelivery"
+    assert direct.metadata["dispatch_receipt"]["state"] == "queued"
+    assert {event.id for event in active} == {direct.id, workflow.id}
+    original = test_db.get(LoopNode, original_id)
+    assert original.metadata_json["dispatch_receipt"]["state"] == "cancelled"
+
+    events = (
+        test_db.query(LoopNode)
+        .filter_by(resource_type="stand_in_issue_event", user_id=test_user.id)
+        .all()
+    )
+    assert {event.metadata_json["assignmentId"] for event in events} == {
+        original_id,
+        direct.id,
+    }
+    notifications = (
+        test_db.query(WeworkNotification)
+        .filter_by(user_id=test_user.id, kind="issue_dispatch_assignment")
+        .all()
+    )
+    assert {notification.payload["assignmentId"] for notification in notifications} == {
+        original_id,
+        direct.id,
+    }

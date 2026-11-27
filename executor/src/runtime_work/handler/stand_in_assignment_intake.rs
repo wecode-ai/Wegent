@@ -1,4 +1,5 @@
 use super::*;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 
 #[cfg(test)]
 #[path = "project_intake_boundary_tests.rs"]
@@ -41,7 +42,14 @@ impl RuntimeWorkRpcHandler {
         }
         let project = super::stand_in_tasks::required(event, "projectId")?;
         let config = self
-            .issue_intake_roles(std::slice::from_ref(role), user, project, storage, id)
+            .issue_intake_roles(
+                std::slice::from_ref(role),
+                user,
+                project,
+                storage,
+                id,
+                Some(IssueIntakeTrigger::Assignment),
+            )
             .await?
             .into_iter()
             .find(|config| config["handlingPolicy"]["automatic"] == true)
@@ -64,6 +72,7 @@ impl RuntimeWorkRpcHandler {
             })?;
             let mut issue = serde_json::to_value(issue)
                 .map_err(|e| AppIpcError::new("invalid_assignment", e.to_string()))?;
+            issue["tags"] = issue["metadata"]["tags"].clone();
             let history = issue["metadata"]["assignment_history"]
                 .as_array()
                 .ok_or_else(|| {
@@ -77,14 +86,14 @@ impl RuntimeWorkRpcHandler {
             if binding["humanAssignmentId"] != event["assignmentId"]
                 || assignment["to_type"] != "user"
                 || assignment["to_id"].as_str() != Some(expected_user_id.as_str())
-                || !super::stand_in::assignment_after_enable(
+                || !super::stand_in::issue_after_enable(
                     &json!({"created_at":assignment["at"]}),
                     &config,
+                    &issue,
                 )
             {
                 return Err(AppIpcError::new("invalid_assignment", "Assignment changed"));
             }
-            issue["tags"] = issue["metadata"]["tags"].clone();
             (issue, binding)
         } else {
             return Err(AppIpcError::new(
@@ -138,7 +147,7 @@ impl RuntimeWorkRpcHandler {
             .flatten()
             .find(|row| row["id"] == event["assignmentId"] && row["status"] == "active");
         if issue["human_task_binding"]["assignmentId"] != event["assignmentId"]
-            || !active.is_some_and(|row| super::stand_in::assignment_after_enable(row, config))
+            || !active.is_some_and(|row| super::stand_in::issue_after_enable(row, config, &issue))
         {
             return Err(AppIpcError::new(
                 "invalid_assignment",

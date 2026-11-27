@@ -114,6 +114,21 @@ pub(crate) async fn transition_in<T: MysqlTransaction>(
     summary: Option<&str>,
     error: Option<&str>,
 ) -> MysqlResult<Option<Execution>> {
+    let changed = transition_execution_in(tx, id, status, summary, error).await?;
+    if let Some(execution) = &changed {
+        update_statistics_in(tx, execution, summary.unwrap_or(""), error.unwrap_or("")).await?;
+    }
+    Ok(changed)
+}
+
+/// Recovery can commit a guarded execution failure independently of CRD statistics.
+pub(crate) async fn transition_execution_in<T: MysqlTransaction>(
+    tx: &mut T,
+    id: i64,
+    status: &str,
+    summary: Option<&str>,
+    error: Option<&str>,
+) -> MysqlResult<Option<Execution>> {
     // `datetime.now(timezone.utc)`: the source clock has microsecond
     // resolution, and the statistics it writes carry exactly that precision.
     let now = now_micros();
@@ -150,7 +165,16 @@ pub(crate) async fn transition_in<T: MysqlTransaction>(
     if updated.rows_affected == 0 {
         return Ok(None);
     }
-    if completes(status) {
+    Ok(Some(execution))
+}
+
+pub(crate) async fn update_statistics_in<T: MysqlTransaction>(
+    tx: &mut T,
+    execution: &Execution,
+    summary: &str,
+    error: &str,
+) -> MysqlResult<()> {
+    if completes(&execution.status) {
         // `_update_subscription_statistics`: the statistics write rides the ORM's
         // dirty-attribute flush, so `updated_at` is the mapper's `now()` rather
         // than a bound value.
@@ -164,15 +188,15 @@ pub(crate) async fn transition_in<T: MysqlTransaction>(
             write_statistics(
                 tx,
                 &mut subscription,
-                status,
-                summary.unwrap_or(""),
-                error.unwrap_or(""),
-                now,
+                &execution.status,
+                summary,
+                error,
+                execution.completed_at,
             )
             .await?;
         }
     }
-    Ok(Some(execution))
+    Ok(())
 }
 
 /// `_update_subscription_statistics` (`app/services/subscription/execution.py:

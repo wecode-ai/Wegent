@@ -1,6 +1,7 @@
 //! Reconcile accepted dispatch intent with current authority and actual local work.
 use super::stand_in::settings_error;
 use super::*;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 
 fn retryable_dispatch_error(error: &AppIpcError) -> bool {
     matches!(
@@ -197,7 +198,7 @@ impl RuntimeWorkRpcHandler {
                 return Ok(());
             }
             let mut config = store
-                .stand_in_settings(project, user, role)
+                .stand_in_settings(project, "cloud", user, role)
                 .map_err(settings_error)?;
             config["projectId"] = intent["projectId"].clone();
             config["projectStore"] = json!("cloud");
@@ -221,6 +222,7 @@ impl RuntimeWorkRpcHandler {
                 intent["userId"].as_i64().unwrap_or_default(),
                 project,
                 intent["issueId"].as_str().unwrap_or_default(),
+                IssueIntakeTrigger::Assignment,
             )
             .await?
             .into_iter()

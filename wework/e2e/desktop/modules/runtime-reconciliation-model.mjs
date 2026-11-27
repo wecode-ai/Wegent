@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { createModelResponseGates } from './model-response-gates.mjs'
 
 import {
   assistantMessage,
@@ -12,15 +13,7 @@ import {
   streamingTextEvents,
 } from './response-protocol.mjs'
 
-function deferred() {
-  let resolve
-  const promise = new Promise(done => {
-    resolve = done
-  })
-  return { promise, resolve }
-}
-
-function modelCase(marker, order) {
+function modelCase(marker, order, gates) {
   marker = `${marker}_${order}`
   const prefix = `${marker}_PARTIAL`
   const changeRequest = 'https://github.com/example/project/pull/123'
@@ -35,8 +28,8 @@ function modelCase(marker, order) {
     continuePrompt: `${marker}_CONTINUE`,
     continuePrefix: `${marker}_NEW_TURN_RUNNING`,
     continueText: `${marker}_NEW_TURN_RUNNING ${marker}_NEW_TURN_COMPLETE`,
-    initialGate: deferred(),
-    continueGate: deferred(),
+    initialGate: gates.pause(),
+    continueGate: gates.pause(),
     initialRequests: 0,
     continueRequests: 0,
   }
@@ -64,7 +57,8 @@ function streamDelta(stream, delta) {
 }
 
 export function createRuntimeReconciliationModel({ marker, orders }) {
-  const cases = orders.map(order => modelCase(marker, order))
+  const gates = createModelResponseGates()
+  const cases = orders.map(order => modelCase(marker, order, gates))
   return {
     cases,
     async handleHttp(request, response, url) {
@@ -101,12 +95,7 @@ export function createRuntimeReconciliationModel({ marker, orders }) {
       response.end(createSse([streamDelta(stream, text.slice(prefix.length)), ...stream.finish]))
       return true
     },
-    release() {
-      cases.forEach(testCase => {
-        testCase.initialGate.resolve()
-        testCase.continueGate.resolve()
-      })
-    },
+    release: gates.cleanup,
     diagnostics: () =>
       cases.map(testCase => ({
         order: testCase.order,

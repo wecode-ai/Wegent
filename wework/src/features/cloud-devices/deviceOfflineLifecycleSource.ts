@@ -4,6 +4,7 @@ import type { DeviceLifecyclePhase } from './useDeviceOfflineLifecycleAction'
 export interface DeviceOfflineLifecycleInputs {
   status: DeviceInfo['status']
   runtimeInstanceId?: string | null
+  recoveryReady?: boolean
   requestAction(): Promise<unknown>
   refreshDevices(): void | Promise<void>
   pollIntervalMs: number
@@ -57,12 +58,16 @@ export function createDeviceOfflineLifecycleSource() {
       startingInstance && inputs.runtimeInstanceId && startingInstance !== inputs.runtimeInstanceId
     )
     const connected = inputs.status === 'online' || inputs.status === 'busy'
-    if ((snapshot.phase === 'waiting-online' || changed) && connected) {
+    if (
+      (snapshot.phase === 'waiting-online' || changed) &&
+      connected &&
+      inputs.recoveryReady !== false
+    ) {
       clearTimers()
       noticeUntil = Date.now() + inputs.recoveredNoticeMs
       publish('recovered')
       armNotice()
-    } else if (snapshot.phase === 'waiting-offline' && inputs.status === 'offline')
+    } else if (snapshot.phase === 'waiting-offline' && (inputs.status === 'offline' || changed))
       publish('waiting-online')
   }
   const current = (epoch: number) => epoch === operation && listeners.size > 0 && waiting()

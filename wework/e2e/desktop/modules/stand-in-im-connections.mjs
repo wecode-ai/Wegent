@@ -52,14 +52,18 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.equal((await rpc('runtime.stand_in.binding', { operation: 'get' })).status, 'unbound')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', {
-        value: `/stand-in?deviceId=${encodeURIComponent(initial.executionDeviceId)}`,
+        value: `/stand-in?${new URLSearchParams({
+          deviceId: initial.executionDeviceId,
+          profileId: '@primary',
+        })}`,
       })
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await finishStandInOnboarding(control)
       const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
-      assert.equal(binding.status, 'active')
-      assert.equal(binding.target.userId, userId)
-      assert.equal(binding.target.deviceId, initial.executionDeviceId)
+      assert.equal(binding.status, 'unbound')
+      const { assistant } = await request('/api/v1/personal-assistant')
+      const primary = assistant.definitions.find(definition => definition.roleId === '@primary')
+      assert.equal(primary.bot.spec.execution_policy.environment_id, initial.executionDeviceId)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
@@ -336,6 +340,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       }
       await closeConnections()
       await selectWorkbenchTheme(control, { mode: 'dark', themeId: 'wework' })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await captureScreenshot(control, 'im-stand-in-10-channel-settings-dark.png')

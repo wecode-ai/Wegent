@@ -37,6 +37,7 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
+import { withTimeout } from './wait.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const DESKTOP_READY_TIMEOUT_MS = readPositiveTimeout(
@@ -165,6 +166,10 @@ const GUIDANCE_SCROLL_RESPONSE = [
   ),
 ].join('\n\n')
 const GUIDANCE_SCROLL_MESSAGE = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_MESSAGE'
+const GUIDANCE_ATTACHMENT_NAME = 'guidance-notes.txt'
+const GUIDANCE_ATTACHMENT_CONTENT = 'WEWORK_DESKTOP_E2E_GUIDANCE_ATTACHMENT_CONTENT'
+const GUIDANCE_CORRECTION_PROMPT = 'WEWORK_DESKTOP_E2E_GUIDANCE_CORRECTION'
+const GUIDANCE_CORRECTION_COMPLETION = 'WEWORK_DESKTOP_E2E_GUIDANCE_CORRECTION_COMPLETE'
 const GUIDANCE_SCROLL_PRE_TOOL_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_PRE_TOOL_TEXT'
 const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMPLETE'
 const EMBEDDED_BROWSER_SETUP_PROMPT =
@@ -961,14 +966,6 @@ switch ($Action) {
       `---\nname: desktop-e2e-skill\ndescription: Verifies the installed plugin can be used in chat.\n---\n\nUse this skill to verify the Wework desktop plugin flow.\n`
     ),
   ])
-}
-
-function withTimeout(promise, timeoutMs, message) {
-  let timeout
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
-  })
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout))
 }
 
 async function isExecutable(path) {
@@ -1808,6 +1805,10 @@ export {
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
   GUIDANCE_SCROLL_MESSAGE,
+  GUIDANCE_ATTACHMENT_NAME,
+  GUIDANCE_ATTACHMENT_CONTENT,
+  GUIDANCE_CORRECTION_PROMPT,
+  GUIDANCE_CORRECTION_COMPLETION,
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   EMBEDDED_BROWSER_SETUP_PROMPT,
