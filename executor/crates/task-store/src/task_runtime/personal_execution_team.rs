@@ -399,6 +399,12 @@ mod tests {
 
     #[test]
     fn imported_definition_preserves_bot_order_across_save_and_reopen() {
+        for mode in ["coordinate", "route", "collaborate"] {
+            assert_portable_team_round_trip(mode);
+        }
+    }
+
+    fn assert_portable_team_round_trip(mode: &str) {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
         let store = LocalTaskStore::open(&path).unwrap();
@@ -406,7 +412,7 @@ mod tests {
         let mut role = empty_role("copy", "target");
         role["migrationSource"] = json!("[\"source\",7,\"original\"]");
         settings["roles"] = json!([role]);
-        let definition = json!({"name":"Review","collaboration_model":"coordinate","model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"native","model_id":"review-model"}},"bot":[
+        let definition = json!({"name":"Review","collaboration_model":mode,"model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"native","model_id":"review-model"}},"bot":[
             {"id":"lead","name":"Lead","shell_type":"Codex"},
             {"id":"reader","name":"Reader","shell_type":"Codex","system_prompt":"Check the evidence"}
         ]});
@@ -426,6 +432,6 @@ mod tests {
             .unwrap();
         assert_eq!(exported["bot"], definition["bot"]);
         assert_eq!(exported["model_policy"], definition["model_policy"]);
-        assert_eq!(exported["collaboration_model"], "coordinate");
+        assert_eq!(exported["collaboration_model"], mode);
     }
 }

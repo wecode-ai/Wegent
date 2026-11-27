@@ -379,7 +379,7 @@ jobs:
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/milestone-mysql.log
           cargo test --locked --lib loop_tasks::assignment_receipts::tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-receipt-mysql.log
-          cargo test --locked --lib socketio::device_pull_claim::tests::device_queue_never_consumes_managed_teams -- --ignored \
+          cargo test --locked --lib socketio::device_pull_claim::tests::device_queue_accepts_device_teams_and_excludes_managed_teams -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-device-queue-mysql.log
           cargo test --locked --lib device_records::retention::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-retention-mysql.log

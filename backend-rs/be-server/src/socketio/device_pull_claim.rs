@@ -758,14 +758,14 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
-    async fn device_queue_never_consumes_managed_teams() -> anyhow::Result<()> {
+    async fn device_queue_accepts_device_teams_and_excludes_managed_teams() -> anyhow::Result<()> {
         crate::migrations::mysql_tests::isolated(async |mysql| {
             crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
             for (id, environment, team) in [(1,"local",0), (2,"wegent",42), (3,"cloud",42)] {
                 mysql.execute("INSERT INTO loop_item_executions(id,loop_item_id,cloud_project_id,executor_owner_user_id,status,execution_environment,execution_device_id,team_id,execution_payload,error_message) VALUES (?,'root','1001',7,'queued',?,'',?,'{}','')",(id,environment,team)).await?;
             }
             let rows: Vec<QueueExecutionRow> = mysql.fetch_all(queue_sql("?"),(7,"device","local")).await?;
-            assert_eq!(rows.iter().map(|row|row.execution().id).collect::<Vec<_>>(),vec![1]);
+            assert_eq!(rows.iter().map(|row|row.execution().id).collect::<Vec<_>>(),vec![1,3]);
             Ok(())
         }).await
     }

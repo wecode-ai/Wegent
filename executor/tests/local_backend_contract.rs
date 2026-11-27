@@ -837,7 +837,7 @@ async fn registration_pulls_without_publishing_scheduler_capacity() {
     assert_eq!(calls[1].event, "runtime.tasks.pull");
     assert_eq!(
         calls[1].payload,
-        json!({"runner_catalog": {"runtimes": ["codex"], "models": []}})
+        json!({"runner_catalog": {"runtimes": ["codex"], "models": []}, "dispatch_protocol_version": 2})
     );
     let heartbeats = transport.wait_for_emit_count("device:heartbeat", 1).await;
     assert!(heartbeats[0].payload.get("runtime_capacity").is_none());
