@@ -190,13 +190,16 @@ describe("shared Issue threads", () => {
     ).toHaveLength(1);
   });
 
-  it("shows one public start comment with the recorded task link and threaded result", () => {
+  it.each([
+    { activity_type: "member_execution" },
+    { dispatch_role: "member", execution_id: 17 },
+  ])("shows the recorded task link on the public start for %j", (identity) => {
     const runtimeAddress = { deviceId: "executor", taskId: "member-task" };
     const execution: ProjectChatMessage = {
       ...message,
       runtimeAddress,
       metadata: {
-        activity_type: "member_execution",
+        ...identity,
         workflow_task_title: "Task",
       },
     };

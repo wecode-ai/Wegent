@@ -33,11 +33,7 @@ export function groupIssueTimelineThreads(
   const startExecutions = new Map<string, ProjectChatMessage>();
   for (const [activityId, start] of startsByActivity) {
     const activity = byId.get(activityId);
-    const kind = activity?.metadata.activity_type;
-    if (
-      activity &&
-      (kind === "member_execution" || kind === "manager_execution")
-    ) {
+    if (activity) {
       movedActivities.set(activityId, start.messageId);
       startExecutions.set(start.messageId, activity);
     }
