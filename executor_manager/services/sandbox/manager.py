@@ -221,11 +221,7 @@ class SandboxManager(metaclass=SingletonMeta):
         deadline = time.monotonic() + SANDBOX_TASK_LOCK_WAIT_TIMEOUT
         while True:
             try:
-                owner_token = await asyncio.to_thread(
-                    self._lifecycle_lock.acquire_owned,
-                    lock_name,
-                    SANDBOX_TASK_LOCK_TTL,
-                )
+                owner_token = await self._acquire_lifecycle_owner(lock_name)
             except DistributedLockUnavailableError as exc:
                 logger.error(
                     "[SandboxManager] Distributed task lock unavailable "
@@ -261,11 +257,7 @@ class SandboxManager(metaclass=SingletonMeta):
         if lock_name is None:
             return None
         try:
-            owner_token = await asyncio.to_thread(
-                self._lifecycle_lock.acquire_owned,
-                lock_name,
-                SANDBOX_TASK_LOCK_TTL,
-            )
+            owner_token = await self._acquire_lifecycle_owner(lock_name)
         except DistributedLockUnavailableError as exc:
             logger.error(
                 "[SandboxManager] Lifecycle lock unavailable during heartbeat "
@@ -280,6 +272,30 @@ class SandboxManager(metaclass=SingletonMeta):
         lease = _TaskLifecycleLease(lock_name=lock_name, owner_token=owner_token)
         lease.renew_task = asyncio.create_task(self._renew_task_lifecycle_lease(lease))
         return lease
+
+    async def _acquire_lifecycle_owner(self, lock_name: str) -> Optional[str]:
+        """Release any Redis lock acquired after its caller was cancelled."""
+        acquisition = asyncio.create_task(
+            asyncio.to_thread(
+                self._lifecycle_lock.acquire_owned, lock_name, SANDBOX_TASK_LOCK_TTL
+            )
+        )
+        try:
+            return await asyncio.shield(acquisition)
+        except asyncio.CancelledError:
+            # Cancelling the await does not stop the Redis command in its thread.
+            while not acquisition.done():
+                with suppress(asyncio.CancelledError):
+                    await asyncio.wait((acquisition,))
+            with suppress(DistributedLockUnavailableError):
+                owner_token = acquisition.result()
+                if owner_token:
+                    await asyncio.shield(
+                        self._release_task_lifecycle_lease(
+                            _TaskLifecycleLease(lock_name, owner_token)
+                        )
+                    )
+            raise
 
     async def _renew_task_lifecycle_lease(self, lease: _TaskLifecycleLease) -> None:
         """Renew a lifecycle lease until its owner finishes the operation."""

@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import time
+from threading import Event
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -2030,6 +2031,46 @@ class TestSandboxManager:
             "task-lifecycle:12345",
             "task-lifecycle:12345",
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wait_for_lock", [False, True])
+    async def test_cancelled_lease_acquisition_releases_late_owner(
+        self, sandbox_manager_with_mock_redis, mocker, wait_for_lock
+    ):
+        manager = sandbox_manager_with_mock_redis
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        resume = Event()
+
+        def acquire_owned(lock_name, ttl):
+            loop.call_soon_threadsafe(entered.set)
+            if not resume.wait(timeout=3):
+                raise AssertionError("Timed out waiting to complete Redis acquisition")
+            return "owner-token"
+
+        mocker.patch.object(
+            manager._lifecycle_lock, "acquire_owned", side_effect=acquire_owned
+        )
+        release = mocker.patch.object(manager._lifecycle_lock, "release_owned")
+        acquire = (
+            manager._acquire_task_lifecycle_lease
+            if wait_for_lock
+            else manager._try_acquire_task_lifecycle_lease
+        )
+        acquisition = asyncio.create_task(acquire("12345"))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            acquisition.cancel()
+            await asyncio.sleep(0)
+            assert not acquisition.done()
+            acquisition.cancel()
+            await asyncio.sleep(0)
+        finally:
+            resume.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(acquisition, timeout=2)
+        release.assert_called_once_with("task-lifecycle:12345", "owner-token")
 
     @pytest.mark.asyncio
     async def test_get_execution_found(
