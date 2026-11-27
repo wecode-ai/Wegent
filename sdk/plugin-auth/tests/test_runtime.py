@@ -5,8 +5,10 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +23,54 @@ from wegent_plugin_auth import (
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_native_sdk_import_and_export_do_not_load_the_http_transport(self):
+        script = textwrap.dedent(
+            """
+            import io, json, sys
+            sys.path.insert(0, sys.argv[1])
+            def reject_http_import(event, arguments):
+                if event == "import" and arguments[0] == "urllib.request":
+                    raise AssertionError("Native export must not load HTTP transport")
+            sys.addaudithook(reject_http_import)
+            from pathlib import Path
+            from wegent_plugin_auth import (
+                AccountAuthAdapter, delegate_cloud_command, local_configuration, runtime,
+            )
+            def export():
+                assert local_configuration() == {"CACHE_DIR": "synthetic-config"}
+                return {"username": "alice", "password": "synthetic-private-secret"}
+            adapter = AccountAuthAdapter(
+                connector_slug="mail", credential_type="password", export=export,
+                account_id=lambda credential: credential["username"],
+                execute=lambda credential, arguments: 0, allowed_commands=("read",),
+            )
+            metadata = adapter.export_credential(io.BytesIO())
+            with runtime.native_execution_scope():
+                assert delegate_cloud_command(Path("/missing"), "mail", ["read"],
+                                              account_id="alice") is None
+            assert "urllib.request" not in sys.modules
+            print(json.dumps({"accountId": metadata["accountId"]}))
+        """
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                script,
+                str(Path(__file__).resolve().parents[1]),
+            ],
+            env={
+                **os.environ,
+                "WEGENT_PLUGIN_AUTH_LOCAL_CONFIGURATION": '{"CACHE_DIR":"synthetic-config"}',
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        self.assertEqual(json.loads(completed.stdout), {"accountId": "alice"})
+
     def test_local_command_does_not_require_a_broker_or_managed_package(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(
@@ -189,7 +239,7 @@ class RuntimeTests(unittest.TestCase):
                     },
                     clear=True,
                 ),
-                patch.object(runtime.urllib.request, "build_opener") as build,
+                patch.object(runtime, "_broker_opener") as build,
             ):
                 build.return_value.open.return_value = response
                 result = run_account_command(root, "mail", ["list", "--limit", "1"])

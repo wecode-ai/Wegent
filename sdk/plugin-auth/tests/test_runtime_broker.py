@@ -20,7 +20,7 @@ from wegent_plugin_auth import AuthError, run_account_command, runtime
 
 class BrokerRuntimeTests(unittest.TestCase):
     @contextlib.contextmanager
-    def broker(self, result, *, status=200, delay=0):
+    def broker(self, result, *, status=200, delay=0, headers=None):
         requests = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -36,12 +36,20 @@ class BrokerRuntimeTests(unittest.TestCase):
                 body = json.dumps(result).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Length", str(len(body)))
+                for name, value in (headers or {}).items():
+                    self.send_header(name, value)
                 self.end_headers()
                 try:
                     self.wfile.write(body)
                 except (BrokenPipeError, ConnectionResetError):
                     # A timeout regression closes the client before the reply.
                     pass
+
+            def do_GET(self):
+                requests.append((self.path, self.headers.get("Authorization"), None))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"stdout":"redirected"}')
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         worker = threading.Thread(
@@ -84,13 +92,34 @@ class BrokerRuntimeTests(unittest.TestCase):
             worker.join(timeout=5)
             self.assertFalse(worker.is_alive())
 
+    def test_broker_ignores_ambient_proxies_and_rejects_redirects(self):
+        with self.broker({"stdout": "direct result"}) as (root, requests):
+            with (
+                patch.dict(
+                    os.environ, {"http_proxy": "http://127.0.0.1:1", "no_proxy": ""}
+                ),
+                patch("urllib.request.proxy_bypass", return_value=False),
+            ):
+                self.assertEqual(
+                    run_account_command(root, "mail", ["read"]), "direct result"
+                )
+            self.assertEqual(len(requests), 1)
+
+        with self.broker({}, status=302, headers={"Location": "/redirected"}) as (
+            root,
+            requests,
+        ):
+            with self.assertRaisesRegex(AuthError, "^plugin_auth_broker_unavailable$"):
+                run_account_command(root, "mail", ["read"])
+            self.assertEqual(
+                len(requests), 1, "The broker credential must never follow a redirect"
+            )
+
     def test_explicit_local_account_waits_for_slow_python_preparation(self):
         # Complete after the old 1080s SDK deadline but within the current
         # 960s preparation plus 180s action budget, using the real HTTP client.
         scale = 0.002
-        opener = runtime.urllib.request.build_opener(
-            runtime.urllib.request.ProxyHandler({}), runtime._NoRedirect()
-        )
+        opener = runtime._broker_opener()
         timeouts = []
 
         class ScaledOpener:
@@ -102,9 +131,7 @@ class BrokerRuntimeTests(unittest.TestCase):
             self.broker(
                 {"stdout": "prepared mailbox result"}, delay=1120 * scale
             ) as fixture,
-            patch.object(
-                runtime.urllib.request, "build_opener", return_value=ScaledOpener()
-            ),
+            patch.object(runtime, "_broker_opener", return_value=ScaledOpener()),
         ):
             root, requests = fixture
             result = run_account_command(root, "mail", ["read"], account_id="alice")

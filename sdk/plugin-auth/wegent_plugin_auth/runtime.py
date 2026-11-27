@@ -7,9 +7,6 @@ import contextlib
 import json
 import os
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterator, Optional, Sequence
@@ -51,9 +48,14 @@ PUBLIC_ERRORS = frozenset(
 )
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise AuthError("plugin_auth_broker_unavailable")
+def _broker_opener():
+    from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
+
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise AuthError("plugin_auth_broker_unavailable")
+
+    return build_opener(ProxyHandler({}), NoRedirect())
 
 
 def _entry_roots(entry: dict, capabilities: Path) -> Iterator[Path]:
@@ -100,9 +102,11 @@ def run_account_command(
 ) -> str:
     """Return business stdout, never credentials or native provider errors."""
     try:
+        from urllib.parse import urlsplit
+
         url = os.environ.get("WEGENT_PLUGIN_AUTH_BROKER", "")
         token = os.environ.get("WEGENT_PLUGIN_AUTH_BROKER_TOKEN", "")
-        parsed = urllib.parse.urlsplit(url)
+        parsed = urlsplit(url)
         if (
             parsed.scheme != "http"
             or parsed.hostname != "127.0.0.1"
@@ -127,7 +131,10 @@ def run_account_command(
         ).encode("utf-8")
         if len(payload) > 65_536:
             raise AuthError("plugin_auth_invalid_command")
-        request = urllib.request.Request(
+        from urllib.error import HTTPError
+        from urllib.request import Request
+
+        request = Request(
             url,
             data=payload,
             headers={
@@ -136,12 +143,10 @@ def run_account_command(
             },
             method="POST",
         )
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _NoRedirect()
-        )
+        opener = _broker_opener()
         try:
             response = opener.open(request, timeout=BROKER_REQUEST_TIMEOUT_SECONDS)
-        except urllib.error.HTTPError as error:
+        except HTTPError as error:
             response = error
         with response:
             data = response.read(MAX_RESPONSE_BYTES + 1)

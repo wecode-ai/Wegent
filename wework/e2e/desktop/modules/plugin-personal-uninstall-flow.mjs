@@ -763,6 +763,23 @@ export async function resetPersonalRecipientAccount({
   return recipient.id
 }
 
+async function assertIdempotentRecipientUninstall(recipientCloud, installedId) {
+  const response = await fetch(
+    `${recipientCloud.backendUrl}/api/plugins/installed/${installedId}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${recipientCloud.authToken}` },
+      signal: AbortSignal.timeout(10_000),
+    }
+  )
+  // The account-uninstall endpoint is idempotent for missing/non-owned IDs.
+  assert.equal(
+    response.status,
+    204,
+    'The stale-ID uninstall violated the existing idempotent response contract'
+  )
+}
+
 export async function verifyRecipientUninstallDoesNotRemoveOwner({
   control,
   cloudEnvironment,
@@ -775,23 +792,12 @@ export async function verifyRecipientUninstallDoesNotRemoveOwner({
   assert.ok(recipient, 'The cross-account fixture needs its own recipient membership')
   const recipientId = String(recipient.metadata.labels.id)
   assert.notEqual(recipientId, ownerIdentity.id, 'Cross-account test reused the author install ID')
-  const denied = await fetch(
-    `${recipientCloud.backendUrl}/api/plugins/installed/${ownerIdentity.id}`,
-    {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${recipientCloud.authToken}` },
-      signal: AbortSignal.timeout(10_000),
-    }
-  )
-  // The existing account-uninstall endpoint is idempotent for missing/non-owned IDs.
-  assert.equal(
-    denied.status,
-    204,
-    'The stale-ID uninstall violated the existing idempotent response contract'
-  )
+  await assertIdempotentRecipientUninstall(recipientCloud, ownerIdentity.id)
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
-  // Exercise the real UI while the recipient still has its own membership.
-  await uninstallPersonalPluginInUi(control, plugin, { refresh: true })
+  // The caller already verified the recipient menu. This shared native home
+  // still contains the author's source, so reconciling the recipient's package
+  // would correctly reject replacing it before this account-only uninstall.
+  await uninstallPersonalPluginInUi(control, plugin)
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('uninstall-plugin-dialog'),
@@ -804,12 +810,28 @@ export async function verifyRecipientUninstallDoesNotRemoveOwner({
     undefined,
     'Uninstall restored recipient membership'
   )
+  // With no native install or account membership, refresh correctly removes
+  // the UI uninstall action. Exercise both stale IDs at the real API boundary.
+  for (const staleId of [recipientId, ownerIdentity.id]) {
+    await assertIdempotentRecipientUninstall(recipientCloud, staleId)
+    await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
+    await assertPersonalSourceUnchanged(source)
+    assert.equal(
+      await accountPlugin(recipientCloud, plugin.name),
+      undefined,
+      'A no-membership uninstall restored recipient membership'
+    )
+  }
   await pluginApi(recipientCloud, `/plugins/marketplace/${plugin.id}/install`, 'POST')
   const restored = await accountPlugin(recipientCloud, plugin.name)
   assert.ok(restored && restored.spec.pluginId === Number(plugin.id))
   await assertAccountIdentity(cloudEnvironment, plugin, ownerIdentity)
   await captureVerificationScreenshot(control, 'personal-plugin-recipient-stale-owner-install.png')
-  return { ownerInstallId: ownerIdentity.id, recipientInstallId: recipientId }
+  return {
+    ownerInstallId: ownerIdentity.id,
+    recipientInstallId: recipientId,
+    absentRecipientUninstallVerified: true,
+  }
 }
 
 export async function verifyAuthorAccountUninstall({

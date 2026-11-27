@@ -43,35 +43,13 @@ export function sanitizeRendererCpuProfile(profile, rendererOrigin) {
   }
 }
 
-// This function runs in the renderer; return only counters from existing marks.
+// This function is serialized into the renderer; keep the static E2E key self-contained.
 export function readRendererCatalogActivity() {
-  const namespaces = [
-    'wework:plugin-local-catalog',
-    'wework:plugin-composer-refresh',
-    'wework:plugin-composer-enrichment',
-  ]
-  const entries = Object.fromEntries(
-    ['started', 'completed', 'failed'].map(phase => [
-      phase,
-      namespaces.flatMap(namespace =>
-        performance.getEntriesByName(namespace + ':' + phase, 'mark')
-      ),
-    ])
-  )
-  const pending = new Map()
-  for (const entry of entries.started) {
-    const key = `${entry.name.slice(0, entry.name.lastIndexOf(':'))}:${entry.startTime}`
-    pending.set(key, (pending.get(key) ?? 0) + 1)
-  }
-  for (const entry of [...entries.completed, ...entries.failed]) {
-    const key = `${entry.name.slice(0, entry.name.lastIndexOf(':'))}:${entry.detail}`
-    const count = pending.get(key)
-    if (count) pending.set(key, count - 1)
-  }
+  const counters = globalThis[Symbol.for('wework:e2e:plugin-activity')]?.total
   return {
-    started: entries.started.length,
-    completed: entries.completed.length,
-    failed: entries.failed.length,
-    pending: [...pending.values()].reduce((sum, count) => sum + count, 0),
+    started: counters?.started ?? 0,
+    completed: counters?.completed ?? 0,
+    failed: counters?.failed ?? 0,
+    pending: counters?.pending ?? 0,
   }
 }

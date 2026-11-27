@@ -9,6 +9,8 @@ use std::{
 
 use serde_json::Value;
 
+use crate::logging::log_executor_event;
+
 use super::{bundled_plugins::directory_content_hash, plugin_catalog::read_json_file};
 
 #[derive(PartialEq)]
@@ -129,7 +131,17 @@ pub fn read_codex_marketplace_cache(
                 continue;
             }
             let package = if kind.is_dir() {
-                selected_codex_package(&entry.path(), marketplace, &name)?
+                selected_codex_package(&entry.path(), marketplace, &name).unwrap_or_else(|error| {
+                    log_executor_event(
+                        "Codex plugin cache package unavailable",
+                        &[
+                            ("marketplace", marketplace.to_owned()),
+                            ("plugin", name.clone()),
+                            ("error", error.to_string()),
+                        ],
+                    );
+                    None
+                })
             } else {
                 None
             };
@@ -410,7 +422,25 @@ mod tests {
         }
         assert!(read_active_codex_plugin_root(home.path(), "ambiguous-market", "demo").is_err());
         assert!(read_codex_plugin_cache(home.path(), "ambiguous-market", "demo").is_err());
-        assert!(read_codex_marketplace_cache(home.path(), "ambiguous-market").is_err());
+        let healthy = home
+            .path()
+            .join("plugins/cache/ambiguous-market/healthy/1.0.0");
+        fs::create_dir_all(healthy.join(".codex-plugin")).unwrap();
+        fs::write(
+            healthy.join(".codex-plugin/plugin.json"),
+            r#"{"name":"healthy","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let packages = read_codex_marketplace_cache(home.path(), "ambiguous-market").unwrap();
+        assert_eq!(packages.len(), 2);
+        assert!(packages["demo"].is_none());
+        assert_eq!(
+            packages["healthy"].as_ref().unwrap().root,
+            healthy.canonicalize().unwrap()
+        );
+        for version in ["2.0.0", "10.0.0", "11-custom"] {
+            assert!(ambiguous.join(version).is_dir());
+        }
 
         for marketplace in ["wework-personal", "test-market"] {
             let root = home

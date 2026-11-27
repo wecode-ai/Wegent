@@ -54,6 +54,7 @@ import {
 import i18n from '@/i18n'
 import { sha256Hex } from '@/api/fileHash'
 import { getErrorMessage } from '@/lib/error-message'
+import { beginPluginRefreshDiagnostics } from '@/lib/plugin-refresh-diagnostics'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
@@ -3500,13 +3501,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return requestLocalExecutor<string>('executor.plugins.example.save', { destinationPath })
     },
     readState(params = {}) {
-      const observeLocalCatalog =
-        (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') &&
-        params.marketplaceKinds?.includes('local')
       // Observe the real call before any awaits; E2E must detect an early read
       // even if the Executor queues it behind package synchronization.
-      const startedAt = observeLocalCatalog
-        ? performance.mark('wework:plugin-local-catalog:started').startTime
+      const finishObservation = params.marketplaceKinds?.includes('local')
+        ? beginPluginRefreshDiagnostics('catalog')
         : undefined
       const result = readState({
         query: params.q,
@@ -3516,14 +3514,14 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         refresh: params.refresh,
         reuseInstalledInventory: params.reuseInstalledInventory,
       })
-      if (!observeLocalCatalog) return result
+      if (!finishObservation) return result
       return result.then(
         state => {
-          performance.mark('wework:plugin-local-catalog:completed', { detail: startedAt })
+          finishObservation()
           return state
         },
         error => {
-          performance.mark('wework:plugin-local-catalog:failed', { detail: startedAt })
+          finishObservation('failed')
           throw error
         }
       )

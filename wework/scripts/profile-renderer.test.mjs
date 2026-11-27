@@ -111,31 +111,31 @@ test('retains CPU counters and only packaged renderer asset locations', () => {
   expect(JSON.stringify(result)).not.toContain('127.0.0.1')
 })
 
-test('keeps concurrent catalog reads pending when start timestamps collide', () => {
-  const namespace = 'wework:plugin-local-catalog'
-  const refresh = 'wework:plugin-composer-refresh'
-  const entries = {
-    started: [
-      { name: `${namespace}:started`, startTime: 5 },
-      { name: `${namespace}:started`, startTime: 5 },
-      { name: `${refresh}:started`, startTime: 5 },
-    ],
-    completed: [{ name: `${namespace}:completed`, detail: 5 }],
-    failed: [],
-  }
+test('reads E2E counters without scanning retained marks or importing renderer helpers', () => {
+  const state = { total: { started: 3, completed: 1, failed: 0, pending: 2 } }
   const read = () =>
     runInNewContext(`(${readRendererCatalogActivity.toString()})()`, {
+      [Symbol.for('wework:e2e:plugin-activity')]: state,
       performance: {
-        getEntriesByName: name =>
-          entries[name.split(':').at(-1)].filter(entry => entry.name === name),
+        getEntriesByName: () => {
+          throw new Error('Counter reads must not scan historical marks')
+        },
       },
     })
 
   expect(read()).toEqual({ started: 3, completed: 1, failed: 0, pending: 2 })
-  entries.failed.push({ name: `${namespace}:failed`, detail: 5 })
+  state.total.failed++
+  state.total.pending--
   expect(read()).toEqual({ started: 3, completed: 1, failed: 1, pending: 1 })
-  entries.completed.push({ name: `${refresh}:completed`, detail: 5 })
+  state.total.completed++
+  state.total.pending--
   expect(read()).toEqual({ started: 3, completed: 2, failed: 1, pending: 0 })
+  expect(runInNewContext(`(${readRendererCatalogActivity.toString()})()`)).toEqual({
+    started: 0,
+    completed: 0,
+    failed: 0,
+    pending: 0,
+  })
 })
 
 test('uses full ten-second windows to measure the concurrent CPU peak', () => {
