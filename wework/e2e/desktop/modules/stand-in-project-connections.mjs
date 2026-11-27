@@ -1,5 +1,9 @@
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
-import { openConnectionTypePicker, openProjectScopeDetails } from './stand-in-flows.mjs'
+import {
+  openConnectionTypePicker,
+  openProjectScopeDetails,
+  saveRoleScopeAndReturn,
+} from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { createLocalCollaborationProject } from './workspace-flows.mjs'
@@ -26,7 +30,7 @@ export async function verifyRemoteStandInProjectScope(control, localProjectId, c
   await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-all"]')
   await control.command('waitFor', cloud, { visible: false })
   await control.command('waitFor', local, { visible: false })
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+  await saveRoleScopeAndReturn(control)
 }
 
 /** Resolve saved project references to names in both personal connection editors. */

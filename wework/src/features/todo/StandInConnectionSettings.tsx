@@ -32,6 +32,7 @@ import {
   connectionConfigurationChanges,
   createConnectionSettingsModel,
   hasConnectionDraft,
+  rebaseConnectionDraft,
 } from './standInConnectionSettingsModel'
 import { EMAIL_PROVIDER, StandInEmailConnections } from './StandInEmailConnections'
 import { GIT_CONNECTION_PREFIX, StandInGitConnections } from './StandInGitConnections'
@@ -183,7 +184,9 @@ export function StandInConnectionSettings({
         const start = wizardStart.current
         wizardStart.current = null
         tagDraft?.set('')
-        onChange({ ...role, ...connectionConfigurationChanges(role, start.role, start.view) })
+        if (hasConnectionDraft(role, start.role, start.view)) {
+          onChange(rebaseConnectionDraft(role, start.role, start.role, start.view))
+        }
       }
       model.setScopeTitle(title)
     },

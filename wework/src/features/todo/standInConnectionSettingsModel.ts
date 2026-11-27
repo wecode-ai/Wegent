@@ -50,7 +50,7 @@ export function connectionConfigurationChanges(
 /** Rebase unsaved edits on the receipt without reviving old values for untouched sources. */
 export function rebaseConnectionDraft<T extends ConnectionConfiguration>(
   draft: T,
-  before: ConnectionConfiguration,
+  before: T,
   accepted: T,
   savedView: string
 ): T {
@@ -75,8 +75,8 @@ export function rebaseConnectionDraft<T extends ConnectionConfiguration>(
   }
   const keepDraft = (view: string) => view !== savedView && hasConnectionDraft(draft, before, view)
   const calendar = keepDraft('time') ? draft : accepted
-  const remaining = {
-    ...draft,
+  const remaining: T = {
+    ...accepted,
     collaboration: keepDraft('projects') ? draft.collaboration : accepted.collaboration,
     calendar: calendar.calendar,
     connections: editedProviders.size
@@ -85,6 +85,19 @@ export function rebaseConnectionDraft<T extends ConnectionConfiguration>(
           ...(draft.connections ?? []).filter(row => editedProviders.has(row.providerId)),
         ]
       : accepted.connections,
+  }
+  const fields = new Set([...Object.keys(before), ...Object.keys(draft)] as (keyof T)[])
+  fields.delete('collaboration')
+  fields.delete('calendar')
+  fields.delete('connections')
+  for (const key of fields) {
+    if (Object.hasOwn(draft, key)) {
+      if (!Object.hasOwn(before, key) || !dequal(draft[key], before[key])) {
+        remaining[key] = draft[key]
+      }
+    } else if (Object.hasOwn(before, key)) {
+      delete remaining[key]
+    }
   }
   if (!Object.hasOwn(calendar, 'calendar')) delete remaining.calendar
   if (!editedProviders.size && !Object.hasOwn(accepted, 'connections')) {

@@ -428,6 +428,7 @@ function AccountStandInWorkspace({
                 () => configureCloudDestination(deviceId)
               )
               if (role === 'initialized') {
+                setWorkspaceView('conversation')
                 setDestinationReady(true)
                 navigateTo('/stand-in')
                 return

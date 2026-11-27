@@ -62,15 +62,22 @@ it('adopts a refreshed DingTalk boundary after saving a project while retaining 
     policy: { automatic: true, askBeforeAct: true },
     enabledAfter: '2026-11-27T08:00:00Z',
   }
-  const original = { ...newStandInPrimaryRole('local'), connections: [dingtalk] }
+  const original = {
+    ...newStandInPrimaryRole('local'),
+    connections: [dingtalk],
+    enabledAfter: dingtalk.enabledAfter,
+  }
   const mailbox = { ...dingtalk, providerId: 'email', id: 'inbox', kind: 'mailbox' }
   const draft = {
     ...original,
+    prompt: 'Unsaved instructions',
     collaboration: { ...original.collaboration, allProjects: true, enabled: true },
     connections: [dingtalk, mailbox],
   }
   const accepted = {
-    ...draft,
+    ...original,
+    collaboration: draft.collaboration,
+    enabledAfter: '2026-11-27T08:05:00Z',
     connections: [{ ...dingtalk, enabledAfter: '2026-11-27T08:05:00Z' }],
   }
 
@@ -78,6 +85,8 @@ it('adopts a refreshed DingTalk boundary after saving a project while retaining 
 
   expect(hasConnectionDraft(remaining, accepted, dingtalk.providerId)).toBe(false)
   expect(remaining.connections).toEqual([...accepted.connections, mailbox])
+  expect(remaining.enabledAfter).toBe(accepted.enabledAfter)
+  expect(remaining.prompt).toBe(draft.prompt)
 
   const unconnected = newStandInPrimaryRole('local')
   const savedProject = { ...unconnected, collaboration: accepted.collaboration }

@@ -220,7 +220,11 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-choose-selected"]')
       await control.command('waitFor', '[data-testid="stand-in-dingtalk-query"]')
       await captureScreenshot(control, '08-explicit-source-selection.png', ROOT)
-      await control.command('click', '[data-testid="stand-in-cancel"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
+      await control.command('waitFor', '[data-testid="stand-in-dingtalk-add-scope"]')
+      await control.command('waitFor', '[data-testid="stand-in-path-scope"]', { visible: false })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
+      await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', { visible: false })
       await control.command('click', '[data-testid="stand-in-primary-open"]')
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: '已记住这次补充',
