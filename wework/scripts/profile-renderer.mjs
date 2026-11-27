@@ -30,7 +30,6 @@ import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window
 import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
-  resolveCpuProfileLocations,
   startPerformanceRecording,
   stopPerformanceRecording,
   writeDiagnosticFile,
@@ -886,8 +885,6 @@ export function createDesktopScenario({
         })
       }
       let recording = false
-      let recordingTurnCpu = false
-      let turnCpuEvidence
       const command = (method, params) => client({ action: 'command', target, method, params })
       let probingTurnUpdates = false
       try {
@@ -950,7 +947,6 @@ export function createDesktopScenario({
         )
         await evaluate(`(${installTurnUpdateProbe.toString()})()`)
         probingTurnUpdates = true
-        let navigationStartUs
         if (enforceBudgets) {
           await command('Performance.enable', { timeDomain: 'timeTicks' })
           const { metrics } = await command('Performance.getMetrics')
@@ -959,11 +955,7 @@ export function createDesktopScenario({
             Number.isFinite(navigationStart),
             'The renderer did not report its navigation clock'
           )
-          navigationStartUs = navigationStart * 1_000_000
-          await command('Profiler.enable')
-          await command('Profiler.setSamplingInterval', { interval: 2_000 })
-          await command('Profiler.start')
-          recordingTurnCpu = true
+          // The failure-only capture owns V8 profiling, which consumes renderer CPU.
           // Keep endpoint diagnostics outside the process CPU measurement window.
           readSingleTaskRendererMetrics = async () => {
             const system = { availableParallelism: availableParallelism(), loadAverage: loadavg() }
@@ -1046,22 +1038,7 @@ export function createDesktopScenario({
           `window.__weworkProfileTurnUpdates.stop(${JSON.stringify(taskId)})`
         )
         probingTurnUpdates = false
-        if (recordingTurnCpu) {
-          recordingTurnCpu = false
-          const { profile } = await command('Profiler.stop')
-          await command('Profiler.disable')
-          await command('Performance.disable')
-          const slowUpdates = turnUpdates.filter(
-            update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
-          )
-          turnCpuEvidence = { navigationStartUs, slowUpdates, profile }
-          if (slowUpdates.length > 0) {
-            await writeDiagnosticFile(
-              join(resultDir, 'renderer-turn-long-task-profile.json'),
-              turnCpuEvidence
-            )
-          }
-        }
+        if (enforceBudgets) await command('Performance.disable')
         assert.ok(
           turnUpdates.some(update => update.status === 'started'),
           'The profiled task did not receive a started runtime.turn.updated snapshot'
@@ -1145,21 +1122,6 @@ export function createDesktopScenario({
           await finishRecording()
         }
         if (enforceBudgets) {
-          if (
-            turnCpuEvidence &&
-            (turnCpuEvidence.slowUpdates.length > 0 ||
-              measurements.singleTaskCpuPercent >= limits.singleTaskCpuPercent)
-          ) {
-            const sourceMapEvidence = await resolveCpuProfileLocations(
-              client,
-              target,
-              turnCpuEvidence.profile
-            ).catch(error => ({ error: error.message }))
-            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
-              ...turnCpuEvidence,
-              sourceMapEvidence,
-            })
-          }
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
@@ -1170,7 +1132,6 @@ export function createDesktopScenario({
           if (probingTurnUpdates) await evaluate('window.__weworkProfileTurnUpdates?.stop()')
         } finally {
           try {
-            if (recordingTurnCpu) await command('Profiler.stop').catch(() => {})
             if (recording) await finishRecording()
           } finally {
             await client({ action: 'detach', target })
