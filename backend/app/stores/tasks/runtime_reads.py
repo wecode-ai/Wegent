@@ -2,14 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Task-scoped projections and pages shared by base and routed stores."""
+"""Task-scoped projections, pages and cleanup shared by base and routed stores."""
 
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 from sqlalchemy import Text, cast, func, or_
 from sqlalchemy.orm import Query, Session, load_only
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.stores.tasks.runtime_writes import mark_prepared_runtime_bindings
 
 RUNTIME_READ_BATCH_SIZE = 100
 FORM_READ_BATCH_SIZE = 50
@@ -172,3 +173,15 @@ class SubtaskRuntimeReads:
                 return
             after_id = rows[-1].id
             yield from rows
+
+    def mark_runtime_cleanup_deleted(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int,
+        bindings: Mapping[int, tuple[Optional[str], Optional[str]]],
+    ) -> int:
+        """Mark only prepared, unchanged bindings within the store's current owner scope."""
+        model, query = self._runtime_read_query(db, task_id, owner_user_id)
+        return mark_prepared_runtime_bindings(db, model, query, bindings)

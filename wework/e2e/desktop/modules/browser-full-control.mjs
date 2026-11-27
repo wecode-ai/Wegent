@@ -14,6 +14,33 @@ export async function readEditorFixtureState(control, label, timeoutMs) {
   return JSON.parse(state)
 }
 
+export async function beginBrowserApproval(control, invoke, selector, timeoutMs) {
+  let outcome
+  const pending = invoke().then(
+    result => (outcome = { result }),
+    error => (outcome = { error })
+  )
+  try {
+    await control.command('waitFor', selector, { timeoutMs })
+  } catch (error) {
+    if (outcome && 'error' in outcome) throw outcome.error
+    throw error
+  }
+  const approvalId = await control.command('getAttribute', selector, { value: 'data-approval-id' })
+  assert.ok(approvalId, 'The visible approval must identify its original operation')
+  if (outcome && 'error' in outcome) throw outcome.error
+  assert.equal(outcome, undefined, 'The original tool call must await the user decision')
+  return {
+    approvalId,
+    completed: () => outcome !== undefined,
+    async result() {
+      const settled = await pending
+      if ('error' in settled) throw settled.error
+      return settled.result
+    },
+  }
+}
+
 export async function verifyBrowserFullControl(control, bridgeCall, fill, label, timeoutMs) {
   const openSettings = async () => {
     await control.command('click', '[data-testid="settings-button"]')
@@ -57,14 +84,19 @@ export async function verifyBrowserFullControl(control, bridgeCall, fill, label,
   } finally {
     await setEnabled(false)
   }
-  const pending = bridgeCall({
-    action: 'fill',
-    selector: '#script-editor',
-    text: 'requires confirmation again',
-  })
-  await control.command('waitFor', REJECT, { timeoutMs })
+  const pending = await beginBrowserApproval(
+    control,
+    () =>
+      bridgeCall({
+        action: 'fill',
+        selector: '#script-editor',
+        text: 'requires confirmation again',
+      }),
+    REJECT,
+    timeoutMs
+  )
   await control.command('click', REJECT)
-  const rejected = await pending
+  const rejected = await pending.result()
   assert.equal(rejected.error?.code, 'approval_rejected', JSON.stringify(rejected))
   assert.equal((await readEditor()).text, 'full control edit')
 }

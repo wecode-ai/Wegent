@@ -1,0 +1,17 @@
+{
+  "order": 65010,
+  "scenario": "./scenarios/collaboration-external-agents.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 58010,
+      "shard": 2,
+      "position": 7010
+    }
+  },
+  "paths": [
+    "backend-rs/be-server/src/external_agents/**",
+    "packages/wework-worker/**",
+    "wework/src/features/collaboration/ExternalProjectAgentForm.tsx"
+  ]
+}

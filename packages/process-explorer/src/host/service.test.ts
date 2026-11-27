@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { ProcessDegradation } from '../contract.js'
 import type { ElectronProcessMetric } from '../core/build-snapshot.js'
 import { ProcessExplorerService } from './service.js'
 import type { SystemProcessTableResult } from './system-process-table.js'
@@ -68,7 +69,178 @@ function createService(
   }
 }
 
+function systemRow(pid: number, parentPid: number, identity: string) {
+  return {
+    pid,
+    parentPid,
+    name: `Process ${pid}`,
+    command: `process-${pid}`,
+    cpuPercent: 1,
+    memoryBytes: 4096,
+    startedAt: 1000,
+    identity,
+  }
+}
+
+/** A table whose rows the test replaces between samples. */
+function mutableTable() {
+  let rows = [systemRow(40, 10, 'created-40'), systemRow(41, 40, 'created-41')]
+  let degraded: ProcessDegradation[] = []
+  const read = vi.fn(async () => ({ processes: rows, degraded }))
+  return {
+    read,
+    setRows(next: ReturnType<typeof systemRow>[]) {
+      rows = next
+      degraded = []
+    },
+    fail() {
+      degraded = [{ code: 'system-process-table-failed', detail: 'ps failed' }]
+    },
+  }
+}
+
 describe('ProcessExplorerService', () => {
+  it('collects current Electron identities when a fresh snapshot bypasses the cached view', async () => {
+    let splashClosed = false
+    const metrics = vi.fn(() => [
+      metric(10, 'Browser'),
+      metric(30, 'Tab'),
+      ...(splashClosed ? [] : [metric(44, 'Tab')]),
+    ])
+    const { service, advance } = createService({ metrics })
+    const cached = await service.snapshot()
+    expect(await service.snapshot()).toBe(cached)
+    expect(metrics).toHaveBeenCalledOnce()
+    splashClosed = true
+    advance(10)
+    const current = await service.snapshot({ fresh: true })
+    expect(current.processes.map(row => row.pid)).toEqual([10, 30])
+    expect(metrics).toHaveBeenCalledTimes(2)
+  })
+
+  it('bypasses cached metrics when external enumeration rebuilds a fresh snapshot', async () => {
+    const table = deferredSystemTable()
+    let splashClosed = false
+    const metrics = vi.fn(() => [
+      metric(10, 'Browser'),
+      metric(30, 'Tab'),
+      ...(splashClosed ? [] : [metric(44, 'Tab')]),
+    ])
+    const { service, advance } = createService({ metrics, systemTable: table })
+    await service.snapshot({ waitForSystemProcesses: false })
+    splashClosed = true
+    advance(10)
+    table.complete()
+    const current = await service.snapshot({ fresh: true })
+    expect(current.processes.filter(row => row.source === 'electron').map(row => row.pid)).toEqual([
+      10, 30,
+    ])
+    expect(metrics).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards an external process-table read started before a fresh request', async () => {
+    const priorTable = deferredSystemTable()
+    const nextTable = {
+      processes: [
+        {
+          pid: 41,
+          parentPid: 10,
+          name: 'Current child',
+          command: null,
+          cpuPercent: 0,
+          memoryBytes: 1024,
+          startedAt: 2000,
+          identity: 'current-41',
+        },
+      ],
+      degraded: [],
+    }
+    const read = vi.fn().mockImplementationOnce(priorTable.read).mockResolvedValue(nextTable)
+    const { service } = createService({ systemTable: { read } })
+    const prior = service.snapshot()
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+    const fresh = service.snapshot({ fresh: true })
+    priorTable.complete()
+    await prior
+    const current = await fresh
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(current.processes.filter(row => row.source === 'system').map(row => row.pid)).toEqual([
+      41,
+    ])
+  })
+
+  it('bounds fresh waits without accumulating external collectors behind a hung read', async () => {
+    vi.useFakeTimers()
+    try {
+      let release!: (result: SystemProcessTableResult) => void
+      const read = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              release = resolve
+            })
+        )
+        .mockResolvedValue({ processes: [], degraded: [] })
+      const { service } = createService({ systemTable: { read }, systemTableTimeoutMs: 50 })
+      const prior = service.snapshot()
+      await vi.advanceTimersByTimeAsync(0)
+      for (let request = 0; request < 2; request++) {
+        const fresh = service.snapshot({ fresh: true })
+        await vi.advanceTimersByTimeAsync(50)
+        expect((await fresh).degraded[0]?.code).toBe('system-process-table-failed')
+        expect(read).toHaveBeenCalledOnce()
+      }
+      await prior
+      release({ processes: [], degraded: [] })
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await service.snapshot({ fresh: true })).degraded).toEqual([])
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])(
+    'does not reuse an older in-flight collection with fresh=%s',
+    async firstFresh => {
+      let release!: (descriptors: (typeof executorProcess)[]) => void
+      const held = new Promise<(typeof executorProcess)[]>(resolve => {
+        release = resolve
+      })
+      const currentExecutor = { ...executorProcess, pid: 41 }
+      const hostProcesses = vi.fn().mockReturnValueOnce(held).mockReturnValue([currentExecutor])
+      let splashClosed = false
+      const metrics = vi.fn(() => [
+        metric(10, 'Browser'),
+        metric(30, 'Tab'),
+        ...(splashClosed ? [] : [metric(44, 'Tab')]),
+      ])
+      const { service, advance } = createService({ metrics, hostProcesses })
+      const older = service.snapshot({ fresh: firstFresh })
+      await vi.waitFor(() => expect(hostProcesses).toHaveBeenCalledOnce())
+      splashClosed = true
+      advance(10)
+      let delivered: Awaited<typeof older> | undefined
+      const fresh = service.snapshot({ fresh: true }).then(snapshot => {
+        delivered = snapshot
+        return snapshot
+      })
+      try {
+        await vi.waitFor(() => expect(delivered).toBeDefined(), { timeout: 100 })
+        expect(delivered?.processes.map(row => row.pid)).toEqual([10, 30, 41])
+        expect(metrics).toHaveBeenCalledTimes(2)
+      } finally {
+        release([executorProcess])
+        await older
+        await fresh
+      }
+      expect((await service.snapshot({ fresh: true })).processes.map(row => row.pid)).toEqual([
+        10, 30, 41,
+      ])
+    }
+  )
+
   it.each(['preview-first', 'complete-first'])(
     'waits for authoritative host identities with %s requests',
     async order => {
@@ -253,6 +425,280 @@ describe('ProcessExplorerService', () => {
       expect((await service.snapshot()).degraded).toEqual([
         { code: 'system-process-table-unavailable', detail: 'unsupported' },
       ])
+    })
+  })
+
+  describe('exited processes', () => {
+    it('keeps an exited process for the linger window and keeps its orphan in the group', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [executorProcess]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'created-41')])
+      const snapshot = await service.snapshot()
+
+      expect(snapshot.processes.map(row => row.pid)).toEqual([10, 20, 30, 41])
+      expect(snapshot.recentlyExited).toHaveLength(1)
+      expect(snapshot.recentlyExited[0]).toMatchObject({
+        pid: 40,
+        name: 'Executor',
+        owner: { id: 'executor' },
+        cpuPercent: 1,
+        memoryBytes: 4096,
+        exitedAt: 2000,
+      })
+      expect(snapshot.processes.find(row => row.pid === 41)).toMatchObject({
+        // The OS reported parentPid 1; the snapshot keeps the exited parent
+        // so the child renders under it while the parent lingers.
+        parentPid: 40,
+        kind: 'host-child',
+        owner: { id: 'executor' },
+      })
+
+      advance(5000)
+      expect((await service.snapshot()).recentlyExited).toHaveLength(1)
+      advance(1000)
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+    })
+
+    it('clears an exit when the same process identity reappears in a complete sample', async () => {
+      const child = systemRow(40, 10, 'created-40')
+      const table = mutableTable()
+      table.setRows([child])
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([])
+      expect((await service.snapshot()).recentlyExited.map(row => row.id)).toEqual([
+        '40:created-40',
+      ])
+
+      advance(1000)
+      table.setRows([child])
+      const returned = await service.snapshot()
+      expect(returned.processes).toContainEqual(expect.objectContaining({ id: '40:created-40' }))
+      expect(returned.recentlyExited).toEqual([])
+    })
+
+    it('does not report exits after a sampling gap longer than the linger window', async () => {
+      const table = mutableTable()
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(6000)
+      table.setRows([systemRow(41, 1, 'created-41')])
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+    })
+
+    it('does not treat a failed system table read as every process exiting', async () => {
+      const table = mutableTable()
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([])
+      table.fail()
+      const failed = await service.snapshot()
+      expect(failed.processes.map(row => row.pid)).toEqual([10, 20, 30])
+      expect(failed.recentlyExited).toEqual([])
+
+      // The next complete table is compared with the last complete one.
+      advance(1000)
+      table.setRows([systemRow(41, 1, 'created-41')])
+      const recovered = await service.snapshot()
+      expect(recovered.degraded).toEqual([])
+      expect(recovered.recentlyExited.map(row => row.pid)).toEqual([40])
+    })
+
+    it('does not infer exits when host process metadata fails', async () => {
+      const table = mutableTable()
+      let failHost = false
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => {
+          if (failHost) throw new Error('runtime unavailable')
+          return [{ ...executorProcess, identity: 'executor', includeDescendants: true }]
+        },
+      })
+      await service.snapshot()
+
+      advance(1000)
+      failHost = true
+      const degraded = await service.snapshot()
+      expect(degraded.degraded).toContainEqual({
+        code: 'host-process-provider-failed',
+        detail: 'runtime unavailable',
+      })
+      expect(degraded.recentlyExited).toEqual([])
+
+      // The baseline survived, so nothing is reported exited once it recovers.
+      advance(1000)
+      failHost = false
+      const recovered = await service.snapshot()
+      expect(recovered.recentlyExited).toEqual([])
+      expect(recovered.processes.filter(row => row.pid === 40).map(row => row.id)).toEqual([
+        '40:executor',
+      ])
+    })
+
+    it('keeps the whole subtree and ownership of a reparented child', async () => {
+      const table = mutableTable()
+      table.setRows([systemRow(40, 10, 'c40'), systemRow(41, 40, 'c41'), systemRow(42, 41, 'c42')])
+      let descriptors: (typeof executorProcess)[] = [
+        { ...executorProcess, identity: 'executor', includeDescendants: true },
+      ]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'c41'), systemRow(42, 41, 'c42')])
+      const snapshot = await service.snapshot()
+      expect(snapshot.recentlyExited.map(row => row.pid)).toEqual([40])
+      expect(snapshot.processes.filter(row => row.pid >= 41)).toMatchObject([
+        { pid: 41, parentPid: 40, kind: 'host-child', owner: { id: 'executor' } },
+        { pid: 42, parentPid: 41, kind: 'host-child', owner: { id: 'executor' } },
+      ])
+    })
+
+    it('uses the restored snapshot as the exit baseline', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [
+        { ...executorProcess, identity: 'executor', includeDescendants: true },
+      ]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'created-41')])
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([])
+      const snapshot = await service.snapshot()
+      expect(snapshot.recentlyExited.map(row => row.pid)).toEqual([40, 41])
+    })
+
+    it('does not renew the baseline from a stale table reused by a preview', async () => {
+      let resolveRead!: (value: {
+        processes: ReturnType<typeof systemRow>[]
+        degraded: ProcessDegradation[]
+      }) => void
+      const read = vi.fn(
+        () =>
+          new Promise(resolve => {
+            resolveRead = resolve
+          })
+      )
+      const { service, advance } = createService({ systemTable: { read } })
+      const first = service.snapshot()
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+      resolveRead({
+        processes: [systemRow(40, 10, 'c40'), systemRow(41, 40, 'c41')],
+        degraded: [],
+      })
+      await first
+
+      // Hidden for a minute; the first sample on return reuses the old table.
+      advance(60_000)
+      await service.snapshot({ waitForSystemProcesses: false })
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+      resolveRead({ processes: [systemRow(41, 1, 'c41')], degraded: [] })
+      const fresh = await service.snapshot()
+      expect(fresh.recentlyExited).toEqual([])
+    })
+
+    it('ignores an older collection that resumes after a newer one', async () => {
+      const table = mutableTable()
+      let release!: (value: (typeof executorProcess)[]) => void
+      const held = new Promise<(typeof executorProcess)[]>(resolve => {
+        release = resolve
+      })
+      const hostProcesses = vi.fn().mockReturnValueOnce(held).mockReturnValue([executorProcess])
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses,
+      })
+      const older = service.snapshot()
+      await vi.waitFor(() => expect(hostProcesses).toHaveBeenCalledTimes(1))
+
+      advance(1000)
+      table.setRows([systemRow(41, 1, 'created-41')])
+      const newer = await service.snapshot()
+      expect(newer.recentlyExited).toEqual([])
+
+      release([executorProcess])
+      await older
+      // The resumed older collection must not become the exit baseline.
+      advance(1000)
+      expect((await service.snapshot()).recentlyExited).toEqual([])
+    })
+
+    it('does not report a process as exited when only its descriptor disappears', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [{ ...executorProcess, identity: 'executor' }]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+
+      advance(1000)
+      descriptors = []
+      const snapshot = await service.snapshot()
+      expect(snapshot.recentlyExited).toEqual([])
+      expect(snapshot.processes.filter(row => row.pid === 40).map(row => row.kind)).toEqual([
+        'system',
+      ])
+    })
+
+    it('does not reparent a reused pid onto a lingering parent', async () => {
+      const table = mutableTable()
+      let descriptors: (typeof executorProcess)[] = [
+        { ...executorProcess, identity: 'executor', includeDescendants: true },
+      ]
+      const { service, advance } = createService({
+        systemTable: { read: table.read },
+        hostProcesses: () => descriptors,
+      })
+      await service.snapshot()
+      advance(1000)
+      descriptors = []
+      table.setRows([systemRow(41, 1, 'created-41')])
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([{ ...systemRow(41, 1, 'reused'), startedAt: 9000 }])
+      const snapshot = await service.snapshot()
+      expect(snapshot.processes.map(row => row.pid)).not.toContain(41)
+      expect(snapshot.recentlyExited.map(row => row.id)).toEqual(['40:executor', '41:created-41'])
+    })
+
+    it('tells a reused pid apart from a process that kept running', async () => {
+      const table = mutableTable()
+      table.setRows([systemRow(50, 10, 'first')])
+      const { service, advance } = createService({ systemTable: { read: table.read } })
+      await service.snapshot()
+
+      advance(1000)
+      table.setRows([{ ...systemRow(50, 10, 'second'), startedAt: 2000 }])
+      const snapshot = await service.snapshot()
+      expect(snapshot.processes.map(row => row.id)).toContain('50:second')
+      expect(snapshot.recentlyExited.map(row => row.id)).toEqual(['50:first'])
     })
   })
 

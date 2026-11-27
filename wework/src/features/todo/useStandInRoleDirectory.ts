@@ -47,6 +47,7 @@ export function useStandInRoleDirectory(
         scope: data.scope,
         roles: data.roles,
         error,
+        rootUnavailable: data.rootUnavailable,
       },
     [data, error]
   )

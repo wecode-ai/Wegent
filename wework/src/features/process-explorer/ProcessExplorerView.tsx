@@ -3,12 +3,11 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type {
   ProcessExplorerClient,
   ProcessOwnerRef,
-  ProcessRecord,
   ProcessSnapshot,
 } from '@wegent/process-explorer'
 import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
@@ -36,6 +35,8 @@ import {
   buildProcessTree,
   filterProcessTree,
   flattenProcessTree,
+  isExited,
+  type ProcessRow,
   type ProcessTreeNode,
 } from './processTree'
 
@@ -47,7 +48,7 @@ export interface ProcessExplorerViewProps {
   refreshIntervalMs?: number
 }
 
-const DEFAULT_REFRESH_INTERVAL_MS = 2000
+const DEFAULT_REFRESH_INTERVAL_MS = 1000
 
 const COLUMN_LABELS = [
   { label: 'process_explorer.column_process', align: 'text-left', padding: 'pl-3 pr-3' },
@@ -94,6 +95,10 @@ export function ProcessExplorerView({
   const snapshot = state.data?.snapshot ?? null
   const error = state.error ?? null
   const load = source.reload
+  // A hidden window stops sampling; the first frame after it is shown is fresh.
+  useDocumentEvent('visibilitychange', () => {
+    if (!document.hidden) void load()
+  })
   useWindowEvent('keydown', event => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
       event.preventDefault()
@@ -105,7 +110,9 @@ export function ProcessExplorerView({
   const totalCpu = groups.reduce((total, group) => total + group.cpuPercent, 0)
   const totalMemory = groups.reduce((total, group) => total + group.memoryBytes, 0)
   const totalCount = groups.reduce((total, group) => total + group.count, 0)
-  const selectedRecord = snapshot?.processes.find(record => record.id === selectedId) ?? null
+  const selectedRecord =
+    snapshot?.processes.concat(snapshot.recentlyExited).find(record => record.id === selectedId) ??
+    null
   const selectedDetail = selectedRecord?.detail
     ? normalizeLaunchDetail(selectedRecord.detail)
     : null
@@ -175,10 +182,12 @@ export function ProcessExplorerView({
     )
   }
 
+  // This desktop-only window can be narrower than the shared button's
+  // touch-target breakpoint; keep its dense controls one size.
   return (
     <div
       data-testid="process-explorer-window"
-      className="flex h-screen flex-col bg-background text-text-primary"
+      className="flex h-screen flex-col bg-background text-text-primary max-md:[&_button]:min-h-0 max-md:[&_button]:min-w-0"
     >
       <title>{t('process_explorer.title')}</title>
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
@@ -234,7 +243,7 @@ export function ProcessExplorerView({
             onClick={() => void load()}
             aria-label={t('process_explorer.refresh')}
             title={t('process_explorer.refresh')}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted md:min-h-7"
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </ControlButton>
@@ -476,6 +485,7 @@ function createProcessSnapshotSource(client: ProcessExplorerClient, refreshInter
     {
       refreshIntervalMs,
       refreshIntervalMode: 'after-settle',
+      refreshEnabled: () => !document.hidden,
       success({ snapshot, sequence, startedAt }) {
         traceSnapshotLoad('received', sequence, startedAt, {
           accepted: true,
@@ -515,20 +525,24 @@ function traceSnapshotLoad(
 
 function buildRenderGroups(snapshot: ProcessSnapshot | null, filter: string): RenderGroup[] {
   const normalizedFilter = filter.trim().toLowerCase()
-  return groupProcesses(snapshot?.processes ?? []).flatMap(group => {
+  // Exited processes stay in the tree while they fade, so a short-lived child
+  // remains visible under the parent that forked it.
+  const rows = snapshot?.processes.concat(snapshot.recentlyExited) ?? []
+  return groupProcesses(rows).flatMap(group => {
     let tree = buildProcessTree(group.processes)
     if (normalizedFilter) {
       tree = filterProcessTree(tree, record => matchesFilter(record, normalizedFilter))
     }
     const flat = flattenProcessTree(tree)
     if (flat.length === 0) return []
+    const running = flat.filter(node => !isExited(node.record))
     return [
       {
         owner: group.owner,
         tree,
-        count: flat.length,
-        cpuPercent: sum(flat.map(node => node.record.cpuPercent)),
-        memoryBytes: sum(flat.map(node => node.record.memoryBytes)),
+        count: running.length,
+        cpuPercent: sum(running.map(node => node.record.cpuPercent)),
+        memoryBytes: sum(running.map(node => node.record.memoryBytes)),
       },
     ]
   })
@@ -542,10 +556,12 @@ function renderNodes(
   select: (id: string) => void
 ): ReactElement[] {
   const record = node.record
+  const exited = isExited(record)
   return [
     <tr
       key={record.id}
       data-testid={`process-explorer-row-${record.pid}`}
+      data-state={exited ? 'exited' : undefined}
       tabIndex={0}
       aria-current={selectedId === record.id ? 'true' : undefined}
       onClick={() => select(record.id)}
@@ -555,13 +571,25 @@ function renderNodes(
         select(record.id)
       }}
       className={cn(
-        'cursor-pointer border-b border-border/40 hover:bg-muted/40 focus-visible:bg-muted focus-visible:outline-none',
-        selectedId === record.id && 'bg-muted'
+        'cursor-pointer border-b border-border/40 transition-opacity duration-300 hover:bg-muted/40 focus-visible:bg-muted focus-visible:outline-none',
+        selectedId === record.id && 'bg-muted',
+        exited && 'text-text-muted opacity-60'
       )}
     >
-      <td className="overflow-hidden py-1.5 pr-3" style={{ paddingLeft: 32 + depth * 16 }}>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate" title={record.name}>
+      <td className="overflow-hidden py-1.5 pl-4 pr-3">
+        <div className="flex min-w-0 items-center">
+          <span className="w-4 shrink-0" />
+          {Array.from({ length: depth }, (_, level) => (
+            <span
+              key={level}
+              aria-hidden
+              className="relative -my-1.5 w-4 shrink-0 self-stretch before:absolute before:inset-y-0 before:left-1/2 before:w-px before:bg-border/60"
+            />
+          ))}
+          <span
+            className="truncate"
+            title={exited ? `${record.name} · ${t('process_explorer.exited')}` : record.name}
+          >
             {record.name}
           </span>
         </div>
@@ -574,14 +602,14 @@ function renderNodes(
         {formatMemory(record.memoryBytes)}
       </td>
       <td className="overflow-hidden px-2 py-1.5 text-right tabular-nums">
-        {formatAge(record.startedAt)}
+        {formatAge(record.startedAt, exited ? record.exitedAt : undefined)}
       </td>
     </tr>,
     ...node.children.flatMap(child => renderNodes(child, depth + 1, t, selectedId, select)),
   ]
 }
 
-function matchesFilter(record: ProcessRecord, filter: string): boolean {
+function matchesFilter(record: ProcessRow, filter: string): boolean {
   if (/^\d+$/.test(filter)) return String(record.pid) === filter
   return (
     record.name.toLowerCase().includes(filter) ||

@@ -30,13 +30,15 @@ function stubContainedIframeWindows(node: Node) {
     .forEach(iframe => stubGetBBox(iframe.contentDocument?.defaultView ?? null))
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   stubGetBBox(window)
   Node.prototype.appendChild = function <T extends Node>(this: Node, node: T): T {
     const appended = originalAppendChild.call(this, node) as T
     stubContainedIframeWindows(node)
     return appended
   }
+  // Register the real lazy diagram dependency without compiling or caching a viewer artifact.
+  await mermaid.parse('flowchart LR\nDependencyFixture --> Initialized')
 })
 
 afterAll(() => {

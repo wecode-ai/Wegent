@@ -1,13 +1,23 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.schemas.subscription import (
     BackgroundExecutionStatus,
     SubscriptionExecutionTargetType,
 )
+
+
+def _mocked_session():
+    """Keep real transaction event dispatch while mocking legacy query fixtures."""
+    db = Session()
+    for name in ("query", "get", "commit", "rollback", "refresh", "flush"):
+        setattr(db, name, MagicMock())
+    return db
 
 
 def test_code_wiki_callback_recovers_execution_link_from_generation() -> None:
@@ -33,7 +43,7 @@ def test_code_wiki_callback_recovers_execution_link_from_generation() -> None:
     generation_query.filter.return_value = generation_query
     generation_query.order_by.return_value = generation_query
     generation_query.first.return_value = generation
-    db = MagicMock()
+    db = _mocked_session()
     db.query.side_effect = lambda model: (
         empty_execution_query if model is BackgroundExecution else generation_query
     )
@@ -89,8 +99,11 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -210,8 +223,11 @@ async def test_auto_delete_task_without_background_execution_deletes_executor():
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == TaskResource:
@@ -297,7 +313,7 @@ async def test_task_without_auto_delete_label_keeps_executor():
     task_query.filter.return_value = task_query
     task_query.first.return_value = task
 
-    db = MagicMock()
+    db = _mocked_session()
     db.query.return_value = task_query
 
     @contextmanager
@@ -371,8 +387,11 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -496,6 +515,11 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
         def limit(self, *_args):
             return self
 
+        def update(self, values, **_kwargs):
+            for subtask in self._items:
+                subtask.executor_deleted_at = values[Subtask.executor_deleted_at]
+            return len(self._items)
+
         def all(self):
             if any(
                 str(criterion.left) == "subtasks.id"
@@ -508,7 +532,7 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
                 return []
             return list(self._items)
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -577,3 +601,215 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
     executor_service.delete_executor_task_async.assert_not_awaited()
     assert subtask.executor_deleted_at is True
     db.commit.assert_called()
+
+
+def _finished_subscription_fixture(event_status, execution_status):
+    """A managed subscription run whose completion event arrives with event_status."""
+    from app.core.events import TaskCompletedEvent
+    from app.models.kind import Kind
+    from app.models.subtask import Subtask
+    from app.models.task import TaskResource
+    from app.services.subscription.task_completion_handler import (
+        SubscriptionTaskCompletionHandler,
+    )
+
+    handler = SubscriptionTaskCompletionHandler()
+    execution = SimpleNamespace(
+        id=11,
+        subscription_id=22,
+        status=execution_status,
+        inbox_message_id=0,
+    )
+    subscription = SimpleNamespace(id=22, name="daily-briefing", json={})
+    task = SimpleNamespace(id=44, user_id=1)
+    subtask = SimpleNamespace(
+        id=33,
+        task_id=44,
+        executor_name="executor-subscription-1",
+        executor_namespace="default",
+        executor_deleted_at=False,
+    )
+
+    subscription_query = MagicMock()
+    subscription_query.filter.return_value = subscription_query
+    subscription_query.first.return_value = subscription
+
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
+
+    subtask_query = MagicMock()
+    subtask_query.filter.return_value = subtask_query
+    subtask_query.options.return_value = subtask_query
+    subtask_query.order_by.return_value = subtask_query
+    subtask_query.limit.return_value = subtask_query
+    subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
+
+    db = _mocked_session()
+
+    def query_side_effect(model):
+        if model == Kind:
+            return subscription_query
+        if model == TaskResource:
+            return task_query
+        if model == Subtask:
+            return subtask_query
+        raise AssertionError(f"Unexpected model query: {model}")
+
+    db.query.side_effect = query_side_effect
+
+    @contextmanager
+    def fake_db_session():
+        yield db
+
+    event = TaskCompletedEvent(
+        task_id=44,
+        subtask_id=33,
+        user_id=1,
+        status=event_status,
+        result={"value": "done"},
+        error=None,
+    )
+
+    subscription_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            displayName="Daily Briefing",
+            executionTarget=SimpleNamespace(
+                type=SubscriptionExecutionTargetType.MANAGED
+            ),
+        )
+    )
+
+    dispatch = AsyncMock()
+    patches = (
+        patch.object(handler, "_find_execution_by_task_id", return_value=execution),
+        patch.object(handler, "_extract_result_summary", return_value="done"),
+        patch.object(handler, "_dispatch_notifications", new=dispatch),
+        patch.object(handler.execution_manager, "update_execution_status"),
+        patch(
+            "app.services.subscription.task_completion_handler.get_db_session",
+            fake_db_session,
+        ),
+        patch(
+            "app.services.subscription.task_completion_handler.validate_subscription_for_read",
+            return_value=subscription_crd,
+        ),
+        patch(
+            "app.services.subscription.task_completion_handler.get_executor_runtime_client"
+        ),
+        patch(
+            "app.services.subscription.task_completion_handler.executor_kinds_service"
+        ),
+    )
+    return handler, event, db, subtask, dispatch, patches
+
+
+@pytest.mark.parametrize("event_status", ["FAILED", "CANCELLED"])
+@pytest.mark.asyncio
+async def test_failed_or_cancelled_subscription_deletes_executor_immediately(
+    event_status,
+):
+    """Every finished run releases its executor, not only successful ones."""
+    handler, event, db, subtask, dispatch, patches = _finished_subscription_fixture(
+        event_status=event_status,
+        execution_status=BackgroundExecutionStatus.RUNNING.value,
+    )
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3] as update,
+        patches[4],
+        patches[5],
+        patches[6] as runtime_client_factory,
+        patches[7] as executor_service,
+    ):
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client_factory.return_value = runtime_client
+        executor_service.delete_executor_task_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+        await handler.on_task_completed(event)
+
+    assert update.call_count == 1
+    executor_service.delete_executor_task_async.assert_awaited_once_with(
+        "executor-subscription-1",
+        "default",
+    )
+    runtime_client.delete_sandbox.assert_not_called()
+    assert subtask.executor_deleted_at is True
+    db.commit.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_already_cancelled_execution_still_deletes_executor():
+    """cancel_execution marks the execution first; the event still frees the slot."""
+    handler, event, db, subtask, dispatch, patches = _finished_subscription_fixture(
+        event_status="CANCELLED",
+        execution_status=BackgroundExecutionStatus.CANCELLED.value,
+    )
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3] as update,
+        patches[4],
+        patches[5],
+        patches[6] as runtime_client_factory,
+        patches[7] as executor_service,
+    ):
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client_factory.return_value = runtime_client
+        executor_service.delete_executor_task_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+        await handler.on_task_completed(event)
+
+    update.assert_not_called()
+    dispatch.assert_not_awaited()
+    executor_service.delete_executor_task_async.assert_awaited_once_with(
+        "executor-subscription-1",
+        "default",
+    )
+    assert subtask.executor_deleted_at is True
+
+
+@pytest.mark.asyncio
+async def test_terminal_execution_receiving_running_event_keeps_executor():
+    """A non-terminal event for a finished execution must not clean anything."""
+    handler, event, db, subtask, dispatch, patches = _finished_subscription_fixture(
+        event_status="RUNNING",
+        execution_status=BackgroundExecutionStatus.CANCELLED.value,
+    )
+
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3] as update,
+        patches[4],
+        patches[5],
+        patches[6] as runtime_client_factory,
+        patches[7] as executor_service,
+    ):
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client_factory.return_value = runtime_client
+        executor_service.delete_executor_task_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+        await handler.on_task_completed(event)
+
+    update.assert_not_called()
+    dispatch.assert_not_awaited()
+    runtime_client.get_sandbox.assert_not_awaited()
+    executor_service.delete_executor_task_async.assert_not_awaited()
+    assert subtask.executor_deleted_at is False
+    db.commit.assert_not_called()

@@ -54,6 +54,7 @@ import {
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
   removeRuntimeConversationTurn,
+  replaceRuntimeConversationGuidance,
   replaceRuntimeConversationFromUserMessage,
   settleOptimisticallyInterruptedRuntimeConversation,
   restoreOptimisticallyInterruptedRuntimeConversation,
@@ -89,6 +90,11 @@ import type {
   RuntimeMessageSendResult,
 } from './workbenchPaneSessionTypes'
 import type { PaneCommandContext } from './workbenchPaneCommandContext'
+
+type ContinuationOptions = Pick<RuntimePaneQueuedMessage, 'displayContent' | 'attachments'> & {
+  appendAcceptedMessage?: boolean
+  guidanceCorrection?: RuntimePaneQueuedMessage['guidanceCorrection']
+}
 
 export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
   const getRuntimeModelFields = (modelOptionsOverride?: ModelOptions) => {
@@ -174,8 +180,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     const operation = beginRuntimeConversationOperation(currentRuntimeTask)
     let pendingAdmission = false
     try {
+      const shouldAppendLocalMessage =
+        options.appendLocalMessage !== false && !message.guidanceCorrection
       const appendedLocalMessage =
-        options.appendLocalMessage !== false &&
+        shouldAppendLocalMessage &&
         !pendingRequestUserInputPayload(
           getRuntimeConversationMessages(currentRuntimeTask),
           answeredRequestUserInputIds
@@ -186,7 +194,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
           message: createRuntimeQueuedUserMessage(message),
         })
       }
-      if (options.appendLocalMessage !== false && !appendedLocalMessage) {
+      if (shouldAppendLocalMessage && !appendedLocalMessage) {
         setQueuedMessages(messages => {
           if (messages.some(item => item.id === message.id)) return messages
           pendingAdmission = true
@@ -200,7 +208,8 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
         {
           ...options,
           isCurrent: operation.isCurrent,
-          appendAcceptedMessage: !appendedLocalMessage,
+          appendAcceptedMessage:
+            options.appendAcceptedMessage ?? message.appendAcceptedMessage ?? !appendedLocalMessage,
           onError: options.onError ?? setError,
         }
       )
@@ -349,7 +358,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     return true
   }
 
-  const dispatchContinuation = async (input: string, displayContent?: string): Promise<boolean> => {
+  const dispatchContinuation = async (
+    input: string,
+    options?: ContinuationOptions
+  ): Promise<boolean> => {
     const { currentRuntimeTask, lifecycleStore, queuedMessageBusyBlocks } = sessionOwner.frame
     const {
       getRuntimeModelFields,
@@ -360,10 +372,12 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     } = sessionOwner.commands
 
     if (!currentRuntimeTask) return false
+    const { appendAcceptedMessage, ...messageOptions } = options ?? {}
     const message: RuntimePaneQueuedMessage = {
       id: `runtime-retry-continuation-${crypto.randomUUID()}`,
       content: input,
-      ...(displayContent === undefined ? {} : { displayContent }),
+      ...messageOptions,
+      ...(appendAcceptedMessage === false ? { appendAcceptedMessage: false } : {}),
       status: 'queued',
       createdAt: new Date().toISOString(),
       ...getRuntimeModelFields(),
@@ -372,6 +386,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     let sendError: string | null = null
     const result = await sendRuntimeMessage(message, {
       appendLocalMessage: false,
+      ...(appendAcceptedMessage === false ? { appendAcceptedMessage: false } : {}),
       onError: error => {
         sendError = error
       },
@@ -390,7 +405,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     return true
   }
 
-  const sendContinuation = async (input: string, displayContent?: string): Promise<boolean> => {
+  const sendContinuation = async (
+    input: string,
+    options?: ContinuationOptions
+  ): Promise<boolean> => {
     const { currentRuntimeTask } = sessionOwner.frame
     const { dispatchContinuation, setError } = sessionOwner.commands
 
@@ -398,7 +416,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     sessionOwner.live.continuationInFlight = true
     setError(null)
     try {
-      return await dispatchContinuation(input.trim(), displayContent)
+      return await dispatchContinuation(input.trim(), options)
     } catch (error) {
       setError(
         error instanceof Error ? error.message : i18n.t('workbench.project_chat_send_failed')
@@ -429,10 +447,9 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       failedMessageId: message.id,
       failedTurnId: failedMessage.turnId ?? failedMessage.subtaskId ?? null,
     })
-    return sendContinuation(
-      RUNTIME_RETRY_CONTINUATION_PROMPT,
-      i18n.t('workbench.retry_continue_message', '继续')
-    )
+    return sendContinuation(RUNTIME_RETRY_CONTINUATION_PROMPT, {
+      displayContent: i18n.t('workbench.retry_continue_message', '继续'),
+    })
   }
 
   const editLastUserMessageInPane = async (
@@ -447,10 +464,9 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       paneStatus,
       runtimeTranscriptPageSize,
     } = sessionOwner.frame
-    const { getRuntimeModelFields, setError } = sessionOwner.commands
+    const { getRuntimeModelFields, sendContinuation, setError } = sessionOwner.commands
 
     const submittedContent = content.trim()
-    if (!submittedContent) return false
     if (!currentRuntimeTask) return false
     if (paneStatus.isBusy) {
       setError('当前回复仍在进行中，完成后再编辑')
@@ -462,6 +478,40 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     if (!isEditableLastUserMessage(currentMessages, messageIndex)) {
       setError('只能编辑最后一轮已完成的问题')
       return false
+    }
+
+    const targetMessage = currentMessages[messageIndex]
+    if (!targetMessage) return false
+    const guidanceAttachments = targetMessage.attachments ?? []
+    const isGuidance = targetMessage.runtimeGuidance === true
+    if (!submittedContent && !(isGuidance && guidanceAttachments.length > 0)) return false
+
+    if (isGuidance) {
+      const originalGuidance = {
+        ...targetMessage,
+        role: 'user' as const,
+        runtimeGuidance: true as const,
+      }
+      replaceRuntimeConversationGuidance(currentRuntimeTask, {
+        ...originalGuidance,
+        content: submittedContent,
+      })
+      const sent = await sendContinuation(
+        submittedContent
+          ? i18n.t('workbench.guidance_correction_prompt', { content: submittedContent })
+          : i18n.t('workbench.guidance_attachment_correction_prompt'),
+        {
+          attachments: targetMessage.attachments,
+          displayContent: submittedContent || undefined,
+          appendAcceptedMessage: false,
+          guidanceCorrection: {
+            clientGuidanceId: targetMessage.id,
+            content: submittedContent,
+          },
+        }
+      )
+      if (!sent) replaceRuntimeConversationGuidance(currentRuntimeTask, originalGuidance)
+      return sent
     }
 
     const previousTurns = getRuntimeConversationTurns(currentRuntimeTask)

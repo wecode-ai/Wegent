@@ -111,9 +111,10 @@ export async function verifyRiskyCommandApproval(control, workspacePath) {
 
   // The choices made in an existing conversation become the default for new ones.
   const selectedTask = '[data-testid^="runtime-local-task-row-"][aria-current="page"]'
-  const taskTestId = await control.command('getAttribute', selectedTask, { value: 'data-testid' })
-  assert.ok(taskTestId, 'The risky-command conversation is not selected')
-  const taskRow = `[data-testid="${taskTestId}"]`
+  const { workbench } = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = workbench.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The risky-command conversation must have a runtime task')
+  const taskRow = `[data-testid="runtime-local-task-row-${taskId}"]`
   for (const [mode, labels] of [
     ['automatic', ['Run risky commands automatically', '自动执行高危命令']],
     ['ai', ['Review risky commands with AI', 'AI 审核高危命令']],

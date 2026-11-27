@@ -331,6 +331,11 @@ Platform E2E selects tests by changed paths on PRs and merge queue commits.
 Platform E2E and Rust tests cover source-only changes in the task execution
 crates. Delivery-image verification still runs for packaging, startup and other
 Backend inputs, and during full regression runs.
+Ordinary PRs build the delivery image on the same CentOS base using the Rust
+release profile, with optimization level 1 for dependencies and level 0 for
+the gateway entry-point crate. The probes
+exercise real startup, health checks, and shutdown. Release builds and full
+regression runs use the default optimization level.
 Scheduled and manual runs retain full coverage. Executor device and sandbox
 projects run in parallel on separate runners with their own services and
 databases. Device tests keep one worker and sandbox tests keep two. Rust Backend
@@ -340,11 +345,18 @@ regressions. It uploads the original measurements on failure.
 For a trace, run `pnpm --filter wework profile:renderer --capture` on macOS.
 
 Linux desktop E2E shards get their native test tools from the shared image.
+Linux Core runs `core-task-flow` and `human-interactions-hidden` in isolation
+before starting parallel checkpoints on their shards. The hidden-task check stays
+on Core shard 9. Native startup probes call the locked Electron installer directly to avoid
+the additional root workspace install triggered by invoking a package script.
 Platform E2E prepares its dependencies and services while the Rust backend builds,
 then waits for the backend artifact from the same CI run before using it. PRs
 from the same repository can reuse Linux desktop packages with identical build
 inputs from earlier runs of that PR. The
-macOS desktop checks on ordinary PRs build the local app and Executor. Use a
+macOS desktop checks on ordinary PRs build the local app and Executor. When no
+exact Executor artifact is available, they compile it with the release profile
+at optimization level 0 and cache it per PR. Complete macOS builds use the
+default optimization level. Use a
 `ci:all` run when you need the complete macOS build or native backend artifact
 from a PR.
 

@@ -6,14 +6,17 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { ACTIVE_WORKBENCH_SELECTOR, selectE2EModel } from '../modules/shared.mjs'
+import { ACTIVE_WORKBENCH_SELECTOR } from '../modules/shared.mjs'
 import {
   shellCommandPollResponse,
   shellCommandResponse,
 } from '../modules/shell-command-response.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
-import { waitForAttribute } from '../modules/workspace-flows.mjs'
+import {
+  createNativeProfileWaiter,
+  createStandInRoleBrowserChecks,
+} from '../modules/stand-in-role-browser-checks.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -31,6 +34,7 @@ import {
 
 const USER = 9001
 const ROOT = '[data-testid="stand-in-overview"]'
+const PRIMARY = `${ROOT} [data-testid="stand-in-primary-open"]`
 const CHAT = `${ROOT} [data-testid="stand-in-conversation"]`
 const EDITOR = `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`
 const CARD = `${CHAT} [data-testid="stand-in-delegated-work"]`
@@ -58,20 +62,6 @@ const WRITE_ALLOWED = 'ROLE_WORKSPACE_WRITE_ALLOWED'
 const WRITE_BLOCKED = 'ROLE_WORKSPACE_WRITE_BLOCKED'
 const READ_ONLY_FOLLOW_UP = '请核对这条任务恢复只读后的工作区写入权限。'
 const READ_ONLY_RESULT = '已确认只读任务无法直接写入工作区。'
-const READ_ONLY_BROWSER_FOLLOW_UP = '请核验只读模式下的浏览器打开审批。'
-const READ_ONLY_BROWSER_RESULT = '只读模式下浏览器操作已按用户拒绝停止。'
-const ORDINARY_READ_ONLY_BROWSER_PROMPT = '请核验普通只读任务的浏览器打开审批。'
-const ORDINARY_READ_ONLY_BROWSER_RESULT = '普通只读任务下浏览器操作已按用户拒绝停止。'
-const BROWSER_APPROVAL_FOLLOW_UP = '请核验委派任务的浏览器页面与清理确认。'
-const BROWSER_APPROVAL_RESULT = '委派任务浏览器已按浏览器设置完成确认与清理。'
-const BROWSER_FULL_CONTROL_FOLLOW_UP = '开启浏览器完全控制后再次核验浏览器清理。'
-const BROWSER_FULL_CONTROL_RESULT = '开启完全控制后浏览器已直接完成清理。'
-const ORDINARY_BROWSER_APPROVAL_PROMPT = '请核验普通完整访问任务的浏览器页面与清理确认。'
-const ORDINARY_BROWSER_APPROVAL_RESULT = '普通完整访问任务浏览器已按设置完成确认与清理。'
-const ORDINARY_BROWSER_FULL_CONTROL_PROMPT = '普通完整访问任务开启浏览器完全控制后再次核验清理。'
-const ORDINARY_BROWSER_FULL_CONTROL_RESULT = '普通完整访问任务开启完全控制后已直接完成清理。'
-const BROWSER_APPROVAL_FIXTURE = '/role-browser-approval-fixture'
-const BROWSER_COOKIE = 'wework_role_browser_e2e=present'
 const FINAL = '发布方案已汇总：迁移可回滚，公告草稿已就绪。'
 const CANCEL_REQUEST = '请并行核对下次发布窗口和公告读者。'
 const DEPENDENCY_REQUEST = '先核对维护窗口，再写一条使用核验结果的通知。'
@@ -123,11 +113,6 @@ export function createDesktopScenario({
   let dependentStarted = false
   let prerequisiteReleased = false
   let readOnlyFollowUpReported = false
-  let readOnlyBrowserReported = false
-  let browserFollowUpReported = false
-  let browserFullControlReported = false
-  let browserFixtureRequests = 0
-  let browserFixtureUrl
   let writingWorkspace
   let sequence = 0
   const reply = (response, events) => {
@@ -143,14 +128,7 @@ export function createDesktopScenario({
       searchCallId: `${id}-discovery`,
       toolCallId: id,
     }).events
-  const browserTool = (body, name, id, args = {}) =>
-    mcpToolRequestEvents(body, {
-      toolName: name,
-      directToolName: `mcp__wework_browser__${name}`,
-      argumentsValue: args,
-      searchCallId: `${id}-discovery`,
-      toolCallId: id,
-    }).events
+  const browserChecks = createStandInRoleBrowserChecks(reply)
 
   function delegate(body, index) {
     const role = roles[index]
@@ -191,15 +169,11 @@ export function createDesktopScenario({
     )
 
   return {
+    // The permission probes need an actual filesystem sandbox. Without a
+    // Windows backend, Codex asks for approval before running the probe.
+    codexConfigToml: process.platform === 'win32' ? '[windows]\nsandbox = "unelevated"\n' : '',
     async handleHttp(request, response, url) {
-      if (request.method === 'GET' && url.pathname === BROWSER_APPROVAL_FIXTURE) {
-        browserFixtureRequests += 1
-        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        response.end(
-          `<!doctype html><html><head><meta charset="utf-8" /><title>Browser approval fixture</title></head><body><h1>Browser approval fixture</h1><script>if (new URLSearchParams(location.search).get('set') === '1') { document.cookie = '${BROWSER_COOKIE}; Path=/'; }</script></body></html>`
-        )
-        return true
-      }
+      if (browserChecks.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) {
         return false
       }
@@ -213,153 +187,7 @@ export function createDesktopScenario({
       const latest = JSON.stringify(
         (body.input ?? []).filter(item => item.role === 'user').at(-1) ?? ''
       )
-      if (
-        latest.includes(READ_ONLY_BROWSER_FOLLOW_UP) ||
-        latest.includes(ORDINARY_READ_ONLY_BROWSER_PROMPT)
-      ) {
-        const isOrdinary = latest.includes(ORDINARY_READ_ONLY_BROWSER_PROMPT)
-        const callId = isOrdinary ? 'ordinary-readonly-browser-open' : 'readonly-browser-open'
-        assert.ok(browserFixtureUrl)
-        if (!requestContainsToolOutput(body, callId)) {
-          reply(
-            response,
-            browserTool(body, 'browser_open_and_inspect', callId, {
-              url: `${browserFixtureUrl}?set=1&readonly=${isOrdinary ? 'ordinary' : 'role'}`,
-            })
-          )
-        } else {
-          assert.equal(
-            browserFixtureRequests,
-            0,
-            'Declined read-only browser MCP approval must block opening the URL'
-          )
-          reply(response, [
-            assistantMessage(
-              isOrdinary ? ORDINARY_READ_ONLY_BROWSER_RESULT : READ_ONLY_BROWSER_RESULT
-            ),
-          ])
-        }
-        return true
-      }
-      const handleBrowserApprovalCheck = (prefix, expectedFixturesAfterOpen, completionText) => {
-        assert.ok(browserFixtureUrl)
-        if (!requestContainsToolOutput(body, `${prefix}-browser-open`)) {
-          reply(
-            response,
-            browserTool(body, 'browser_open_and_inspect', `${prefix}-browser-open`, {
-              url: `${browserFixtureUrl}?set=1&scope=${prefix}`,
-            })
-          )
-        } else if (!requestContainsToolOutput(body, `${prefix}-browser-clear-reject`)) {
-          assert.equal(
-            browserFixtureRequests,
-            expectedFixturesAfterOpen,
-            `${prefix} browser open must load directly without runtime MCP prompt`
-          )
-          assert.ok(
-            readMcpToolOutput(body, `${prefix}-browser-open`).includes(
-              'Combined: open_and_inspect ok=true'
-            )
-          )
-          reply(
-            response,
-            browserTool(body, 'browser_clear_data', `${prefix}-browser-clear-reject`, {
-              kinds: ['cookies'],
-            })
-          )
-        } else if (!requestContainsToolOutput(body, `${prefix}-browser-cookie-retained`)) {
-          assert.ok(
-            readMcpToolOutput(body, `${prefix}-browser-clear-reject`).includes('approval_rejected')
-          )
-          reply(
-            response,
-            browserTool(body, 'browser_evaluate', `${prefix}-browser-cookie-retained`, {
-              expression: `document.cookie.includes('${BROWSER_COOKIE}')`,
-            })
-          )
-        } else if (!requestContainsToolOutput(body, `${prefix}-browser-clear-approve`)) {
-          assert.equal(
-            JSON.parse(readMcpToolOutput(body, `${prefix}-browser-cookie-retained`)).value,
-            true
-          )
-          reply(
-            response,
-            browserTool(body, 'browser_clear_data', `${prefix}-browser-clear-approve`, {
-              kinds: ['cookies'],
-            })
-          )
-        } else if (!requestContainsToolOutput(body, `${prefix}-browser-cookie-cleared`)) {
-          assert.ok(
-            readMcpToolOutput(body, `${prefix}-browser-clear-approve`).includes('"success":true')
-          )
-          reply(
-            response,
-            browserTool(body, 'browser_evaluate', `${prefix}-browser-cookie-cleared`, {
-              expression: `document.cookie.includes('${BROWSER_COOKIE}')`,
-            })
-          )
-        } else {
-          assert.equal(
-            JSON.parse(readMcpToolOutput(body, `${prefix}-browser-cookie-cleared`)).value,
-            false
-          )
-          reply(response, [assistantMessage(completionText)])
-        }
-        return true
-      }
-      const handleBrowserFullControlCheck = (prefix, expectedFixturesAfterOpen, completionText) => {
-        assert.ok(browserFixtureUrl)
-        if (!requestContainsToolOutput(body, `${prefix}-full-browser-open`)) {
-          reply(
-            response,
-            browserTool(body, 'browser_open_and_inspect', `${prefix}-full-browser-open`, {
-              url: `${browserFixtureUrl}?set=1&full=1&scope=${prefix}`,
-            })
-          )
-        } else if (!requestContainsToolOutput(body, `${prefix}-full-browser-clear`)) {
-          assert.equal(browserFixtureRequests, expectedFixturesAfterOpen)
-          assert.ok(
-            readMcpToolOutput(body, `${prefix}-full-browser-open`).includes(
-              'Combined: open_and_inspect ok=true'
-            )
-          )
-          reply(
-            response,
-            browserTool(body, 'browser_clear_data', `${prefix}-full-browser-clear`, {
-              kinds: ['cookies'],
-            })
-          )
-        } else if (!requestContainsToolOutput(body, `${prefix}-full-browser-verify`)) {
-          assert.ok(
-            readMcpToolOutput(body, `${prefix}-full-browser-clear`).includes('"success":true')
-          )
-          reply(
-            response,
-            browserTool(body, 'browser_evaluate', `${prefix}-full-browser-verify`, {
-              expression: `document.cookie.includes('${BROWSER_COOKIE}')`,
-            })
-          )
-        } else {
-          assert.equal(
-            JSON.parse(readMcpToolOutput(body, `${prefix}-full-browser-verify`)).value,
-            false
-          )
-          reply(response, [assistantMessage(completionText)])
-        }
-        return true
-      }
-      if (latest.includes(ORDINARY_BROWSER_APPROVAL_PROMPT)) {
-        return handleBrowserApprovalCheck('ordinary', 1, ORDINARY_BROWSER_APPROVAL_RESULT)
-      }
-      if (latest.includes(ORDINARY_BROWSER_FULL_CONTROL_PROMPT)) {
-        return handleBrowserFullControlCheck('ordinary', 2, ORDINARY_BROWSER_FULL_CONTROL_RESULT)
-      }
-      if (latest.includes(BROWSER_APPROVAL_FOLLOW_UP)) {
-        return handleBrowserApprovalCheck('role', 3, BROWSER_APPROVAL_RESULT)
-      }
-      if (latest.includes(BROWSER_FULL_CONTROL_FOLLOW_UP)) {
-        return handleBrowserFullControlCheck('role', 4, BROWSER_FULL_CONTROL_RESULT)
-      }
+      if (browserChecks.handleModel(body, latest, response)) return true
       if (latest.includes(READ_ONLY_FOLLOW_UP)) {
         const result = accountCommandResult(body.input, READ_ONLY_WRITE_CALL)
         if (!result) {
@@ -438,45 +266,17 @@ export function createDesktopScenario({
             return true
           }
           if (
-            child === taskIds.get(roles[1].id) &&
-            JSON.stringify(results).includes(READ_ONLY_BROWSER_RESULT)
-          ) {
-            assert.equal(readOnlyBrowserReported, false, 'The read-only browser check reports once')
-            readOnlyBrowserReported = true
-            reply(response, [])
+            browserChecks.handleDelegatedResult({
+              child,
+              writingTaskId: taskIds.get(roles[1].id),
+              resultId,
+              reported,
+              results,
+              latest,
+              response,
+            })
+          )
             return true
-          }
-          if (
-            child === taskIds.get(roles[1].id) &&
-            JSON.stringify(results).includes(BROWSER_APPROVAL_RESULT)
-          ) {
-            assert.equal(browserFollowUpReported, false, 'The browser follow-up must report once')
-            assert.ok(reported.has(child), 'The original branch must have reported first')
-            assert.notEqual(resultId, reported.get(child), 'The follow-up must have a new result')
-            assert.ok(latest.includes('status=done,'), 'The browser approval check must complete')
-            browserFollowUpReported = true
-            reply(response, [])
-            return true
-          }
-          if (
-            child === taskIds.get(roles[1].id) &&
-            JSON.stringify(results).includes(BROWSER_FULL_CONTROL_RESULT)
-          ) {
-            assert.equal(
-              browserFullControlReported,
-              false,
-              'The full-control browser follow-up must report once'
-            )
-            assert.ok(reported.has(child), 'The original branch must have reported first')
-            assert.notEqual(resultId, reported.get(child), 'The follow-up must have a new result')
-            assert.ok(
-              latest.includes('status=done,'),
-              'The full-control browser check must complete'
-            )
-            browserFullControlReported = true
-            reply(response, [])
-            return true
-          }
           assert.equal(
             reported.has(child),
             false,
@@ -663,7 +463,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      browserFixtureUrl = `${control.url}${BROWSER_APPROVAL_FIXTURE}`
+      browserChecks.prepare(control)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -727,6 +527,7 @@ export function createDesktopScenario({
       })
       try {
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', CHAT)
         await control.command(
           'clickWhenEnabled',
@@ -744,25 +545,10 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
           visible: false,
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', EDITOR)
         const executorLog = join(resultDir, 'executor.log')
-        const waitForNativeProfile = (taskId, profile, fromOffset = 0) =>
-          storyUntil(
-            async () =>
-              (await readFile(executorLog, 'utf8'))
-                .slice(fromOffset)
-                .split('\n')
-                .filter(line => line.includes(`codex source sandbox applied task_id=${taskId} `)),
-            lines =>
-              lines.some(
-                line =>
-                  line.includes(String.raw`\"id\":\"${profile}\"`) &&
-                  line.includes(String.raw`reviewer="\"user\""`)
-              ),
-            uiTimeoutMs,
-            `Task ${taskId} must run with native profile ${profile} and the human reviewer`
-          )
+        const waitForNativeProfile = createNativeProfileWaiter(executorLog, uiTimeoutMs)
         const ordinaryTaskId = 'stand-in-delegation-story-ordinary-task'
         const origin = {
           type: 'stand_in_task',
@@ -1011,6 +797,7 @@ export function createDesktopScenario({
         await captureScreenshot(control, '06-specialist-task-open.png')
 
         await control.command('navigate', 'body', { value: '/stand-in' })
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
         await send(CANCEL_REQUEST)
         await waitForReply('两项核对已分派。')
@@ -1165,302 +952,37 @@ export function createDesktopScenario({
         })
         await captureScreenshot(control, '16-ordinary-task-open.png')
 
-        await control.command('navigate', 'body', { value: '/stand-in' })
-        await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
-        await control.command(
-          'scrollToRatioAsUser',
-          `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
-          { value: '0' }
-        )
-        await selectDelegation(writingTaskId)
-        await expandDelegation()
-        await control.command('clickElementWithText', row, {
-          text: '起草公告',
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-          {
-            text: '面向内部团队的公告草稿已就绪。',
-          }
-        )
-        const taskMode = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="permission-mode-menu-button"]`
-        await control.command('clickWhenEnabled', `${taskMode}[aria-label*="工作区"]`)
-        await control.command('clickWhenEnabled', '[data-testid="permission-mode-read-only"]')
-        await control.command('waitFor', `${taskMode}[aria-label*="只读"]`)
-        const fromOffset = (await readFile(executorLog, 'utf8')).length
-        await control.command(
-          'fill',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-          { value: READ_ONLY_FOLLOW_UP }
-        )
-        await control.command(
-          'clickWhenEnabled',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-        )
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-          {
-            text: READ_ONLY_RESULT,
-            timeoutMs: modelResponseTimeoutMs,
-          }
-        )
-        await waitForNativeProfile(writingTaskId, 'wework-source-read', fromOffset)
-        await assert.rejects(readFile(join(writingWorkspace, READ_ONLY_FILE)), { code: 'ENOENT' })
-        await storyUntil(
-          () => Promise.resolve(readOnlyFollowUpReported),
-          Boolean,
+        await browserChecks.verify({
+          control,
+          uiTimeoutMs,
           modelResponseTimeoutMs,
-          'The read-only follow-up must deliver its distinct result to the original conversation'
-        )
-        const mcpApprovalCard = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-card"]`
-        const mcpDeclineOption = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="request-user-input-option-__mcp_approval-1"]`
-        const browserApproveButton = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
-        const browserRejectButton = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
-        const fullControlToggle = '[data-testid="browser-full-control-toggle"]'
-        const enableFullAccessInActiveTask = async () => {
-          await control.command('clickWhenEnabled', taskMode)
-          await control.command('clickWhenEnabled', '[data-testid="permission-mode-full-access"]')
-          await control.command('clickWhenEnabled', '[data-testid="full-access-confirm-submit"]')
-          await control.command('waitFor', `${taskMode}[aria-label*="完整访问"]`, {
-            timeoutMs: uiTimeoutMs,
-          })
-        }
-        const setBrowserFullControl = async enabled => {
-          await control.command('click', '[data-testid="settings-button"]')
-          await control.command('click', '[data-testid="settings-menu-button"]')
-          await control.command('click', '[data-testid="settings-nav-browser"]')
-          await control.command('waitFor', `${fullControlToggle}:not(:disabled)`, {
-            timeoutMs: uiTimeoutMs,
-          })
-          const checked = await control.command('getAttribute', fullControlToggle, {
-            value: 'aria-checked',
-          })
-          if (checked !== String(enabled)) {
-            await control.command('click', fullControlToggle)
-          }
-          await waitForAttribute(
-            control,
-            fullControlToggle,
-            'aria-checked',
-            String(enabled),
-            'Browser full control was not saved'
-          )
-          await control.command('click', '[data-testid="settings-back-button"]')
-          await control.command(
-            'waitFor',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-            { timeoutMs: uiTimeoutMs }
-          )
-        }
-        const runFullAccessBrowserSuite = async ({
-          approvalPrompt,
-          approvalResult,
-          fullControlPrompt,
-          fullControlResult,
-          expectedFixturesAfterApproval,
-          expectedFixturesAfterFullControl,
-        }) => {
-          let browserPromptCount = 0
-          await control.command(
-            'fill',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-            { value: approvalPrompt }
-          )
-          await control.command(
-            'clickWhenEnabled',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-          )
-          await control.command('waitFor', browserRejectButton, {
-            timeoutMs: modelResponseTimeoutMs,
-          })
-          browserPromptCount += 1
-          try {
-            assert.equal(
-              Number(await control.command('getElementCount', mcpApprovalCard)),
-              0,
-              'Full-access tasks must not prompt runtime MCP approval for browser tools'
-            )
-          } finally {
-            await control.command('clickWhenEnabled', browserRejectButton)
-          }
-          await control.command('waitFor', browserRejectButton, {
-            visible: false,
-            timeoutMs: uiTimeoutMs,
-          })
-          await control.command('waitFor', browserApproveButton, {
-            timeoutMs: modelResponseTimeoutMs,
-          })
-          browserPromptCount += 1
-          try {
-            assert.equal(
-              Number(await control.command('getElementCount', mcpApprovalCard)),
-              0,
-              'Full-access tasks must keep runtime MCP approval suppressed across browser steps'
-            )
-          } finally {
-            await control.command('clickWhenEnabled', browserApproveButton)
-          }
-          await control.command('waitFor', browserApproveButton, {
-            visible: false,
-            timeoutMs: uiTimeoutMs,
-          })
-          await control.command(
-            'waitFor',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"], ${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: approvalResult, timeoutMs: modelResponseTimeoutMs }
-          )
-          assert.equal(browserFixtureRequests, expectedFixturesAfterApproval)
-
-          await setBrowserFullControl(true)
-          try {
+          writingTaskId,
+          executorLog,
+          waitForNativeProfile,
+          readOnlyWorkspace: {
+            prompt: READ_ONLY_FOLLOW_UP,
+            result: READ_ONLY_RESULT,
+            file: join(writingWorkspace, READ_ONLY_FILE),
+            reported: () => readOnlyFollowUpReported,
+          },
+          reopenDelegatedTask: async (openPrimary = false) => {
+            await control.command('navigate', 'body', { value: '/stand-in' })
+            if (openPrimary) await control.command('clickWhenEnabled', PRIMARY)
+            await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
             await control.command(
-              'fill',
-              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-              { value: fullControlPrompt }
+              'scrollToRatioAsUser',
+              `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
+              { value: '0' }
             )
-            await control.command(
-              'clickWhenEnabled',
-              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-            )
-            await control.command(
-              'waitFor',
-              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"], ${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-              { text: fullControlResult, timeoutMs: modelResponseTimeoutMs }
-            )
-            assert.equal(
-              Number(await control.command('getElementCount', mcpApprovalCard)),
-              0,
-              'Full-control browser actions must not prompt runtime MCP approval'
-            )
-            assert.equal(
-              Number(await control.command('getElementCount', browserApproveButton)),
-              0,
-              'Browser full control must execute browser actions without panel confirmation'
-            )
-            assert.equal(browserFixtureRequests, expectedFixturesAfterFullControl)
-          } finally {
-            await setBrowserFullControl(false)
-          }
-          return {
-            mcpPrompts: 0,
-            browserPromptsWhenDisabled: browserPromptCount,
-            browserPromptsWhenEnabled: 0,
-          }
-        }
-
-        // 1. In read-only mode, mutating browser calls must still require native runtime MCP approval.
-        await control.command(
-          'fill',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-          { value: READ_ONLY_BROWSER_FOLLOW_UP }
-        )
-        await control.command(
-          'clickWhenEnabled',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-        )
-        await control.command('waitFor', mcpDeclineOption, { timeoutMs: modelResponseTimeoutMs })
-        assert.equal(
-          browserFixtureRequests,
-          0,
-          'Read-only delegated task must block browser navigation until MCP approval'
-        )
-        await control.command('clickWhenEnabled', mcpDeclineOption)
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-          { text: READ_ONLY_BROWSER_RESULT, timeoutMs: modelResponseTimeoutMs }
-        )
-        await storyUntil(
-          () => Promise.resolve(readOnlyBrowserReported),
-          Boolean,
-          modelResponseTimeoutMs,
-          'The declined read-only browser check must report back to the parent conversation'
-        )
-
-        // 2. Compare an ordinary task and the delegated task side-by-side under Read-Only and Full Access authorization.
-        await control.command('click', '[data-testid="new-chat-button"]')
-        await selectE2EModel(control)
-        await control.command('clickWhenEnabled', taskMode)
-        await control.command('clickWhenEnabled', '[data-testid="permission-mode-read-only"]')
-        await control.command('waitFor', `${taskMode}[aria-label*="只读"]`, {
-          timeoutMs: uiTimeoutMs,
+            await selectDelegation(writingTaskId)
+            await expandDelegation()
+            await control.command('clickElementWithText', row, {
+              text: '起草公告',
+              visible: true,
+              timeoutMs: uiTimeoutMs,
+            })
+          },
         })
-        await control.command(
-          'fill',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-          { value: ORDINARY_READ_ONLY_BROWSER_PROMPT }
-        )
-        await control.command(
-          'clickWhenEnabled',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-        )
-        await control.command('waitFor', mcpDeclineOption, { timeoutMs: modelResponseTimeoutMs })
-        assert.equal(
-          browserFixtureRequests,
-          0,
-          'Read-only ordinary task must block browser navigation until MCP approval'
-        )
-        await control.command('clickWhenEnabled', mcpDeclineOption)
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"], ${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: ORDINARY_READ_ONLY_BROWSER_RESULT, timeoutMs: modelResponseTimeoutMs }
-        )
-        await enableFullAccessInActiveTask()
-        const ordinaryEvidence = await runFullAccessBrowserSuite({
-          approvalPrompt: ORDINARY_BROWSER_APPROVAL_PROMPT,
-          approvalResult: ORDINARY_BROWSER_APPROVAL_RESULT,
-          fullControlPrompt: ORDINARY_BROWSER_FULL_CONTROL_PROMPT,
-          fullControlResult: ORDINARY_BROWSER_FULL_CONTROL_RESULT,
-          expectedFixturesAfterApproval: 1,
-          expectedFixturesAfterFullControl: 2,
-        })
-
-        await control.command('navigate', 'body', { value: '/stand-in' })
-        await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
-        await control.command(
-          'scrollToRatioAsUser',
-          `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
-          { value: '0' }
-        )
-        await selectDelegation(writingTaskId)
-        await expandDelegation()
-        await control.command('clickElementWithText', row, {
-          text: '起草公告',
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-          { text: READ_ONLY_BROWSER_RESULT, timeoutMs: uiTimeoutMs }
-        )
-        const fullAccessOffset = (await readFile(executorLog, 'utf8')).length
-        await enableFullAccessInActiveTask()
-        const delegatedEvidence = await runFullAccessBrowserSuite({
-          approvalPrompt: BROWSER_APPROVAL_FOLLOW_UP,
-          approvalResult: BROWSER_APPROVAL_RESULT,
-          fullControlPrompt: BROWSER_FULL_CONTROL_FOLLOW_UP,
-          fullControlResult: BROWSER_FULL_CONTROL_RESULT,
-          expectedFixturesAfterApproval: 3,
-          expectedFixturesAfterFullControl: 4,
-        })
-        await waitForNativeProfile(writingTaskId, ':danger-full-access', fullAccessOffset)
-        assert.deepEqual(
-          delegatedEvidence,
-          ordinaryEvidence,
-          'Delegated Full Access tasks must match ordinary Full Access browser approval behavior'
-        )
-        await storyUntil(
-          () => Promise.resolve(browserFollowUpReported && browserFullControlReported),
-          Boolean,
-          modelResponseTimeoutMs,
-          'Both Full Access browser follow-ups must deliver results to the original conversation'
-        )
         const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
         assert.equal(
           saved.roles.find(role => role.id === roles[1].id)?.taskPermissions?.permissionMode,

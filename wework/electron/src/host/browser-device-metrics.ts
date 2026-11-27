@@ -14,8 +14,13 @@ export class BrowserDeviceMetricsController {
   private lease: DebuggerLease | null = null
   private pending: Promise<void> = Promise.resolve()
   private disposed = false
+  private appliedScale = 1
 
   constructor(private readonly target: DebuggerTarget) {}
+
+  inputScale(): number {
+    return this.lease?.isActive() ? this.appliedScale : 1
+  }
 
   set(metrics: BrowserDeviceMetrics | null): Promise<void> {
     if (metrics && (!Number.isFinite(metrics.scale) || metrics.scale <= 0 || metrics.scale > 5)) {
@@ -43,6 +48,7 @@ export class BrowserDeviceMetricsController {
       if (!lease) return
       try {
         await lease.session.sendCommand('Emulation.clearDeviceMetricsOverride')
+        this.appliedScale = 1
       } finally {
         lease.release()
         if (this.lease === lease) this.lease = null
@@ -59,6 +65,7 @@ export class BrowserDeviceMetricsController {
         mobile: false,
         scale: metrics.scale,
       })
+      this.appliedScale = metrics.scale
     } catch (error) {
       if (!hadOverride) {
         lease.release()

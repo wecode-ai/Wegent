@@ -8,7 +8,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 
-use crate::{local::app_ipc::AppIpcError, protocol::ExecutionRequest};
+use crate::{
+    local::app_ipc::AppIpcError,
+    protocol::ExecutionRequest,
+    runtime_work::{external_work_kind, ExternalWorkKind},
+};
 
 pub(crate) mod apps;
 mod catalog;
@@ -83,7 +87,7 @@ impl ControlContext {
 
 pub(crate) fn restricted_request(request: &ExecutionRequest) -> bool {
     restricted_origin(request.extra.get("origin"))
-        || crate::runtime_work::external_work_kind(request).is_some()
+        || external_work_kind(request) == Some(ExternalWorkKind::Message)
         || request.extra.get("origin").is_some_and(|origin| {
             origin["type"] == "project_coordinator" || origin.get("project_coordination").is_some()
         })
@@ -94,21 +98,52 @@ pub(crate) fn restricted_origin(origin: Option<&Value>) -> bool {
 }
 
 pub(crate) fn origin_restriction(origin: Option<&Value>) -> Option<&'static str> {
-    if origin.is_some_and(crate::task_runtime::mcp::is_independent_issue_origin) {
+    let origin = origin?;
+    if crate::task_runtime::mcp::is_independent_issue_origin(origin) {
         return Some("projectStore");
     }
     if matches!(
-        origin.and_then(|value| value["type"].as_str()),
+        origin["type"].as_str(),
         Some("stand_in_identity" | "connection_work" | "dingtalk_work")
     ) {
         return Some("type");
     }
-    ["dispatchRole", "dispatch_role", "dispatchId", "dispatch_id"]
+    let marker = |key: &str| origin.get(key).is_some_and(|value| !value.is_null());
+    if let Some(role) = ["dispatchRole", "dispatch_role"]
         .into_iter()
-        .find(|key| {
+        .find(|key| marker(key))
+    {
+        return Some(role);
+    }
+    let issue_dispatch = origin["type"] == "issue_dispatch";
+    // A human's own Issue conversation carries assignment correlation IDs.
+    // Explicit roles and stand-in provenance still take precedence.
+    if issue_dispatch && is_personal_issue_assignment(origin) {
+        return None;
+    }
+    ["dispatchId", "dispatch_id"]
+        .into_iter()
+        .find(|key| marker(key))
+        .or_else(|| issue_dispatch.then_some("type"))
+}
+
+fn is_personal_issue_assignment(origin: &Value) -> bool {
+    !["initiatedBy", "initiated_by", "standInId", "stand_in_id"]
+        .into_iter()
+        .any(|key| origin.get(key).is_some_and(|value| !value.is_null()))
+        && [
+            ("cloudProjectId", "cloud_project_id"),
+            ("loopItemId", "loop_item_id"),
+            ("humanAssignmentId", "human_assignment_id"),
+        ]
+        .into_iter()
+        .all(|(camel, snake)| {
             origin
-                .and_then(|value| value.get(*key))
-                .is_some_and(|value| !value.is_null())
+                .get(camel)
+                .or_else(|| origin.get(snake))
+                .is_some_and(|id| {
+                    id.is_number() || id.as_str().is_some_and(|value| !value.trim().is_empty())
+                })
         })
 }
 
@@ -302,6 +337,40 @@ mod tests {
             assert_eq!(restricted_origin(Some(&origin)), expected.is_some());
         }
         assert_eq!(origin_restriction(None), None);
+    }
+
+    #[test]
+    fn personal_issue_assignment_requires_a_bound_human_conversation() {
+        let personal = json!({
+            "type": "issue_dispatch", "cloudProjectId": "project", "loopItemId": "issue",
+            "humanAssignmentId": "human", "dispatchId": "dispatch"
+        });
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), personal.clone());
+        assert!(!restricted_request(&request));
+
+        for (key, value) in [
+            ("dispatchRole", json!("executor")),
+            ("dispatch_role", json!("manager")),
+            ("initiatedBy", json!("stand_in")),
+            ("standInId", json!("assistant")),
+            ("projectStore", json!("independent")),
+            ("project_coordination", json!({})),
+            ("humanAssignmentId", json!(" ")),
+            ("loopItemId", Value::Null),
+            ("cloudProjectId", Value::Null),
+        ] {
+            let mut origin = personal.clone();
+            origin[key] = value;
+            request.extra.insert("origin".into(), origin);
+            assert!(restricted_request(&request), "{key}");
+        }
+        request.extra.insert("origin".into(), personal);
+        request.extra.insert(
+            "standInDelegation".into(),
+            json!({"sourceTaskId": "primary"}),
+        );
+        assert!(restricted_request(&request));
     }
 
     #[tokio::test]

@@ -2,23 +2,43 @@
   const input = __WEWORK_WAIT_INPUT__
   const startedAt = performance.now()
   const warnings = []
-  const agent = ensureAgentRuntime()
+  const guarded = input.probeMode === 'guarded'
+  const agent = guarded ? window.__WEWORK_BROWSER_AGENT__ : ensureAgentRuntime()
   const quietMs = clampNumber(input.quietMs || input.options?.quietMs, 0, 5000, 250)
   const condition = normalizeCondition(input)
   const waitId = String(input.waitId || JSON.stringify(condition))
-  agent.waitStates =
-    agent.waitStates && typeof agent.waitStates === 'object' ? agent.waitStates : {}
-  const waitState = agent.waitStates[waitId] || {
-    initial: observe(condition),
-    startedAt: performance.now(),
+  if (input.probeMode === 'prepare') {
+    return {
+      documentId: agent.waitDocumentId,
+      initial: observe(condition),
+      startedAt: performance.now(),
+    }
   }
-  agent.waitStates[waitId] = waitState
+  if (guarded && (!agent?.waitDocumentId || agent.waitDocumentId !== input.waitState?.documentId)) {
+    return { ok: false, kind: 'browser.wait', reason: 'observation_unavailable' }
+  }
+  const waitState = guarded ? input.waitState : initializeWaitState()
+
+  function initializeWaitState() {
+    agent.waitStates =
+      agent.waitStates && typeof agent.waitStates === 'object' ? agent.waitStates : {}
+    const state = agent.waitStates[waitId] || {
+      initial: observe(condition),
+      startedAt: performance.now(),
+    }
+    agent.waitStates[waitId] = state
+    return state
+  }
+
+  function completeWaitState() {
+    delete agent.waitStates[waitId]
+  }
 
   try {
     const observed = observe(condition)
     const matched = evaluateCondition(condition, observed, waitState.initial, quietMs)
     if (matched.ok) {
-      delete agent.waitStates[waitId]
+      if (!guarded) completeWaitState()
       return {
         ok: true,
         kind: 'browser.wait',
@@ -78,6 +98,8 @@
     current.lastViewportMutationAt = Number.isFinite(current.lastViewportMutationAt)
       ? current.lastViewportMutationAt
       : performance.now()
+    if (!current.waitDocumentId && input.probeMode === 'prepare')
+      current.waitDocumentId = input.waitId
     window.__WEWORK_BROWSER_AGENT__ = current
 
     if (!current.revisionObserverInstalled && document.documentElement) {
@@ -108,10 +130,12 @@
 
   function normalizeCondition(request) {
     const optionCondition =
-      request.options && typeof request.options.condition === 'object'
+      request.options?.condition &&
+      typeof request.options.condition === 'object' &&
+      !Array.isArray(request.options.condition)
         ? request.options.condition
         : {}
-    const condition = { ...optionCondition }
+    const condition = optionCondition
     if (request.selector && !condition.selectorAttached && !condition.selectorVisible) {
       condition.selectorAttached = request.selector
     }

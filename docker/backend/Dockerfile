@@ -17,6 +17,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 # Cache dependency compilation independently of application source changes.
 FROM rust-builder-base AS rust-builder-deps
+ARG CARGO_PROFILE_RELEASE_OPT_LEVEL
 COPY --exclude=be-server/src --exclude=be-server/examples --exclude=be-server/tests \
     --exclude=config --exclude=docs --exclude=init_data --exclude=migrations/reference --exclude=scripts backend-rs/ ./
 COPY shared/rust /app/shared/rust
@@ -31,7 +32,12 @@ COPY shared/assets/codex-models /app/shared/assets/codex-models
 COPY backend-rs/be-server/src ./be-server/src
 COPY shared/data/builtin-connector-apps.json /app/shared/data/builtin-connector-apps.json
 RUN find be-server/src -type f -exec touch {} + \
-    && cargo build --release --locked --bin wegent-backend-rs
+    && if [ -n "${CARGO_PROFILE_RELEASE_OPT_LEVEL:-}" ]; then \
+        set -- --config 'profile.release.package.wegent-backend-rs.opt-level=0'; \
+    else \
+        set --; \
+    fi \
+    && cargo build --release --locked "$@" --bin wegent-backend-rs
 
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS runtime
 

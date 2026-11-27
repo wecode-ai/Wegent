@@ -4,9 +4,14 @@ import { ApiError } from '@/api/http'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { DeviceInfo } from '@/types/api'
 import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
-import { personalAssistantDeviceSettings } from './personalAssistantDeviceSettings'
+import {
+  collectPersonalAssistantDefinitionBackups,
+  personalAssistantDeviceSettings,
+} from './personalAssistantDeviceSettings'
 import { usePersonalStandIn } from './usePersonalStandIn'
+import type { StandInEntry } from './standInEntry'
 
 const account: PersonalAssistantAccount = {
   defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
@@ -24,7 +29,8 @@ const blank: PersonalStandInSettings = {
 function setup(
   initial: PersonalAssistantAccount | Error | null,
   local = blank,
-  boundDevice?: string
+  boundDevice?: string,
+  options?: { preferredDevice?: string; initialEntry?: StandInEntry; devices?: DeviceInfo[] }
 ) {
   const get = vi.fn(async () => {
     if (initial instanceof Error) throw initial
@@ -42,14 +48,31 @@ function setup(
     standInApi: { personalGet, binding },
     getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'mac' }),
   } as unknown as WorkbenchServices
-  const workspace = (preferredDevice?: string) => (
+  let publishAccount: ((value: PersonalAssistantAccount) => void) | undefined
+  let readAccount: (() => PersonalAssistantAccount | undefined) | undefined
+  const workspace = (preferredDevice = options?.preferredDevice) => (
     <PersonalAssistantAccountSetup
       services={services}
       userId={7}
       active
       preferredDevice={preferredDevice}
+      initialEntry={options?.initialEntry}
+      devices={options?.devices}
     >
-      {assistant => <p>{assistant?.defaultBotRef.name ?? 'local workspace'}</p>}
+      {(assistant, publish, read, reloadAccount, newAccount) => {
+        publishAccount = publish
+        readAccount = read
+        return (
+          <>
+            <p data-new-account={String(newAccount)}>
+              {assistant?.defaultBotRef.name ?? 'local workspace'}
+            </p>
+            <button type="button" data-testid="test-account-reload" onClick={reloadAccount}>
+              Refresh account
+            </button>
+          </>
+        )
+      }}
     </PersonalAssistantAccountSetup>
   )
   const { rerender } = render(workspace())
@@ -57,13 +80,17 @@ function setup(
     get,
     personalGet,
     initialize,
+    publishAccount: (value: PersonalAssistantAccount) => publishAccount?.(value),
+    readAccount: () => readAccount?.(),
     changePreferredDevice: (device: string) => rerender(workspace(device)),
   }
 }
 
 test('an initialized cloud account opens without probing a legacy profile', async () => {
   const { personalGet, initialize } = setup(account)
-  expect(await screen.findByText('primary')).toBeVisible()
+  const primary = await screen.findByText('primary')
+  expect(primary).toBeVisible()
+  expect(primary).toHaveAttribute('data-new-account', 'false')
   expect(personalGet).not.toHaveBeenCalled()
   expect(initialize).not.toHaveBeenCalled()
 })
@@ -74,6 +101,34 @@ test('device inventory changes keep the loaded cloud assistant mounted', async (
   changePreferredDevice('other-cloud-device')
   expect(screen.getByText('primary')).toBe(workspace)
   expect(get).toHaveBeenCalledTimes(1)
+})
+
+test('a transient account refresh failure leaves the loaded workspace mounted and retryable', async () => {
+  const { get } = setup(account)
+  const workspace = await screen.findByText('primary')
+  get.mockRejectedValueOnce(new ApiError('Offline', 503))
+  fireEvent.click(screen.getByTestId('test-account-reload'))
+  expect(await screen.findByTestId('personal-assistant-account-refresh-error')).toBeVisible()
+  expect(screen.getByText('primary')).toBe(workspace)
+  fireEvent.click(screen.getByTestId('personal-assistant-account-retry'))
+  await waitFor(() =>
+    expect(screen.queryByTestId('personal-assistant-account-refresh-error')).toBeNull()
+  )
+  expect(screen.getByText('primary')).toBe(workspace)
+})
+
+test('a denied account refresh hides the previously loaded workspace', async () => {
+  const { get, publishAccount, readAccount } = setup(account)
+  expect(await screen.findByText('primary')).toBeVisible()
+  get.mockRejectedValueOnce(new ApiError('Forbidden', 403))
+  fireEvent.click(screen.getByTestId('test-account-reload'))
+  expect(await screen.findByTestId('personal-assistant-account-retry')).toBeVisible()
+  expect(screen.queryByText('primary')).toBeNull()
+  expect(screen.queryByTestId('personal-assistant-account-refresh-error')).toBeNull()
+  // An old save can complete after the account lookup was denied.
+  act(() => publishAccount(account))
+  expect(readAccount()).toBeUndefined()
+  expect(screen.queryByText('primary')).toBeNull()
 })
 
 test('a saved legacy profile requires confirmation before import', async () => {
@@ -114,10 +169,50 @@ test('imports the bound remote profile after confirmation on the current compute
   expect(initialize).toHaveBeenCalledWith(expect.any(String), remote)
 })
 
+test('a registered peer binding is preserved even when that device is offline', async () => {
+  const remote = { ...blank, version: 1, executionDeviceId: 'electron-peer' }
+  const { personalGet, initialize } = setup(null, remote, remote.executionDeviceId, {
+    devices: [
+      {
+        id: 2,
+        device_id: remote.executionDeviceId,
+        name: 'Peer desktop',
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+        status: 'offline',
+        is_default: false,
+      },
+    ],
+  })
+  const confirm = await screen.findByTestId('personal-assistant-account-migrate-confirm')
+  expect(personalGet.mock.calls).toEqual([[7, remote.executionDeviceId]])
+  expect(initialize).not.toHaveBeenCalled()
+  fireEvent.click(confirm)
+  expect(await screen.findByText('primary')).toBeVisible()
+  expect(initialize).toHaveBeenCalledWith(expect.any(String), remote)
+})
+
 test('a missing cloud and legacy profile takes ordinary initialization', async () => {
   const { initialize } = setup(null)
-  expect(await screen.findByText('primary')).toBeVisible()
+  const primary = await screen.findByText('primary')
+  expect(primary).toBeVisible()
+  expect(primary).toHaveAttribute('data-new-account', 'true')
   expect(screen.queryByTestId('personal-assistant-account-migrate-confirm')).toBeNull()
+  expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
+})
+
+test('first-use primary identity link initializes on the verified local device', async () => {
+  const { initialize } = setup(null, blank, undefined, {
+    preferredDevice: 'cloud',
+    initialEntry: {
+      kind: 'identity',
+      deviceId: 'mac',
+      profileId: '@primary',
+      userId: '7',
+      scheduled: false,
+    },
+  })
+  expect(await screen.findByText('primary')).toHaveAttribute('data-new-account', 'true')
   expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, 'mac')
 })
 
@@ -127,6 +222,64 @@ test('a failed cloud read cannot trigger initialization or local import', async 
   expect(screen.getByTestId('personal-assistant-account-setup')).toHaveTextContent('HTTP 404')
   expect(personalGet).not.toHaveBeenCalled()
   expect(initialize).not.toHaveBeenCalled()
+})
+
+test('keeps a conflicting device definition in the local backup and projects the cloud definition', async () => {
+  const original = {
+    ...newStandInRole('old-dev', 'default'),
+    name: 'Local name',
+    prompt: 'Local prompt',
+  }
+  const current = {
+    ...account,
+    definitions: [
+      {
+        roleId: original.id,
+        bot: {
+          metadata: { ...account.defaultBotRef, displayName: 'Cloud name' },
+          spec: { execution_policy: { mode: 'fixed', environment_id: 'old-dev' } },
+        },
+        ghost: { spec: { systemPrompt: 'Cloud prompt' } },
+      },
+    ],
+  }
+  const services = {
+    personalAssistantAccountApi: {},
+    standInApi: { personalGet: async () => ({ ...blank, version: 7, roles: [original] }) },
+  } as unknown as WorkbenchServices
+  const backendUrl = 'https://definition-backup.example/api'
+  const api = personalAssistantDeviceSettings(
+    services,
+    () => current,
+    vi.fn(),
+    backendUrl,
+    id => id === 'mac',
+    'mac'
+  ).standInApi!
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const projected = await api.personalGet(7, 'mac', { roleDirectory: true })
+    expect(projected.roles[0]).toMatchObject({
+      name: 'Cloud name',
+      prompt: 'Cloud prompt',
+      executionDeviceId: 'mac',
+    })
+  }
+  expect(collectPersonalAssistantDefinitionBackups(backendUrl, 7)).toEqual([
+    {
+      sourceDeviceId: 'mac',
+      profileVersion: 7,
+      cloudRevision: current.revision,
+      definitions: [
+        {
+          roleId: original.id,
+          name: original.name,
+          prompt: original.prompt,
+          executionDeviceId: 'old-dev',
+        },
+      ],
+    },
+  ])
+  expect(collectPersonalAssistantDefinitionBackups(backendUrl, 8)).toEqual([])
 })
 
 test('saving and retrying a new shared role never uploads a device-only profile', async () => {

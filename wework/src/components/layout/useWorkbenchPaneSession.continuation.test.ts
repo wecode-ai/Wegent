@@ -17,7 +17,7 @@ import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProvid
 import { createScopedDraftStore } from '@/features/workbench/scopedDraftStore'
 
 import type { RuntimeTaskAddress } from '@/types/api'
-import type { RuntimeConversationTurn } from '@/types/workbench'
+import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -616,6 +616,147 @@ test.each([true, false])(
     expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
   }
 )
+
+function completedGuidanceTurn(guidance: Partial<WorkbenchMessage> = {}): RuntimeConversationTurn {
+  return {
+    id: 'guidance-turn',
+    status: 'done',
+    items: [
+      {
+        id: 'native-guidance-item',
+        position: 9,
+        type: 'user_message',
+        message: {
+          id: 'guidance-message',
+          role: 'user',
+          content: 'Original guidance',
+          status: 'done',
+          createdAt: '2026-11-25T00:00:00.000Z',
+          runtimeGuidance: true,
+          ...guidance,
+        },
+      },
+      {
+        id: 'assistant-after-guidance',
+        type: 'assistant_text',
+        content: 'Completed response',
+        createdAt: '2026-11-25T00:00:01.000Z',
+      },
+    ],
+  }
+}
+
+test('updates a guidance correction in place before transport and never appends a duplicate', async () => {
+  const { result } = await renderSession()
+  act(() => reconcileRuntimeConversationSnapshot(address, [completedGuidanceTurn()]))
+  const guidance = await waitFor(() => {
+    const message = result.current.messages.find(item => item.id === 'guidance-message')
+    expect(message).toBeDefined()
+    return message!
+  })
+  let finish!: (accepted: boolean) => void
+  let usersAtTransport: WorkbenchMessage[] = []
+  mocks.send.mockImplementationOnce((_request, options) => {
+    usersAtTransport = getRuntimeConversationMessages(address).filter(
+      message => message.role === 'user'
+    )
+    return new Promise<boolean>(resolve => {
+      finish = accepted => {
+        if (accepted) {
+          options?.onAccepted?.({
+            accepted: true,
+            taskId: address.taskId,
+            turnId: 'correction-turn',
+          })
+        }
+        resolve(accepted)
+      }
+    })
+  })
+
+  let sending!: Promise<boolean>
+  act(() => {
+    sending = result.current.editLastUserMessage(guidance, 'Revised guidance')
+  })
+  await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+  expect(usersAtTransport).toHaveLength(1)
+  expect(usersAtTransport[0]).toMatchObject({
+    id: 'guidance-message',
+    runtimeItemId: 'native-guidance-item',
+    content: 'Revised guidance',
+  })
+
+  const pendingGuidance = getRuntimeConversationMessages(address).filter(
+    message => message.role === 'user'
+  )
+  expect(pendingGuidance).toHaveLength(1)
+  expect(pendingGuidance[0]).toMatchObject({
+    id: 'guidance-message',
+    content: 'Revised guidance',
+    runtimeGuidance: true,
+  })
+  expect(mocks.send.mock.calls[0][0].message).toContain('Revised guidance')
+  expect(mocks.send.mock.calls[0][0].clientUserMessageId).not.toBe('guidance-message')
+  expect(mocks.send.mock.calls[0][0].guidanceCorrection).toEqual({
+    clientGuidanceId: 'guidance-message',
+    content: 'Revised guidance',
+  })
+
+  await act(async () => {
+    finish(true)
+    await sending
+  })
+  expect(
+    getRuntimeConversationMessages(address).filter(message => message.role === 'user')
+  ).toHaveLength(1)
+  expect(result.current.messages.filter(message => message.role === 'user')).toHaveLength(1)
+})
+
+test('admits an attachment-only guidance correction before transport', async () => {
+  const { result } = await renderSession()
+  act(() =>
+    reconcileRuntimeConversationSnapshot(address, [
+      completedGuidanceTurn({ content: '', attachments: [attachment] }),
+    ])
+  )
+  const guidance = await waitFor(() => {
+    const message = result.current.messages.find(item => item.id === 'guidance-message')
+    expect(message).toBeDefined()
+    return message!
+  })
+  let finish!: () => void
+  let usersAtTransport: WorkbenchMessage[] = []
+  mocks.send.mockImplementationOnce(() => {
+    usersAtTransport = getRuntimeConversationMessages(address).filter(
+      message => message.role === 'user'
+    )
+    return new Promise<boolean>(resolve => {
+      finish = () => resolve(true)
+    })
+  })
+
+  let sending!: Promise<boolean>
+  act(() => {
+    sending = result.current.editLastUserMessage(guidance, '')
+  })
+  await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+  expect(usersAtTransport).toHaveLength(1)
+  expect(usersAtTransport[0]).toMatchObject({ id: 'guidance-message', content: '' })
+  const request = mocks.send.mock.calls[0][0]
+  expect(request.message).not.toBe('')
+  expect(request.attachments).toEqual([attachment])
+  expect(
+    getRuntimeConversationMessages(address).filter(message => message.role === 'user')
+  ).toHaveLength(1)
+
+  await act(async () => {
+    finish()
+    await sending
+  })
+  expect(
+    getRuntimeConversationMessages(address).filter(message => message.role === 'user')
+  ).toHaveLength(1)
+})
 
 test.each([true, false])(
   'settles the whole async group only after the runtime accepts its response (accepted=%s)',

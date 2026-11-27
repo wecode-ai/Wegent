@@ -156,6 +156,8 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `chat_session.py:137-170`'s fire-and-forget memory save: the prepared
     /// context goes to the mem0 client off the request path.
     MemorySave(crate::responses::create::memory_context::SaveRequest),
+    /// Post-commit runtime deletion with owned, task-routed services.
+    SubscriptionCleanup(Box<crate::internal_callback::completion::SubscriptionCleanupJob>),
     /// An automatic handoff is acknowledged only after its destination accepts.
     Pipeline(Box<DispatchJob<M, R>>, oneshot::Sender<Result<(), String>>),
     /// A device turn accepted after its callback reader exists. The supervisor
@@ -192,6 +194,12 @@ impl<M: Mysql, R: Redis> DispatchJob<M, R> {
                 request_id: job.request_id.clone(),
                 target: job.target_url.clone(),
             },
+            Self::SubscriptionCleanup(job) => JobContext {
+                task_id: job.task_id,
+                subtask_id: job.subtask_id,
+                request_id: String::new(),
+                target: "subscription runtime cleanup".into(),
+            },
             Self::MemorySave(_) => JobContext {
                 task_id: 0,
                 subtask_id: 0,
@@ -214,6 +222,7 @@ impl<M: Mysql, R: Redis> DispatchJob<M, R> {
 
 pub struct ResponsesDispatch<M: Mysql = MysqlService, R: Redis = RedisService> {
     queue: DispatchQueue<DispatchJob<M, R>>,
+    cleanup_queue: DispatchQueue<DispatchJob<M, R>>,
 }
 
 impl<M: Mysql, R: Redis> ResponsesDispatch<M, R> {
@@ -222,7 +231,15 @@ impl<M: Mysql, R: Redis> ResponsesDispatch<M, R> {
     }
 
     pub(crate) fn submit(&self, job: DispatchJob<M, R>) -> bool {
-        self.queue.submit(job)
+        let mut inner = &job;
+        while let DispatchJob::Pipeline(job, _) = inner {
+            inner = job;
+        }
+        if matches!(inner, DispatchJob::SubscriptionCleanup(_)) {
+            self.cleanup_queue.submit(job)
+        } else {
+            self.queue.submit(job)
+        }
     }
 }
 
@@ -233,6 +250,14 @@ where
 {
     ResponsesDispatch {
         queue: DispatchQueue::spawn(
+            executor_dispatch_http_client,
+            DispatchJob::context,
+            |http, job| Box::pin(run(http, job)),
+        ),
+        // Separate bounded supervisors keep cleanup's permit wait and FIFO
+        // backlog from blocking launches. Both retain the same task ownership,
+        // rejection logging and drain-on-shutdown behavior.
+        cleanup_queue: DispatchQueue::spawn(
             executor_dispatch_http_client,
             DispatchJob::context,
             |http, job| Box::pin(run(http, job)),
@@ -375,6 +400,7 @@ where
         DispatchJob::ChatShell(job) => {
             let _ = run_chat_shell(*job, accepted).await;
         }
+        DispatchJob::SubscriptionCleanup(job) => job.run().await,
         DispatchJob::Pipeline(..) => unreachable!("nested pipeline dispatch"),
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;

@@ -64,6 +64,7 @@ struct StopIntentChange {
     operation: StopIntentOperation,
     request_id: String,
     expected_request_id: Option<String>,
+    expected_version: Option<i64>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -78,6 +79,8 @@ enum StopIntentOperation {
 struct StopIntentState {
     request_id: String,
     pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_version: Option<i64>,
 }
 
 type StopIntentStates = BTreeMap<String, StopIntentState>;
@@ -88,11 +91,15 @@ impl StopIntentChange {
             && self.device_id.len() <= 255
             && valid_stop_request_id(&self.request_id)
             && match self.operation {
-                StopIntentOperation::Mark => self
-                    .expected_request_id
-                    .as_deref()
-                    .is_none_or(valid_stop_request_id),
-                StopIntentOperation::Clear => self.expected_request_id.is_none(),
+                StopIntentOperation::Mark => {
+                    self.expected_request_id
+                        .as_deref()
+                        .is_none_or(valid_stop_request_id)
+                        && self.expected_version.is_none_or(|version| version >= 0)
+                }
+                StopIntentOperation::Clear => {
+                    self.expected_request_id.is_none() && self.expected_version.is_none()
+                }
             }
     }
 }
@@ -198,7 +205,13 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
     let pending: Vec<_> = states
         .into_iter()
         .filter(|(_, state)| state.pending)
-        .map(|(device, state)| json!({"deviceId":device,"requestId":state.request_id}))
+        .map(|(device, state)| {
+            let mut intent = json!({"deviceId":device,"requestId":state.request_id});
+            if let Some(version) = state.expected_version {
+                intent["expectedVersion"] = json!(version);
+            }
+            intent
+        })
         .collect();
     if !pending.is_empty() {
         result["assistant"]["stopIntents"] = json!(pending);
@@ -451,7 +464,11 @@ fn apply_stop_intent(
         // The current request is idempotent even after it was cleared. Keep
         // its tombstone as the expected generation for a fresh stop request.
         (StopIntentOperation::Mark, Some(state)) if state.request_id == change.request_id => {
-            Ok(false)
+            if state.expected_version == change.expected_version {
+                Ok(false)
+            } else {
+                Err(())
+            }
         }
         (StopIntentOperation::Mark, current) => {
             if current.as_ref().map(|state| state.request_id.as_str())
@@ -459,14 +476,24 @@ fn apply_stop_intent(
             {
                 return Err(());
             }
-            if current.is_some_and(|state| state.pending) {
-                return Ok(false);
+            if let Some(state) = current.filter(|state| state.pending) {
+                // An explicit new confirmation can replace an unresolved generation
+                // only with a newer observed profile, never with an unknown or older one.
+                if change.expected_version.is_none()
+                    || state.expected_version == change.expected_version
+                {
+                    return Ok(false);
+                }
+                if state.expected_version > change.expected_version {
+                    return Err(());
+                }
             }
             states.insert(
                 device_id,
                 StopIntentState {
                     request_id: change.request_id,
                     pending: true,
+                    expected_version: change.expected_version,
                 },
             );
             Ok(true)
@@ -840,6 +867,7 @@ fn stop_change(
         operation,
         request_id: request_id.to_owned(),
         expected_request_id: expected_request_id.map(str::to_owned),
+        expected_version: None,
     }
 }
 
@@ -870,4 +898,65 @@ fn stop_intent_patch_has_distinct_validated_shape() {
     invalid.expected_request_id = None;
     invalid.request_id.clear();
     assert!(!invalid.valid());
+}
+
+#[test]
+fn stop_generation_preserves_confirmed_profile_version_until_replaced() {
+    let mut states = StopIntentStates::new();
+    let device = "device-2".to_owned();
+    let mark = |request, expected, version| StopIntentChange {
+        expected_version: version,
+        ..stop_change("device-2", StopIntentOperation::Mark, request, expected)
+    };
+    assert_eq!(
+        apply_stop_intent(&mut states, device.clone(), mark("offline", None, None)),
+        Ok(true)
+    );
+    assert_eq!(
+        apply_stop_intent(&mut states, device.clone(), mark("offline", None, Some(4))),
+        Err(())
+    );
+    assert_eq!(
+        apply_stop_intent(
+            &mut states,
+            device.clone(),
+            mark("confirmed", Some("offline"), Some(4))
+        ),
+        Ok(true)
+    );
+    assert_eq!(states[&device].expected_version, Some(4));
+    assert_eq!(
+        apply_stop_intent(
+            &mut states,
+            device.clone(),
+            mark("delayed", Some("offline"), Some(5))
+        ),
+        Err(())
+    );
+    assert_eq!(
+        apply_stop_intent(
+            &mut states,
+            device.clone(),
+            mark("older", Some("confirmed"), Some(3))
+        ),
+        Err(())
+    );
+    assert_eq!(
+        apply_stop_intent(
+            &mut states,
+            device.clone(),
+            mark("retry", Some("confirmed"), Some(5))
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        apply_stop_intent(
+            &mut states,
+            device.clone(),
+            stop_change("device-2", StopIntentOperation::Clear, "confirmed", None)
+        ),
+        Err(())
+    );
+    assert_eq!(states[&device].request_id, "retry");
+    assert_eq!(states[&device].expected_version, Some(5));
 }

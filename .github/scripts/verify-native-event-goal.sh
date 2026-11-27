@@ -6,14 +6,15 @@ stage="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/native-event-goal.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 
 # Reuse the managed binary downloader and its checked-in integrity lock.
-# Only its packaging dependency is needed; do not install the Wework workspace.
+# Only its packaging and download dependencies are needed; do not install the
+# Wework workspace.
 mkdir -p "$stage/wework/scripts/lib" "$stage/wework/third_party/codex" "$stage/LICENSES"
 cp "$repository/wework/scripts/prepare-codex-binary.mjs" "$stage/wework/scripts/"
 cp "$repository/wework/scripts/lib/process-lock.mjs" "$stage/wework/scripts/lib/"
 cp "$repository/wework/codex-binaries.lock.json" "$stage/wework/"
 cp "$repository/LICENSES/Apache-2.0.txt" "$stage/LICENSES/"
 cp "$repository/wework/third_party/codex/NOTICE" "$repository/wework/third_party/codex/RATATUI-LICENSE.txt" "$stage/wework/third_party/codex/"
-npm install --prefix "$stage/wework" --no-save --package-lock=false --ignore-scripts tar@7.5.20
+npm install --prefix "$stage/wework" --no-save --package-lock=false --ignore-scripts tar@7.5.20 undici@7.27.2
 WEGENT_CODEX_CACHE_DIR="$stage/cache" node "$stage/wework/scripts/prepare-codex-binary.mjs" --materialize
 native_goal_binary="$(node --input-type=module - "$stage/wework/resources/binaries/codex" <<'NODE'
 import { readdir, readFile } from 'node:fs/promises'

@@ -15,9 +15,12 @@ fn stand_in_owner(origin: &Value) -> Option<i64> {
 impl RuntimeWorkRpcHandler {
     pub(super) fn stand_in_binding(&self, payload: Value) -> Result<Value, AppIpcError> {
         let operation = payload["operation"].as_str().unwrap_or("get");
+        let instance_device = (std::env::var("WEWORK_DEVELOPMENT_ISOLATED").as_deref() == Ok("1"))
+            .then_some(self.device_id.as_str());
         LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(settings_error)?
             .stand_in_binding(
+                instance_device,
                 operation,
                 payload["version"].as_i64().unwrap_or(-1),
                 payload["target"].clone(),
@@ -73,8 +76,8 @@ impl RuntimeWorkRpcHandler {
         let (operation, expected_version) = match requested_operation {
             // A separate operation makes older Executors reject a conditional
             // stop rather than ignore its version and stop a newer instance.
-            "stopIfVersion" => (
-                "stop",
+            "stopIfVersion" | "startIfVersion" => (
+                if requested_operation == "stopIfVersion" { "stop" } else { "start" },
                 Some(
                     payload["expectedVersion"]
                         .as_i64()
@@ -82,7 +85,7 @@ impl RuntimeWorkRpcHandler {
                         .ok_or_else(|| {
                             AppIpcError::new(
                                 "bad_request",
-                                "expectedVersion must be a nonnegative integer for stopIfVersion",
+                                "expectedVersion must be a nonnegative integer for a conditional lifecycle operation",
                             )
                         })?,
                 ),
@@ -276,12 +279,16 @@ mod tests {
             ..Default::default()
         });
         let plain = ExecutionRequest::default();
-        assert!(handler
-            .validate_stand_in_lifecycle(&plain, "worker")
-            .is_err());
-        assert!(handler
-            .validate_stand_in_lifecycle(&plain, "ordinary")
-            .is_ok());
+        assert!(
+            handler
+                .validate_stand_in_lifecycle(&plain, "worker")
+                .is_err()
+        );
+        assert!(
+            handler
+                .validate_stand_in_lifecycle(&plain, "ordinary")
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -330,12 +337,14 @@ mod tests {
             .unwrap();
         acknowledgement.await.unwrap();
         assert!(!handler.is_busy_local_task("worker"));
-        assert!(handler
-            .turn_scheduler
-            .lock()
-            .unwrap()
-            .queued_turns
-            .is_empty());
+        assert!(
+            handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .queued_turns
+                .is_empty()
+        );
         assert!(
             super::super::turns::read_runtime_turn_queue(&handler.turn_queue_path)
                 .unwrap()
@@ -360,11 +369,13 @@ mod tests {
         forged.as_object_mut().unwrap().remove("lifecycle");
         forged["primary"]["enabled"] = json!(true);
         assert!(store.save_personal_stand_in(7, "mac", forged).is_err());
-        assert!(handler
-            .personal_stand_in_lifecycle(json!({"userId":7,"operation":"start"}))
-            .await
-            .unwrap()["lifecycle"]
-            .is_null());
+        assert!(
+            handler
+                .personal_stand_in_lifecycle(json!({"userId":7,"operation":"start"}))
+                .await
+                .unwrap()["lifecycle"]
+                .is_null()
+        );
     }
 
     #[tokio::test]
@@ -379,8 +390,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stopped["lifecycle"]["status"], "stopped");
+        assert_eq!(
+            handler.personal_stand_in_lifecycle(json!({"userId":7,"operation":"startIfVersion","expectedVersion":initial["version"]}))
+                .await.unwrap_err().code,
+            "version_conflict"
+        );
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), stopped);
         let restarted = handler
-            .personal_stand_in_lifecycle(json!({"userId":7,"operation":"start"}))
+            .personal_stand_in_lifecycle(json!({"userId":7,"operation":"startIfVersion","expectedVersion":stopped["version"]}))
             .await
             .unwrap();
         assert!(restarted["lifecycle"].is_null());
@@ -396,6 +413,7 @@ mod tests {
             json!({"userId":7,"operation":"stopIfVersion"}),
             json!({"userId":7,"operation":"stopIfVersion","expectedVersion":-1}),
             json!({"userId":7,"operation":"stopIfVersion","expectedVersion":"1"}),
+            json!({"userId":7,"operation":"startIfVersion"}),
             json!({"userId":7,"operation":"stop","expectedVersion":0}),
             json!({"userId":7,"operation":"start","expectedVersion":0}),
         ] {
@@ -436,9 +454,11 @@ mod tests {
         let settings = store.personal_stand_in(7, "mac").unwrap();
         assert_eq!(settings["lifecycle"]["status"], "stopping");
         assert_eq!(settings["lifecycle"]["tasks"], json!(["worker"]));
-        assert!(store
-            .transition_personal_stand_in(7, "mac", "start")
-            .is_err());
+        assert!(
+            store
+                .transition_personal_stand_in(7, "mac", "start")
+                .is_err()
+        );
         stopped.send(()).unwrap();
         let result = handler
             .personal_stand_in_lifecycle_with_timeout(payload, Duration::from_millis(20))

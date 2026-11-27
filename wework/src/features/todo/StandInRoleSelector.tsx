@@ -2,7 +2,7 @@ import { roleSelectsProject, standInRoleName, type StandInRole } from '@/api/per
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInIcon, type CollaborationProject } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { ArrowLeft, Check, Plus, UserRound } from 'lucide-react'
+import { ArrowLeft, Check, Inbox, Plus, UserRound } from 'lucide-react'
 import type { ComponentProps } from 'react'
 
 export function StandInNavigationButton({
@@ -16,6 +16,27 @@ export function StandInNavigationButton({
       className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:min-h-8 ${selected ? 'bg-text-primary font-medium text-background' : 'text-text-secondary hover:bg-muted'}`}
       {...props}
     />
+  )
+}
+
+export function StandInMessageCenterButton({
+  selected,
+  onOpen,
+}: {
+  selected: boolean
+  onOpen(): void
+}) {
+  const { t } = useTranslation('standInMessageCenter')
+  return (
+    <StandInNavigationButton
+      selected={selected}
+      data-testid="stand-in-message-center-open"
+      aria-current={selected ? 'page' : undefined}
+      onClick={onOpen}
+    >
+      <Inbox aria-hidden="true" className="size-4" />
+      {t('center')}
+    </StandInNavigationButton>
   )
 }
 
@@ -40,10 +61,14 @@ function StandInConversationHeading({ name, onBack }: { name: string; onBack(): 
 
 export function StandInNavigation({
   conversationName,
+  messageCenter,
   ...roles
-}: ComponentProps<typeof StandInRoleSelector> & { conversationName?: string }) {
+}: ComponentProps<typeof StandInRoleSelector> & {
+  conversationName?: string
+  messageCenter?: { selected: boolean; onOpen(): void }
+}) {
   return conversationName === undefined ? (
-    <StandInRoleSelector {...roles} />
+    <StandInRoleSelector {...roles} messageCenter={messageCenter} />
   ) : (
     <StandInConversationHeading name={conversationName} onBack={() => roles.chooseRole()} />
   )
@@ -58,6 +83,7 @@ function StandInRoleSelector({
   matchDevice,
   chooseRole,
   onCreate,
+  messageCenter,
 }: {
   roles: StandInRole[]
   projects: CollaborationProject[]
@@ -67,6 +93,7 @@ function StandInRoleSelector({
   matchDevice: boolean
   chooseRole(id?: string, device?: string): void
   onCreate(trigger: HTMLElement): void
+  messageCenter?: { selected: boolean; onOpen(): void }
 }) {
   const { t } = useTranslation('common')
   return (
@@ -76,15 +103,18 @@ function StandInRoleSelector({
       data-testid="stand-in-role-selector"
     >
       <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
+        {messageCenter && <StandInMessageCenterButton {...messageCenter} />}
         <StandInNavigationButton
-          selected={!roleId}
+          selected={!roleId && !messageCenter?.selected}
           data-testid="stand-in-primary-open"
-          aria-current={!roleId ? 'page' : undefined}
+          aria-current={!roleId && !messageCenter?.selected ? 'page' : undefined}
           onClick={() => chooseRole()}
         >
           <UserRound aria-hidden="true" className="h-4 w-4" />
           {t('standIn.personal.default_role')}
-          {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+          {!roleId && !messageCenter?.selected && (
+            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+          )}
         </StandInNavigationButton>
         {roles.map((value, index) => {
           const selectedProjects = projects.filter(project =>

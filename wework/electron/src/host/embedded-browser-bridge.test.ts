@@ -652,6 +652,9 @@ describe('EmbeddedBrowserBridge', () => {
       const browser = fakeBrowser()
       browser.has.mockReturnValue(true)
       browser.evaluate.mockRejectedValue(new Error('Read-only evaluation rejected'))
+      if (action === 'waitFor') {
+        browser.evaluate.mockResolvedValueOnce({ documentId: 'fixture', initial: {}, startedAt: 0 })
+      }
       const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
       bridges.push(bridge)
       try {
@@ -669,11 +672,18 @@ describe('EmbeddedBrowserBridge', () => {
           ok: true,
           data: { ok: false, error: { code: 'read_only_expression_rejected' } },
         })
-        expect(browser.evaluate).toHaveBeenCalledExactlyOnceWith(
-          'workspace-browser',
-          '(fixtureExpression)',
-          { readOnly: true }
-        )
+        if (action === 'evaluate') {
+          expect(browser.evaluate).toHaveBeenCalledExactlyOnceWith(
+            'workspace-browser',
+            '(fixtureExpression)',
+            { readOnly: true }
+          )
+        } else {
+          expect(browser.evaluate.mock.calls[0]?.[1]).not.toContain('fixtureExpression')
+          expect(browser.evaluate.mock.calls[1]?.[1]).toContain('fixtureExpression')
+          expect(browser.evaluate.mock.calls[1]?.[2]).toEqual({ readOnly: true })
+          expect(browser.evaluate).toHaveBeenCalledTimes(2)
+        }
       } finally {
         await bridge.stop()
         await rm(executorHome, { recursive: true, force: true })
@@ -681,12 +691,12 @@ describe('EmbeddedBrowserBridge', () => {
     }
   )
 
-  test('passes only the read-only expression result to the structured wait', async () => {
+  test('evaluates the expression and the structured wait together under the read-only guard', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-readonly-wait-'))
     const browser = fakeBrowser()
     browser.has.mockReturnValue(true)
     browser.evaluate
-      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({ documentId: 'fixture', initial: {}, startedAt: 0 })
       .mockResolvedValueOnce({ ok: true, kind: 'browser.wait' })
     const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
     bridges.push(bridge)
@@ -708,19 +718,66 @@ describe('EmbeddedBrowserBridge', () => {
         ok: true,
         data: { ok: true, kind: 'browser.wait' },
       })
-      expect(browser.evaluate.mock.calls[0]).toEqual([
-        'workspace-browser',
-        '(fixtureExpression)',
-        { readOnly: true },
-      ])
-      expect(browser.evaluate.mock.calls[1]?.[1]).toContain('"expressionMatched":true')
-      expect(browser.evaluate.mock.calls[1]?.[1]).not.toContain('fixtureExpression')
+      expect(browser.evaluate.mock.calls[0]?.[1]).toContain('"probeMode":"prepare"')
+      expect(browser.evaluate.mock.calls[0]?.[1]).not.toContain('fixtureExpression')
+      expect(browser.evaluate.mock.calls[0]?.[2]).toBeUndefined()
+      expect(browser.evaluate.mock.calls[1]?.[1]).toContain('"probeMode":"guarded"')
+      expect(browser.evaluate.mock.calls[1]?.[1]).toContain(
+        '"expressionMatched":Boolean((fixtureExpression))'
+      )
+      expect(browser.evaluate.mock.calls[1]?.[1]).toContain('"textVisible":"fixture"')
+      expect(browser.evaluate.mock.calls[1]?.[2]).toEqual({ readOnly: true })
       expect(browser.evaluate).toHaveBeenCalledTimes(2)
     } finally {
       await bridge.stop()
       await rm(executorHome, { recursive: true, force: true })
     }
   })
+
+  test.each(['prepare', 'guarded'] as const)(
+    'enforces one wait deadline even during %s evaluation',
+    async phase => {
+      const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-wait-deadline-'))
+      const browser = fakeBrowser()
+      browser.has.mockReturnValue(true)
+      let release!: () => void
+      const delayed = new Promise(resolve => {
+        release = () => resolve({ ok: true, documentId: 'fixture', initial: {}, startedAt: 0 })
+      })
+      if (phase === 'guarded') {
+        browser.evaluate.mockResolvedValueOnce({ documentId: 'fixture', initial: {}, startedAt: 0 })
+      }
+      browser.evaluate.mockReturnValueOnce(delayed)
+      const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+      bridges.push(bridge)
+      try {
+        await bridge.start()
+        const env = bridge.environment()
+        const response = await fetch(`${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL}/browser`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'waitFor',
+            expression: 'fixtureExpression',
+            timeoutMs: 500,
+          }),
+        })
+        await expect(response.json()).resolves.toMatchObject({
+          ok: true,
+          data: { ok: false, error: { code: 'wait_timeout' } },
+        })
+        release()
+        expect(browser.evaluate).toHaveBeenCalledTimes(phase === 'prepare' ? 1 : 2)
+      } finally {
+        release()
+        await bridge.stop()
+        await rm(executorHome, { recursive: true, force: true })
+      }
+    }
+  )
 
   test('routes native clicks through Electron input events', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
@@ -758,7 +815,13 @@ describe('EmbeddedBrowserBridge', () => {
         synthetic: false,
       },
     })
-    expect(browser.clickAt).toHaveBeenCalledWith('workspace-browser', 120.4, 48.6)
+    expect(browser.clickAt).toHaveBeenCalledWith(
+      'workspace-browser',
+      120.4,
+      48.6,
+      undefined,
+      expect.any(Function)
+    )
   })
 
   test('uploads a local file through the CDP file-input bridge', async () => {
@@ -1011,9 +1074,11 @@ describe('EmbeddedBrowserBridge', () => {
       url: currentUrl,
       selector: selector?.trim() || 'input[type="file"]',
       backendNodeId: currentBackendNodeId,
+      contentsId: 1,
+      navigationRevision: 0,
     }))
     browser.uploadFiles.mockImplementation(
-      async (_label, _selector, files, expectedTarget, beforeCommit) => {
+      async (_label, _selector, files, expectedTarget, beforeCommit, beforeDispatch) => {
         if (
           expectedTarget &&
           (expectedTarget.url !== currentUrl ||
@@ -1023,6 +1088,7 @@ describe('EmbeddedBrowserBridge', () => {
         }
         if (changeBeforeCommit) await writeFile(files[0]!, 'updated before upload')
         await beforeCommit?.()
+        beforeDispatch?.()
         completedUploads += 1
         return { selector: expectedTarget?.selector ?? 'input[type="file"]' }
       }
@@ -1160,11 +1226,34 @@ function fakeBrowser() {
   const navigate = vi.fn(async () => undefined)
   const waitForNavigation = vi.fn(async () => undefined)
   const evaluate = vi.fn()
-  const clickAt = vi.fn()
-  const inspectUploadTarget = vi.fn<EmbeddedBrowserManager['inspectUploadTarget']>()
+  const clickAt = vi.fn<EmbeddedBrowserManager['clickAt']>(
+    async (_label, _x, _y, _expected, beforeDispatch) => {
+      beforeDispatch?.()
+    }
+  )
+  const inspectNativeClickTarget = vi.fn<EmbeddedBrowserManager['inspectNativeClickTarget']>(
+    async () => ({
+      contentsId: 1,
+      url: 'https://example.test/',
+      frameId: 'fixture-frame',
+      backendNodeId: 42,
+      navigationRevision: 0,
+      scale: 1,
+    })
+  )
+  const inspectUploadTarget = vi.fn<EmbeddedBrowserManager['inspectUploadTarget']>(
+    async (_label, selector) => ({
+      url: 'https://example.test/',
+      selector: selector ?? 'input[type="file"]',
+      backendNodeId: 43,
+      contentsId: 1,
+      navigationRevision: 0,
+    })
+  )
   const uploadFiles = vi.fn<EmbeddedBrowserManager['uploadFiles']>(
-    async (_label, _selector, _files, _expectedTarget, beforeCommit) => {
+    async (_label, _selector, _files, _expectedTarget, beforeCommit, beforeDispatch) => {
       await beforeCommit?.()
+      beforeDispatch?.()
       return { selector: 'input[type="file"]' }
     }
   )
@@ -1185,6 +1274,7 @@ function fakeBrowser() {
     goForward: vi.fn(),
     evaluate,
     clickAt,
+    inspectNativeClickTarget,
     isAgentControlPaused: vi.fn(() => false),
     registerAgentApproval: vi.fn(() => null),
     waitForAgentApproval: vi.fn(),
@@ -1200,6 +1290,7 @@ function fakeBrowser() {
     activeLabel,
     clearData,
     clickAt,
+    inspectNativeClickTarget,
     evaluate,
     has,
     hideAgentCursor,

@@ -30,6 +30,7 @@ export function assignmentHistoryLabels(
     actions: {
       assign: t("todo.assignment_action_assign", "指派"),
       reassign: t("todo.assignment_action_reassign", "转派"),
+      redeliver: t("todo.assignment_action_redeliver", "重新投递"),
       unassign: t("todo.assignment_action_unassign", "取消指派"),
     },
   };
@@ -78,7 +79,7 @@ export function IssueAssignmentHistoryList({
     group: string;
     system?: string;
     unassigned: string;
-    actions: Record<IssueAssignmentHistoryEntry["action"], string>;
+    actions: Record<IssueAssignmentHistoryEntry["action"] | "redeliver", string>;
   };
 }) {
   return entries.map((entry, index) => {
@@ -112,7 +113,8 @@ export function IssueAssignmentHistoryList({
           <span className="truncate">{toName ?? labels.unassigned}</span>
         </div>
         <p className="mt-0.5 text-xs text-text-secondary">
-          {labels.actions[entry.action]} · {formatIssueTimestamp(entry.at)}
+          {labels.actions[entry.redeliver ? "redeliver" : entry.action]} ·{" "}
+          {formatIssueTimestamp(entry.at)}
         </p>
       </div>
     );

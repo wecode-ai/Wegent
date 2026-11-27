@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createModelResponseGates } from './model-response-gates.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import {
@@ -23,23 +24,11 @@ const PROCESS = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]
 const GATE = 'positioned-commentary-tail'
 
 export function createStreamingCompletionChecks({ resultDir, uiTimeoutMs }) {
-  let releaseTail
-  let releaseProcess
-  let releaseFinal
-  const tail = new Promise(resolve => {
-    releaseTail = resolve
-  })
-  const process = new Promise(resolve => {
-    releaseProcess = resolve
-  })
-  const final = new Promise(resolve => {
-    releaseFinal = resolve
-  })
-  const cleanup = () => {
-    releaseTail()
-    releaseProcess()
-    releaseFinal()
-  }
+  const modelGates = createModelResponseGates()
+  const tail = modelGates.pause()
+  const commentary = modelGates.pause()
+  const final = modelGates.pause()
+  const cleanup = modelGates.cleanup
   return {
     cleanup,
     async handleModelRequest(body, response, id) {
@@ -49,9 +38,9 @@ export function createStreamingCompletionChecks({ resultDir, uiTimeoutMs }) {
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.flushHeaders()
       response.write(sse([...progress.start, ...textDeltaEvents(progress.itemId, PREFIX)]))
-      await tail
+      await tail.promise
       response.write(sse(textDeltaEvents(progress.itemId, SUFFIX, Array.from(PREFIX).length)))
-      await process
+      await commentary.promise
       response.write(
         sse([
           ...progress.finish.filter(event => event.type !== 'response.completed'),
@@ -59,7 +48,7 @@ export function createStreamingCompletionChecks({ resultDir, uiTimeoutMs }) {
           ...textDeltaEvents(answer.itemId, FINAL, 0, 1),
         ])
       )
-      await final
+      await final.promise
       response.end(
         sse([
           ...answer.finish.filter(event => event.type !== 'response.completed'),
@@ -91,7 +80,7 @@ export function createStreamingCompletionChecks({ resultDir, uiTimeoutMs }) {
             { path: 'payload.data.updates.content_delta', equals: SUFFIX },
           ],
         })
-        releaseTail()
+        tail.resolve()
         await gates.wait(GATE)
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', COMPOSER_SELECTOR)
@@ -120,7 +109,7 @@ export function createStreamingCompletionChecks({ resultDir, uiTimeoutMs }) {
           text: COMPLETE,
           value: 'completion-paragraph',
         })
-        releaseProcess()
+        commentary.resolve()
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: FINAL })
         assert.equal(
           Number(
@@ -132,7 +121,7 @@ export function createStreamingCompletionChecks({ resultDir, uiTimeoutMs }) {
           1,
           'Completing unchanged commentary replaced its existing Markdown tree'
         )
-        releaseFinal()
+        final.resolve()
         await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       } finally {
         await gates.save(resultDir, 'streaming-completion-transport.json', [GATE])

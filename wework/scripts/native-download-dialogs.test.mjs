@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { afterEach, expect, test, vi } from 'vitest'
-import { listVisibleDialogsForPid } from '../e2e/desktop/modules/native-download-dialogs.mjs'
+import {
+  clickLinuxPointer,
+  listVisibleDialogsForPid,
+} from '../e2e/desktop/modules/native-download-dialogs.mjs'
 
 const native = vi.hoisted(() => ({ execute: vi.fn() }))
 vi.mock('node:child_process', () => ({
@@ -16,6 +19,21 @@ const geometryError =
 afterEach(() => {
   vi.useRealTimers()
   native.execute.mockReset()
+})
+
+test('releases the native button even when press observation fails', async () => {
+  native.execute.mockResolvedValue({ stdout: '' })
+  const error = new Error('The renderer did not observe the press')
+  const observePress = async () => {
+    expect(native.execute.mock.calls.map(([, args]) => args)).toEqual([['mousedown', '1']])
+    throw error
+  }
+
+  await expect(clickLinuxPointer(1, observePress)).rejects.toBe(error)
+  expect(native.execute.mock.calls.map(([, args]) => args)).toEqual([
+    ['mousedown', '1'],
+    ['mouseup', '1'],
+  ])
 })
 
 test.each([geometryError, 'X Error of failed request:  BadWindow (invalid Window parameter)'])(

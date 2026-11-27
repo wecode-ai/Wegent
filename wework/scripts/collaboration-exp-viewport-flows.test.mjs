@@ -3,7 +3,7 @@ import test from 'node:test'
 import { assertDesktopPanes } from '../e2e/desktop/modules/collaboration-exp-pane-verification.mjs'
 import {
   assertMobileAssistantPriority,
-  assertMobileNavigation,
+  assertMobileCollaborationControls,
   assertReducedPlanMotion,
 } from '../e2e/desktop/modules/collaboration-exp-state-motion.mjs'
 import {
@@ -144,7 +144,7 @@ test('mobile assistant priority still rejects a clipped first decision or an exp
     )
 })
 
-function mobileNavigationControl(change = {}) {
+function mobileCollaborationControl(change = {}) {
   return {
     async command(action, selector) {
       if (action === 'waitFor') return ''
@@ -154,7 +154,7 @@ function mobileNavigationControl(change = {}) {
         label
           ? {
               ...box,
-              text: 'Account',
+              text: 'Tasks',
               height: 16,
               clientHeight: change.labelClientHeight ?? 16,
               scrollHeight: 16,
@@ -163,6 +163,7 @@ function mobileNavigationControl(change = {}) {
           : {
               ...box,
               height: change.buttonHeight ?? 52,
+              attributes: { 'aria-label': change.noAccessibleName ? '' : 'Navigation control' },
               visibleIntersection: { height: change.buttonIntersection ?? 52 },
             },
       ])
@@ -170,16 +171,17 @@ function mobileNavigationControl(change = {}) {
   }
 }
 
-test('mobile navigation keeps controls and their full text visible', async () => {
-  await assertMobileNavigation(mobileNavigationControl(), testId)
+test('mobile collaboration controls keep their name, size and visible task label', async () => {
+  await assertMobileCollaborationControls(mobileCollaborationControl(), testId)
   for (const [change, message] of [
     [{ labelClientHeight: 8 }, /labels must not clip vertically/],
     [{ labelIntersection: 8 }, /labels must fit in the viewport/],
+    [{ noAccessibleName: true }, /controls need an accessible name/],
     [{ buttonHeight: 40 }, /navigation must remain usable/],
     [{ buttonIntersection: 40 }, /controls must fit in the viewport/],
   ])
     await assert.rejects(
-      () => assertMobileNavigation(mobileNavigationControl(change), testId),
+      () => assertMobileCollaborationControls(mobileCollaborationControl(change), testId),
       message
     )
 })

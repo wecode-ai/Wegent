@@ -376,6 +376,10 @@ fn foreign_devices_and_forged_personal_contexts_are_rejected() {
             assert_eq!(handler.control_target(&json!({"conversation_id":workbench_control::conversation_id("other-device","caller")})).unwrap_err().code,"wrong_device");
             for metadata in [
                 json!({"origin":{"dispatchRole":"executor"}}),
+                json!({"origin":{"type":"issue_dispatch","dispatchRole":"executor",
+                    "cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human","dispatchId":"dispatch"}}),
+                json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in",
+                    "cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human","dispatchId":"dispatch"}}),
                 json!({"origin":{"type":"stand_in_coordinator"}}),
                 json!({"origin":{"type":"stand_in_task"}}),
                 json!({"origin":{"type":"project_coordinator"}}),

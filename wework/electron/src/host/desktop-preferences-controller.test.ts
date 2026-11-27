@@ -1,4 +1,8 @@
 import { describe, expect, test, vi } from 'vitest'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PreferencesStore } from './preferences-store.js'
 import {
   DesktopPreferencesController,
   resolveAppshotsShortcut,
@@ -205,19 +209,26 @@ describe('DesktopPreferencesController', () => {
   })
 
   test('a failed attempt to enable browser full control leaves the saved policy unchanged', async () => {
-    const { controller, store, effects } = fixture({ browserFullControl: false })
-    const persisting = deferred<Record<string, unknown>>()
-    store.update.mockReturnValueOnce(persisting.promise)
-    const saving = controller.update({ browserFullControl: true })
-    const rejected = expect(saving).rejects.toThrow('disk full')
-    await vi.waitFor(() => expect(store.update).toHaveBeenCalledOnce())
-    await expect(store.read()).resolves.toEqual({ browserFullControl: false })
-    persisting.reject(new Error('disk full'))
-    await rejected
-    await expect(store.read()).resolves.toEqual({ browserFullControl: false })
-    expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
-    expect(effects.configurePopoutShortcut).not.toHaveBeenCalled()
-    expect(effects.configureAppshotsShortcut).not.toHaveBeenCalled()
+    const directory = await mkdtemp(join(tmpdir(), 'wework-desktop-preferences-'))
+    const store = new PreferencesStore(directory)
+    const { effects } = fixture()
+    const controller = new DesktopPreferencesController(store, effects)
+    try {
+      await controller.update({ browserFullControl: false })
+      // Occupy the temporary write destination to force a real persistence error.
+      await mkdir(join(directory, `app-preferences.json.${process.pid}.tmp`))
+      await expect(controller.update({ browserFullControl: true })).rejects.toThrow()
+      await expect(store.read()).resolves.toEqual({ browserFullControl: false })
+      await expect(new PreferencesStore(directory).read()).resolves.toEqual({
+        browserFullControl: false,
+      })
+      expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
+      expect(effects.configurePopoutShortcut).not.toHaveBeenCalled()
+      expect(effects.configureAppshotsShortcut).not.toHaveBeenCalled()
+    } finally {
+      await store.close()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test('preserves native shortcut defaults and disabled values', () => {

@@ -73,16 +73,34 @@ impl LocalTaskStore {
 
     pub fn stand_in_binding(
         &self,
+        instance_device: Option<&str>,
         operation: &str,
         expected_version: i64,
         target: Value,
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut binding = get_item_from(&transaction, BINDING_KEY, "stand_in_binding")?
+        let key = instance_device.map(|device| format!("{BINDING_KEY}:{device}"));
+        let key = key.as_deref().unwrap_or(BINDING_KEY);
+        let mut saved = get_item_from(&transaction, key, "stand_in_binding")?;
+        if let (None, Some(device)) = (&saved, instance_device) {
+            // Development worktrees share this database but have separate desktop IDs.
+            // A legacy local binding can only belong to the device it was bound to.
+            if let Some(legacy) = get_item_from(&transaction, BINDING_KEY, "stand_in_binding")?
+                .filter(|item| item.metadata["target"]["deviceId"].as_str() == Some(device))
+            {
+                transaction.execute(
+                    "UPDATE loop_items SET id=?1 WHERE id=?2 AND resource_type='stand_in_binding'",
+                    params![key, BINDING_KEY],
+                )?;
+                saved = Some(legacy);
+            }
+        }
+        let mut binding = saved
             .map(|item| item.metadata)
             .unwrap_or_else(|| json!({"version":0,"status":"unbound","target":null}));
         if operation == "get" {
+            transaction.commit()?;
             return Ok(binding);
         }
         if matches!(operation, "markStopping" | "clearStopping") {
@@ -122,7 +140,7 @@ impl LocalTaskStore {
             }
             transaction.execute(
                 "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_binding',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",
-                params![BINDING_KEY, binding.to_string(), now()],
+                params![key, binding.to_string(), now()],
             )?;
             transaction.commit()?;
             return Ok(binding);
@@ -131,8 +149,18 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::VersionConflict);
         }
         match operation {
-            "bind" => {
-                if !matches!(binding["status"].as_str(), Some("unbound" | "stopped")) {
+            "bind" | "prepareBind" | "prepareReplacement" => {
+                let status = binding["status"].as_str();
+                let allowed = match operation {
+                    "prepareReplacement" => {
+                        matches!(status, Some("active" | "stopping"))
+                            && target["deviceId"] != binding["target"]["deviceId"]
+                            && (binding["target"]["userId"] == 0
+                                || target["userId"] == binding["target"]["userId"])
+                    }
+                    _ => matches!(status, Some("unbound" | "stopped")),
+                };
+                if !allowed {
                     return Err(TaskRuntimeError::Invalid(
                         "Stop the current stand-in before changing its binding".into(),
                     ));
@@ -143,6 +171,13 @@ impl LocalTaskStore {
                     return Err(TaskRuntimeError::Invalid("Invalid stand-in binding".into()));
                 }
                 binding["target"] = target;
+                binding["status"] = if operation == "bind" {
+                    json!("active")
+                } else {
+                    json!("activating")
+                };
+            }
+            "completeActivation" if binding["status"] == "activating" => {
                 binding["status"] = json!("active");
             }
             "beginStop" if matches!(binding["status"].as_str(), Some("active" | "stopping")) => {
@@ -160,7 +195,7 @@ impl LocalTaskStore {
         binding["version"] = json!(expected_version + 1);
         transaction.execute(
             "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_binding',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",
-            params![BINDING_KEY, binding.to_string(), now()],
+            params![key, binding.to_string(), now()],
         )?;
         transaction.commit()?;
         Ok(binding)
@@ -283,22 +318,71 @@ mod tests {
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let first = json!({"userId":7,"deviceId":"mac"});
         let second = json!({"userId":7,"deviceId":"cloud"});
-        store.stand_in_binding("bind", 0, first.clone()).unwrap();
-        assert!(store.stand_in_binding("bind", 1, second.clone()).is_err());
-        store.stand_in_binding("beginStop", 1, Value::Null).unwrap();
-        assert!(store.stand_in_binding("bind", 2, second.clone()).is_err());
+        store
+            .stand_in_binding(None, "bind", 0, first.clone())
+            .unwrap();
         assert!(store
-            .stand_in_binding("completeStop", 1, Value::Null)
+            .stand_in_binding(None, "bind", 1, second.clone())
             .is_err());
         store
-            .stand_in_binding("completeStop", 2, Value::Null)
+            .stand_in_binding(None, "beginStop", 1, Value::Null)
+            .unwrap();
+        assert!(store
+            .stand_in_binding(None, "bind", 2, second.clone())
+            .is_err());
+        assert!(store
+            .stand_in_binding(None, "completeStop", 1, Value::Null)
+            .is_err());
+        store
+            .stand_in_binding(None, "completeStop", 2, Value::Null)
             .unwrap();
         let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         let binding = reopened
-            .stand_in_binding("bind", 3, second.clone())
+            .stand_in_binding(None, "bind", 3, second.clone())
             .unwrap();
         assert_eq!(binding["target"], second);
         assert_eq!(binding["status"], "active");
+    }
+
+    #[test]
+    fn explicit_unavailable_replacement_is_limited_to_the_same_account_and_another_device() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let old = json!({"userId":7,"deviceId":"offline"});
+        let new = json!({"userId":7,"deviceId":"online"});
+        store
+            .stand_in_binding(None, "bind", 0, old.clone())
+            .unwrap();
+        assert!(store
+            .stand_in_binding(None, "prepareReplacement", 1, old)
+            .is_err());
+        assert!(store
+            .stand_in_binding(None, "prepareReplacement", 0, new.clone())
+            .is_err());
+        assert!(store
+            .stand_in_binding(
+                None,
+                "prepareReplacement",
+                1,
+                json!({"userId":8,"deviceId":"online"})
+            )
+            .is_err());
+        let binding = store
+            .stand_in_binding(None, "prepareReplacement", 1, new.clone())
+            .unwrap();
+        assert_eq!(binding["target"], new);
+        assert_eq!(binding["status"], "activating");
+        let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        assert_eq!(
+            reopened
+                .stand_in_binding(None, "get", 0, Value::Null)
+                .unwrap()["status"],
+            "activating"
+        );
+        let ready = reopened
+            .stand_in_binding(None, "completeActivation", 2, Value::Null)
+            .unwrap();
+        assert_eq!(ready["status"], "active");
     }
 
     #[test]
@@ -309,17 +393,19 @@ mod tests {
             "userId":7,"deviceId":"mac",
             "backendUrl":"https://original.example/api","username":"previous-name"
         });
-        let binding = store.stand_in_binding("bind", 0, target).unwrap();
+        let binding = store.stand_in_binding(None, "bind", 0, target).unwrap();
         assert_eq!(
-            store.stand_in_binding("get", 0, Value::Null).unwrap(),
+            store.stand_in_binding(None, "get", 0, Value::Null).unwrap(),
             binding
         );
         assert!(store
-            .stand_in_binding("unsupported", 1, Value::Null)
+            .stand_in_binding(None, "unsupported", 1, Value::Null)
             .is_err());
         let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         assert_eq!(
-            reopened.stand_in_binding("get", 0, Value::Null).unwrap(),
+            reopened
+                .stand_in_binding(None, "get", 0, Value::Null)
+                .unwrap(),
             binding
         );
     }
@@ -331,24 +417,26 @@ mod tests {
         let cloud = json!({"userId":7,"deviceId":"cloud-1"});
         let other = json!({"userId":8,"deviceId":"cloud-2"});
         let marked = store
-            .stand_in_binding("markStopping", -1, cloud.clone())
+            .stand_in_binding(None, "markStopping", -1, cloud.clone())
             .unwrap();
         assert_eq!(marked["version"], 0);
         assert_eq!(marked["stoppingTargets"], json!(["7:cloud-1"]));
         store
-            .stand_in_binding("markStopping", -1, other.clone())
+            .stand_in_binding(None, "markStopping", -1, other.clone())
             .unwrap();
         let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         assert_eq!(
-            reopened.stand_in_binding("get", 0, Value::Null).unwrap()["stoppingTargets"],
+            reopened
+                .stand_in_binding(None, "get", 0, Value::Null)
+                .unwrap()["stoppingTargets"],
             json!(["7:cloud-1", "8:cloud-2"])
         );
         let cleared = reopened
-            .stand_in_binding("clearStopping", -1, cloud)
+            .stand_in_binding(None, "clearStopping", -1, cloud)
             .unwrap();
         assert_eq!(cleared["stoppingTargets"], json!(["8:cloud-2"]));
         let all_cleared = reopened
-            .stand_in_binding("clearStopping", -1, other)
+            .stand_in_binding(None, "clearStopping", -1, other)
             .unwrap();
         assert!(all_cleared.get("stoppingTargets").is_none());
     }
@@ -360,24 +448,92 @@ mod tests {
         let cloud = json!({"userId":7,"deviceId":"cloud-1"});
         let other = json!({"userId":7,"deviceId":"cloud-2"});
         let store = LocalTaskStore::open(&path).unwrap();
-        store.stand_in_binding("bind", 0, cloud.clone()).unwrap();
-        store.stand_in_binding("beginStop", 1, Value::Null).unwrap();
-        let unrelated = store.stand_in_binding("clearStopping", -1, other).unwrap();
+        store
+            .stand_in_binding(None, "bind", 0, cloud.clone())
+            .unwrap();
+        store
+            .stand_in_binding(None, "beginStop", 1, Value::Null)
+            .unwrap();
+        let unrelated = store
+            .stand_in_binding(None, "clearStopping", -1, other)
+            .unwrap();
         assert_eq!(unrelated["status"], "stopping");
         assert_eq!(unrelated["version"], 2);
         store
-            .stand_in_binding("clearStopping", -1, cloud.clone())
+            .stand_in_binding(None, "clearStopping", -1, cloud.clone())
             .unwrap();
         let reopened = LocalTaskStore::open(&path).unwrap();
-        let binding = reopened.stand_in_binding("get", 0, Value::Null).unwrap();
+        let binding = reopened
+            .stand_in_binding(None, "get", 0, Value::Null)
+            .unwrap();
         assert_eq!(binding["status"], "stopped");
         assert_eq!(binding["target"], cloud);
         assert_eq!(binding["version"], 3);
         assert_eq!(
             reopened
-                .stand_in_binding("clearStopping", -1, cloud)
+                .stand_in_binding(None, "clearStopping", -1, cloud)
                 .unwrap(),
             binding
+        );
+    }
+
+    #[test]
+    fn development_bindings_are_device_scoped_in_the_shared_store() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let old_target = json!({"userId":7,"deviceId":"old-dev"});
+        let new_target = json!({"userId":7,"deviceId":"cloud"});
+        store.stand_in_binding(None, "bind", 0, old_target).unwrap();
+        let legacy = store
+            .stand_in_binding(None, "beginStop", 1, Value::Null)
+            .unwrap();
+
+        let new = store
+            .stand_in_binding(Some("new-dev"), "get", 0, Value::Null)
+            .unwrap();
+        assert_eq!(new["status"], "unbound");
+        let new = store
+            .stand_in_binding(Some("new-dev"), "bind", 0, new_target.clone())
+            .unwrap();
+        assert_eq!(new["target"]["deviceId"], "cloud");
+
+        assert_eq!(
+            store
+                .stand_in_binding(Some("old-dev"), "get", 0, Value::Null)
+                .unwrap(),
+            legacy
+        );
+        let marked = store
+            .stand_in_binding(Some("new-dev"), "markStopping", -1, new_target.clone())
+            .unwrap();
+        assert_eq!(marked["stoppingTargets"], json!(["7:cloud"]));
+        let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        assert_eq!(
+            reopened
+                .stand_in_binding(Some("new-dev"), "get", 0, Value::Null)
+                .unwrap(),
+            marked
+        );
+        assert_eq!(
+            reopened
+                .stand_in_binding(Some("old-dev"), "get", 0, Value::Null)
+                .unwrap(),
+            legacy
+        );
+        assert_eq!(
+            reopened
+                .stand_in_binding(Some("new-dev"), "clearStopping", -1, new_target)
+                .unwrap(),
+            new
+        );
+        store
+            .stand_in_binding(Some("old-dev"), "completeStop", 2, Value::Null)
+            .unwrap();
+        assert_eq!(
+            store
+                .stand_in_binding(Some("new-dev"), "get", 0, Value::Null)
+                .unwrap(),
+            new
         );
     }
 

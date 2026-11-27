@@ -66,6 +66,7 @@ interface BrowserEntry {
   navigationError: BrowserPageState['navigationError']
   historyVisit: { id: string | null } | null
   historyGeneration: number
+  navigationRevision: number
   initialNavigation: boolean
   navigationCompletion: Promise<void>
   pendingLocalNavigation?: symbol
@@ -477,6 +478,7 @@ export class EmbeddedBrowserManager {
       navigationError: null,
       historyVisit: null,
       historyGeneration: this.historyGeneration,
+      navigationRevision: 0,
       initialNavigation: true,
       navigationCompletion: Promise.resolve(),
       scripts: new BrowserScriptEvaluator(contents),
@@ -578,6 +580,7 @@ export class EmbeddedBrowserManager {
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
       if (isMainFrame) {
+        entry.navigationRevision += 1
         this.agentApprovals.cancelLabel(entry.label)
         entry.navigationError = null
         entry.historyVisit = null
@@ -689,13 +692,25 @@ export class EmbeddedBrowserManager {
     label: string,
     selector: string | null
   ): Promise<BrowserUploadTargetSnapshot> {
-    const contents = this.required(label).contents
+    const entry = this.required(label)
+    const { contents } = entry
+    const url = contents.getURL()
+    const navigationRevision = entry.navigationRevision
     return withDebuggerSession(contents, async target => {
       const resolved = await resolveFileInputTarget(target, selector)
+      if (
+        this.required(label) !== entry ||
+        contents.getURL() !== url ||
+        entry.navigationRevision !== navigationRevision
+      ) {
+        throw approvalTargetChanged('The file input page changed during inspection.')
+      }
       return {
-        url: contents.getURL(),
+        url,
         selector: resolved.selector,
         backendNodeId: resolved.backendNodeId,
+        contentsId: contents.id,
+        navigationRevision,
       }
     })
   }
@@ -705,53 +720,145 @@ export class EmbeddedBrowserManager {
     selector: string | null,
     files: string[],
     expectedTarget?: BrowserUploadTargetSnapshot,
-    beforeCommit?: () => Promise<void>
+    beforeCommit?: () => Promise<void>,
+    beforeDispatch?: () => void
   ): Promise<{ selector: string }> {
-    const contents = this.required(label).contents
+    const entry = this.required(label)
+    const { contents } = entry
     return withDebuggerSession(contents, async target => {
-      const resolved = await resolveFileInputTarget(target, selector)
-      if (
-        expectedTarget &&
-        (contents.getURL() !== expectedTarget.url ||
-          resolved.selector !== expectedTarget.selector ||
-          resolved.backendNodeId !== expectedTarget.backendNodeId)
-      ) {
-        throw Object.assign(
-          new Error('The upload page or file input changed before approval completed.'),
-          { code: 'approval_target_changed' }
-        )
+      const resolve = async () => {
+        try {
+          const resolved = await resolveFileInputTarget(target, selector)
+          if (
+            expectedTarget &&
+            (this.required(label) !== entry ||
+              contents.id !== expectedTarget.contentsId ||
+              entry.navigationRevision !== expectedTarget.navigationRevision ||
+              contents.getURL() !== expectedTarget.url ||
+              resolved.selector !== expectedTarget.selector ||
+              resolved.backendNodeId !== expectedTarget.backendNodeId)
+          ) {
+            throw approvalTargetChanged('The approved file input or page changed.')
+          }
+          return resolved
+        } catch (error) {
+          if (!expectedTarget) throw error
+          throw approvalTargetChanged(
+            'The approved file input is no longer available or has changed.'
+          )
+        }
       }
+      let resolved = await resolve()
       await beforeCommit?.()
-      if (expectedTarget && contents.getURL() !== expectedTarget.url) {
-        throw Object.assign(new Error('The approved upload page changed.'), {
-          code: 'approval_target_changed',
-        })
-      }
+      if (expectedTarget) resolved = await resolve()
+      beforeDispatch?.()
       await target.sendCommand('DOM.setFileInputFiles', { files, nodeId: resolved.nodeId })
       return { selector: resolved.selector }
     })
   }
 
-  clickAt(label: string, x: number, y: number): void {
-    const contents = this.required(label).contents
-    const point = {
-      x: Math.max(0, Math.round(x)),
-      y: Math.max(0, Math.round(y)),
+  async inspectNativeClickTarget(
+    label: string,
+    x: number,
+    y: number
+  ): Promise<BrowserNativeClickTargetSnapshot> {
+    const entry = this.required(label)
+    return withDebuggerSession(entry.contents, target =>
+      this.nativeClickTarget(entry, target, nativeClickPoint(x, y))
+    )
+  }
+
+  async clickAt(
+    label: string,
+    x: number,
+    y: number,
+    expectedTarget?: BrowserNativeClickTargetSnapshot,
+    beforeDispatch?: () => void
+  ): Promise<void> {
+    const entry = this.required(label)
+    const { contents } = entry
+    const point = nativeClickPoint(x, y)
+    const move = () => {
+      contents.focus()
+      contents.sendInputEvent({ type: 'mouseMove', ...point })
     }
-    contents.focus()
-    contents.sendInputEvent({ type: 'mouseMove', ...point })
-    contents.sendInputEvent({
-      type: 'mouseDown',
-      ...point,
-      button: 'left',
-      clickCount: 1,
-    })
-    contents.sendInputEvent({
-      type: 'mouseUp',
-      ...point,
-      button: 'left',
-      clickCount: 1,
-    })
+    if (expectedTarget) {
+      await withDebuggerSession(contents, async target => {
+        const verify = async () => {
+          try {
+            const actual = await this.nativeClickTarget(entry, target, point)
+            if (this.required(label) !== entry || !sameNativeClickTarget(actual, expectedTarget)) {
+              throw approvalTargetChanged('The approved click target changed.')
+            }
+          } catch {
+            throw approvalTargetChanged(
+              'The approved click target is no longer available or has changed.'
+            )
+          }
+        }
+        await verify()
+        beforeDispatch?.()
+        move()
+        // Hover or focus can change the hit target before the button events.
+        await verify()
+        beforeDispatch?.()
+        sendNativeClick(contents, point)
+      })
+      return
+    }
+    beforeDispatch?.()
+    move()
+    sendNativeClick(contents, point)
+  }
+
+  private async nativeClickTarget(
+    entry: BrowserEntry,
+    target: { sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown> },
+    point: { x: number; y: number }
+  ): Promise<BrowserNativeClickTargetSnapshot> {
+    const { contents } = entry
+    const scale = contents.getZoomFactor() * entry.deviceMetrics.inputScale()
+    const revision = entry.navigationRevision
+    const url = contents.getURL()
+    if (!Number.isFinite(scale) || scale <= 0)
+      throw approvalTargetChanged('The click coordinates could not be verified.')
+    const cssX = point.x / scale
+    const cssY = point.y / scale
+    const { backendNodeId, frameId } = (await target.sendCommand('DOM.getNodeForLocation', {
+      x: Math.floor(cssX),
+      y: Math.floor(cssY),
+    })) as { backendNodeId?: number; frameId?: string }
+    // CDP accepts integer CSS coordinates, but native events can map to
+    // fractional pixels under zoom or device emulation. Require an unambiguous hit.
+    for (const x of new Set([Math.floor(cssX), Math.ceil(cssX)])) {
+      for (const y of new Set([Math.floor(cssY), Math.ceil(cssY)])) {
+        if (x === Math.floor(cssX) && y === Math.floor(cssY)) continue
+        const adjacent = (await target.sendCommand('DOM.getNodeForLocation', { x, y })) as {
+          backendNodeId?: number
+          frameId?: string
+        }
+        if (adjacent.backendNodeId !== backendNodeId || adjacent.frameId !== frameId) {
+          throw approvalTargetChanged('The click coordinates do not identify one target.')
+        }
+      }
+    }
+    if (
+      typeof backendNodeId !== 'number' ||
+      !frameId ||
+      entry.navigationRevision !== revision ||
+      contents.getURL() !== url ||
+      contents.getZoomFactor() * entry.deviceMetrics.inputScale() !== scale
+    ) {
+      throw approvalTargetChanged('The click target could not be verified.')
+    }
+    return {
+      contentsId: contents.id,
+      url,
+      frameId,
+      backendNodeId,
+      navigationRevision: revision,
+      scale,
+    }
   }
 
   state(label: string): BrowserPageState {
@@ -1567,6 +1674,44 @@ export interface BrowserUploadTargetSnapshot {
   url: string
   selector: string
   backendNodeId: number
+  contentsId: number
+  navigationRevision: number
+}
+
+export interface BrowserNativeClickTargetSnapshot {
+  contentsId: number
+  url: string
+  frameId: string
+  backendNodeId: number
+  navigationRevision: number
+  scale: number
+}
+
+function nativeClickPoint(x: number, y: number) {
+  return { x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) }
+}
+
+function sameNativeClickTarget(
+  left: BrowserNativeClickTargetSnapshot,
+  right: BrowserNativeClickTargetSnapshot
+) {
+  return (
+    left.contentsId === right.contentsId &&
+    left.url === right.url &&
+    left.frameId === right.frameId &&
+    left.backendNodeId === right.backendNodeId &&
+    left.navigationRevision === right.navigationRevision &&
+    left.scale === right.scale
+  )
+}
+
+function sendNativeClick(contents: WebContents, point: { x: number; y: number }) {
+  contents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
+  contents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
+}
+
+function approvalTargetChanged(message: string): Error {
+  return Object.assign(new Error(message), { code: 'approval_target_changed' })
 }
 
 async function resolveFileInputTarget(

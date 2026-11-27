@@ -4,25 +4,42 @@ import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { Button } from '@/components/ui/button'
+import { invalidatesExperienceRead } from '@/features/collaboration-exp/data/useExperienceSourceReads'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import type { DeviceInfo } from '@/types/api'
+import {
+  getStandInErrorMessage,
+  isStandInDeviceUnreachable,
+  reportStandInError,
+} from '@/lib/stand-in-error-message'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { hasSavedStandIn, normalizeStandInBindingTarget } from './standInInstanceSource'
+import {
+  hasSavedStandIn,
+  initializeStandInTarget,
+  normalizeStandInBindingTarget,
+} from './standInInstanceSource'
+import { initializePersonalAssistantOnDevice } from './personalAssistantDeviceSettings'
+import { resolveStandInEntry, type StandInEntry } from './standInEntry'
+import { availableStandInDevices } from './standInDevices'
 
 async function loadSetup(
   services: WorkbenchServices,
   userId: number,
   name: string,
   signal: AbortSignal,
-  preferredDevice?: string
+  preferredDevice?: string,
+  initialEntry?: StandInEntry,
+  devices: DeviceInfo[] = []
 ) {
+  if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
+    performance.mark('wework:assistant-account-load')
   const cloud = services.personalAssistantAccountApi!
   const account = await cloud.get(signal).catch((cause: unknown) => {
     signal.throwIfAborted()
@@ -31,17 +48,17 @@ async function loadSetup(
       throw new Error('cloud_assistant_api_unavailable', { cause })
     throw new Error(getStandInErrorMessage(cause, 'load_cloud_assistant_failed'), { cause })
   })
-  if (account) return { account, local: undefined }
+  if (account) return { account, local: undefined, newAccount: false }
   signal.throwIfAborted()
   const api = services.standInApi
   if (!services.getLocalRuntimeSidebarIdentity || !api) {
-    return { account: await cloud.initialize(name), local: undefined }
+    return { account: await cloud.initialize(name), local: undefined, newAccount: true }
   }
   const device = await services.getLocalRuntimeSidebarIdentity()
   if (!device) throw new Error('Executor identity is unavailable')
-  const rawBinding = await api.binding(device.deviceId)
-  const target = rawBinding.target
-    ? normalizeStandInBindingTarget(rawBinding.target, device.deviceId)
+  const binding = await api.binding(device.deviceId)
+  const target = binding.target
+    ? normalizeStandInBindingTarget(binding.target, device.deviceId, devices)
     : null
   signal.throwIfAborted()
   if (
@@ -49,10 +66,33 @@ async function loadSetup(
     (target.userId === userId ||
       (target.userId === LOCAL_USER.id && target.deviceId === device.deviceId))
   ) {
-    const profile = await api.personalGet(target.userId, target.deviceId)
+    let profile
+    try {
+      profile = await api.personalGet(target.userId, target.deviceId)
+    } catch (cause) {
+      signal.throwIfAborted()
+      if (!isStandInDeviceUnreachable(cause) || target.deviceId === device.deviceId) throw cause
+      const targetDevice =
+        preferredDevice && preferredDevice !== target.deviceId ? preferredDevice : device.deviceId
+      const account = await initializeStandInTarget(
+        api,
+        device.deviceId,
+        binding,
+        { userId, deviceId: targetDevice, backendUrl: target.backendUrl },
+        async () => {
+          signal.throwIfAborted()
+          return initializePersonalAssistantOnDevice(cloud, name, targetDevice)
+        }
+      )
+      return { account, local: undefined, newAccount: false }
+    }
     signal.throwIfAborted()
-    if (hasSavedStandIn(profile)) return { account: null, local: profile }
-    return { account: await cloud.initialize(name, undefined, target.deviceId), local: undefined }
+    if (hasSavedStandIn(profile)) return { account: null, local: profile, newAccount: false }
+    return {
+      account: await cloud.initialize(name, undefined, target.deviceId),
+      local: undefined,
+      newAccount: false,
+    }
   }
   const [owned, local] = await Promise.all([
     api.personalGet(userId, device.deviceId),
@@ -60,12 +100,39 @@ async function loadSetup(
   ])
   signal.throwIfAborted()
   const legacy = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
-  return legacy
-    ? { account: null, local: legacy }
-    : {
-        account: await cloud.initialize(name, undefined, preferredDevice ?? device.deviceId),
-        local: undefined,
-      }
+  if (legacy) return { account: null, local: legacy, newAccount: false }
+
+  let initialDevice = preferredDevice ?? device.deviceId
+  if (
+    initialEntry?.kind === 'identity' &&
+    initialEntry.profileId === '@primary' &&
+    initialEntry.deviceId &&
+    (!initialEntry.userId || initialEntry.userId === String(userId))
+  ) {
+    const requested = initialEntry.deviceId
+    if (
+      requested === device.deviceId &&
+      owned.userId === userId &&
+      owned.executionDeviceId === requested
+    ) {
+      initialDevice = requested
+    } else if (availableStandInDevices(devices).some(device => device.device_id === requested)) {
+      const result = await resolveStandInEntry(
+        api,
+        initialEntry,
+        { userId, deviceId: requested },
+        new Set([requested]),
+        { unbound: true }
+      )
+      signal.throwIfAborted()
+      if (result.kind === 'ready') initialDevice = result.deviceId
+    }
+  }
+  return {
+    account: await cloud.initialize(name, undefined, initialDevice),
+    local: undefined,
+    newAccount: true,
+  }
 }
 
 export function PersonalAssistantAccountSetup({
@@ -73,23 +140,28 @@ export function PersonalAssistantAccountSetup({
   userId,
   active,
   preferredDevice,
+  initialEntry,
+  devices,
   children,
 }: {
   services: WorkbenchServices
   userId: number
   active: boolean
   preferredDevice?: string
+  initialEntry?: StandInEntry
+  devices?: DeviceInfo[]
   children(
     account: PersonalAssistantAccount | undefined,
     publish: (account: PersonalAssistantAccount) => void,
     readAccount: () => PersonalAssistantAccount | undefined,
-    reloadAccount?: () => void
+    reloadAccount?: () => void,
+    newAccount?: boolean
   ): ReactNode
 }) {
   const { t } = useTranslation('common')
   const name = t('standIn.personal.default_role')
   const load = useStableEvent((signal: AbortSignal) =>
-    loadSetup(services, userId, name, signal, preferredDevice)
+    loadSetup(services, userId, name, signal, preferredDevice, initialEntry, devices)
   )
   const resource = useMemo(
     () =>
@@ -110,21 +182,51 @@ export function PersonalAssistantAccountSetup({
   const [error, setError] = useState<unknown>()
   const inFlight = useRef(false)
   const publish = useCallback(
-    (account: PersonalAssistantAccount) => resource.update(() => ({ account, local: undefined })),
+    (account: PersonalAssistantAccount) => {
+      if (!invalidatesExperienceRead(resource.getSnapshot().error))
+        resource.update(() => ({ account, local: undefined, newAccount: false }))
+    },
     [resource]
   )
-  const readAccount = useCallback(
-    () => resource.getSnapshot().data?.account ?? undefined,
-    [resource]
-  )
+  const readAccount = useCallback(() => {
+    const current = resource.getSnapshot()
+    return invalidatesExperienceRead(current.error)
+      ? undefined
+      : (current.data?.account ?? undefined)
+  }, [resource])
   const reloadAccount = useCallback(() => {
     void resource.reload()
   }, [resource])
   const data = snapshot.data
-  if (data?.account && !snapshot.error) {
+  const failure = snapshot.error ?? error
+  const retry = failure ? (
+    <>
+      <p role="alert" className="text-sm text-error">
+        {getStandInErrorMessage(failure, 'load_settings_failed')}
+      </p>
+      <Button
+        data-testid="personal-assistant-account-retry"
+        onClick={() => {
+          setError(undefined)
+          reloadAccount()
+        }}
+      >
+        {t('standIn.reload')}
+      </Button>
+    </>
+  ) : null
+  if (data?.account && !invalidatesExperienceRead(snapshot.error)) {
     return (
       <>
-        {children(data.account, publish, readAccount, reloadAccount)}
+        {retry && (
+          <section
+            className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2"
+            data-testid="personal-assistant-account-refresh-error"
+          >
+            {retry}
+          </section>
+        )}
+        {children(data.account, publish, readAccount, reloadAccount, data.newAccount)}
         <TransientNotice
           message={migrationNotice ? t('standIn.account.migration_complete') : null}
           onClear={clearMigrationNotice}
@@ -156,7 +258,6 @@ export function PersonalAssistantAccountSetup({
     }
   }
 
-  const failure = snapshot.error ?? error
   return (
     <>
       <section
@@ -168,20 +269,7 @@ export function PersonalAssistantAccountSetup({
         data-testid="personal-assistant-account-setup"
       >
         {failure ? (
-          <>
-            <p role="alert" className="text-sm text-error">
-              {getStandInErrorMessage(failure, 'load_settings_failed')}
-            </p>
-            <Button
-              data-testid="personal-assistant-account-retry"
-              onClick={() => {
-                setError(undefined)
-                void resource.reload()
-              }}
-            >
-              {t('standIn.reload')}
-            </Button>
-          </>
+          retry
         ) : data ? (
           <>
             <span className="text-sm text-text-secondary">

@@ -1,7 +1,17 @@
 import { LOCAL_USER } from '@/api/local/localSession'
+import { ApiError } from '@/api/http'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
-import { resolvePrimaryStandInDevice } from '@/features/todo/standInInstanceSource'
+import {
+  isStandInBindingOwner,
+  type StandInBindingTarget,
+  type StandInExecutorApi,
+  type StandInProposal,
+} from '@/api/standIn'
+import {
+  getStandInAccountStopIntent,
+  resolvePrimaryStandInDevice,
+} from '@/features/todo/standInInstanceSource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
@@ -16,6 +26,7 @@ export interface AssistantSourceData {
   proposals: StandInProposal[]
   proposalsReady: boolean
 }
+const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
 interface SourceSnapshot {
   source?: AssistantSourceData
   failure?: { cause: unknown }
@@ -24,20 +35,28 @@ interface SourceSnapshot {
 const locationsKey = (source: AssistantSourceData) =>
   JSON.stringify(source.settings.roles.map(role => [role.id, role.executionDeviceId]))
 
+function accountReadUnavailable(cause: unknown): boolean {
+  if (invalidatesExperienceRead(cause)) return false
+  return cause instanceof ApiError
+    ? cause.status === 408 || cause.status === 429 || cause.status >= 500
+    : cause instanceof TypeError || (cause instanceof DOMException && cause.name === 'TimeoutError')
+}
+
 /** Account-bound settings and proposals share identity validation, but independent failures. */
 export function createAssistantSourcesModel(
   services: WorkbenchServices,
   api: StandInExecutorApi | undefined,
   userId: number,
   scope: string,
-  devices: DeviceInfo[] = [],
-  connected = false
+  expectedBinding?: Pick<StandInBindingTarget, 'userId' | 'deviceId'>
 ) {
   let snapshot: SourceSnapshot = {}
   const listeners = new Set<() => void>()
   let sourceRevision = 0
   let proposalRevision = 0
   let includeProposals = false
+  let devices: DeviceInfo[] = []
+  let connected = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let unsubscribe: (() => void) | undefined
   const publish = (next: SourceSnapshot) => {
@@ -101,24 +120,71 @@ export function createAssistantSourcesModel(
         throw Object.assign(new Error(), { code: 'executor_unavailable' })
       }
       if (snapshot.source && snapshot.source.localDeviceId !== identity.deviceId) clearSource()
-      const account =
-        services.personalAssistantAccountApi && userId !== LOCAL_USER.id
-          ? ((await services.personalAssistantAccountApi.get()) ?? undefined)
-          : undefined
+      let account: PersonalAssistantAccount | undefined
+      let accountFailure: SourceSnapshot['failure']
+      if (services.personalAssistantAccountApi && userId !== LOCAL_USER.id) {
+        try {
+          account = (await services.personalAssistantAccountApi.get()) ?? undefined
+        } catch (cause) {
+          if (!accountReadUnavailable(cause)) throw cause
+          accountFailure = { cause }
+        }
+      }
       if (!current()) return
-      const ownerId = userId
-      const deviceId =
-        services.personalAssistantAccountApi && userId !== LOCAL_USER.id
-          ? await resolvePrimaryStandInDevice({
-              api,
-              account,
-              userId,
-              localDeviceId: identity.deviceId,
-              devices,
-              connected,
-            })
-          : identity.deviceId
+      let ownerId = userId
+      let deviceId: string
+      if (account) {
+        deviceId = await resolvePrimaryStandInDevice({
+          api,
+          account,
+          userId,
+          localDeviceId: identity.deviceId,
+          devices,
+          connected,
+        })
+        if (expectedBinding && getStandInAccountStopIntent(account, deviceId, devices)) {
+          throw Object.assign(new Error(), { code: 'permission_denied' })
+        }
+      } else {
+        const previous = snapshot.source
+        const confirmedTarget =
+          expectedBinding ?? (previous && { userId: previous.ownerId, deviceId: previous.deviceId })
+        if (accountFailure && confirmedTarget && confirmedTarget.deviceId !== identity.deviceId)
+          throw accountFailure.cause
+        const binding = await api.binding(identity.deviceId)
+        if (!current()) return
+        let target = binding.target
+        if (target && !isStandInBindingOwner(target.userId, userId)) {
+          throw Object.assign(new Error(), { code: 'permission_denied' })
+        }
+        if (accountFailure) {
+          // Only a verified local source may continue independently of the cloud account.
+          // A remembered remote target must not silently turn into a local one.
+          const localTarget = confirmedTarget ?? (binding.status === 'active' ? target : undefined)
+          if (!localTarget || localTarget.deviceId !== identity.deviceId) throw accountFailure.cause
+          if (
+            !isStandInBindingOwner(localTarget.userId, userId) ||
+            (target?.userId === localTarget.userId &&
+              target.deviceId === localTarget.deviceId &&
+              binding.status !== 'active') ||
+            binding.stoppingTargets?.includes(`${localTarget.userId}:${localTarget.deviceId}`)
+          ) {
+            throw Object.assign(new Error(), { code: 'permission_denied' })
+          }
+          target = localTarget
+        } else if (expectedBinding && (binding.status !== 'active' || !target)) {
+          throw Object.assign(new Error(), { code: 'permission_denied' })
+        }
+        ownerId = target?.userId ?? userId
+        deviceId = target?.deviceId ?? identity.deviceId
+      }
       if (!current()) return
+      if (
+        expectedBinding &&
+        (ownerId !== expectedBinding.userId || deviceId !== expectedBinding.deviceId)
+      ) {
+        throw Object.assign(new Error(), { code: 'permission_denied' })
+      }
       if (
         snapshot.source &&
         (snapshot.source.ownerId !== ownerId || snapshot.source.deviceId !== deviceId)
@@ -128,6 +194,9 @@ export function createAssistantSourcesModel(
       if (!current()) return
       if (settings.userId !== ownerId || settings.executionDeviceId !== deviceId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
+      if ((expectedBinding || accountFailure) && settings.lifecycle?.status) {
+        throw Object.assign(new Error(), { code: 'permission_denied' })
+      }
       const previous = snapshot.source
       const next: AssistantSourceData = {
         api,
@@ -144,7 +213,7 @@ export function createAssistantSourcesModel(
         next.proposals = previous.proposals
         next.proposalsReady = previous.proposalsReady
       }
-      publish({ ...snapshot, source: next, failure: undefined })
+      publish({ ...snapshot, source: next, failure: accountFailure })
       if (!sameLocations) await poll()
     } catch (cause) {
       if (!current()) return
@@ -160,10 +229,20 @@ export function createAssistantSourcesModel(
     refresh() {
       void refresh()
     },
-    subscribe(listener: () => void, proposals: boolean) {
+    subscribe(
+      listener: () => void,
+      proposals: boolean,
+      nextDevices: DeviceInfo[],
+      nextConnected: boolean
+    ) {
+      const inputsChanged =
+        devices !== nextDevices || connected !== nextConnected || includeProposals !== proposals
+      devices = nextDevices
+      connected = nextConnected
       listeners.add(listener)
       includeProposals = proposals
       if (listeners.size === 1) {
+        if (e2e) performance.mark('wework:assistant-source-subscribe')
         unsubscribe = subscribePersonalStandIn(settings => {
           const source = snapshot.source
           if (
@@ -174,10 +253,13 @@ export function createAssistantSourcesModel(
             void refresh()
         })
         void refresh()
+      } else if (inputsChanged) {
+        void refresh()
       }
       return () => {
         listeners.delete(listener)
         if (!listeners.size) {
+          if (e2e) performance.mark('wework:assistant-source-unsubscribe')
           sourceRevision++
           proposalRevision++
           clearTimeout(timer)

@@ -69,6 +69,7 @@ test('collaboration experiment acceptance uses the existing core runner and owns
   )
   assert.ok(catalog.ci.core_shards.some(shard => shard.split(',').includes('collaboration-exp')))
   for (const helper of [
+    'collaboration-exp-assistant-entry',
     'collaboration-exp-rhythm',
     'collaboration-exp-state-motion',
     'collaboration-exp-pane-verification',
@@ -82,6 +83,7 @@ test('collaboration experiment acceptance uses the existing core runner and owns
   assert.deepEqual(COLLABORATION_EXP_USER_STORIES, [
     'default-off-preserves-baseline-and-makes-no-targeted-business-requests',
     'deliberate-beta-toggle-and-fixed-tab-survive-reload',
+    'assistant-waits-for-preferences-and-keeps-one-instance-across-retry-reload-and-navigation',
     'local-and-cloud-issues-keep-their-canonical-source',
     'project-notifications-and-deep-links-reuse-one-experiment-tab',
     'assistant-tasks-project-timeline-private-discussion-work-in-three-viewports',

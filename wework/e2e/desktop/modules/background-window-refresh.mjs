@@ -13,6 +13,7 @@ import {
 } from './streaming-text-fixture.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { withTimeout } from './shared.mjs'
+import { createModelResponseGates } from './model-response-gates.mjs'
 
 const PROMPT = 'WEWORK_BACKGROUND_WINDOW_REFRESH'
 const PREFIX = 'Visible stream prefix.'
@@ -21,19 +22,16 @@ const benchmarkCpu = process.env.WEWORK_E2E_SAMPLE_BACKGROUND_CPU === '1'
 const execFileAsync = promisify(execFile)
 
 export function createBackgroundWindowRefreshChecks({ uiTimeoutMs }) {
-  const progress = Promise.withResolvers()
-  const completion = Promise.withResolvers()
+  const gates = createModelResponseGates()
   const samples = Array.from({ length: 3 }, () => ({
-    start: Promise.withResolvers(),
+    start: gates.pause(),
     done: Promise.withResolvers(),
   }))
+  const progress = gates.pause()
+  const completion = gates.pause()
 
   return {
-    cleanup() {
-      samples.forEach(sample => sample.start.resolve())
-      progress.resolve()
-      completion.resolve()
-    },
+    cleanup: gates.cleanup,
     async handleModelRequest(body, response, responseId) {
       if (!latestModelInputText(body).includes(PROMPT)) return false
       let text = PREFIX

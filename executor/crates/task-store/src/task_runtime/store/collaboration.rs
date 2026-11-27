@@ -113,6 +113,21 @@ pub(super) fn record_assignment_change(
     to_id: Option<&str>,
     to_name: Option<&str>,
 ) {
+    push_assignment_history(metadata, by_user_id, to_type, to_id, to_name, false);
+}
+
+pub(super) fn record_assignment_redelivery(metadata: &mut Value, by_user_id: i64, to_id: &str) {
+    push_assignment_history(metadata, by_user_id, Some("user"), Some(to_id), None, true);
+}
+
+fn push_assignment_history(
+    metadata: &mut Value,
+    by_user_id: i64,
+    to_type: Option<&str>,
+    to_id: Option<&str>,
+    to_name: Option<&str>,
+    redeliver: bool,
+) {
     let history = metadata
         .as_object_mut()
         .expect("task metadata must be an object")
@@ -124,7 +139,7 @@ pub(super) fn record_assignment_change(
     let entries = history
         .as_array_mut()
         .expect("assignment history must be an array");
-    entries.push(json!({
+    let mut entry = json!({
         "by_user_id": by_user_id,
         "receipt_tracking": true,
         "to_type": to_type,
@@ -132,13 +147,17 @@ pub(super) fn record_assignment_change(
         "to_name": to_name,
         "action": if to_id.is_none() {
             "unassign"
-        } else if entries.is_empty() {
+        } else if entries.is_empty() && !redeliver {
             "assign"
         } else {
             "reassign"
         },
         "at": now(),
-    }));
+    });
+    if redeliver {
+        entry["redeliver"] = json!(true);
+    }
+    entries.push(entry);
 }
 
 pub(super) fn collaboration_agent(

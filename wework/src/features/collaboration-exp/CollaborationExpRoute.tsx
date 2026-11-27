@@ -13,7 +13,7 @@ type CollaborationExpLoader = () => Promise<CollaborationExpModule>
 
 const loadCollaborationExpApp: CollaborationExpLoader = () => import('./CollaborationExpApp')
 
-class CollaborationExpErrorBoundary extends Component<
+export class CollaborationExpErrorBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
   { failed: boolean }
 > {

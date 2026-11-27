@@ -29,11 +29,13 @@ export function issueMentionCandidates({
   agents,
   membersLabel,
   agentsLabel,
+  externalAgentsLabel = agentsLabel,
 }: {
   members: { user_id: number; user_name: string }[];
-  agents: { id: string; name: string }[];
+  agents: { id: string; name: string; runtime?: string }[];
   membersLabel: string;
   agentsLabel: string;
+  externalAgentsLabel?: string;
 }): ComposerExternalMentionCandidate[] {
   return [
     ...members.map((member) => ({
@@ -52,7 +54,7 @@ export function issueMentionCandidates({
       id: String(agent.id),
       type: "agent" as const,
       title: agent.name,
-      metaLabel: agentsLabel,
+      metaLabel: agent.runtime === "external" ? externalAgentsLabel : agentsLabel,
       reference: issueMentionReference("agent", agent.name, agent.id),
       testId: `collaboration-issue-mention-agent-${agent.id}`,
     })),

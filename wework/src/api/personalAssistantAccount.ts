@@ -27,6 +27,7 @@ export interface PersonalAssistantAccount {
 export interface PersonalAssistantStopIntent {
   deviceId: string
   requestId: string
+  expectedVersion?: number
 }
 
 interface AccountResponse {
@@ -84,14 +85,17 @@ export function createPersonalAssistantAccountApi(client: HttpClient) {
       deviceId: string,
       operation: 'mark' | 'clear',
       requestId: string,
-      expectedRequestId?: string | null
+      expectedRequestId?: string | null,
+      expectedVersion?: number
     ) {
       const { assistant } = await client.patch<AccountResponse>('/v1/personal-assistant', {
         stopIntent: {
           deviceId,
           operation,
           requestId,
-          ...(operation === 'mark' ? { expectedRequestId: expectedRequestId ?? null } : {}),
+          ...(operation === 'mark'
+            ? { expectedRequestId: expectedRequestId ?? null, expectedVersion }
+            : {}),
         },
       })
       if (!assistant) throw new Error('Personal assistant stop state was not returned')

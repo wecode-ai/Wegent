@@ -326,20 +326,29 @@ export function createDingTalkReplyStory(options) {
           'The model must receive the persisted proposal before reviewing its grant'
         )
         assert.equal(model.proposalSubmitted, true)
+        const beforeGrant = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
         assert.equal(
-          (await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })).roles.find(
-            item => item.id === ROLE
-          ).connections[0].policy.askBeforeAct,
+          beforeGrant.roles.find(item => item.id === ROLE).connections[0].policy.askBeforeAct,
           true
         )
         await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-open"]')
         await options.captureScreenshot(control, 'source-story-dingtalk-continuous-proposal.png')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-proposal-accept"]')
-        const granted = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
-        assert.equal(
-          granted.roles.find(item => item.id === ROLE).connections[0].policy.askBeforeAct,
-          false
+        const granted = await storyUntil(
+          async () => {
+            const settings = await rpc('runtime.stand_in.personal.get', { userId: STORY_USER })
+            const source = settings.roles
+              .find(item => item.id === ROLE)
+              ?.connections.find(
+                item => item.providerId === PROVIDER && item.id === page.items[0].id
+              )
+            return { version: settings.version, askBeforeAct: source?.policy.askBeforeAct }
+          },
+          value => value.version > beforeGrant.version && value.askBeforeAct === false,
+          options.modelResponseTimeoutMs,
+          'The accepted continuing grant must persist on the same source before the next mention'
         )
+        assert.equal(granted.askBeforeAct, false)
         model.continuous = true
         model.phase = 3
         await publish(3)

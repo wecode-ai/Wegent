@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
+  beginBrowserApproval,
   readEditorFixtureState,
   verifyBrowserFullControl,
 } from '../modules/browser-full-control.mjs'
@@ -391,25 +392,15 @@ async function verifyWaitTimeoutWithoutApproval(bridgeCall, control, timeoutMs) 
 }
 
 async function beginEditorApproval(invoke, control, text, timeoutMs, previousId = '') {
-  let completed = false
-  const pending = invoke({ action: 'fill', selector: '#script-editor', text }).then(
-    result => {
-      completed = true
-      return result
-    },
-    error => {
-      completed = true
-      return { transportError: String(error) }
-    }
-  )
   const selector = previousId
     ? BROWSER_AGENT_APPROVE_SELECTOR + ':not([data-approval-id="' + previousId + '"])'
     : BROWSER_AGENT_APPROVE_SELECTOR
-  await control.command('waitFor', selector, { timeoutMs })
-  const approvalId = await control.command('getAttribute', selector, { value: 'data-approval-id' })
-  assert.ok(approvalId, 'The visible approval must identify its original operation')
-  assert.equal(completed, false, 'The original tool call must await the user decision')
-  return { pending, approvalId, completed: () => completed }
+  return beginBrowserApproval(
+    control,
+    () => invoke({ action: 'fill', selector: '#script-editor', text }),
+    selector,
+    timeoutMs
+  )
 }
 
 async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs, mcpFill) {
@@ -428,7 +419,7 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
   await verifyPendingApprovalWaitTimeout(bridgeCall, control, timeoutMs)
   await verifyPendingApprovalTakeover(bridgeCall, control, label, timeoutMs)
   await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
-  const edited = await first.pending
+  const edited = await first.result()
   assert.equal(edited.ok, true, JSON.stringify(edited))
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
   assert.deepEqual(await readEditor(), { text: editText, edits: 1 })
@@ -438,7 +429,7 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
 
   const rejected = await beginEditorApproval(bridgeCall, control, 'rejected change', timeoutMs)
   await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
-  const rejectedResult = await rejected.pending
+  const rejectedResult = await rejected.result()
   assert.equal(rejectedResult.error?.code, 'approval_rejected', JSON.stringify(rejectedResult))
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
   assert.deepEqual(await readEditor(), { text: editText, edits: 1 })
@@ -466,7 +457,7 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
     latest.approvalId
   )
   await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
-  const latestResult = await latest.pending
+  const latestResult = await latest.result()
   assert.equal(latestResult.ok, true, JSON.stringify(latestResult))
   assert.equal(
     earlier.completed(),
@@ -479,7 +470,7 @@ async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeo
     { timeoutMs }
   )
   await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
-  const earlierResult = await earlier.pending
+  const earlierResult = await earlier.result()
   assert.equal(earlierResult.error?.code, 'approval_rejected', JSON.stringify(earlierResult))
   await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { visible: false, timeoutMs })
   assert.deepEqual(await readEditor(), { text: latestText, edits: 2 })
@@ -1485,8 +1476,12 @@ export function createDesktopScenario({
       }
       const clearAction = { action: 'clearData', kinds: ['cookies'] }
       const settleProtectedAction = async (action, approved, before, after) => {
-        const pending = bridgeCall(action)
-        await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, { timeoutMs: uiTimeoutMs })
+        const pending = await beginBrowserApproval(
+          control,
+          () => bridgeCall(action),
+          BROWSER_AGENT_REJECT_SELECTOR,
+          uiTimeoutMs
+        )
         let allow = false
         try {
           assert.deepEqual(await readProtectedPageState(), before)
@@ -1497,7 +1492,7 @@ export function createDesktopScenario({
             allow ? BROWSER_AGENT_APPROVE_SELECTOR : BROWSER_AGENT_REJECT_SELECTOR
           )
         }
-        const result = await pending
+        const result = await pending.result()
         if (approved) assert.equal(result.ok, true, JSON.stringify(result))
         else assert.equal(result.error?.code, 'approval_rejected', JSON.stringify(result))
         assert.deepEqual(await readProtectedPageState(), after)
@@ -1523,8 +1518,12 @@ export function createDesktopScenario({
       assert.deepEqual(await readProtectedPageState(), originalPageState)
 
       // Navigation cancels the pending approval; replacing the input is checked at approval time.
-      const navMismatchPending = bridgeCall(uploadAction)
-      await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const navMismatchPending = await beginBrowserApproval(
+        control,
+        () => bridgeCall(uploadAction),
+        BROWSER_AGENT_REJECT_SELECTOR,
+        uiTimeoutMs
+      )
       let navigationCompleted = false
       try {
         const navigated = await bridgeCall({
@@ -1542,7 +1541,7 @@ export function createDesktopScenario({
           await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
         }
       }
-      const navMismatchResult = await navMismatchPending
+      const navMismatchResult = await navMismatchPending.result()
       assert.equal(
         navMismatchResult.error?.code,
         'approval_cancelled',
@@ -1587,8 +1586,12 @@ export function createDesktopScenario({
         '0',
         'Read-only diagnostics must not change the fixture'
       )
-      const domMismatchPending = bridgeCall(uploadAction)
-      await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const domMismatchPending = await beginBrowserApproval(
+        control,
+        () => bridgeCall(uploadAction),
+        BROWSER_AGENT_REJECT_SELECTOR,
+        uiTimeoutMs
+      )
       let inputReplaced = false
       try {
         await control.command('setEmbeddedBrowserWindowValue', 'body', {
@@ -1611,7 +1614,7 @@ export function createDesktopScenario({
           inputReplaced ? BROWSER_AGENT_APPROVE_SELECTOR : BROWSER_AGENT_REJECT_SELECTOR
         )
       }
-      const domMismatchResult = await domMismatchPending
+      const domMismatchResult = await domMismatchPending.result()
       assert.equal(
         domMismatchResult.error?.code,
         'approval_target_changed',
@@ -1914,12 +1917,12 @@ export function createDesktopScenario({
       })
       assert.ok(finalInspect.inspectText.includes(DIRECT_CLICKED_TEXT))
 
-      const pendingDelete = bridgeCall({
-        action: 'click',
-        ref: deleteNode.ref,
-        timeoutMs: 5_000,
-      })
-      await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const pendingDelete = await beginBrowserApproval(
+        control,
+        () => bridgeCall({ action: 'click', ref: deleteNode.ref, timeoutMs: 5_000 }),
+        BROWSER_AGENT_APPROVE_SELECTOR,
+        uiTimeoutMs
+      )
       const deleteApprovalId = await control.command(
         'getAttribute',
         BROWSER_AGENT_APPROVE_SELECTOR,
@@ -1942,7 +1945,7 @@ export function createDesktopScenario({
         'Browser approval remained pending after the user approved it'
       )
 
-      const approvedDeleteResult = await pendingDelete
+      const approvedDeleteResult = await pendingDelete.result()
       assert.equal(
         approvedDeleteResult.ok,
         true,

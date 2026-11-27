@@ -38,6 +38,36 @@ test('a request observation forwards the real operation without awaiting its res
   expect(readRuntimeTransportGate('request')?.value).toEqual({ params: { limit: 5 } })
 })
 
+test('a gate armed for reload holds the next renderer request only once', async () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  const entries = new Map<string, string>()
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => entries.set(key, value),
+    removeItem: (key: string) => entries.delete(key),
+  })
+  try {
+    const rule = { id: 'startup-read', kind: 'request', name: 'preferences.get' } as const
+    const value = { params: { requireReadable: true } }
+    const current = vi.fn()
+    armRuntimeTransportGate({ ...rule, afterReload: true })
+    deliverRuntimeTransport(rule.kind, rule.name, value, current)
+    expect(current).toHaveBeenCalledOnce()
+
+    vi.resetModules()
+    const next = await import('./runtime-transport-gates')
+    const startup = vi.fn()
+    next.deliverRuntimeTransport(rule.kind, rule.name, value, startup)
+    expect(next.readRuntimeTransportGate(rule.id)?.value).toEqual(value)
+    expect(startup).not.toHaveBeenCalled()
+    next.releaseRuntimeTransportGate(rule.id)
+    expect(startup).toHaveBeenCalledOnce()
+    expect(entries.size).toBe(0)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 test('holding an actual response leaves live events independent and preserves its identity', async () => {
   vi.stubEnv('VITE_WEWORK_E2E', 'true')
   armRuntimeTransportGate({

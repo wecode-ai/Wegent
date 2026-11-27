@@ -376,12 +376,21 @@ async fn verify_batch_receipt_isolation(
             // Observe both rows before releasing A: B must have committed while A
             // remained blocked, and the timed-out A must not report false success.
             eprintln!("[plugin-local-sync] Checking persisted batch rows (registration={registration})");
-            let peer_state = peer.state().await?;
-            let blocked_state = context.state().await?;
-            let blocked_revision = context.write_revision().await?;
-            lease.verify_owned().await?;
+            let peer_state = observe_batch(context, "peer state", peer.state()).await?;
+            let blocked_state = observe_batch(context, "blocked state", context.state()).await?;
+            let blocked_revision =
+                observe_batch(context, "blocked revision", context.write_revision()).await?;
+            observe_batch(context, "lease ownership", async {
+                Ok(lease.verify_owned().await?)
+            })
+            .await?;
             Ok::<_, anyhow::Error>((outcome, peer_state, blocked_state, blocked_revision, deadline))
         }.await;
+        if let Err(error) = &observed {
+            eprintln!(
+                "[plugin-local-sync] Batch receipt observation failed (registration={registration}): {error:#}"
+            );
+        }
         lease.release().await;
         let (outcome, peer_state, blocked_state, blocked_revision, deadline) = observed?;
         assert_eq!(
@@ -413,4 +422,22 @@ async fn verify_batch_receipt_isolation(
         .execute("DELETE FROM kinds WHERE user_id=81001 AND id=?", (peer.id,))
         .await?;
     Ok(())
+}
+
+async fn observe_batch<T>(
+    context: &Context<'_>,
+    observation: &str,
+    result: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    use anyhow::Context as _;
+
+    tokio::time::timeout(Duration::from_secs(5), result)
+        .await
+        .with_context(|| {
+            format!(
+                "Timed out observing {observation} after the batch receipt (MySQL pool: {:?})",
+                context.mysql.pool_stats()
+            )
+        })?
+        .with_context(|| format!("Could not observe {observation} after the batch receipt"))
 }

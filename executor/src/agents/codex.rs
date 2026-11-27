@@ -1651,6 +1651,11 @@ struct PendingCodexResponse {
     native_request: Option<CodexNativeRequest>,
 }
 
+struct PendingMcpElicitation {
+    request: Value,
+    _settled: oneshot::Sender<()>,
+}
+
 type RuntimeNotificationSubscribers = Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>;
 
 #[derive(Clone)]
@@ -1661,7 +1666,7 @@ struct CodexNotificationHub {
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
     mcp_recovery: Arc<mcp_recovery::McpRecovery>,
-    pending_mcp_elicitations: Arc<StdMutex<HashMap<String, oneshot::Sender<()>>>>,
+    pending_mcp_elicitations: Arc<StdMutex<HashMap<String, PendingMcpElicitation>>>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
@@ -1889,7 +1894,12 @@ impl CodexAppServerHandle {
         {
             let mut pending = self.notifications.pending_mcp_elicitations.lock().unwrap();
             match pending.entry(request_id.to_string()) {
-                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(settled),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(PendingMcpElicitation {
+                        request: message.clone(),
+                        _settled: settled,
+                    })
+                }
                 std::collections::hash_map::Entry::Occupied(_) => return,
             };
         }
@@ -4124,7 +4134,7 @@ fn restrict_stand_in_mcp_answer(response: &mut Value, decline_answer: &str) {
     }
 }
 
-fn restrict_stand_in_approval(message: &mut Value) {
+pub(crate) fn restrict_stand_in_approval(message: &mut Value) {
     if is_mcp_tool_call_approval_request(message) {
         message["params"]["standInSingleApproval"] = json!(true);
         if let Some(questions) = message["params"]["questions"].as_array_mut() {
@@ -4725,6 +4735,7 @@ mod json_rpc;
 #[path = "codex/mcp_form.rs"]
 mod mcp_form;
 
+mod child_mcp_approval;
 #[path = "codex/elicitation.rs"]
 mod elicitation;
 #[path = "codex/url_elicitation.rs"]
@@ -4876,9 +4887,6 @@ fn build_codex_launch_config_with_route_scope(
             .env
             .insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
     }
-    launch_config
-        .config_overrides
-        .push(shell_path_config_override());
     if request.extra.get("origin").is_some_and(|origin| {
         matches!(
             origin["initiatedBy"].as_str(),
@@ -5155,13 +5163,6 @@ fn apply_git_cli_environment(
             ));
         }
     }
-}
-
-fn shell_path_config_override() -> String {
-    let path = process_environment::normalized_process_path(
-        env::var("PATH").ok().as_deref().unwrap_or_default(),
-    );
-    format!("shell_environment_policy.set.PATH={}", toml_value(&path))
 }
 
 #[cfg(test)]
@@ -6374,12 +6375,6 @@ async fn prepare_codex_execution_request(
     ))
 }
 
-pub(crate) async fn codex_guidance_input(request: ExecutionRequest) -> Vec<Value> {
-    let request = super::runtime_capabilities::prepare_runtime_attachments(request).await;
-    let prepared = prepare_codex_input_attachments(request, Vec::new(), false);
-    turn_input(&prepared.request.prompt)
-}
-
 fn prepare_codex_input_attachments(
     mut request: ExecutionRequest,
     mut generated_files: Vec<PathBuf>,
@@ -6471,22 +6466,56 @@ fn prepare_codex_input_attachments(
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
-    let binary_attachment_context =
-        AttachmentPromptProcessor::build_binary_attachment_context(&success);
-    if !binary_attachment_context.is_empty() {
-        request.prompt =
-            append_text_attachment_context(&request.prompt, &binary_attachment_context);
-    }
-    let text_attachment_context =
-        AttachmentPromptProcessor::build_text_attachment_context(&success);
-    if !text_attachment_context.is_empty() {
-        request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
-    }
+    request.prompt = append_codex_attachment_context(request.prompt, &success);
 
     PreparedCodexExecutionRequest {
         request,
         generated_files,
     }
+}
+
+fn append_codex_attachment_context(mut prompt: Value, attachments: &[AttachmentRecord]) -> Value {
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(attachments);
+    if !binary_attachment_context.is_empty() {
+        prompt = append_text_attachment_context(&prompt, &binary_attachment_context);
+    }
+    let text_attachment_context =
+        AttachmentPromptProcessor::build_text_attachment_context(attachments);
+    if !text_attachment_context.is_empty() {
+        prompt = append_text_attachment_context(&prompt, &text_attachment_context);
+    }
+    prompt
+}
+
+pub(crate) async fn codex_guidance_input(request: &ExecutionRequest) -> Result<Vec<Value>, String> {
+    let attachments = attachment_records(request);
+    let mut images = Vec::new();
+    for attachment in &attachments {
+        let unavailable = || format!("Attachment unavailable: {}", attachment.original_filename);
+        let path = attachment
+            .local_path
+            .as_deref()
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(unavailable)?;
+        let is_file = tokio::fs::metadata(path)
+            .await
+            .is_ok_and(|metadata| metadata.is_file());
+        if !is_file || attachment.status.as_deref() == Some("failed") {
+            return Err(unavailable());
+        }
+        if is_image_attachment(attachment) {
+            images.push(json!({ "type": "localImage", "path": path }));
+        }
+    }
+    let prompt = append_codex_attachment_context(request.prompt.clone(), &attachments);
+    let text = prompt_text(&prompt);
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(text_input(text));
+    }
+    input.extend(images);
+    Ok(input)
 }
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {

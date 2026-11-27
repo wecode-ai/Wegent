@@ -33,11 +33,8 @@ impl RuntimeWorkRpcHandler {
             "resource_event_keys".into(),
             record["resource_event_keys"].clone(),
         );
-        if let Err(error) = self.prepare_resource_event_request(task, &mut request) {
-            if error.code != "resource_events_already_accepted" {
-                return Err(error);
-            }
-            record["status"] = json!("delivered");
+        if let Some(receipt) = self.prepare_resource_event_request(task, &mut request)? {
+            mark_event_delivered(record, Some(&receipt["commandId"]));
             self.save_event_subscription(id, record)?;
             return Ok(true);
         }
@@ -58,6 +55,7 @@ impl RuntimeWorkRpcHandler {
             .remove("additionalContext")
             .unwrap_or_else(|| json!({}));
         record["native_guidance"] = json!("requested");
+        record["guided_event_keys"] = request.extra["resource_event_keys"].clone();
         self.save_event_subscription(id, record)?;
 
         let conversation_context = self
@@ -88,12 +86,7 @@ impl RuntimeWorkRpcHandler {
             }
             Ok(result) if result["accepted"] == true => {
                 record["native_guidance"] = json!("accepted");
-                record["handled_events"] = handled_event_summaries(record);
-                record["status"] = json!(if record["waiting_goal"].is_null() {
-                    "delivered"
-                } else {
-                    "resuming_goal"
-                });
+                mark_event_delivered(record, None);
                 self.save_event_subscription(id, record)?;
             }
             _ => {

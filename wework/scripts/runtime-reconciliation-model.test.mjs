@@ -3,6 +3,7 @@ import { once } from 'node:events'
 import { createServer } from 'node:http'
 import test from 'node:test'
 
+import { createModelResponseGates } from '../e2e/desktop/modules/model-response-gates.mjs'
 import { createRuntimeReconciliationModel } from '../e2e/desktop/modules/runtime-reconciliation-model.mjs'
 
 const MARKER = 'RUNTIME_RECONCILIATION_HTTP_TEST'
@@ -210,4 +211,26 @@ test('an unknown Issue in the scenario fails instead of completing with Ready', 
 
   assert.equal(response.status, 500)
   assert.match(await response.text(), /Unknown reconciliation Issue/)
+})
+
+test('model gates release independently and cleanup opens pending and late gates', async () => {
+  const gates = createModelResponseGates()
+  const first = gates.pause()
+  const second = gates.pause()
+  const released = []
+  const firstResponse = first.promise.then(() => released.push('first'))
+  const secondResponse = second.promise.then(() => released.push('second'))
+  await Promise.resolve()
+  assert.deepEqual(released, [])
+
+  first.resolve()
+  await firstResponse
+  assert.deepEqual(released, ['first'])
+
+  gates.cleanup()
+  gates.cleanup()
+  const lateGateResult = Promise.race([gates.pause().promise, Promise.resolve('still held')])
+  await secondResponse
+  assert.deepEqual(released, ['first', 'second'])
+  assert.equal(await lateGateResult, undefined)
 })

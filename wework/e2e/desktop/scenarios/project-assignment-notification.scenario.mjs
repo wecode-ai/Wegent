@@ -3,6 +3,17 @@ import { revealCollaborationSidebarElement } from '../modules/collaboration-side
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
+import {
+  createConversationEventModel,
+  PREEXISTING_CHECKS_HEAD,
+  PREEXISTING_CHECKS_TOPIC,
+} from '../modules/conversation-event-model.mjs'
+import {
+  CONVERSATION_EVENT_PROVIDER,
+  createConversationEventSource,
+} from '../modules/conversation-event-source.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { waitForCompletedOwnerTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
 import { verifyLinkedTasksScrolling } from '../modules/issue-linked-tasks.mjs'
 import { verifyIssuePersonalTaskPrivacy } from '../modules/issue-personal-task-privacy.mjs'
@@ -47,6 +58,9 @@ const MANUAL_ISSUE = `人工复核项目周报-${process.pid}`
 const MARKER = `DIRECT_HUMAN_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_DELIVERED`
 const MANUAL_RESULT = `${MARKER}：已人工核对周报。`
+const EVENT_PHASE = 'assigned_issue'
+const EVENT_PREFIX = `${MARKER}_PR_WAIT`
+const PR_WAIT = `${EVENT_PREFIX}_${EVENT_PHASE}`
 const CALLS = {
   createSearch: `${MARKER}-create-search`,
   create: `${MARKER}-create`,
@@ -504,12 +518,14 @@ async function verifyManualCommentFlow(control, request, projectId, owner, uiTim
   assert.equal(restarted.completed_at, null)
 }
 
-export function createDesktopScenario({
-  captureScreenshot,
-  modelResponseTimeoutMs,
-  uiTimeoutMs,
-  workbenchReadyTimeoutMs,
-}) {
+export function createDesktopScenario(options) {
+  const { captureScreenshot, modelResponseTimeoutMs, uiTimeoutMs, workbenchReadyTimeoutMs } =
+    options
+  const eventSource = createConversationEventSource(options)
+  const eventModel = createConversationEventModel({
+    markerPrefix: EVENT_PREFIX,
+    providerId: CONVERSATION_EVENT_PROVIDER,
+  })
   let backendUrl = ''
   let cloudEnvironment = null
   let ownerToken = ''
@@ -522,9 +538,85 @@ export function createDesktopScenario({
   let runtimeTaskId = ''
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
+  const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const getTask = async (control, taskId) =>
+    (await rpc(control, 'runtime.tasks.get', { taskId })).task
+
+  async function verifyRecoveredPrWait(control, binding, threadId) {
+    const panel = '[data-testid="work-item-task-chat-panel"]'
+    const composer = `${panel} [data-testid="chat-message-input"]`
+    const assistant = `${panel} [data-testid="message-assistant"]`
+    const readTask = () => getTask(control, binding.task_id)
+    const assertOriginalThread = task => {
+      assert.equal(task.taskId, binding.task_id)
+      assert.equal(task.threadId, threadId, 'PR tracking must reuse the existing native thread')
+    }
+    assertOriginalThread(await readTask())
+    await control.command('fill', composer, { value: `${PR_WAIT} 订阅这次提交的 PR 检查结果。` })
+    await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
+      enabled: true,
+    })
+    await control.command('press', composer, { key: 'Enter' })
+    await control.command('waitFor', assistant, {
+      text: `${PR_WAIT}_WAITING`,
+      timeoutMs: modelResponseTimeoutMs,
+    })
+    const armed = await waitForValue(
+      readTask,
+      task =>
+        task.running === false &&
+        task.runtimeHandle?.connectionEventSubscriptions?.some(
+          wait => wait.subscription_key === PR_WAIT && wait.status === 'armed'
+        ) &&
+        task,
+      'The recovered Issue conversation did not arm and persist its PR wait',
+      modelResponseTimeoutMs
+    )
+    assertOriginalThread(armed)
+    await eventSource.publishEvents([
+      {
+        id: PR_WAIT,
+        objectId: PREEXISTING_CHECKS_TOPIC,
+        version: PREEXISTING_CHECKS_HEAD,
+        eventType: 'git.event',
+        topicId: PREEXISTING_CHECKS_TOPIC,
+        text: `${PR_WAIT}_EVENT_RECEIVED`,
+        at: new Date().toISOString(),
+        external: {
+          eventType: 'tracked.status',
+          payload: {
+            headRefOid: PREEXISTING_CHECKS_HEAD,
+            statusCheckRollup: { state: 'FAILURE' },
+          },
+        },
+      },
+    ])
+    await control.command('waitFor', assistant, {
+      text: `${PR_WAIT}_DONE`,
+      timeoutMs: modelResponseTimeoutMs,
+    })
+    const event = `${panel} [data-testid="connection-event-message"]`
+    await control.command('waitFor', event, { visible: true })
+    assert.equal(Number(await control.command('getElementCount', event)), 1)
+    assert.ok(
+      eventModel.completed.has(EVENT_PHASE),
+      'The original model turn did not receive the event'
+    )
+    assertOriginalThread(await readTask())
+    const bound = await ownerRequest(`/api/v1/loop-items/${issue.id}/tasks`)
+    assert.deepEqual(
+      bound
+        .filter(value => value.human_assignment_id === binding.human_assignment_id)
+        .map(value => value.task_id),
+      [binding.task_id],
+      'Event delivery must keep one conversation bound to the human assignment'
+    )
+  }
 
   return {
     requiresCloudEnvironment: true,
+    appEnvironment: eventSource.appEnvironment,
+    prepareApp: eventSource.prepareApp,
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -558,6 +650,10 @@ export function createDesktopScenario({
       }
       if (!serialized.includes(MARKER)) {
         writeEvents(response, responseId, [])
+        return true
+      }
+      if (serialized.includes(PR_WAIT)) {
+        writeEvents(response, responseId, eventModel.events(body, EVENT_PHASE))
         return true
       }
 
@@ -611,6 +707,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       assert.ok(owner?.id, '当前登录用户 fixture 缺失')
+      await eventSource.install(control)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clearSystemNotifications', 'body')
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
@@ -845,6 +942,17 @@ export function createDesktopScenario({
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
+      const threadId = await waitForCompletedOwnerTaskThread(
+        taskId => getTask(control, taskId),
+        binding.task_id,
+        modelResponseTimeoutMs
+      )
+      await waitForValue(
+        () => rpc(control, 'runtime.codex.app_server.restart', { ifIdle: true }),
+        value => value.restarted === true,
+        'Could not cold-resume the existing assigned Issue conversation',
+        uiTimeoutMs
+      )
       const boundTask = scoped(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
       await control.command('waitFor', boundTask)
       await control.command('scrollIntoView', boundTask)
@@ -865,6 +973,7 @@ export function createDesktopScenario({
         'The bound personal task inherited the unrelated new-chat default'
       )
       await captureScreenshot(control, 'assignment-04-bound-task-model-preserved.png', CONTENT)
+      await verifyRecoveredPrWait(control, binding, threadId)
       await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
       await changeIssueStatus(control, ownerRequest, issue.id, 'completed', uiTimeoutMs)
       await captureScreenshot(control, 'assignment-05-human-completed.png', CONTENT)

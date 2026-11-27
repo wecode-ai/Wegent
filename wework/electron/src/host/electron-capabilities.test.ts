@@ -312,6 +312,35 @@ describe('showElectronNotification', () => {
     expect(notificationNavigation.openRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('publishes an asynchronous native delivery failure to the renderer', async () => {
+    const { router, notificationNavigation } = createIsolatedClipboardRouter()
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'notification.show', {
+      title: 'Assigned',
+      body: 'Open the project task.',
+    })
+
+    const failed = electronMocks.notificationOnce.mock.calls.find(
+      ([event]) => event === 'failed'
+    )?.[1]
+    failed?.({}, new Error('permission denied'))
+
+    expect(notificationNavigation.events.publish).toHaveBeenCalledWith('notification-lifecycle', {
+      status: 'failed',
+    })
+  })
+
+  test('reports native notification support without showing a notification', async () => {
+    const { router } = createIsolatedClipboardRouter()
+    electronMocks.notificationIsSupported.mockReturnValueOnce(false)
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'notification.isSupported', {})).resolves.toBe(
+      false
+    )
+    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'notification.isSupported', {})).resolves.toBe(
+      true
+    )
+    expect(electronMocks.notificationShow).not.toHaveBeenCalled()
+  })
+
   test('opens only the fixed platform notification settings destination', async () => {
     const { router } = createIsolatedClipboardRouter()
     electronMocks.shellOpenExternal.mockClear()
@@ -479,7 +508,14 @@ function createIsolatedClipboardRouter(
   services?: Partial<ElectronDesktopServices>,
   storedPreferences: Record<string, unknown> = { workbenchMode: 'developer' }
 ) {
-  const notificationNavigation = { openRuntimeTask: vi.fn(), openScheme: vi.fn() }
+  const notificationNavigation = {
+    events: {
+      publish: vi.fn(),
+      read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })),
+    },
+    openRuntimeTask: vi.fn(),
+    openScheme: vi.fn(),
+  }
   const targetWindow = {
     isDestroyed: vi.fn(() => false),
     isFocused: vi.fn(() => focused),
@@ -502,10 +538,7 @@ function createIsolatedClipboardRouter(
       executorHome: '/tmp/wework-clipboard-test/executor',
       cleanupStaleTemporaryImages: vi.fn(),
       coreDshPlugins: () => null,
-      events: {
-        publish: vi.fn(),
-        read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })),
-      },
+      events: notificationNavigation.events,
       feedback: {} as never,
       ...notificationNavigation,
       pendingSchemes: {
@@ -1221,6 +1254,13 @@ describe('registerDesktopServiceCapabilities', () => {
         expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true })
         await handler({ waitForSystemProcesses: false }, { principal: 'test' })
         expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false })
+        await handler({ fresh: true }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: true, fresh: true })
+        await handler({ waitForSystemProcesses: false, fresh: false }, { principal: 'test' })
+        expect(snapshot).toHaveBeenLastCalledWith({ waitForSystemProcesses: false, fresh: false })
+        await expect(handler({ fresh: 'true' }, { principal: 'test' })).rejects.toThrow(
+          'fresh is invalid'
+        )
         const failure = new Error('Snapshot collection failed')
         snapshot.mockRejectedValueOnce(failure)
         await expect(handler({}, { principal: 'test' })).rejects.toBe(failure)

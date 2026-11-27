@@ -668,7 +668,7 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
               (fieldSaves.error instanceof Error
                 ? fieldSaves.error.message
                 : t('todo.save_issue_failed', '保存任务失败'))}
-            {fieldSaves.error ? (
+            {fieldSaves.canRetry ? (
               <ControlButton
                 variant="unstyled"
                 type="button"

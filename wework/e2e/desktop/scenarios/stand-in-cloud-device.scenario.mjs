@@ -108,7 +108,8 @@ export function createDesktopScenario({
   let remoteSocket
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const stop = control => stopBoundStandIn(control, uiTimeoutMs)
-  const bind = (control, user, device) => bindStoppedStandIn(control, user, device, uiTimeoutMs)
+  const bind = (control, user, device) =>
+    bindStoppedStandIn(control, user, device, uiTimeoutMs, cloud)
   const readCloudAssistant = (token = cloud.authToken) =>
     fetchJson(`${cloud.backendUrl}/api/v1/personal-assistant`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -316,6 +317,9 @@ export function createDesktopScenario({
         language: 'zh-CN',
       })
       await ensureExperimentalFeaturesEnabled(peerControl)
+      await peerControl.command('setAppPreferences', 'body', {
+        value: JSON.stringify({ collaborationExperienceEnabled: false }),
+      })
       const peerIdentity = JSON.parse(await peerControl.command('getLocalExecutorStatus', 'body'))
       const peerDevice = peerIdentity.deviceId
       assert.notEqual(
@@ -339,6 +343,12 @@ export function createDesktopScenario({
         intent => intent.deviceId === CLOUD_DEVICE_ID
       )
       assert.ok(pending?.requestId, 'The account must retain the offline stop request')
+      assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
+      assert.equal(
+        await control.command('getElementCount', testId(`stand-in-instance-bind-0-${localDevice}`)),
+        '0',
+        'Offline cancellation must not expose a legacy owner-zero binding'
+      )
       await observeDevice(peerControl, CLOUD_DEVICE_ID, '离线')
       await reloadMainWindow(peerControl)
       await peerControl.command('waitFor', testId('stand-in-instance-stopping'))
@@ -368,11 +378,13 @@ export function createDesktopScenario({
         (async () => {
           await control.command('navigate', 'body', { value: '/stand-in' })
           await reloadMainWindow(control)
+          await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
           await control.command('waitFor', testId('stand-in-conversation'))
         })(),
         (async () => {
           await peerControl.command('navigate', 'body', { value: '/stand-in' })
           await reloadMainWindow(peerControl)
+          await peerControl.command('clickWhenEnabled', testId('stand-in-primary-open'))
           await peerControl.command('waitFor', testId('stand-in-conversation'))
         })(),
       ])
@@ -388,6 +400,7 @@ export function createDesktopScenario({
         PEER_CLOUD_COMPLETE
       )
       await reloadMainWindow(control)
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await control.command('waitFor', testId('stand-in-conversation'), {
         text: PEER_CLOUD_COMPLETE,
         timeoutMs: uiTimeoutMs,
@@ -401,13 +414,19 @@ export function createDesktopScenario({
       })
       assert.equal(cloudProfileBefore.lifecycle, undefined)
       assert.equal(localProfileBefore.lifecycle, undefined)
+      await openStandInSettings(control)
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
       await control.command('waitFor', testId('stand-in-instance-stop-confirm'))
       await setPrimaryDevice(localDevice)
       await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
       await control.command('waitFor', testId('stand-in-instance-stop-confirm'), { visible: false })
-      await control.command('waitFor', testId('stand-in-instance-stop'), { enabled: true })
-      await openStandInSettings(control)
+      await control.command('waitFor', testId('stand-in-overview'))
+      if (
+        Number(await control.command('getElementCount', testId('stand-in-profile-panel'))) === 0
+      ) {
+        await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+        await openStandInSettings(control)
+      }
       await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
       await control.command('waitFor', testId('personal-assistant-execution-device'), {
         text: '当前设备',
@@ -433,6 +452,7 @@ export function createDesktopScenario({
       // 3. While @primary points to client 1's private localDevice, client 2 (simultaneously signed in)
       // falls back cleanly to CLOUD_DEVICE_ID without overwriting cloud @primary and executes on CLOUD_DEVICE_ID.
       await reloadMainWindow(peerControl)
+      await peerControl.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await peerControl.command('waitFor', testId('stand-in-conversation'))
       assert.equal(
         await readPrimaryDevice(),
@@ -456,6 +476,61 @@ export function createDesktopScenario({
     }
   }
 
+  async function verifyDefinitionBackupSettingsEntry(control) {
+    const backup = testId('stand-in-download-definition-backups')
+    assert.equal(await control.command('getElementCount', backup), '0')
+    assert.equal(await control.command('getElementCount', testId('stand-in-migration-expand')), '0')
+    assert.equal(await control.command('getElementCount', testId('stand-in-migration')), '0')
+    await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+    await openStandInSettings(control)
+    await control.command('waitFor', backup, { timeoutMs: uiTimeoutMs })
+    await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
+    await control.command('waitFor', backup, { visible: false, timeoutMs: uiTimeoutMs })
+  }
+
+  async function verifyUnreachableSourceInitialization(control, readAssistant) {
+    const missingDevice = 'stand-in-unregistered-source'
+    await setPrimaryDevice(missingDevice)
+    await reloadMainWindow(control)
+    const migration = testId('stand-in-migration')
+    await control.command('waitFor', migration, { timeoutMs: uiTimeoutMs })
+    assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+    assert.equal(
+      await readPrimaryDevice(),
+      missingDevice,
+      'An unavailable source stays selected until recovery'
+    )
+    const existing = (await readAssistant()).assistant
+    await control.command('select', testId('stand-in-migration-device'), { value: CLOUD_DEVICE_ID })
+    await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
+    await control.command('clickWhenEnabled', testId('stand-in-migrate-confirm'))
+    await until(
+      () => readPrimaryDevice(),
+      deviceId => deviceId === CLOUD_DEVICE_ID,
+      'An unreachable source must allow the destination to use the cloud assistant',
+      uiTimeoutMs
+    )
+    await control.command('waitFor', migration, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', testId('stand-in-overview'), { timeoutMs: uiTimeoutMs })
+    await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+    await control.command('waitFor', testId('stand-in-conversation'), { timeoutMs: uiTimeoutMs })
+    const saved = (await readAssistant()).assistant
+    assert.deepEqual(
+      saved.definitions.map(definition => [definition.roleId, definition.ghost.spec.systemPrompt]),
+      existing.definitions.map(definition => [
+        definition.roleId,
+        definition.ghost.spec.systemPrompt,
+      ])
+    )
+    assert.equal(
+      saved.definitions.find(definition => definition.roleId === '@primary').bot.spec
+        .execution_policy.environment_id,
+      CLOUD_DEVICE_ID
+    )
+    await verifyDefinitionBackupSettingsEntry(control)
+    await stop(control)
+  }
+
   async function verifyRegularBinding(control, localDevice) {
     const username = `stand-in-binding-${process.pid}`
     const credentials = { user_name: username, password: randomUUID() }
@@ -476,6 +551,8 @@ export function createDesktopScenario({
     })
     try {
       const session = await authRequest('/auth/login', credentials)
+      // Prepare this account's local profile before entering the account initialization screen.
+      await control.command('navigate', 'body', { value: '/cloud-work' })
       await control.command('setCloudSessionToken', 'body', { value: session.access_token })
       await rpc(control, 'runtime.stand_in.onboarding.complete', {
         userId: member.id,
@@ -503,6 +580,7 @@ export function createDesktopScenario({
         },
       })
       assert.equal((await readCloudAssistant(session.access_token)).assistant, null)
+      await control.command('navigate', 'body', { value: '/stand-in' })
       await reloadMainWindow(control)
       const migrateConfirm = testId('personal-assistant-account-migrate-confirm')
       await control.command('waitFor', migrateConfirm, { timeoutMs: uiTimeoutMs })
@@ -570,8 +648,13 @@ export function createDesktopScenario({
 
       // Navigating with an explicit notification userId for another account still guards mismatch,
       // while normal account switching opens the signed-in account directly.
-      await control.command('navigate', 'body', { value: `/stand-in?userId=${USER}` })
-      await control.command('waitFor', testId('stand-in-instance-owner-unavailable'))
+      await control.command('navigate', 'body', {
+        value: `/stand-in?${new URLSearchParams({ userId: String(USER), profileId: '@primary', deviceId: localDevice })}`,
+      })
+      await control.command('waitFor', testId('stand-in-route-error'), {
+        text: '你无权访问链接中的助理或设备。',
+      })
+      assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId(`stand-in-overview-role-${role.id}`))
     } finally {
@@ -710,8 +793,14 @@ export function createDesktopScenario({
       const localDevice = localIdentity.deviceId
       const remoteHome = dirname(cloud.remoteCodexHome)
       await ensureExperimentalFeaturesEnabled(control)
+      await control.command('setAppPreferences', 'body', {
+        value: JSON.stringify({ collaborationExperienceEnabled: true }),
+      })
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId('stand-in-onboarding-setup'))
+      const beforeSetup = await rpc(control, 'runtime.stand_in.binding', { operation: 'get' })
+      assert.equal(beforeSetup.status, 'unbound')
+      assert.equal(beforeSetup.target, null)
       const firstUseDevice = await readPrimaryDevice()
       assert.ok(
         [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].includes(firstUseDevice),
@@ -722,12 +811,16 @@ export function createDesktopScenario({
         '0',
         'Onboarding must not expose the legacy binding switch'
       )
-      await control.command('clickWhenEnabled', testId('stand-in-onboarding-continue'))
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
       await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
+      assert.equal(await readPrimaryDevice(), firstUseDevice)
       const readInitialAssistant = () => readCloudAssistant()
       const initialAssistant = (await readInitialAssistant()).assistant
       assert.equal(initialAssistant.definitions[0].roleId, '@primary')
+      await control.command('setAppPreferences', 'body', {
+        value: JSON.stringify({ collaborationExperienceEnabled: false }),
+      })
+      await control.command('waitFor', testId('stand-in-overview'), { visible: true })
       const executionDevice = testId('personal-assistant-execution-device')
       async function openExecutionSettings() {
         await openStandInDetails(control)
@@ -736,6 +829,7 @@ export function createDesktopScenario({
         await control.command('clickWhenEnabled', testId('stand-in-primary-execution-toggle'))
       }
       assert.equal(await control.command('getElementCount', executionDevice), '0')
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await openExecutionSettings()
       await control.command('clickWhenEnabled', executionDevice)
       await control.command('waitFor', '[role="listbox"] [role="option"]', {
@@ -753,6 +847,7 @@ export function createDesktopScenario({
       })
       await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
       await reloadMainWindow(control)
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await control.command('waitFor', testId('stand-in-conversation'))
       await sendChat(control, testId('stand-in-conversation'), LOCAL_PROMPT)
       await control.command('waitFor', testId('stand-in-conversation'), {
@@ -840,6 +935,10 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
       await control.command('clickWhenEnabled', testId('stand-in-migrate-confirm'))
+      await control.command('waitFor', testId('stand-in-migration'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', testId('stand-in-role-name'))
       assert.equal(await control.command('getValue', testId('stand-in-role-name')), LOCAL_NAME)
       assert.equal(await readPrimaryDevice(), CLOUD_DEVICE_ID)
@@ -985,6 +1084,7 @@ export function createDesktopScenario({
       await stop(control)
       await bind(control, USER, CLOUD_DEVICE_ID)
       await verifySimultaneousClients(control, localDevice)
+      await verifyUnreachableSourceInitialization(control, readInitialAssistant)
       await verifyRegularBinding(control, localDevice)
       await writeFile(
         join(resultDir, 'stand-in-cloud-device-evidence.json'),
@@ -999,6 +1099,7 @@ export function createDesktopScenario({
           offlineStoppingReloadVerified: true,
           offlineStoppingPeerVerified: true,
           simultaneousClientsVerified: true,
+          unreachableSourceMigrated: true,
           localHistoryRetained: true,
           localMemoryRetained: true,
           foreignDesktopFallbackVerified: true,

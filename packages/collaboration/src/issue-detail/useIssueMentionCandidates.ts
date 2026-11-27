@@ -17,6 +17,7 @@ export function useIssueMentionCandidates(
         agents,
         membersLabel: translate('todo.members'),
         agentsLabel: translate('todo.agent_teams'),
+        externalAgentsLabel: translate('todo.external_agent'),
       }),
     [members, agents, translate]
   )

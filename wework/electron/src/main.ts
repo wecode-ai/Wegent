@@ -126,6 +126,7 @@ import {
   registerApplicationActivation,
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
+import { createProcessExplorerFixture } from './host/process-explorer-fixture.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -1435,7 +1436,9 @@ async function openProcessExplorerWindow(): Promise<void> {
     backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
-      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
+      // Keep the default throttling: the explorer pauses sampling while
+      // `document.hidden`, which stays false on macOS and Linux when
+      // background throttling is disabled.
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -2511,13 +2514,17 @@ async function configureDesktopRuntime(): Promise<void> {
       dispose: () => {},
     },
     input => cloudModelRuntime!.transport(input),
-    async targetUrl => {
-      const raw = (await rendererStorage!.read())[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
+    async (targetUrl, trace) => {
+      const entries = await trace.run('proxy-settings', () => rendererStorage!.read())
+      const raw = entries[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
       const config = storedLocalProxyConfig(raw ? JSON.parse(raw) : {})
       if (config.mode === 'custom') return normalizeLocalProxyUrl(config.proxyUrl) || null
       if (config.mode === 'direct') return null
-      return resolveSystemProxy(session.defaultSession, targetUrl)
-    }
+      return trace.run('system-proxy', () => resolveSystemProxy(session.defaultSession, targetUrl))
+    },
+    process.env.VITE_WEWORK_E2E === 'true'
+      ? event => console.debug('[native-model-request] ' + JSON.stringify(event))
+      : undefined
   )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),
@@ -2631,6 +2638,7 @@ async function configureDesktopRuntime(): Promise<void> {
       runtimeHost: smartAppRuntimeHost,
     })
   }
+  const processExplorerFixture = createProcessExplorerFixture()
   const processExplorerService = createWeworkProcessExplorerService({
     windowLabel: contentsId => dshWindowLabels.get(contentsId) ?? null,
     embeddedBrowserLabel: contentsId => embeddedBrowser?.labelForContentsId(contentsId) ?? null,
@@ -2827,6 +2835,17 @@ async function configureDesktopRuntime(): Promise<void> {
             const target = processExplorerWindow
             if (target && !target.isDestroyed()) target.close()
           },
+          setProcessExplorerWindowHidden: hidden => {
+            const target = processExplorerWindow
+            if (!target || target.isDestroyed()) return
+            if (hidden) target.hide()
+            else {
+              target.show()
+              target.focus()
+            }
+          },
+          spawnProcessExplorerFixture: () => processExplorerFixture.spawn(),
+          stopProcessExplorerFixture: () => processExplorerFixture.stop(),
           dockVisible: () => dockVisible,
           rendererStartupReady,
           rendererStartupFailed: failure => {

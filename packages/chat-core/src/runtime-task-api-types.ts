@@ -200,6 +200,15 @@ export interface RuntimeSendRequest {
   request_user_input_response?: RequestUserInputResponse
   additionalContext?: RuntimeAdditionalContext
   additional_context?: RuntimeAdditionalContext
+  /** A guidance correction replaces an existing guidance row instead of adding a user message. */
+  guidanceCorrection?: RuntimeGuidanceCorrection
+}
+
+export interface RuntimeGuidanceCorrection {
+  /** Client message ID of the guidance row that the correction replaces. */
+  clientGuidanceId: string
+  /** User-facing text after the correction. It may be empty for attachment-only guidance. */
+  content: string
 }
 
 export interface RuntimeSendResponse {

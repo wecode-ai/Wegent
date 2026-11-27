@@ -164,6 +164,7 @@ tool_call_mcp_elicitation = true
 
 - Codex thread/turn 参数使用 granular approval policy，只打开 `mcp_elicitations`。
 - `features.tool_call_mcp_elicitation=true` 将工具审批与普通问题的原生等待槽隔离；通过 `_meta.codex_approval_kind` 区分工具审批和业务表单，不改变权限策略。
+- 子智能体发起的 MCP 工具审批在父任务中显示。提交和取消按子回合及请求 ID 送回原生审批，要求子智能体仍归属于该父任务的活动回合。
 - request/bot MCP config 默认补 `default_tools_approval_mode = "approve"`，显式 `prompt` 优先。
 - 完整访问模式识别 `_meta.codex_approval_kind = "mcp_tool_call"` 的 MCP elicitation，或仅含一个 `mcp_tool_call_approval_<call-id>` 问题的 `requestUserInput`，直接返回对应的 `accept`/`Allow`，不向聊天界面发送该授权事件。
 - `mcp_servers.wegent_apps` 是 Wework Connector Apps 的内置持久 server，由 Wework 写入并在 configure/app sync 时刷新，同样默认 `approve`。

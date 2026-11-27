@@ -209,7 +209,7 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # 开启 runtime work cache/emit mapping �
 
 ## 流式消息渲染
 
-桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 把每次发布的最新前缀直接交给 Streamdown，终态和交互操作即时发布。
+桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 将追加的正文合并为一批再交给 Streamdown，终态和交互操作即时发布。内联可视化回调仅在渲染函数或文件变更摘要更新时重建，避免正文增量触发额外的 Markdown 渲染。
 
 过程文本、thinking 和 plan block 的实时更新只传输 `content_delta`，不能在每个 delta 或完成节点重复发送从开头累计的完整 `content`。完成节点通常只携带 `status: done`；若 provider 的完成快照仅比已流式内容多一个尾部，则只补发该尾部增量。Wework 在运行时事件层按 16 ms 窗口合并同一 block 的连续增量，避免长程任务形成二次方级别的 IPC 复制和渲染压力。流式 block 更新属于可丢弃的 bulk 事件；发生 app IPC 背压时，终态事件仍保持优先，并由 transcript 对账恢复权威内容。Electron 主进程不得为每个 `response.*` 增量写 stdout；终端或父进程未及时消费输出时，同步 console 写入会阻塞 Browser 主线程和全部窗口输入。
 
@@ -266,7 +266,7 @@ window.__WEWORK_PERF__.snapshot();
 
 返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 Chromium XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
 
-Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/electron/src/host/process-diagnostics.ts` 读取 macOS `ps` 的 RSS；Process Explorer 则使用 Electron metrics 与 `systeminformation`，其中 Electron 管理的进程使用 Electron `workingSetSize`。两者数值接近但不可互换：不要复用另一侧的内存阈值；如果要合并采集链路，应作为独立变更重新建立 memory E2E 基线。
+Performance Diagnostics 有意保留独立的采集器：它仍通过 `wework/electron/src/host/process-diagnostics.ts` 读取 macOS `ps` 的 RSS；Process Explorer 则使用 Electron metrics 与系统进程表（macOS 直接读取 `ps`，Windows/Linux 使用 `systeminformation`，Linux 另用内核进程名校正显示名），其中 Electron 管理的进程使用 Electron `workingSetSize`。两者数值接近但不可互换：不要复用另一侧的内存阈值；如果要合并采集链路，应作为独立变更重新建立 memory E2E 基线。
 
 进程组同时提供 `rss_kib` 和 `physical_footprint_kib`：RSS 包含共享映射和可回收驻留页，通常明显高于真实内存压力；判断泄漏或系统资源占用时应优先比较 `physical_footprint_kib`，RSS 只作为地址空间驻留的辅助指标。需要持续观察时可以多次执行，重点比较：
 

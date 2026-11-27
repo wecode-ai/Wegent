@@ -31,7 +31,8 @@ export interface StandInBindingTarget {
 
 export interface StandInInstanceBinding {
   version: number
-  status: 'unbound' | 'active' | 'stopping' | 'stopped'
+  // Account-backed workspaces also use unavailable when no lifecycle read has succeeded.
+  status: 'unbound' | 'activating' | 'active' | 'stopping' | 'stopped' | 'unavailable'
   target: StandInBindingTarget | null
   stoppingTargets?: string[]
 }
@@ -88,7 +89,14 @@ export interface ConnectionReadinessSource {
 }
 
 export interface ConnectionReadiness {
-  status: 'ready' | 'auth_required' | 'identity_required' | 'permissions_required' | 'error'
+  status:
+    | 'ready'
+    | 'auth_required'
+    | 'identity_required'
+    | 'permissions_required'
+    | 'component_unavailable'
+    | 'error'
+  code?: string
   identity?: ConnectionReadinessIdentity
   candidates?: ConnectionReadinessIdentity[]
   component?: { source: 'managed' | 'bundled' | 'external'; version: string }
@@ -419,7 +427,16 @@ export interface StandInExecutorApi {
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   binding(
     deviceId: string,
-    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop' | 'markStopping' | 'clearStopping',
+    operation?:
+      | 'get'
+      | 'bind'
+      | 'beginStop'
+      | 'completeStop'
+      | 'prepareBind'
+      | 'prepareReplacement'
+      | 'completeActivation'
+      | 'markStopping'
+      | 'clearStopping',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>
@@ -600,7 +617,7 @@ export interface StandInExecutorApi {
   personalGet(
     userId: number,
     deviceId: string,
-    options?: { deviceSettingsOnly?: boolean }
+    options?: { deviceSettingsOnly?: boolean; roleDirectory?: boolean }
   ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
@@ -1000,14 +1017,15 @@ export function createStandInExecutorApi(
     binding: (deviceId, operation = 'get', version, target) =>
       request('runtime.stand_in.binding', { operation, version, target }, deviceId),
     lifecycle: async (userId, deviceId, operation, expectedVersion) => {
-      if (expectedVersion !== undefined && operation !== 'stop') {
-        throw new Error('Only a stop can have an expected version')
-      }
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.lifecycle',
         expectedVersion === undefined
           ? { userId, operation }
-          : { userId, operation: 'stopIfVersion', expectedVersion },
+          : {
+              userId,
+              operation: operation === 'stop' ? 'stopIfVersion' : 'startIfVersion',
+              expectedVersion,
+            },
         deviceId
       )
       publishPersonalStandIn(saved)

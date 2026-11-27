@@ -172,7 +172,7 @@ export function createDesktopScenario(options) {
       const local = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
       await finishStandInOnboarding(control)
       await stopBoundStandIn(control, uiTimeoutMs)
-      await bindStoppedStandIn(control, userId, local.deviceId, uiTimeoutMs)
+      await bindStoppedStandIn(control, userId, local.deviceId, uiTimeoutMs, cloud)
       await finishStandInOnboarding(control)
       const settings = await requestExecutor(
         control,

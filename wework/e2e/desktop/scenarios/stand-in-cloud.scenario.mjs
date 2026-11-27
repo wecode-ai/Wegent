@@ -259,7 +259,13 @@ export function createDesktopScenario({
         await stopBoundStandIn(control, uiTimeoutMs)
         // Seed before the bound device's settings are loaded by the renderer.
         await seedStandInRoleFixture(rpc, user.id)
-        await bindStoppedStandIn(control, user.id, REMOTE_DOCKER_DEVICE_ID, uiTimeoutMs)
+        await bindStoppedStandIn(
+          control,
+          user.id,
+          REMOTE_DOCKER_DEVICE_ID,
+          uiTimeoutMs,
+          cloudEnvironment
+        )
         await finishStandInOnboarding(control)
         const remoteDraft = await rpc('runtime.stand_in.get', settingsParams())
         await control.command('navigate', 'body', {
@@ -327,7 +333,13 @@ export function createDesktopScenario({
         // existing cross-device deduplication assertions remain concurrent.
         await control.command('navigate', 'body', { value: '/stand-in' })
         await stopBoundStandIn(control, uiTimeoutMs)
-        await bindStoppedStandIn(control, user.id, localSettings.executionDeviceId, uiTimeoutMs)
+        await bindStoppedStandIn(
+          control,
+          user.id,
+          localSettings.executionDeviceId,
+          uiTimeoutMs,
+          cloudEnvironment
+        )
         await finishStandInOnboarding(control)
         await rpc('runtime.stand_in.personal.lifecycle', { userId: user.id, operation: 'start' })
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')

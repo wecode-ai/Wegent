@@ -8,8 +8,162 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SearchableSelect } from '../controls/SearchableSelect'
+import { SearchableSelect, type SearchableSelectOption } from '../controls/SearchableSelect'
+import { createCollaborationTranslator } from '../i18n'
 import { CollaborationTheme } from '../theme'
+import type { CollaborationIssue, SharedIssueAssignmentHistoryEntry } from '../types'
+import type { IssueAssigneeTarget } from './IssueDetailDraft'
+import {
+  isValidIssueAssignmentShortcut,
+  issueAssignmentOptions,
+  issueAssignmentShortcuts,
+} from './issueAssignmentShortcuts'
+
+describe('Issue assignment suggestions', () => {
+  const translate = createCollaborationTranslator('en')
+  const candidates: SearchableSelectOption<IssueAssigneeTarget>[] = [
+    { value: '', label: 'Unassigned' },
+    ...Array.from({ length: 7 }, (_, index) => ({
+      value: `user:${index + 1}` as const,
+      label: `Member ${index + 1}`,
+      group: 'Member',
+      testId: `person-${index + 1}`,
+      disabled: index === 6,
+    })),
+    { value: 'agent:historical', label: 'Agent', group: 'Agents' },
+  ]
+  const baseIssue: CollaborationIssue = {
+    id: 'issue-1',
+    cloud_project_id: 'project-1',
+    sequence_number: 1,
+    parent_id: null,
+    created_by_user_id: 1,
+    assignee_user_id: 1,
+    title: 'Review handoff',
+    description: '',
+    status: 'open',
+    priority: 'none',
+    due_at: null,
+    tags: [],
+    sort_order: 0,
+    version: 1,
+    created_at: '2026-11-27T00:00:00Z',
+    updated_at: '2026-11-27T00:00:00Z',
+    completed_at: null,
+  }
+
+  function history(...targets: (number | 'agent' | null)[]): SharedIssueAssignmentHistoryEntry[] {
+    return targets.map((target, index) => ({
+      by_user_id: 1,
+      to_type: target === 'agent' ? 'agent' : target === null ? null : 'user',
+      to_id: target === 'agent' ? 'historical' : target === null ? null : String(target),
+      action: target === null ? 'unassign' : 'assign',
+      at: new Date(Date.UTC(2026, 10, 27, 0, index)).toISOString(),
+    }))
+  }
+
+  const issue = {
+    ...baseIssue,
+    assignment_history: history(6, 5, 4, 3, 'agent', 7, 8, 3, 2, null, 1, 1),
+  }
+
+  it('selects the previous assignee and at most three further eligible people in recency order', () => {
+    const shortcuts = issueAssignmentShortcuts(issue, candidates, 'Member 1', true, translate)
+    expect(shortcuts.map(({ kind, target }) => [kind, target])).toEqual([
+      ['redeliver', 'user:1'],
+      ['return', 'user:2'],
+      ['recent', 'user:3'],
+      ['recent', 'user:4'],
+      ['recent', 'user:5'],
+    ])
+  })
+
+  it.each([7, 8])('does not replace an unavailable previous assignee (%s)', previous => {
+    const shortcuts = issueAssignmentShortcuts(
+      { ...baseIssue, assignment_history: history(2, previous, 1) },
+      candidates,
+      'Member 1',
+      true,
+      translate
+    )
+    expect(shortcuts.map(({ kind, target }) => [kind, target])).toEqual([
+      ['redeliver', 'user:1'],
+      ['recent', 'user:2'],
+    ])
+  })
+
+  it.each([true, false])(
+    'groups ordinary choices without duplicates (namespaced=%s)',
+    namespaced => {
+      const shortcuts = issueAssignmentShortcuts(issue, candidates, 'Member 1', true, translate)
+      const options = issueAssignmentOptions(
+        shortcuts,
+        candidates.map(candidate => ({
+          ...candidate,
+          value: namespaced ? candidate.value : candidate.value.replace(/^user:/, ''),
+        })),
+        'assignee',
+        translate
+      )
+      const value = (id: number) => (namespaced ? `user:${id}` : String(id))
+      expect(options.map(option => option.value)).toEqual([
+        'redeliver:user:1',
+        'return:user:2',
+        value(3),
+        value(4),
+        value(5),
+        '',
+        value(1),
+        value(2),
+        value(6),
+        value(7),
+        'agent:historical',
+      ])
+      expect(options.filter(option => option.section === 'Recent transfers')).toEqual(
+        [3, 4, 5].map(id =>
+          expect.objectContaining({
+            value: value(id),
+            label: `Member ${id}`,
+            testId: `person-${id}`,
+          })
+        )
+      )
+      expect(new Set(options.map(option => option.value)).size).toBe(options.length)
+    }
+  )
+
+  it('keeps the original choices when no assignment history is available', () => {
+    const shortcuts = issueAssignmentShortcuts(baseIssue, candidates, 'Member 1', false, translate)
+    expect(shortcuts).toEqual([])
+    expect(issueAssignmentOptions(shortcuts, candidates, 'assignee', translate)).toEqual(candidates)
+  })
+
+  it('invalidates a return shortcut after intermediate transfers while allowing same-person redelivery', () => {
+    const initial = { ...baseIssue, assignee_user_id: 2, assignment_history: history(1, 2) }
+    const returnShortcut = issueAssignmentShortcuts(
+      initial,
+      candidates,
+      'Member 2',
+      true,
+      translate
+    ).find(shortcut => shortcut.kind === 'return')!
+    expect(isValidIssueAssignmentShortcut(initial, returnShortcut)).toBe(true)
+    expect(
+      isValidIssueAssignmentShortcut(
+        { ...initial, assignment_history: history(1, 2, 2) },
+        returnShortcut
+      )
+    ).toBe(true)
+    for (const stale of [
+      { ...initial, assignee_user_id: 3, assignment_history: history(1, 2, 3) },
+      { ...initial, assignee_user_id: 2, assignment_history: history(1, 2, 3, 2) },
+      { ...initial, assignee_user_id: 2, assignment_history: history(1, 2, 1, 2) },
+      { ...initial, assignee_user_id: null, assignment_history: history(1, 2, null) },
+    ]) {
+      expect(isValidIssueAssignmentShortcut(stale, returnShortcut)).toBe(false)
+    }
+  })
+})
 
 describe('SearchableSelect', () => {
   let container: HTMLDivElement

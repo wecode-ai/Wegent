@@ -59,6 +59,7 @@ import { retryRuntimeConversation } from '@wegent/collaboration/execution/retryR
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
+import { getDefaultModelOptions, inferModelFamily, normalizeModelOptions } from '@/lib/model-ui'
 import {
   requiresNewConversationForModelSwitch,
   selectedModelExecutionFields,
@@ -123,7 +124,7 @@ export function TemporaryChatPanel({
   showExecutionTools = true,
   showModelSelector = true,
   hideProcessing = false,
-  showActivityDots = false,
+  isAssistantView = false,
   markReadWhenActive = false,
   nativeConversation = false,
   allowMessagesDuringApproval = false,
@@ -284,9 +285,12 @@ export function TemporaryChatPanel({
   ) {
     setConfirmedSession(null)
   }
-  const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
-  const globalSelectedModelOptions =
-    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const [draftModel, setDraftModel] = useState<{
+    model: UnifiedModel | null
+    options: ModelOptions
+  } | null>(null)
+  const draftSelectedModel = draftModel ? draftModel.model : projectChat.selectedModel
+  const draftSelectedOptions = draftModel?.options ?? projectChat.selectedModelOptions
   const taskModelIdentityPending = modelControls
     ? modelControls.loading ||
       Boolean(modelControls.unavailable) ||
@@ -325,7 +329,30 @@ export function TemporaryChatPanel({
             ...runtimeTaskModelControlOverrides(projectChat, address, taskModelSelection),
             supportsModelProviderSwitch: taskModelSelection.supportsModelProviderSwitch,
           }
-        : {}),
+        : {
+            activeModel: null,
+            selectedModel: draftSelectedModel,
+            selectedModelOptions: draftSelectedOptions,
+            setSelectedModel: (model: UnifiedModel | null) =>
+              setDraftModel({
+                model,
+                options:
+                  model &&
+                  draftSelectedModel &&
+                  inferModelFamily(model) === inferModelFamily(draftSelectedModel)
+                    ? normalizeModelOptions(model, draftSelectedOptions)
+                    : getDefaultModelOptions(model),
+              }),
+            setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
+              setDraftModel({ model, options }),
+            setSelectedModelOption: (optionId: string, value: string) =>
+              setDraftModel(current => ({
+                model: current ? current.model : draftSelectedModel,
+                options: { ...(current?.options ?? draftSelectedOptions), [optionId]: value },
+              })),
+            getSelectedModel: () => draftSelectedModel,
+            getSelectedModelOptions: () => draftSelectedOptions,
+          }),
       ...(modelControls
         ? {
             ...modelControls,
@@ -373,6 +400,8 @@ export function TemporaryChatPanel({
       attachmentSelection,
       contextUsage,
       projectChat,
+      draftSelectedModel,
+      draftSelectedOptions,
       taskPermissions,
       taskModelSelection,
       instanceId,
@@ -539,8 +568,8 @@ export function TemporaryChatPanel({
       // (for example plan mode) still belong to this conversation.
       return selectedModelExecutionFields(null, taskModelSelection.selectedModelOptions)
     }
-    return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
-  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])
+    return selectedModelExecutionFields(draftSelectedModel, draftSelectedOptions)
+  }, [address, draftSelectedModel, draftSelectedOptions, taskModelSelection, modelControls])
 
   const sessionStartFields =
     activeThreadId &&
@@ -661,6 +690,7 @@ export function TemporaryChatPanel({
         captureAttachmentsForScope: attachmentSelection.captureAttachmentsForScope,
         instanceId,
         selectedModelFields,
+        temporaryExecutionModel: draftModel || modelControls ? selectedModelFields : undefined,
         runtimeContext,
         sendQueuedMessageAsGuidance,
         sendRuntimePaneMessage,
@@ -914,7 +944,7 @@ export function TemporaryChatPanel({
     (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   const messageGaps = renderMessageGaps?.(presentation.messages)
   const showReplyWaitingIndicator =
-    (hideProcessing || showActivityDots) &&
+    (hideProcessing || isAssistantView) &&
     !readOnly &&
     !pendingRequest &&
     !taskLifecycle?.interactionStatus &&
@@ -927,9 +957,9 @@ export function TemporaryChatPanel({
         message.role === 'user' ||
         (message.role === 'assistant' && getAssistantContentPresentation(message).content.trim())
     )?.role !== 'assistant'
-  const showWaitingDots = showActivityDots && showReplyWaitingIndicator
+  const showWaitingDots = isAssistantView && showReplyWaitingIndicator
   const isWaitingForAssistant =
-    hideProcessing || showActivityDots
+    hideProcessing || isAssistantView
       ? showReplyWaitingIndicator
       : nativeConversation
         ? sending
@@ -1061,7 +1091,9 @@ export function TemporaryChatPanel({
                   value={input}
                   replaceDraftKey={replaceDraftKey}
                   onChange={value => {
-                    setInput(value)
+                    // The editor can flush after the conversation view has unsubscribed.
+                    if (draft) draft.onChange(value)
+                    else setInput(value)
                     return { appliedSynchronously: true }
                   }}
                   onDraftEdit={() => {
@@ -1100,7 +1132,7 @@ export function TemporaryChatPanel({
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
                   isStreaming={busy}
-                  showPauseButton={!showActivityDots || showWaitingDots}
+                  showPauseButton={!isAssistantView || showWaitingDots}
                   onPause={pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
@@ -1133,7 +1165,7 @@ export function TemporaryChatPanel({
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
         isWaitingForAssistant={isWaitingForAssistant}
-        waitingIndicatorStyle={showActivityDots ? 'dots' : undefined}
+        waitingIndicatorStyle={isAssistantView ? 'dots' : undefined}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
         className="min-h-0 flex-1"

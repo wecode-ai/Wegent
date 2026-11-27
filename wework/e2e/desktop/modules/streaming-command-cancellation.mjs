@@ -42,7 +42,10 @@ export function createStreamingCommandCancellationChecks({
         response.once('close', () => held.delete(response))
         response.write(sse([responseCreated(id)]))
       } else {
-        const command = `while [ ! -f './${RELEASE}' ]; do sleep 0.05; done; printf '%s' '${OUTPUT}'`
+        const command =
+          process.platform === 'win32'
+            ? `while (-not (Test-Path -LiteralPath './${RELEASE}')) { Start-Sleep -Milliseconds 50 }; Write-Output '${OUTPUT}'`
+            : `while [ ! -f './${RELEASE}' ]; do sleep 0.05; done; printf '%s' '${OUTPUT}'`
         const tool = selectShellTool(body, workspacePath, command)
         response.end(
           sse([responseCreated(id), ...selectedToolCall(CALL, tool), responseCompleted(id)])

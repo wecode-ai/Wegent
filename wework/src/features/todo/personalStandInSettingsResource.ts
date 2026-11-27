@@ -3,6 +3,7 @@ import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { dequal } from 'dequal'
 import { createStandInRoleDraft, type InitialStandInRoleRequest } from './standInRoleDraft'
 import { PersonalAssistantDefinitionSaveError } from './personalAssistantDeviceSettings'
 
@@ -28,6 +29,21 @@ export function personalStandInSettingsError(error: ErrorState): string | null {
   return typeof error === 'string' || error === null
     ? error
     : getStandInErrorMessage(error.cause, error.operation)
+}
+
+function appendedRole(
+  baseline: PersonalStandInSettings,
+  draft: PersonalStandInSettings,
+  change: Parameters<StandInExecutorApi['personalSave']>[4]
+) {
+  if (change?.kind !== 'create') return
+  const role = draft.roles.find(role => role.id === change.roleId)
+  if (
+    role &&
+    !baseline.roles.some(item => item.id === role.id) &&
+    dequal(baseline, { ...draft, roles: draft.roles.filter(item => item.id !== role.id) })
+  )
+    return role
 }
 
 /** One account and Executor own the read, editable draft, and accepted writes. */
@@ -211,6 +227,19 @@ export function createPersonalStandInSettingsResource({
       errorOverride = null
       publish()
       try {
+        const added = appendedRole(loaded.settings, value, definitionChange)
+        if (added) {
+          // Appending an independent role must preserve concurrent edits to the profile.
+          const latest = await api.personalGet(userId, loaded.deviceId)
+          if (!listeners.size) return null
+          if (
+            latest.userId === userId &&
+            latest.executionDeviceId === loaded.settings.executionDeviceId &&
+            latest.lifecycle?.status === loaded.settings.lifecycle?.status &&
+            !latest.roles.some(role => role.id === added.id)
+          )
+            value = { ...latest, roles: [...latest.roles, added] }
+        }
         const receipt = definitionChange
           ? await api.personalSave(userId, value, loaded.deviceId, undefined, definitionChange)
           : await api.personalSave(userId, value, loaded.deviceId)

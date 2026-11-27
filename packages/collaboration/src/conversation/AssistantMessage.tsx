@@ -51,13 +51,15 @@ import {
 import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { getAssistantReferences } from './codexReferences'
 
+export type RenderMessageVisualization = (
+  part: Parameters<NonNullable<AssistantMarkdownProps['renderVisualization']>>[0],
+  fileChanges: TurnFileChangesSummary | undefined
+) => ReactNode
+
 interface AssistantMessageProps {
   imageServices: AttachmentImageServices<Attachment>
   showProcessingStatus?: boolean
-  renderVisualization?: (
-    part: { file: string; mode?: 'wide'; title?: string },
-    message: WorkbenchMessage
-  ) => ReactNode
+  renderVisualization?: RenderMessageVisualization
   message: WorkbenchMessage
   runtimeTurn?: RuntimeConversationTurn
   conversationKey?: string | number | null
@@ -260,9 +262,10 @@ function AssistantMessageContent({
   )
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
+  const { fileChanges } = message
   const renderMessageVisualization = useMemo<AssistantMarkdownProps['renderVisualization']>(
-    () => (renderVisualization ? part => renderVisualization(part, message) : undefined),
-    [renderVisualization, message]
+    () => (renderVisualization ? part => renderVisualization(part, fileChanges) : undefined),
+    [renderVisualization, fileChanges]
   )
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
   const showProcessingTimeline =

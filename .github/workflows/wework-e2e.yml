@@ -510,16 +510,13 @@ jobs:
         env:
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
-          pnpm --dir wework prepare:electron
-          pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
+          node wework/scripts/prepare-electron.mjs
+          electron_bin="$(node -p "require('./wework/electron/node_modules/electron')")"
+          test -f "$electron_bin" && test -x "$electron_bin"
 
       - name: Set up real object storage for collaboration E2E
         if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
         uses: ./.github/actions/setup-minio-e2e
-
-      - name: Verify Electron for native startup checkpoints
-        if: contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'workbench-mode')
-        run: pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Run Wework desktop Core shard E2E
         id: core-e2e
@@ -543,9 +540,6 @@ jobs:
         run: |
           WEWORK_E2E_SEGMENTS="$(node .github/scripts/order-wework-linux-e2e.mjs)"
           echo "checkpoints=$WEWORK_E2E_SEGMENTS" >> "$GITHUB_OUTPUT"
-          if [[ "$WEWORK_E2E_SEGMENTS" == *"native-window-startup"* || "$WEWORK_E2E_SEGMENTS" == *"workbench-mode"* ]]; then
-            pnpm --dir wework/electron exec node -e "const fs=require('node:fs');const electron=require('electron');const stats=fs.statSync(electron);if(!stats.isFile()||!(stats.mode&0o111))throw new Error('Electron is not an executable regular file: '+electron)"
-          fi
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
@@ -1444,9 +1438,28 @@ jobs:
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
       - name: Enforce renderer performance budgets
+        id: renderer-profile
         if: needs.changes.outputs.wework_desktop_renderer_profile == 'true'
         timeout-minutes: 8
         run: node wework/scripts/profile-renderer.mjs --check
+
+      - name: Capture renderer thread timing after performance failure
+        if: failure() && steps.renderer-profile.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 8
+        env:
+          WEWORK_E2E_RESULT_ROOT: ${{ runner.temp }}/wework-renderer-capture
+        run: node wework/scripts/profile-renderer.mjs --capture --thread-timing
+
+      - name: Upload renderer thread timing
+        if: failure() && steps.renderer-profile.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-macos-renderer-thread-timing
+          path: ${{ runner.temp }}/wework-renderer-capture/*/renderer-performance-timing.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1476,15 +1489,16 @@ jobs:
             --parallel-segments "$segments"
 
       - name: Publish verified PR macOS Executor runtime
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true' && (env.MACOS_COMPLETE_BUILD == 'true' || steps.macos-build.outputs.executor-built-during-packaging == 'true')
         env:
           CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXECUTOR_CACHE_VARIANT: ${{ env.MACOS_COMPLETE_BUILD == 'true' && 'pr' || 'opt0-pr' }}
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
           .github/scripts/publish-macos-e2e-runtime-oci.sh \
             "$WEWORK_E2E_EXECUTOR_BIN" \
-            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-pr-$CACHE_PR_NUMBER"
+            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-$EXECUTOR_CACHE_VARIANT-$CACHE_PR_NUMBER"
 
       - name: Upload macOS Inspector failure evidence before cleanup
         if: always() && failure()
@@ -1495,7 +1509,6 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/*/failure.txt
             wework/test-results/desktop-e2e/*/renderer-threshold-measurements.json
-            wework/test-results/desktop-e2e/*/renderer-turn-long-task-profile.json
             wework/test-results/desktop-e2e/*/scenario-state.json
             wework/test-results/desktop-e2e/*/model-requests.json
             wework/test-results/desktop-e2e/*/*.log
