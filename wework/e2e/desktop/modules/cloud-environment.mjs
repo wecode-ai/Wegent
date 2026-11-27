@@ -1507,7 +1507,7 @@ class RealCloudEnvironment {
     )
   }
 
-  async restartCloudExecutor({ beforeSpawn } = {}) {
+  async restartCloudExecutor({ beforeSpawn, version } = {}) {
     assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
     const previousDevice = await this.device(CLOUD_DEVICE_ID)
     const previousInstanceId = previousDevice?.runtime_instance_id
@@ -1516,7 +1516,9 @@ class RealCloudEnvironment {
     await this.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', this.remoteExecutorLogPath)
     await beforeSpawn?.()
     this.remoteExecutor = await this.spawnExecutor(
-      this.remoteExecutorEnv,
+      version
+        ? { ...this.remoteExecutorEnv, WEGENT_EXECUTOR_VERSION: version }
+        : this.remoteExecutorEnv,
       this.remoteExecutorLogPath
     )
     const device = await this.waitForDeviceStatus(
@@ -1584,8 +1586,8 @@ class RealCloudEnvironment {
     return this.nevisSandboxService.restartRequests.length
   }
 
-  async waitForSandboxRestartRequest() {
-    return this.nevisSandboxService.waitForRestartRequest(0)
+  async waitForSandboxRestartRequest(afterCount = 0) {
+    return this.nevisSandboxService.waitForRestartRequest(afterCount)
   }
 
   async startGeneratedRemoteDevice({
