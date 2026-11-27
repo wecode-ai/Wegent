@@ -1,6 +1,36 @@
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import type { StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { raceWithTimeout } from '@/lib/promise-timeout'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
+import { dequal } from 'dequal'
+import { effectiveProjectSource } from './standInProjects'
+
+type ConnectionConfiguration = Pick<StandInRole, 'connections' | 'collaboration' | 'calendar'>
+
+export function hasConnectionDraft(
+  draft: ConnectionConfiguration,
+  saved: ConnectionConfiguration | undefined,
+  view?: string | null
+): boolean {
+  if (!saved) return false
+  if (view === 'projects')
+    return !dequal(
+      effectiveProjectSource(draft.collaboration),
+      effectiveProjectSource(saved.collaboration)
+    )
+  if (view === 'time') return !dequal(draft.calendar, saved.calendar)
+  if (view) {
+    const scope = (configuration: ConnectionConfiguration) =>
+      (configuration.connections ?? []).filter(row => row.providerId === view)
+    return !dequal(scope(draft), scope(saved))
+  }
+  return (
+    hasConnectionDraft(draft, saved, 'projects') ||
+    hasConnectionDraft(draft, saved, 'time') ||
+    !dequal(draft.connections ?? [], saved.connections ?? [])
+  )
+}
 
 export interface ConnectionSettingsInput {
   api?: StandInExecutorApi
@@ -12,7 +42,7 @@ export interface ConnectionSettingsInput {
   onScheduleDirtyChange?(dirty: boolean): void
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
-  onDetailTitleChange?(title: string | null): void
+  onDetailTitleChange?(title: string | null, view: string | null, scopeTitle: string | null): void
 }
 
 /** Own the selected connection editor and its scoped provider catalog. */
@@ -22,6 +52,7 @@ export function createConnectionSettingsModel(
 ) {
   let input = initial
   let view: string | null = initialCalendar ? 'time' : null
+  let scopeTitle: string | null = null
   let scheduleDirty = false
   let emailDirty = false
   let installing = false
@@ -32,8 +63,17 @@ export function createConnectionSettingsModel(
       JSON.stringify(['connection-providers', owner.deviceId, owner.locale]),
       async () => {
         if (!owner.api) return []
-        const result = await owner.api.connectionProviders(owner.deviceId)
-        return result.items.map(item => ({ ...item, ...item.locales?.[owner.locale] }))
+        try {
+          const result = await raceWithTimeout(
+            owner.api.connectionProviders(owner.deviceId),
+            15_000,
+            () => Object.assign(new Error('App catalog timed out'), { code: 'app_catalog_timeout' })
+          )
+          return result.items.map(item => ({ ...item, ...item.locales?.[owner.locale] }))
+        } catch (cause) {
+          reportStandInError('load_connection_catalog', cause, owner.deviceId)
+          throw cause
+        }
       },
       { refreshOnSubscribe: true }
     )
@@ -72,7 +112,13 @@ export function createConnectionSettingsModel(
   }
   let snapshot = readSnapshot()
   let notification:
-    | { detail: boolean; calendar: boolean; dirty: boolean; title: string | null }
+    | {
+        detail: boolean
+        calendar: boolean
+        dirty: boolean
+        title: string | null
+        scopeTitle: string | null
+      }
     | undefined
   function notifyOwner(force = false) {
     if (!listeners.size) return
@@ -81,12 +127,14 @@ export function createConnectionSettingsModel(
       calendar: view === 'time',
       dirty: scheduleDirty || emailDirty,
       title: snapshot.title,
+      scopeTitle,
     }
     if (force || next.detail !== notification?.detail) input.onDetailViewChange?.(next.detail)
     if (force || next.calendar !== notification?.calendar)
       input.onCalendarViewChange?.(next.calendar)
     if (force || next.dirty !== notification?.dirty) input.onScheduleDirtyChange?.(next.dirty)
-    if (force || next.title !== notification?.title) input.onDetailTitleChange?.(next.title)
+    if (force || next.title !== notification?.title || next.scopeTitle !== notification?.scopeTitle)
+      input.onDetailTitleChange?.(next.title, view, next.scopeTitle)
     notification = next
   }
   function publish() {
@@ -128,7 +176,7 @@ export function createConnectionSettingsModel(
           if (listeners.size) return
           next.onDetailViewChange?.(false)
           next.onCalendarViewChange?.(false)
-          next.onDetailTitleChange?.(null)
+          next.onDetailTitleChange?.(null, null, null)
           stopCatalog?.()
           stopCatalog = undefined
         })
@@ -137,8 +185,14 @@ export function createConnectionSettingsModel(
     setView(next: string | null) {
       if (next === view) return
       view = next
+      scopeTitle = null
       observeCatalog()
       publish()
+    },
+    setScopeTitle(next: string | null) {
+      if (next === scopeTitle) return
+      scopeTitle = next
+      notifyOwner()
     },
     setScheduleDirty(dirty: boolean) {
       if (scheduleDirty === dirty) return

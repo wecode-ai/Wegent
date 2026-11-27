@@ -2,6 +2,7 @@
 use super::runtime_owner::runtime_user;
 use super::stand_in::settings_error;
 use super::*;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
@@ -1024,10 +1025,17 @@ impl RuntimeWorkRpcHandler {
             let config = if independent {
                 super::stand_in_personal_issues::personal_issue_role(role, user)
             } else {
-                self.issue_intake_roles(std::slice::from_ref(role), user, project, kind, issue_id)
-                    .await?
-                    .into_iter()
-                    .next()
+                self.issue_intake_roles(
+                    std::slice::from_ref(role),
+                    user,
+                    project,
+                    kind,
+                    issue_id,
+                    None,
+                )
+                .await?
+                .into_iter()
+                .next()
             }
             .ok_or_else(|| {
                 let message = if independent {
@@ -1185,6 +1193,7 @@ impl RuntimeWorkRpcHandler {
                     project,
                     kind,
                     required(event, "issueId")?,
+                    Some(IssueIntakeTrigger::Assignment),
                 )
                 .await?
                 .into_iter()

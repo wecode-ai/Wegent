@@ -51,11 +51,55 @@ export async function editProjectSource(control, enabled) {
   await control.command('click', '[data-testid="stand-in-connections-open"]')
   await openConnectionTypePicker(control)
   await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
-  const selector = '[data-testid="stand-in-source-collaboration"]'
-  await control.command('waitFor', selector)
-  const current = await control.command('getAttribute', selector, { value: 'aria-checked' })
-  if (current !== String(enabled)) await control.command('click', selector)
-  await control.command('waitFor', `${selector}[aria-checked="${enabled}"]`)
+  await control.command('waitFor', '[data-testid="stand-in-project-scope"]')
+  const count = Number(
+    await control.command('getElementCount', '[data-testid^="stand-in-project-open-scope-"]')
+  )
+  if (enabled && !count) {
+    await openProjectScopeDetails(control)
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-all"]')
+    const back = '[data-testid="stand-in-connections-back"]'
+    await control.command('clickWhenEnabled', back)
+    await control.command('waitFor', '[data-testid="stand-in-project-choose-projects"]')
+    await control.command('clickWhenEnabled', back)
+  } else if (!enabled && count) {
+    await clearProjectScopes(control)
+  }
+  await control.command('waitFor', '[data-testid^="stand-in-project-open-scope-"]', {
+    visible: enabled,
+  })
+}
+
+export async function addAllProjectScopes(control, { configure = false } = {}) {
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-project-add-scope"]')
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-all-projects"]')
+  if (configure) return
+  const back =
+    '[data-testid="stand-in-connections-back"],[data-testid="stand-in-onboarding-connections-back"]'
+  await control.command('clickWhenEnabled', back)
+  await control.command('waitFor', '[data-testid="stand-in-project-choose-projects"]')
+  await control.command('clickWhenEnabled', back)
+}
+
+export async function openProjectScopeDetails(control) {
+  const saved = '[data-testid="stand-in-project-open-scope-projects"]'
+  if (Number(await control.command('getElementCount', saved)) > 0) {
+    await control.command('clickWhenEnabled', saved)
+  } else {
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-project-add-scope"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-project-choose-projects"]')
+  }
+}
+
+export async function clearProjectScopes(control) {
+  for (const scope of ['projects', 'includeIndependentIssues', 'includeParticipatingIssues']) {
+    const remove = `[data-testid="stand-in-project-open-scope-${scope}-remove"]`
+    if (Number(await control.command('getElementCount', remove)) > 0) {
+      await control.command('clickWhenEnabled', remove)
+      await control.command('waitFor', remove, { visible: false })
+    }
+  }
 }
 
 export async function discardStandInDraft(control) {

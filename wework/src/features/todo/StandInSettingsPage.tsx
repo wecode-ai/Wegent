@@ -206,6 +206,7 @@ function StandInSettingsEditor({
         role.executionDeviceId !== state.loadedDeviceId)
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false)
   const tagScope = JSON.stringify([userId, executionDeviceId, role?.id])
   const tagApi = services.standInApi
   const [tagOwner, setTagOwner] = useState(() => ({
@@ -233,6 +234,14 @@ function StandInSettingsEditor({
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
+  const [connectionScopeTitle, setConnectionScopeTitle] = useState<string | null>(null)
+  const connectionTitleChanged = useCallback(
+    (title: string | null, _view: string | null, scopeTitle: string | null) => {
+      setConnectionTitle(title)
+      setConnectionScopeTitle(scopeTitle)
+    },
+    []
+  )
   const [calendarEntry, setCalendarEntry] = useState(initialCalendar)
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const calendarViewChanged = useCallback(
@@ -462,17 +471,22 @@ function StandInSettingsEditor({
           {
             label: t('standIn.workspace.role_profile'),
             testId: 'stand-in-path-settings',
-            onClick: view !== (initialProject ? 'project' : 'main') ? close : undefined,
+            onClick:
+              view !== 'connections' && view !== (initialProject ? 'project' : 'main')
+                ? close
+                : undefined,
           },
           ...(view === 'connections'
             ? [
                 {
                   label: t('standIn.workspace.connections'),
                   testId: 'stand-in-path-connections',
-                  onClick: connectionDetailOpen ? () => connectionRef.current?.back() : undefined,
                 },
                 ...(connectionTitle
                   ? [{ label: connectionTitle, testId: 'stand-in-path-source' }]
+                  : []),
+                ...(connectionScopeTitle
+                  ? [{ label: connectionScopeTitle, testId: 'stand-in-path-scope' }]
                   : []),
               ]
             : view === 'advanced'
@@ -678,7 +692,7 @@ function StandInSettingsEditor({
             {view === 'connections' && (
               <StandInConnectionSettings
                 initialCalendar={calendarEntry}
-                onDetailTitleChange={setConnectionTitle}
+                onDetailTitleChange={connectionTitleChanged}
                 onCalendarViewChange={calendarViewChanged}
                 onDetailViewChange={setConnectionDetailOpen}
                 hideHeading
@@ -688,6 +702,7 @@ function StandInSettingsEditor({
                 savedConfiguration={saved?.roles.find(item => item.id === role.id)}
                 scheduling={{ userId, roleId: role.id }}
                 onScheduleDirtyChange={setScheduleDirty}
+                onScheduleEditorOpenChange={setScheduleEditorOpen}
                 tagDraft={tagDraft}
                 projects={projects}
                 focusedProjectId={initialProject?.id}
@@ -795,11 +810,12 @@ function StandInSettingsEditor({
             />
           )}
           {shortcutPage?.content}
-          {!scheduleDirty && !shortcutPage && (
+          {!scheduleDirty && !scheduleEditorOpen && !shortcutPage && (
             <StandInSettingsActions
               prefix="stand-in"
               busy={saving}
               leading={
+                !connectionDetailOpen &&
                 (footerLeading || canDeleteRole) && (
                   <>
                     {footerLeading}

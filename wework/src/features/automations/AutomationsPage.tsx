@@ -59,6 +59,7 @@ const EMPTY_AUTOMATION_RUNS: AutomationRun[] = []
 
 export interface AutomationNavigationHandle {
   requestLeave(action: () => void): void
+  returnToList?(): void
 }
 
 export function AutomationsPage({
@@ -68,13 +69,13 @@ export function AutomationsPage({
   initialAutomationId,
   detailOnly = false,
   onClose,
-  onDirtyChange,
+  onEditorChange,
   onNavigate,
   ref,
 }: {
   embedded?: boolean
   ref?: Ref<AutomationNavigationHandle>
-  onDirtyChange?(dirty: boolean): void
+  onEditorChange?(open: boolean, dirty: boolean): void
   onNavigate?(action: () => void): void
   standInDeviceId?: string
   initialAutomationId?: string
@@ -160,8 +161,8 @@ export function AutomationsPage({
   }
   const source = owner.source
   const subscribeDraft = useCallback(
-    (notify: () => void) => source.subscribe(notify, onDirtyChange),
-    [source, onDirtyChange]
+    (notify: () => void) => source.subscribe(notify, onEditorChange),
+    [source, onEditorChange]
   )
   const {
     selectedAutomationId,
@@ -189,7 +190,6 @@ export function AutomationsPage({
     loadAutomations,
     loadRuns,
   } = source
-  useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
   const catalog = useSyncExternalStore(
     source.subscribeCatalog,
     source.catalog.getSnapshot,
@@ -598,6 +598,7 @@ export function AutomationsPage({
       setDraft(null)
       setDirty(false)
     })
+  useImperativeHandle(ref, () => ({ requestLeave, returnToList: closeDetail }))
   const handleOpenRuntimeTask = async (address: RuntimeTaskAddress) => {
     const isCurrent = source.capture()
     if (!isCurrent()) return

@@ -1248,3 +1248,81 @@ async fn stand_in_role_transfer_excludes_permissions_on_first_save_and_retransfe
     );
     assert_eq!(store.personal_stand_in(7, "mac").unwrap(), retransferred);
 }
+#[test]
+fn project_and_participation_triggers_authorize_independent_event_types() {
+    use crate::task_runtime::personal_stand_in::IssueIntakeTrigger::{Assignment, Mention};
+
+    let role = json!({
+        "enabled": true,
+        "enabledAfter": "2026-01-01T00:00:00Z",
+        "participatingIssuesEnabledAfter": "2026-02-01T00:00:00Z",
+        "issueTriggerBoundaries": {"participatingTrigger":{"mention":"2026-03-01T00:00:00Z"}},
+        "collaboration": {
+            "enabled": true,
+            "allProjects": true,
+            "includeParticipatingIssues": true,
+            "projectTrigger": "assignment",
+            "participatingTrigger": "mention"
+        }
+    });
+    let config = |participant, trigger| {
+        super::super::personal_stand_in::issue_role_config(
+            &role,
+            7,
+            "project",
+            "cloud",
+            participant,
+            Some(trigger),
+        )
+    };
+    assert!(config(false, Mention).is_none());
+    assert_eq!(
+        config(false, Assignment).unwrap()["enabledAfter"],
+        "2026-01-01T00:00:00Z"
+    );
+    assert_eq!(
+        config(true, Mention).unwrap()["enabledAfter"],
+        "2026-03-01T00:00:00Z"
+    );
+    assert_eq!(
+        config(true, Assignment).unwrap()["enabledAfter"],
+        "2026-01-01T00:00:00Z"
+    );
+}
+
+#[test]
+fn issue_tags_and_cutoff_must_match_the_same_receive_scope() {
+    use super::super::personal_stand_in::{issue_role_config, matching_personal_roles};
+    use crate::task_runtime::personal_stand_in::IssueIntakeTrigger::Assignment;
+
+    let role = json!({
+        "enabled": true,
+        "enabledAfter": "2026-01-01T00:00:00Z",
+        "participatingIssuesEnabledAfter": "2026-02-01T00:00:00Z",
+        "collaboration": {
+            "enabled": true,
+            "allProjects": true,
+            "includeParticipatingIssues": true,
+            "includeIndependentIssues": true,
+            "tags": ["legacy"],
+            "tagFilters": {"projects": ["project"], "participating": ["participant"], "independent": []}
+        }
+    });
+    let configs =
+        [issue_role_config(&role, 7, "project", "cloud", true, Some(Assignment)).unwrap()];
+    let early = json!({"created_at": "2026-01-10T00:00:00Z"});
+    let later = json!({"created_at": "2026-02-02T00:00:00Z"});
+    let project = json!({"tags": ["project"]});
+    let participant = json!({"tags": ["participant"]});
+    assert!(issue_after_enable(&early, &configs[0], &project));
+    assert!(!issue_after_enable(&early, &configs[0], &participant));
+    assert!(issue_after_enable(&later, &configs[0], &participant));
+    assert_eq!(
+        matching_personal_roles(&configs, &json!({"tags": ["project", "participant"]})).len(),
+        1
+    );
+    assert!(matching_personal_roles(&configs, &json!({"tags": ["legacy"]})).is_empty());
+    let independent =
+        super::super::stand_in_personal_issues::personal_issue_role(&role, 7).unwrap();
+    assert_eq!(independent["tags"], json!([]));
+}

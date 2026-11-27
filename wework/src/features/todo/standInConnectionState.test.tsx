@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { newStandInPrimaryRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import {
   isStandInBindingOwner,
   type StandInExecutorApi,
@@ -9,11 +9,145 @@ import {
 } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
+import { createGitConnectionsModel } from './standInGitConnectionsModel'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
+import { effectiveProjectSource, updateProjectSource, type ProjectSource } from './standInProjects'
 
 const devices: DeviceInfo[] = []
 const account = { userId: 1, backendUrl: 'https://current.example/api' }
+
+it('restores the saved project draft after undoing scope edits on legacy roles', () => {
+  const legacy: ProjectSource = {
+    enabled: false,
+    allProjects: true,
+    projects: [],
+    excludedProjects: [],
+    tags: [],
+  }
+  expect(effectiveProjectSource(legacy).allProjects).toBe(false)
+  const active = updateProjectSource(legacy, { includeIndependentIssues: true }, legacy)
+  expect(active).toMatchObject({ enabled: true, allProjects: false })
+  expect(updateProjectSource(active, { includeIndependentIssues: false }, legacy)).toBe(legacy)
+
+  const scoped: ProjectSource = {
+    ...legacy,
+    enabled: true,
+    excludedProjects: [
+      { id: 'same', store: 'local' },
+      { id: 'same', store: 'cloud' },
+    ],
+  }
+  const all = updateProjectSource(scoped, { excludedProjects: [] }, scoped)
+  expect(all.excludedProjects).toHaveLength(0)
+  expect(
+    updateProjectSource(all, { excludedProjects: [...scoped.excludedProjects].reverse() }, scoped)
+  ).toBe(scoped)
+})
+
+it.each(['github', 'gitlab'])(
+  'binds %s repository drafts to the authenticated account',
+  async platform => {
+    const providerId = '@wegent/dsh-connection-git/' + platform
+    const account = {
+      providerId,
+      profile: JSON.stringify(['https://' + platform + '.com', '7']),
+      id: 'personal',
+      kind: 'personal',
+      name: 'Test account',
+    }
+    const repository = { ...account, kind: 'repository', id: '42', name: 'team/repository' }
+    const foreign = {
+      ...repository,
+      profile: JSON.stringify(['https://' + platform + '.com', '8']),
+    }
+    const search = vi
+      .fn<StandInExecutorApi['searchConnectionResources']>()
+      .mockResolvedValueOnce({ items: [account], hasMore: false })
+      .mockResolvedValueOnce({ items: [foreign, repository], hasMore: false })
+      .mockResolvedValueOnce({
+        items: [],
+        hasMore: false,
+        availability: { status: 'auth_required' },
+      })
+    const onChange = vi.fn()
+    const initial = { role: newStandInPrimaryRole('test-device'), disabled: false, onChange }
+    const model = createGitConnectionsModel(
+      { searchConnectionResources: search } as unknown as StandInExecutorApi,
+      'test-device',
+      providerId,
+      initial
+    )
+    const unsubscribe = model.subscribe(() => {}, initial)
+    try {
+      await waitFor(() => expect(model.getSnapshot().accountStatus).toBe('ready'))
+      model.set('kind', 'repository')
+      await model.search()
+      expect(model.getSnapshot().items).toEqual([repository])
+      model.changeScope([], [foreign, repository])
+      expect(onChange.mock.lastCall?.[0].connections).toEqual([expect.objectContaining(repository)])
+      await model.search()
+      expect(model.getSnapshot()).toMatchObject({
+        accountStatus: 'signed_out',
+        accounts: [],
+        items: [],
+      })
+      model.changeScope([], [account])
+      expect(onChange).toHaveBeenCalledTimes(1)
+    } finally {
+      unsubscribe()
+    }
+  }
+)
+
+it('restores a saved specific Git source instead of broadening it after reopening the draft', async () => {
+  const providerId = '@wegent/dsh-connection-git/gitlab'
+  const profile = JSON.stringify(['https://gitlab.com', '7'])
+  const resource = { providerId, profile, id: '42', kind: 'repository', name: 'team/repo' }
+  const saved = {
+    ...resource,
+    collectionKey: 'verified-issue-only',
+    configurationSummary: 'Issue #2',
+    policy: { automatic: false, askBeforeAct: true },
+  }
+  const search = vi
+    .fn<StandInExecutorApi['searchConnectionResources']>()
+    .mockResolvedValueOnce({ items: [{ ...resource, id: 'personal', kind: 'personal' }] })
+    .mockResolvedValueOnce({ items: [resource] })
+  const onChange = vi.fn()
+  const initial = {
+    role: newStandInPrimaryRole('test-device'),
+    savedConnections: [saved],
+    disabled: false,
+    onChange,
+  }
+  const model = createGitConnectionsModel(
+    { searchConnectionResources: search } as unknown as StandInExecutorApi,
+    'test-device',
+    providerId,
+    initial
+  )
+  const unsubscribe = model.subscribe(() => {}, initial)
+  try {
+    await waitFor(() => expect(model.getSnapshot().accountStatus).toBe('ready'))
+    model.set('kind', 'repository')
+    await model.search()
+    model.changeScope([], [resource])
+    expect(onChange.mock.lastCall?.[0].connections).toEqual([saved])
+    const previous = { ...saved, policy: { ...saved.policy, immediate: false } }
+    const draft = { ...initial, role: { ...initial.role, connections: [previous] } }
+    const leave = model.subscribe(() => {}, draft)
+    try {
+      model.changeScope([previous])
+      model.changeScope([], [resource])
+      expect(onChange.mock.lastCall?.[0].connections).toEqual([previous])
+    } finally {
+      leave()
+    }
+  } finally {
+    unsubscribe()
+  }
+})
 
 it('matches account IDs and preserves the installation-local owner', () => {
   expect(isStandInBindingOwner(1, 1)).toBe(true)
@@ -132,3 +266,84 @@ it('reads legacy bindings without migration and only offers the stopped profile 
   expect(result.current.stoppedProfile).toBeUndefined()
   expect(personalGet).toHaveBeenCalledTimes(3)
 })
+
+it('keeps a recovered binding inactive until the destination acknowledges startup', async () => {
+  const target = { ...account, deviceId: 'cloud' }
+  const pending: StandInInstanceBinding = { status: 'activating', version: 4, target }
+  const ready: StandInInstanceBinding = { ...pending, status: 'active', version: 5 }
+  const profile: PersonalStandInSettings = {
+    userId: account.userId,
+    executionDeviceId: target.deviceId,
+    version: 1,
+    roles: [],
+  }
+  const binding = vi.fn<StandInExecutorApi['binding']>(async (_device, operation) =>
+    operation === 'completeActivation' ? ready : pending
+  )
+  const lifecycle = vi
+    .fn<StandInExecutorApi['lifecycle']>()
+    .mockRejectedValueOnce(new Error('Activation acknowledgement lost'))
+    .mockResolvedValue(profile)
+  const services = {
+    standInApi: { binding, lifecycle } as unknown as StandInExecutorApi,
+    getLocalRuntimeSidebarIdentity: async () =>
+      ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
+  } satisfies Partial<WorkbenchServices>
+  const { result } = renderHook(() =>
+    useStandInInstance(services as WorkbenchServices, account.userId, devices, true, true)
+  )
+
+  await waitFor(() => expect(result.current.error).toBeTruthy())
+  expect(result.current.binding).toEqual(pending)
+  expect(binding.mock.calls).toEqual([['local']])
+
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.binding).toEqual(ready))
+  expect(result.current.error).toBeNull()
+})
+
+it.each(['runtime_rpc_timeout', 'unsupported_method', 'protocol_mismatch'])(
+  'initializes the target device when stopping the old device reports %s',
+  async code => {
+    const source = { ...account, deviceId: 'remote' }
+    const destination = { ...account, deviceId: 'local' }
+    const pending: StandInInstanceBinding = {
+      status: 'activating',
+      version: 3,
+      target: destination,
+    }
+    const ready: StandInInstanceBinding = { ...pending, status: 'active', version: 4 }
+    const binding = vi
+      .fn<StandInExecutorApi['binding']>()
+      .mockResolvedValueOnce({ status: 'active', version: 1, target: source })
+      .mockResolvedValueOnce({ status: 'stopping', version: 2, target: source })
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(ready)
+    const settings = { userId: account.userId, executionDeviceId: 'local', version: 0, roles: [] }
+    const lifecycle = vi
+      .fn<StandInExecutorApi['lifecycle']>()
+      .mockRejectedValueOnce({ code })
+      .mockResolvedValueOnce(settings)
+    const personalGet = vi.fn<StandInExecutorApi['personalGet']>().mockResolvedValue(settings)
+    const services = {
+      standInApi: { binding, personalGet, lifecycle } as unknown as StandInExecutorApi,
+      getLocalRuntimeSidebarIdentity: async () =>
+        ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
+    } satisfies Partial<WorkbenchServices>
+    const { result } = renderHook(() =>
+      useStandInInstance(services as WorkbenchServices, account.userId, devices, true, true)
+    )
+    await waitFor(() => expect(result.current.binding?.target).toEqual(source))
+
+    const configure = vi.fn(async () => {})
+    await act(async () => {
+      expect(await result.current.initializeOnDevice(destination, configure)).toBe('initialized')
+    })
+    expect(configure).toHaveBeenCalledOnce()
+    expect(lifecycle.mock.calls).toEqual([
+      [account.userId, 'remote', 'stop'],
+      [account.userId, 'local', 'start'],
+    ])
+    expect(result.current.binding).toEqual(ready)
+  }
+)

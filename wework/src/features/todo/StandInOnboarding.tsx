@@ -114,6 +114,14 @@ function StandInOnboardingContent({
     (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
+  const [scopeTitle, setScopeTitle] = useState<string | null>(null)
+  const [scopePageTitle, setScopePageTitle] = useState<string | null>(null)
+  const scopeTitleChanged = useCallback((title: string | null, pageTitle: string | null) => {
+    setScopeTitle(title)
+    setScopePageTitle(pageTitle)
+  }, [])
+  const [backSlot, setBackSlot] = useState<HTMLDivElement | null>(null)
+  const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null)
   const dismiss = () => {
     if (saving || setupBusy) return
     setDismissed(true)
@@ -170,7 +178,7 @@ function StandInOnboardingContent({
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-modal flex items-center justify-center bg-black/15 p-4"
             onMouseDown={event => {
               if (event.target === event.currentTarget) close()
             }}
@@ -183,20 +191,29 @@ function StandInOnboardingContent({
                   ref={dialogRef}
                   aria-labelledby={`${scopeId}-title`}
                   tabIndex={-1}
-                  className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg md:p-6"
+                  className="flex max-h-[min(680px,calc(100dvh-3rem))] w-[92vw] max-w-[600px] flex-col overflow-hidden rounded-[20px] border border-border bg-background text-text-primary shadow-lg"
                   data-testid="stand-in-onboarding"
                 />
               }
             >
-              <div className="flex w-full flex-col gap-5">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 id={`${scopeId}-title`} className="heading-md font-medium">
-                    {t(
-                      guideOpen
-                        ? 'standIn.onboarding.examples_dialog_title'
-                        : 'standIn.onboarding.connect_title'
+              <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5 md:px-6 md:pt-6">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div ref={setBackSlot} className="empty:hidden" />
+                  <div className="min-w-0">
+                    {!guideOpen && scopeTitle && scopePageTitle && (
+                      <p className="text-xs text-text-secondary">{scopeTitle}</p>
                     )}
-                  </h2>
+                    <h2 id={`${scopeId}-title`} className="heading-md break-words font-medium">
+                      {(!guideOpen && (scopePageTitle || scopeTitle)) ||
+                        t(
+                          guideOpen
+                            ? 'standIn.onboarding.examples_dialog_title'
+                            : 'standIn.onboarding.connect_title'
+                        )}
+                    </h2>
+                  </div>
+                </div>
+                {(!scopeTitle || guideOpen) && (
                   <Button
                     variant="ghost"
                     className="h-11 md:h-9"
@@ -206,14 +223,21 @@ function StandInOnboardingContent({
                   >
                     {t(guideOpen ? 'standIn.close' : 'standIn.onboarding.exit')}
                   </Button>
-                </div>
-                {result && !guideOpen ? (
+                )}
+              </div>
+              <div className="flex min-h-0 flex-col gap-5 overflow-y-auto px-5 py-5 md:px-6">
+                {!guideOpen && (result || (error && configuration.onSelectDevice)) ? (
                   <StandInOnboardingSetup
                     ref={setupRef}
-                    configuration={configuration}
+                    configuration={
+                      result ? configuration : { ...configuration, settings: null, error: null }
+                    }
                     api={api}
                     onComplete={complete}
                     onBusyChange={setSetupBusy}
+                    backSlot={backSlot}
+                    footerSlot={footerSlot}
+                    onScopeTitleChange={scopeTitleChanged}
                   />
                 ) : result ? (
                   <>
@@ -277,6 +301,7 @@ function StandInOnboardingContent({
                   </Button>
                 ) : null}
               </div>
+              <div ref={setFooterSlot} className="shrink-0 empty:hidden" />
             </DialogSurface>
           </div>,
           document.body

@@ -1,4 +1,5 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { raceWithTimeout } from '@/lib/promise-timeout'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import { useMemo, useSyncExternalStore } from 'react'
 import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
@@ -82,12 +83,16 @@ function createStandInModelCatalog(
     })
     let result: CatalogResult
     try {
-      result = await read()
+      result = await raceWithTimeout(read(), 15_000, () =>
+        Object.assign(new Error('Model catalog timed out'), { code: 'model_catalog_timeout' })
+      )
     } catch (error) {
       result = { entries: [], error }
     }
-    if (listeners.size && revision === revisions[source])
+    if (listeners.size && revision === revisions[source]) {
+      if (result.error) reportStandInError(`load_${source}_model_catalog`, result.error, deviceId)
       publish(source, publishedSource(snapshot[source], result))
+    }
   }
   const load = (invalidateNative = false, forceRefresh = false) => {
     if (!listeners.size || !services?.standInApi || !deviceId) return
@@ -104,6 +109,10 @@ function createStandInModelCatalog(
       },
       invalidateNative
     )
+    loadCloud(forceRefresh)
+  }
+  const loadCloud = (forceRefresh = false) => {
+    if (!services || (snapshot.cloud.pending && !forceRefresh)) return
     void loadSource('cloud', async () => ({
       entries: runnerModelCatalog(
         [],
@@ -124,7 +133,7 @@ function createStandInModelCatalog(
     subscribe(listener: () => void) {
       listeners.add(listener)
       if (listeners.size === 1 && services?.standInApi && deviceId) {
-        unsubscribe = services.modelApi.subscribe?.(() => load())
+        unsubscribe = services.modelApi.subscribe?.(() => loadCloud())
         const initialRevision = revisions.native
         queueMicrotask(() => {
           if (listeners.size && revisions.native === initialRevision) load()

@@ -291,16 +291,47 @@ export function createDesktopScenario({
       assert.equal(accounts.length, 1)
       assert.equal(accounts[0].password, undefined)
       const accountId = accounts[0].id
+      const mailboxScope = '[data-testid="stand-in-email-add-scope"]'
+      const mailbox = `[data-testid="stand-in-email-connect-${accountId}"]`
+      const runtimeSettings = () => rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
+      const verifiedSettings = await runtimeSettings()
+      assert.ok(
+        !verifiedSettings.primary?.connections?.some(row => row.profile === accountId),
+        'Verifying the account must not enable mail intake'
+      )
+      await captureScreenshot(control, '03-verified-account-with-intake-off.png')
+      await control.command('clickWhenEnabled', mailboxScope)
+      await control.command('clickWhenEnabled', mailbox)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-back"]')
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-add-${PROVIDER}-connection"]`
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="stand-in-email-open-scope-${accountId}"]`
+      )
+      assert.deepEqual(
+        await runtimeSettings(),
+        verifiedSettings,
+        'The inbox stays in the draft until saving'
+      )
+      await control.command('clickWhenEnabled', `[data-testid="stand-in-email-open-scope-${accountId}"]`)
       await control.command(
         'clickWhenEnabled',
         '[data-testid="stand-in-processing-settings-toggle"]'
       )
       await control.command('click', `[data-testid="stand-in-email-policy-${accountId}"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-email-policy-${accountId}-immediate"]`
+      )
       await captureScreenshot(control, '03-account-verified-connection-pending-save.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-save"]', { visible: false })
       const saved = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       assert.equal(saved.primary.connections[0].profile, accountId)
+      assert.equal(saved.primary.connections[0].policy.immediate, true)
       assert.ok(!JSON.stringify(saved).includes(mail.config.password))
       mail.pauseImap()
       await openStandInDetails(control)

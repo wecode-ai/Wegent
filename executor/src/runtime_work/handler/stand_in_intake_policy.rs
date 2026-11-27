@@ -11,9 +11,7 @@ pub(super) fn immediate_intake(roles: &[Value], event: &Value) -> bool {
                 .as_array()
                 .is_some_and(|ids| ids.contains(&role["id"]))
             && match event["kind"].as_str() {
-                Some("calendar") => role["calendar"]["policy"]["immediate"]
-                    .as_bool()
-                    .unwrap_or(role["id"] != "@primary"),
+                Some("calendar") => role["calendar"]["policy"]["automatic"] != false,
                 Some("assignment") => immediate_policy(&project_policy(
                     role,
                     event["projectId"].as_str().unwrap_or_default(),

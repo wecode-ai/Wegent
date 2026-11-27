@@ -1,13 +1,16 @@
 import type { LucideIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 export function StandInConnectionHeader({
   icon: Icon,
   title,
   description,
+  children,
 }: {
   icon: LucideIcon
   title: string
-  description: string
+  description?: string
+  children?: ReactNode
 }) {
   return (
     <header className="shrink-0 space-y-2" data-testid="stand-in-connection-header">
@@ -15,7 +18,8 @@ export function StandInConnectionHeader({
         <Icon aria-hidden="true" className="h-4 w-4" />
         {title}
       </h3>
-      <p className="text-sm text-text-secondary">{description}</p>
+      {children}
+      {description && <p className="text-sm text-text-secondary">{description}</p>}
     </header>
   )
 }

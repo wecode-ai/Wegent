@@ -1,3 +1,4 @@
+import { addAllProjectScopes, clearProjectScopes } from './stand-in-flows.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -7,7 +8,6 @@ import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
 export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captureScreenshot) {
   const dingtalk = '[data-testid="stand-in-add-dingtalk-connection"]'
   const projects = '[data-testid="stand-in-add-projects-connection"]'
-  const receive = '[data-testid="stand-in-source-collaboration"]'
   const panel = '[data-testid="stand-in-primary-profile"]'
   await control.command('waitFor', '[data-testid="stand-in-connected-list"]')
   await control.command('waitFor', dingtalk, { text: '迁移连接' })
@@ -19,10 +19,8 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   )
   await captureScreenshot(control, 'connection-01-source-catalog.png', panel)
   const search = '[data-testid="stand-in-connection-search"]'
-  const configuredFilter = '[data-testid="stand-in-connection-configured-filter"]'
   await verifyProjectFieldFocus(control, 'stand-in-connection-search', {
     includeParent: true,
-    previousButtonId: 'stand-in-connection-configured-filter',
     nextButtonPattern: /^stand-in-add-.+-connection$/,
   })
   await control.command('fill', search, { value: '迁移连接' })
@@ -32,19 +30,14 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   await control.command('fill', search, { value: 'no-matching-source' })
   await control.command('waitFor', `${panel} [role="status"]`, { text: '没有匹配的连接' })
   await control.command('fill', search, { value: '' })
-  await control.command('click', configuredFilter)
-  await control.command('waitFor', '[data-testid="stand-in-available-list"]', { visible: false })
-  await control.command('waitFor', dingtalk)
-  await control.command('click', configuredFilter)
+  await control.command('waitFor', '[data-testid="stand-in-available-list"]')
   await control.command('waitFor', projects)
   await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
   await control.command('click', projects)
-  await control.command('waitFor', receive)
-  const enabled =
-    (await control.command('getAttribute', receive, { value: 'aria-checked' })) === 'true'
-  await control.command('click', receive)
+  await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+  await addAllProjectScopes(control)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]')
-  await control.command('click', receive)
+  await clearProjectScopes(control)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]', {
     visible: false,
   })
@@ -53,13 +46,8 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
     '1',
     'Restoring the original intake setting must clear the unsaved draft'
   )
-  if (!enabled) {
-    await control.command(
-      'waitFor',
-      '[data-testid="stand-in-all-projects"][aria-checked="true"]:disabled'
-    )
-  }
-  await control.command('click', receive)
+  await control.command('waitFor', '[data-testid="stand-in-source-projects"]', { visible: false })
+  await addAllProjectScopes(control)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]')
   await captureScreenshot(control, 'connection-02-pending-scope.png', panel)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
@@ -70,7 +58,8 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
     { userId: 9001 },
     uiTimeoutMs
   )
-  assert.equal(saved.primary.collaboration.enabled, !enabled)
+  assert.equal(saved.primary.collaboration.enabled, true)
+  assert.equal(saved.primary.collaboration.allProjects, true)
   await openStandInSettings(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
   await control.command('waitFor', dingtalk, { text: '迁移连接' })
@@ -80,11 +69,7 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   )
   await captureScreenshot(control, 'connection-03-saved-catalog.png', panel)
   await control.command('click', projects)
-  await control.command('waitFor', receive)
-  assert.equal(
-    await control.command('getAttribute', receive, { value: 'aria-checked' }),
-    String(!enabled)
-  )
+  await control.command('waitFor', '[data-testid="stand-in-project-open-scope-projects"]')
   await control.command('click', '[data-testid="stand-in-connections-back"]')
   await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 }

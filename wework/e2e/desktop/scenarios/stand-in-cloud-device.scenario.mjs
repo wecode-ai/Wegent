@@ -185,6 +185,54 @@ export function createDesktopScenario({
     await stop(control)
   }
 
+  async function verifyDefinitionBackupSettingsEntry(control) {
+    const backup = testId('stand-in-download-definition-backups')
+    assert.equal(await control.command('getElementCount', backup), '0')
+    assert.equal(await control.command('getElementCount', testId('stand-in-migration-expand')), '0')
+    assert.equal(await control.command('getElementCount', testId('stand-in-migration')), '0')
+    await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
+    await openStandInSettings(control)
+    await control.command('waitFor', backup, { timeoutMs: uiTimeoutMs })
+    await control.command('clickWhenEnabled', testId('stand-in-primary-profile-close'))
+    await control.command('waitFor', backup, { visible: false, timeoutMs: uiTimeoutMs })
+  }
+
+  async function verifyUnreachableSourceInitialization(control, readAssistant) {
+    const missingDevice = 'stand-in-unregistered-source'
+    await saveBinding(control, { userId: USER, deviceId: missingDevice })
+    await reloadMainWindow(control)
+    const migration = testId('stand-in-migration')
+    await control.command('waitFor', migration, { timeoutMs: uiTimeoutMs })
+    assert.equal(await control.command('getElementCount', testId('stand-in-conversation')), '0')
+    const existing = (await readAssistant()).assistant
+    await control.command('select', testId('stand-in-migration-device'), { value: CLOUD_DEVICE_ID })
+    await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
+    await control.command('clickWhenEnabled', testId('stand-in-migrate-confirm'))
+    await until(
+      () => binding(control),
+      result => result.status === 'active' && result.target.deviceId === CLOUD_DEVICE_ID,
+      'An unreachable source must allow the destination to use the cloud assistant',
+      uiTimeoutMs
+    )
+    await control.command('waitFor', migration, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', testId('stand-in-conversation'), { timeoutMs: uiTimeoutMs })
+    const saved = (await readAssistant()).assistant
+    assert.deepEqual(
+      saved.definitions.map(definition => [definition.roleId, definition.ghost.spec.systemPrompt]),
+      existing.definitions.map(definition => [
+        definition.roleId,
+        definition.ghost.spec.systemPrompt,
+      ])
+    )
+    assert.equal(
+      saved.definitions.find(definition => definition.roleId === '@primary').bot.spec
+        .execution_policy.environment_id,
+      CLOUD_DEVICE_ID
+    )
+    await verifyDefinitionBackupSettingsEntry(control)
+    await stop(control)
+  }
+
   async function verifyRegularBinding(control, localDevice, backendUrl) {
     const username = `stand-in-binding-${process.pid}`
     const credentials = { user_name: username, password: randomUUID() }
@@ -401,7 +449,6 @@ export function createDesktopScenario({
         '0',
         'Onboarding must not switch an active instance binding'
       )
-      await control.command('clickWhenEnabled', testId('stand-in-onboarding-continue'))
       await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
       await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
       const readInitialAssistant = () =>
@@ -544,6 +591,10 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', testId('stand-in-migrate-open'))
       await control.command('clickWhenEnabled', testId('stand-in-migrate-confirm'))
+      await control.command('waitFor', testId('stand-in-migration'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', testId('stand-in-role-name'))
       assert.equal(await control.command('getValue', testId('stand-in-role-name')), LOCAL_NAME)
       assert.equal((await binding(control)).target.deviceId, CLOUD_DEVICE_ID)
@@ -730,6 +781,7 @@ export function createDesktopScenario({
       await observeDevice(control, CLOUD_DEVICE_ID, '在线')
       await stop(control)
       await verifySavedLocalBinding(control, localDevice)
+      await verifyUnreachableSourceInitialization(control, readInitialAssistant)
       await verifyRegularBinding(control, localDevice, firstUse.target.backendUrl)
       await writeFile(
         join(resultDir, 'stand-in-cloud-device-evidence.json'),
@@ -741,6 +793,7 @@ export function createDesktopScenario({
           modelRequests,
           realTurnCancelled: true,
           offlineBindingRetained: true,
+          activeBindingMigrated: true,
           localHistoryRetained: true,
           localMemoryRetained: true,
           userIdOnlyBinding: true,

@@ -2,8 +2,9 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    project_role, role_project_matches, role_receives_participating_issues, stand_in_connection,
-    stand_in_identities, DINGTALK_PROVIDER,
+    collaboration_scope_tags, project_role, role_project_matches,
+    role_receives_participating_issues, stand_in_connection, stand_in_identities,
+    IssueIntakeTrigger, DINGTALK_PROVIDER,
 };
 
 fn active_dingtalk_delegation(primary: &Value) -> bool {
@@ -106,21 +107,53 @@ pub(super) fn issue_role_config(
     project: &str,
     kind: &str,
     participant: bool,
+    trigger: Option<IssueIntakeTrigger>,
 ) -> Option<Value> {
-    let project_matches = role_project_matches(role, project, kind);
+    let allows = |scope| trigger.map_or(true, |trigger| trigger.matches(role, scope));
+    let project_matches = role_project_matches(role, project, kind) && allows("projectTrigger");
     let participation = participant
         && role_receives_participating_issues(role)
+        && allows("participatingTrigger")
         && role["participatingIssuesEnabledAfter"].is_string();
     if !project_matches && !participation {
         return None;
     }
     let mut config = project_role(role, user, project, kind);
-    if participation
-        && (!project_matches
-            || config["enabledAfter"].as_str().is_none()
-            || role["participatingIssuesEnabledAfter"].as_str() < config["enabledAfter"].as_str())
-    {
-        config["enabledAfter"] = role["participatingIssuesEnabledAfter"].clone();
+    let boundary = |scope: &str, base: &'_ Value| {
+        let added =
+            trigger.and_then(|event| role["issueTriggerBoundaries"][scope][event.key()].as_str());
+        base.as_str()
+            .into_iter()
+            .chain(added)
+            .max()
+            .map(str::to_owned)
+    };
+    let project_since = project_matches
+        .then(|| boundary("projectTrigger", &config["enabledAfter"]))
+        .flatten();
+    let participation_since = participation
+        .then(|| {
+            boundary(
+                "participatingTrigger",
+                &role["participatingIssuesEnabledAfter"],
+            )
+        })
+        .flatten();
+    if role["collaboration"]["tagFilters"].is_object() {
+        let scopes = [
+            (project_matches, "projects", &project_since),
+            (participation, "participating", &participation_since),
+        ]
+        .into_iter()
+        .filter(|(matched, _, _)| *matched)
+        .map(|(_, key, enabled_after)| {
+            json!({"tags": collaboration_scope_tags(role, key), "enabledAfter": enabled_after})
+        })
+        .collect::<Vec<_>>();
+        config["issueScopeTags"] = json!(scopes);
+    }
+    if let Some(since) = project_since.into_iter().chain(participation_since).min() {
+        config["enabledAfter"] = json!(since);
     }
     Some(config)
 }
@@ -133,8 +166,12 @@ impl RuntimeWorkRpcHandler {
         project: &str,
         kind: &str,
         issue_id: &str,
+        trigger: Option<IssueIntakeTrigger>,
     ) -> Result<Vec<Value>, AppIpcError> {
-        let participant = if roles.iter().any(role_receives_participating_issues) {
+        let participant = if roles.iter().any(|role| {
+            role_receives_participating_issues(role)
+                && trigger.map_or(true, |event| event.matches(role, "participatingTrigger"))
+        }) {
             if kind == "local" {
                 let store =
                     LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
@@ -167,7 +204,7 @@ impl RuntimeWorkRpcHandler {
         };
         Ok(roles
             .iter()
-            .filter_map(|role| issue_role_config(role, user, project, kind, participant))
+            .filter_map(|role| issue_role_config(role, user, project, kind, participant, trigger))
             .collect())
     }
 
@@ -177,6 +214,7 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         project: &str,
         issue_id: &str,
+        trigger: IssueIntakeTrigger,
     ) -> Result<Vec<Value>, AppIpcError> {
         let roles = settings
             .iter()
@@ -187,7 +225,7 @@ impl RuntimeWorkRpcHandler {
             })
             .flat_map(stand_in_identities)
             .collect::<Vec<_>>();
-        self.issue_intake_roles(&roles, user, project, "cloud", issue_id)
+        self.issue_intake_roles(&roles, user, project, "cloud", issue_id, Some(trigger))
             .await
     }
 
@@ -628,6 +666,9 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Option<Value>, AppIpcError> {
         let primary = &normalized["primary"];
         let before = &previous["primary"];
+        if primary["dingTalkConnectionMode"] == "confirmed" {
+            return Ok(None);
+        }
         let delegation = &primary["delegation"];
         let preparing = settings["primary"]["delegation"]["action"] == "prepare";
         let verify_read = needs_dingtalk_read_preflight(primary, before);
@@ -808,17 +849,20 @@ impl RuntimeWorkRpcHandler {
 pub(super) fn matching_personal_roles<'a>(configs: &'a [Value], issue: &Value) -> Vec<&'a Value> {
     configs
         .iter()
-        .filter(|role| {
-            role["tags"].as_array().map_or(true, Vec::is_empty)
-                || role["tags"].as_array().is_some_and(|tags| {
-                    tags.iter().any(|tag| {
-                        issue["tags"]
-                            .as_array()
-                            .is_some_and(|tags| tags.contains(tag))
-                    })
-                })
+        .filter(|role| match role["issueScopeTags"].as_array() {
+            Some(scopes) => scopes.iter().any(|scope| issue_tags_match(scope, issue)),
+            None => issue_tags_match(role, issue),
         })
         .collect()
+}
+
+pub(super) fn issue_tags_match(config: &Value, issue: &Value) -> bool {
+    config["tags"].as_array().map_or(true, |wanted| {
+        wanted.is_empty()
+            || issue["tags"]
+                .as_array()
+                .is_some_and(|actual| wanted.iter().any(|tag| actual.contains(tag)))
+    })
 }
 
 pub(super) fn automatic_assignment_roles<'a>(
@@ -830,7 +874,16 @@ pub(super) fn automatic_assignment_roles<'a>(
         .filter(|role| dispatch_authorizes_role(role, issue))
         // One automatic assignment selects one role; explicit role dispatch is separate.
         .min_by_key(|role| {
-            if role["tags"].as_array().is_some_and(|tags| !tags.is_empty()) {
+            let tagged = |scope: &Value| {
+                scope["tags"]
+                    .as_array()
+                    .is_some_and(|tags| !tags.is_empty())
+                    && issue_tags_match(scope, issue)
+            };
+            if role["issueScopeTags"]
+                .as_array()
+                .map_or_else(|| tagged(role), |scopes| scopes.iter().any(tagged))
+            {
                 0
             } else {
                 1

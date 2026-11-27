@@ -129,10 +129,12 @@ export function StandInSettingsHeader({
                 ) : (
                   <span
                     data-testid={entry.testId}
-                    aria-current="page"
-                    role="heading"
-                    aria-level={2}
-                    className="font-medium text-text-primary"
+                    aria-current={index === path.length - 1 ? 'page' : undefined}
+                    role={index === path.length - 1 ? 'heading' : undefined}
+                    aria-level={index === path.length - 1 ? 2 : undefined}
+                    className={
+                      index === path.length - 1 ? 'font-medium text-text-primary' : undefined
+                    }
                   >
                     {entry.label}
                   </span>

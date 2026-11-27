@@ -215,7 +215,9 @@ export function createDesktopScenario({
         0
       )
         await control.command('click', '[data-testid="stand-in-dingtalk-add"]')
-      await control.command('click', '[data-testid="stand-in-dingtalk-scope-selected"]')
+      await control.command('click', '[data-testid="stand-in-dingtalk-add-scope"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-kind-group"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-choose-selected"]')
       await control.command('waitFor', '[data-testid="stand-in-dingtalk-query"]')
       await captureScreenshot(control, '08-explicit-source-selection.png', ROOT)
       await control.command('click', '[data-testid="stand-in-cancel"]')

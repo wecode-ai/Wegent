@@ -1,6 +1,7 @@
 //! Mention notifications are hints; the persisted comment and live project grant authorize intake.
 use super::stand_in::settings_error;
 use super::*;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 
 #[cfg(test)]
 #[path = "stand_in_issue_collection_tests.rs"]
@@ -160,7 +161,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let configs = self
-            .cloud_issue_intake_configs(&[settings], user, project, issue_id)
+            .cloud_issue_intake_configs(
+                &[settings],
+                user,
+                project,
+                issue_id,
+                IssueIntakeTrigger::Mention,
+            )
             .await?;
         let issue = self
             .runtime_http(
@@ -194,9 +201,10 @@ impl RuntimeWorkRpcHandler {
             }
             if config["enabled"] != true
                 || config["handlingPolicy"]["automatic"] != true
-                || !super::stand_in::assignment_after_enable(
+                || !super::stand_in::issue_after_enable(
                     &json!({"created_at":comment["created_at"]}),
                     config,
+                    &issue,
                 )
             {
                 continue;

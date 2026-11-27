@@ -347,14 +347,19 @@ export function createDesktopScenario({
           '[data-testid="stand-in-processing-settings-toggle"]'
         )
         await control.command('waitFor', timing)
+        const setTiming = async mode => {
+          await control.command('clickWhenEnabled', timing)
+          await control.command(
+            'clickWhenEnabled',
+            `[data-testid="stand-in-project-policy-${project.id}-${mode}"]`
+          )
+        }
         assert.equal(await control.command('getAttribute', timing, { value: 'type' }), 'button')
-        assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'switch')
-        assert.equal(
-          await control.command('getAttribute', timing, { value: 'aria-checked' }),
-          'false'
-        )
-        await control.command('click', timing)
-        await control.command('click', timing)
+        assert.equal(await control.command('getAttribute', timing, { value: 'role' }), 'combobox')
+        await control.command('waitFor', timing, { text: '后台排队' })
+        await setTiming('immediate')
+        await setTiming('collect')
+        await control.command('waitFor', timing, { text: '后台排队' })
         assert.equal(
           await control.command('getElementCount', '[data-testid="stand-in-processing-mode"]'),
           '0'
@@ -380,11 +385,8 @@ export function createDesktopScenario({
           'clickWhenEnabled',
           '[data-testid="stand-in-processing-settings-toggle"]'
         )
-        await control.command('click', timing)
-        assert.equal(
-          await control.command('getAttribute', timing, { value: 'aria-checked' }),
-          'true'
-        )
+        await setTiming('immediate')
+        await control.command('waitFor', timing, { text: '触发即处理' })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
         await control.command('waitFor', '[data-testid="stand-in-saved"]')
         await control.command('click', '[data-testid="stand-in-cancel"]')

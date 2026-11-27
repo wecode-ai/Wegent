@@ -8,24 +8,25 @@ import { GithubCliAuthDialog } from '@/components/plugins/GithubCliAuthDialog'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
-import {
-  SelectContent,
-  SelectItem,
-  SelectRoot,
-  SelectTrigger,
-} from '@wegent/collaboration/controls/SelectParts'
-import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { GitBranch, Plus, X } from 'lucide-react'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { createGitConnectionsModel, GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
+import {
+  createGitConnectionsModel,
+  GIT_CONNECTION_PREFIX,
+  instanceOrigin,
+  profileInstance,
+  resourceKey,
+} from './standInGitConnectionsModel'
+import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
+import { useConnectionScopeBack } from './connectionScopeNavigation'
+import { StandInConnectionForm } from './StandInConnectionForm'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 export { GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
 
 interface StandInGitConnectionsProps {
   role: StandInRole
+  savedConnections?: readonly StandInSourceConnection[]
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
   deviceId: string
@@ -49,6 +50,7 @@ export function StandInGitConnections(props: StandInGitConnectionsProps) {
 }
 function StandInGitConnectionsContent({
   role,
+  savedConnections,
   provider,
   api,
   deviceId,
@@ -57,14 +59,21 @@ function StandInGitConnectionsContent({
 }: StandInGitConnectionsProps) {
   const { t } = useTranslation('common')
   const platform = provider.id.slice(GIT_CONNECTION_PREFIX.length)
-  const input = useMemo(() => ({ role, onChange, disabled }), [role, onChange, disabled])
+  const input = useMemo(
+    () => ({ role, savedConnections, onChange, disabled }),
+    [role, savedConnections, onChange, disabled]
+  )
   const [model] = useState(() => createGitConnectionsModel(api, deviceId, provider.id, input))
   const subscribe = useCallback(
     (listener: () => void) => model.subscribe(listener, input),
     [model, input]
   )
   const state = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
-  const { instance, kind, query, items, selection, cursor, busy, searchState, auth } = state
+  const { instance, query, cursor, busy, searchState, auth, accountStatus, accounts } = state
+  const [editing, setEditing] = useState<'choose' | 'personal' | 'repository' | 'item' | null>(null)
+  const [scopeKey, setScopeKey] = useState<string | null>(null)
+  const canSelectScope = accountStatus === 'ready'
+  const invalidInstance = platform === 'gitlab' && !instanceOrigin(instance)
   const error =
     state.error?.kind === 'instance'
       ? t('standIn.git.invalid_instance')
@@ -73,14 +82,10 @@ function StandInGitConnectionsContent({
             defaultValue: t('standIn.git.request_failed'),
           })
         : undefined
-  const setInstance = (value: string) => model.set('instance', value)
   const setKind = (value: string) => model.set('kind', value)
   const setQuery = (value: string) => model.set('query', value)
-  const setSelection = (value: Parameters<typeof model.set<'selection'>>[1]) =>
-    model.set('selection', value)
   const resetSearch = model.resetSearch
   const search = model.search
-  const add = model.add
   const authTransport = useMemo<LocalConnectorAuthTransport>(
     () => ({
       start: target =>
@@ -107,207 +112,351 @@ function StandInGitConnectionsContent({
     [api, deviceId]
   )
   const rows = (role.connections ?? []).filter(row => row.providerId === provider.id)
-  const remove = (row: StandInSourceConnection) => {
-    onChange({ ...role, connections: (role.connections ?? []).filter(value => value !== row) })
+  const profiles = new Set(accounts.map(account => account.profile))
+  const currentRows = rows.filter(row => profiles.has(row.profile))
+  const otherRows = rows.filter(row => !profiles.has(row.profile))
+  const personal = currentRows.filter(row => row.kind === 'personal')
+  const repositories = currentRows.filter(row => row.kind === 'repository')
+  const editedScope =
+    editing === 'item' ? currentRows.find(row => resourceKey(row) === scopeKey) : undefined
+  const editKind = (value: 'personal' | 'repository') => {
+    resetSearch()
+    setQuery('')
+    setKind(value)
+    setEditing(value)
   }
+  useConnectionScopeBack(
+    editing && canSelectScope
+      ? () => {
+          resetSearch()
+          setEditing(editing === 'personal' || editing === 'repository' ? 'choose' : null)
+        }
+      : null
+  )
+  const results = new Map([...state.items, ...repositories].map(row => [resourceKey(row), row]))
+  const selected = new Set(repositories.map(resourceKey))
   return (
     <section className="space-y-4" data-testid={`stand-in-git-${platform}`}>
-      <StandInConnectionHeader
-        icon={GitBranch}
-        title={provider.displayName}
-        description={t('standIn.git.description')}
-      />
-      <div className="space-y-3 border-b border-border pb-4">
-        {platform === 'gitlab' && (
-          <label className="block space-y-1 text-sm">
-            {t('standIn.git.instance')}
-            <ControlInput
-              data-testid="stand-in-git-instance"
-              type="url"
-              placeholder="https://gitlab.com"
-              autoCapitalize="none"
-              spellCheck={false}
-              className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
-              value={instance}
-              disabled={disabled || busy}
-              onChange={event => {
-                resetSearch()
-                setInstance(event.target.value)
-              }}
-            />
-          </label>
-        )}
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <p className="text-sm font-medium">{t('standIn.git.account')}</p>
-            <p className="text-xs leading-relaxed text-text-secondary">
-              {t('standIn.git.account_help')}
-            </p>
+      <StandInConnectionForm
+        compact
+        account={
+          <div className="flex flex-wrap items-end gap-3">
+            {platform === 'gitlab' && (
+              <label className="block min-w-48 flex-1 space-y-1 text-sm">
+                {t('standIn.git.instance')}
+                <ControlInput
+                  data-testid="stand-in-git-instance"
+                  type="url"
+                  placeholder="https://gitlab.com"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
+                  value={instance}
+                  disabled={disabled || busy}
+                  onChange={event => model.setInstance(event.target.value)}
+                  onBlur={() => {
+                    if (accountStatus === 'unavailable' && instanceOrigin(instance))
+                      void model.checkAccount()
+                  }}
+                />
+              </label>
+            )}
+            {accountStatus === 'signed_out' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-11 shrink-0 md:h-9"
+                disabled={disabled || busy}
+                data-testid="stand-in-git-login"
+                onClick={() => void model.login()}
+              >
+                {t('standIn.git.login')}
+              </Button>
+            )}
+            {accountStatus === 'checking' && (
+              <p role="status" className="text-sm text-text-secondary">
+                {t('standIn.git.loading_account')}
+              </p>
+            )}
+            {accountStatus === 'unavailable' && !invalidInstance && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={disabled || busy || !instanceOrigin(instance)}
+                data-testid="stand-in-git-recheck-account"
+                onClick={() => void model.checkAccount()}
+              >
+                {t('standIn.reload')}
+              </Button>
+            )}
+            {invalidInstance && (
+              <p
+                role="alert"
+                data-testid="stand-in-git-instance-invalid"
+                className="text-sm text-destructive"
+              >
+                {t('standIn.git.invalid_instance')}
+              </p>
+            )}
+            {accounts.map(account => (
+              <div key={account.profile} className="min-w-0 space-y-1 text-sm">
+                <p className="break-words font-medium">
+                  {account.name.endsWith(` · ${profileInstance(account.profile)}`)
+                    ? account.name.slice(0, -` · ${profileInstance(account.profile)}`.length)
+                    : account.name}
+                </p>
+              </div>
+            ))}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-11 shrink-0 md:h-9"
-            disabled={disabled || busy}
-            data-testid="stand-in-git-login"
-            onClick={() => void model.login()}
-          >
-            {t('standIn.git.login')}
-          </Button>
-        </div>
-      </div>
-      {rows.length > 0 && (
-        <h4 className="text-sm font-medium">{t('standIn.git.selected_connections')}</h4>
-      )}
-      {rows.map(row => (
-        <div
-          key={`${row.profile}:${row.kind}:${row.id}`}
-          className="flex items-center gap-2 border-b border-border/50 py-2"
-        >
-          <div className="min-w-0 flex-1">
-            <p className="break-all text-sm">{row.name}</p>
-            <p className="text-xs text-text-secondary">
-              {t(`standIn.git.${row.kind}`)} · {profileInstance(row.profile)}
+        }
+        scope={
+          <>
+            {canSelectScope && !editing && (
+              <ConnectionScopeList
+                empty={
+                  currentRows.length ? undefined : t('standIn.workspace.connection_not_configured')
+                }
+                disabled={disabled || busy}
+                testId="stand-in-git-add-scope"
+                onAdd={() => setEditing('choose')}
+              >
+                {currentRows.map(row => (
+                  <ConnectionScopeRow
+                    key={resourceKey(row)}
+                    name={row.name}
+                    description={
+                      row.configurationSummary ??
+                      t(
+                        row.kind === 'personal'
+                          ? 'standIn.workspace.connection_git_personal_type'
+                          : 'standIn.workspace.connection_git_repository_type'
+                      )
+                    }
+                    disabled={disabled || busy}
+                    testId={`stand-in-git-open-scope-${row.kind}-${row.id}`}
+                    onRemove={() => model.changeScope([row])}
+                    onClick={() => {
+                      setScopeKey(resourceKey(row))
+                      setEditing('item')
+                    }}
+                  />
+                ))}
+              </ConnectionScopeList>
+            )}
+            {canSelectScope && editedScope && (
+              <div className="space-y-2">
+                <h4 className="break-words text-sm font-medium">{editedScope.name}</h4>
+                {editedScope.configurationSummary && (
+                  <p className="text-sm text-text-secondary">{editedScope.configurationSummary}</p>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  disabled={disabled || busy}
+                  data-testid={`stand-in-git-remove-scope-${editedScope.id}`}
+                  onClick={() => {
+                    model.changeScope([editedScope])
+                    setEditing(null)
+                  }}
+                >
+                  {t('standIn.workspace.connection_remove_scope')}
+                </Button>
+              </div>
+            )}
+            {canSelectScope && editing === 'choose' && (
+              <ul className="divide-y divide-border">
+                <ConnectionScopeRow
+                  name={t('standIn.workspace.connection_git_personal_type')}
+                  testId="stand-in-git-kind-personal"
+                  disabled={disabled || busy}
+                  onClick={() => editKind('personal')}
+                />
+                <ConnectionScopeRow
+                  name={t('standIn.workspace.connection_git_repository_type')}
+                  testId="stand-in-git-kind-repository"
+                  disabled={disabled || busy}
+                  onClick={() => editKind('repository')}
+                />
+              </ul>
+            )}
+            {canSelectScope && editing === 'personal' && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium">
+                  {t('standIn.workspace.connection_git_personal_type')}
+                </h4>
+                {accounts.map(account => {
+                  const row = personal.find(item => item.profile === account.profile)
+                  return (
+                    <label
+                      key={account.profile}
+                      className="flex min-h-11 items-center gap-2 text-sm"
+                    >
+                      <Checkbox
+                        data-testid={`stand-in-git-personal-${account.id}`}
+                        checked={Boolean(row)}
+                        disabled={disabled || busy}
+                        onCheckedChange={checked =>
+                          model.changeScope(
+                            checked === true || !row ? [] : [row],
+                            checked === true ? [account] : []
+                          )
+                        }
+                      />
+                      <span className="min-w-0 break-words">{account.name}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            {canSelectScope && editing === 'repository' && (
+              <>
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={event => {
+                    event.preventDefault()
+                    void search()
+                  }}
+                >
+                  <ControlInput
+                    data-testid="stand-in-git-query"
+                    className="min-w-0 flex-1"
+                    aria-label={t('standIn.git.search_placeholder')}
+                    placeholder={t('standIn.git.search_placeholder')}
+                    value={query}
+                    disabled={disabled}
+                    onChange={event => {
+                      resetSearch()
+                      setQuery(event.target.value)
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="submit"
+                    className="shrink-0"
+                    disabled={disabled || busy || !query.trim()}
+                    data-testid="stand-in-git-search"
+                  >
+                    {t('standIn.git.search')}
+                  </Button>
+                </form>
+                {(searchState === 'loading' ||
+                  (searchState === 'ready' && state.items.length === 0 && !cursor)) && (
+                  <p
+                    role="status"
+                    data-testid="stand-in-git-query-status"
+                    className="text-sm text-text-secondary"
+                  >
+                    {t(
+                      searchState === 'loading'
+                        ? 'standIn.git.loading_repositories'
+                        : 'standIn.git.empty_repositories'
+                    )}
+                  </p>
+                )}
+                {results.size > 0 && (
+                  <div className="max-h-40 overflow-y-auto">
+                    {[...results].map(([key, item]) => (
+                      <label
+                        key={key}
+                        className="flex min-h-11 items-center gap-2 text-sm md:min-h-8"
+                      >
+                        <Checkbox
+                          data-testid={`stand-in-git-select-${item.id}`}
+                          disabled={disabled || busy}
+                          checked={selected.has(key)}
+                          onCheckedChange={checked =>
+                            model.changeScope(
+                              checked === true ? [] : [item],
+                              checked === true ? [item] : []
+                            )
+                          }
+                        />
+                        <span className="min-w-0 break-words">
+                          {item.name}
+                          {item.configurationSummary && (
+                            <span className="block text-xs text-text-secondary">
+                              {item.configurationSummary}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {cursor && (
+                  <Button
+                    variant="ghost"
+                    disabled={disabled || busy}
+                    data-testid="stand-in-git-more"
+                    onClick={() => void search(cursor)}
+                  >
+                    {t('standIn.git.more')}
+                  </Button>
+                )}
+              </>
+            )}
+            {!editing && otherRows.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">
+                  {t('standIn.workspace.connection_other_accounts')}
+                </p>
+                {otherRows.map(row => (
+                  <label
+                    key={resourceKey(row)}
+                    className="flex min-h-11 items-center gap-2 text-sm md:min-h-8"
+                  >
+                    <Checkbox
+                      data-testid={`stand-in-git-remove-${row.id}`}
+                      checked
+                      disabled={disabled || busy}
+                      onCheckedChange={() => model.changeScope([row])}
+                    />
+                    <span className="min-w-0 break-words">
+                      {row.name}
+                      {row.configurationSummary && (
+                        <span className="block text-xs text-text-secondary">
+                          {row.configurationSummary}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </>
+        }
+        trigger={
+          editedScope && (
+            <p className="text-sm text-text-secondary">
+              {t('standIn.workspace.connection_git_trigger')}
             </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={disabled || busy}
-            data-testid={`stand-in-git-remove-${row.id}`}
-            aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
-            onClick={() => remove(row)}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      ))}
-      <label className="block space-y-1 text-sm">
-        {t('standIn.git.scope')}
-        <SelectRoot
-          value={normalizeSelectValue(kind)}
-          disabled={disabled || busy}
-          onValueChange={selectedValue => {
-            if (selectedValue === null) return
-            resetSearch()
-            setKind(selectedValue)
-          }}
-        >
-          <SelectTrigger
-            data-testid="stand-in-git-kind"
-            className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
+          )
+        }
+        processing={
+          <StandInProcessingSettings
+            compact
+            disabled={disabled}
+            rows={(editedScope ? [editedScope] : []).map(row => ({
+              key: `${row.profile}:${row.kind}:${row.id}`,
+              name: row.name,
+              testId: `stand-in-git-policy-${row.id}`,
+              policy: row.policy,
+              onChange: policy =>
+                onChange({
+                  ...role,
+                  connections: (role.connections ?? []).map(value =>
+                    value === row ? { ...value, policy: { ...policy, askBeforeAct: true } } : value
+                  ),
+                }),
+            }))}
           />
-          <SelectContent data-testid="stand-in-git-kind-options">
-            <SelectItem value="personal">{t('standIn.git.personal')}</SelectItem>
-            <SelectItem value="repository">{t('standIn.git.repository')}</SelectItem>
-          </SelectContent>
-        </SelectRoot>
-      </label>
-      <div className="space-y-2">
-        {kind === 'repository' && (
-          <label className="block text-sm" htmlFor={`stand-in-git-query-${platform}`}>
-            {t('standIn.git.search')}
-          </label>
-        )}
-        <div className="flex items-center gap-2">
-          {kind === 'repository' && (
-            <ControlInput
-              id={`stand-in-git-query-${platform}`}
-              data-testid="stand-in-git-query"
-              className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
-              placeholder={t('standIn.git.search_placeholder')}
-              value={query}
-              disabled={disabled || busy}
-              onChange={event => {
-                resetSearch()
-                setQuery(event.target.value)
-              }}
-            />
-          )}
-          <Button
-            size="sm"
-            className="h-11 shrink-0 md:h-9"
-            disabled={disabled || busy}
-            data-testid="stand-in-git-search"
-            onClick={() => void search()}
-          >
-            {t(kind === 'personal' ? 'standIn.git.check_account' : 'standIn.git.search')}
-          </Button>
-        </div>
-        <p className="text-xs leading-relaxed text-text-secondary">
-          {t(kind === 'personal' ? 'standIn.git.personal_help' : 'standIn.git.repository_help')}
-        </p>
-      </div>
-      <p className="text-xs leading-relaxed text-text-secondary">{t('standIn.git.permissions')}</p>
-      {(searchState === 'loading' ||
-        (searchState === 'ready' && items.length === 0 && !cursor)) && (
-        <p
-          role="status"
-          data-testid="stand-in-git-query-status"
-          className="text-sm text-text-secondary"
-        >
-          {t(
-            `standIn.git.${searchState === 'loading' ? 'loading' : 'empty'}_${kind === 'personal' ? 'account' : 'repositories'}`
-          )}
-        </p>
-      )}
-      {items.map(item => (
-        <label
-          key={`${item.profile}:${item.id}`}
-          className="flex min-h-11 items-center gap-2 text-sm"
-        >
-          <Checkbox
-            data-testid={`stand-in-git-select-${item.id}`}
-            disabled={disabled || busy}
-            checked={selection.some(row => row.id === item.id && row.profile === item.profile)}
-            onCheckedChange={checked =>
-              setSelection(previous =>
-                checked === true ? [...previous, item] : previous.filter(row => row !== item)
-              )
-            }
-          />
-          {item.name}
-        </label>
-      ))}
-      {cursor && (
-        <Button
-          variant="ghost"
-          disabled={disabled || busy}
-          data-testid="stand-in-git-more"
-          onClick={() => void search(cursor)}
-        >
-          {t('standIn.git.more')}
-        </Button>
-      )}
-      {selection.length > 0 && (
-        <Button
-          disabled={disabled || busy}
-          data-testid="stand-in-git-add"
-          onClick={() => void add()}
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          {t('standIn.git.add')}
-        </Button>
-      )}
-      <StandInProcessingSettings
-        disabled={disabled}
-        rows={rows.map(row => ({
-          key: `${row.profile}:${row.kind}:${row.id}`,
-          name: row.name,
-          testId: `stand-in-git-policy-${row.id}`,
-          policy: row.policy,
-          onChange: policy =>
-            onChange({
-              ...role,
-              connections: (role.connections ?? []).map(value =>
-                value === row ? { ...value, policy: { ...policy, askBeforeAct: true } } : value
-              ),
-            }),
-        }))}
+        }
       />
-      {error && (
+      {(error || (accountStatus === 'unavailable' && !invalidInstance)) && (
         <p role="alert" className="text-sm text-destructive">
-          {error}
+          {error ?? t('standIn.git.empty_account')}
         </p>
       )}
       {auth && (
@@ -317,18 +466,12 @@ function StandInGitConnectionsContent({
           target={auth}
           transport={authTransport}
           onCancel={() => model.set('auth', undefined)}
-          onSuccess={model.clearAuth}
+          onSuccess={() => {
+            model.clearAuth()
+            void model.checkAccount()
+          }}
         />
       )}
     </section>
   )
-}
-
-function profileInstance(profile: string): string {
-  try {
-    const value: unknown = JSON.parse(profile)
-    return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : ''
-  } catch {
-    return ''
-  }
 }

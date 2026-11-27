@@ -7,23 +7,26 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
   const id = 'stand-in-dingtalk-policy-connection-migration-fixture'
   const timing = `[data-testid="${id}"]`
   const strategy = `[data-testid="${id}-session-strategy"]`
+  const setTiming = async immediate => {
+    const mode = immediate ? 'immediate' : 'collect'
+    await control.command('clickWhenEnabled', timing)
+    await control.command('clickWhenEnabled', `[data-testid="${id}-${mode}"]`)
+  }
   const load = () =>
     requestExecutor(control, 'runtime.stand_in.personal.get', { userId: 9001 }, uiTimeoutMs)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]')
   await control.command(
     'waitFor',
     '[data-testid="stand-in-processing-settings-toggle"][aria-expanded="false"]'
   )
   await control.command('clickWhenEnabled', '[data-testid="stand-in-processing-settings-toggle"]')
   await control.command('waitFor', `${strategy}:disabled`)
-  await control.command('clickWhenEnabled', `[data-testid="${id}-enable"]`)
+  await setTiming(false)
   await control.command('waitFor', `${strategy}:enabled`)
   for (const immediate of [false, true]) {
     for (const sessionStrategy of ['reuse', 'independent']) {
-      if (
-        (await control.command('getAttribute', timing, { value: 'aria-checked' })) !==
-        String(immediate)
-      )
-        await control.command('clickWhenEnabled', timing)
+      const timingLabel = immediate ? '触发即处理' : '后台排队'
+      if ((await control.command('getText', timing)) !== timingLabel) await setTiming(immediate)
       const independent = sessionStrategy === 'independent'
       if (
         (await control.command('getAttribute', strategy, { value: 'aria-checked' })) !==
@@ -50,6 +53,7 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await openConnectionTypePicker(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]')
       await control.command(
         'waitFor',
         '[data-testid="stand-in-processing-settings-toggle"][aria-expanded="false"]'
@@ -58,7 +62,7 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
         'clickWhenEnabled',
         '[data-testid="stand-in-processing-settings-toggle"]'
       )
-      await control.command('waitFor', `${timing}[aria-checked="${immediate}"]`)
+      await control.command('waitFor', timing, { text: timingLabel })
       assert.equal(
         await control.command('getAttribute', strategy, { value: 'aria-checked' }),
         String(independent)

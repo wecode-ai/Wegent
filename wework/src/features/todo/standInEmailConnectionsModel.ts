@@ -87,7 +87,8 @@ export function createEmailConnectionsModel(initial: EmailInput) {
   }
   function reportDirty() {
     if (!listeners.size) return
-    const next = dirty()
+    // The mailbox editor has its own verification action while it is open.
+    const next = state.adding
     if (dirtyCallback !== input.onDirtyChange) releaseDirty()
     const callback = input.onDirtyChange
     const ownsCallback = callback ? dirtyOwners.get(callback) === owner : true
@@ -176,7 +177,6 @@ export function createEmailConnectionsModel(initial: EmailInput) {
         })
         if (!listeners.size) return
         const updated = Boolean(form.id || rows().some(row => row.profile === account.id))
-        if (!form.id) connect({ id: account.id, email: form.email.trim() })
         state = {
           ...state,
           baseline: initialEmailForm,

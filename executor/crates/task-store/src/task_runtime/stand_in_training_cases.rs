@@ -117,7 +117,7 @@ pub(in super::super) fn local_issue_visible(
     role: &Value,
     source: &Value,
 ) -> Result<bool, TaskRuntimeError> {
-    let tags = role["collaboration"]["tags"]
+    let tags = super::super::personal_stand_in::collaboration_scope_tags(role, "projects")
         .as_array()
         .map(|v| json!(v))
         .unwrap_or_else(|| json!([]));
