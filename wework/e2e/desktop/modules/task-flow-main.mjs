@@ -36,8 +36,8 @@ import {
   verifyShortConversationLayout,
   verifyViewImageProcessingBlock,
   verifyWorktreeCreationStatus,
+  waitForAnchorOffset,
   waitForElementInsideScroller,
-  waitForElementTop,
   waitForElementWidth,
   waitForOverflowMetrics,
   waitForSnapshot,
@@ -4071,6 +4071,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           conversationScrollerSelector,
           'The linked file paragraph before opening the file panel'
         )
+      const filePanelAnchorOffsetBeforeOpen =
+        filePanelAnchorBeforeOpen.top -
+        filePanelScrollerBeforeOpen.top +
+        filePanelScrollerBeforeOpen.scrollTop
       assert.ok(
         distanceFromBottom(filePanelScrollerBeforeOpen) > 100,
         'The linked file paragraph did not move the conversation away from the bottom'
@@ -4111,12 +4115,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
       let filePanelAnchorAfterOpen
       try {
-        filePanelAnchorAfterOpen = await waitForElementTop(
+        filePanelAnchorAfterOpen = await waitForAnchorOffset(
           control,
           filePanelAnchorSelector,
-          top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-          'The linked file paragraph after opening the file panel',
-          DEFAULT_STEP_TIMEOUT_MS
+          conversationScrollerSelector,
+          filePanelAnchorOffsetBeforeOpen,
+          'The linked file paragraph after opening the file panel'
         )
       } catch (error) {
         const settled = {
@@ -4168,12 +4172,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The conversation after closing a linked file',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterClose = await waitForElementTop(
+      const filePanelAnchorAfterClose = await waitForAnchorOffset(
         control,
         filePanelAnchorSelector,
-        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-        'The linked file paragraph after closing the file panel',
-        DEFAULT_STEP_TIMEOUT_MS
+        conversationScrollerSelector,
+        filePanelAnchorOffsetBeforeOpen,
+        'The linked file paragraph after closing the file panel'
       )
       assert.ok(
         Math.abs(filePanelScrollerAfterClose.width - filePanelScrollerBeforeOpen.width) <= 1,
