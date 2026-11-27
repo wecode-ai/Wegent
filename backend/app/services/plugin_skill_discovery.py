@@ -123,6 +123,14 @@ def _read_skill_frontmatter(archive: ZipFile, path: str) -> dict[str, str]:
         if line.strip() == "---":
             break
         frontmatter.append(line)
+    base_indent = min(
+        (
+            len(line) - len(line.lstrip())
+            for line in frontmatter
+            if line.strip() and not line.lstrip().startswith("#") and ":" in line
+        ),
+        default=0,
+    )
     metadata: dict[str, str] = {}
     index = 0
     while index < len(frontmatter):
@@ -130,7 +138,7 @@ def _read_skill_frontmatter(archive: ZipFile, path: str) -> dict[str, str]:
         index += 1
         key, separator, value = line.partition(":")
         if (
-            line[:1].isspace()
+            len(line) - len(line.lstrip()) > base_indent
             or not separator
             or key.strip() not in {"name", "description"}
         ):

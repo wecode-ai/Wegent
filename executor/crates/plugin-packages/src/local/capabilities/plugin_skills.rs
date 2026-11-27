@@ -294,6 +294,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn managed_skill_frontmatter_mapping_indent_matches_shared_cases() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../shared/protocol/plugin_skill_frontmatter_cases.json"
+        )))
+        .unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        write_manifest(
+            temporary.path(),
+            PLUGIN_MANIFEST_PATHS[0],
+            &json!({"name": "example"}),
+        );
+        for case in cases {
+            for newline in ["\n", "\r\n"] {
+                fs::write(
+                    temporary.path().join("SKILL.md"),
+                    case["content"].as_str().unwrap().replace('\n', newline),
+                )
+                .unwrap();
+
+                let skills = scan_plugin_skills(temporary.path()).unwrap();
+
+                assert_eq!(
+                    skills[0]["name"], case["skill_name"],
+                    "{} {newline:?}",
+                    case["name"]
+                );
+                assert_eq!(
+                    skills[0]["description"], case["description"],
+                    "{} {newline:?}",
+                    case["name"]
+                );
+            }
+        }
+    }
+
     fn write_manifest(root: &Path, relative: &str, manifest: &Value) {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();

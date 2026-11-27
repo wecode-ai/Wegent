@@ -227,6 +227,48 @@ fn plugin_inventory_ignores_nested_frontmatter_metadata() {
 }
 
 #[test]
+fn plugin_inventory_frontmatter_mapping_indent_matches_shared_cases() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../shared/protocol/plugin_skill_frontmatter_cases.json"
+    )))
+    .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let plugins = temp.path().join("plugins");
+    let plugin = plugins.join("example");
+    write_inventory_manifest(
+        &plugin,
+        PLUGIN_MANIFEST_PATHS[0],
+        json!({"name": "example"}),
+    );
+    for case in cases {
+        for newline in ["\n", "\r\n"] {
+            write_inventory_file(
+                &plugin,
+                "SKILL.md",
+                &case["content"].as_str().unwrap().replace('\n', newline),
+            );
+
+            let entries = scan_plugin_dir(&plugins, "codex-plugin");
+
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                entries[0].name,
+                case["skill_name"].as_str().unwrap(),
+                "{} {newline:?}",
+                case["name"]
+            );
+            assert_eq!(
+                entries[0].description,
+                case["description"].as_str().unwrap(),
+                "{} {newline:?}",
+                case["name"]
+            );
+        }
+    }
+}
+
+#[test]
 fn plugin_inventory_preserves_provider_version_and_priority() {
     let temp = tempfile::tempdir().unwrap();
     let plugins = temp.path().join("plugins");

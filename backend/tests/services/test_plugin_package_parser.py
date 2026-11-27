@@ -15,6 +15,13 @@ SKILL_CASES = json.loads(
     ).read_text(encoding="utf-8")
 )
 
+SKILL_FRONTMATTER_CASES = json.loads(
+    (
+        Path(__file__).resolve().parents[3]
+        / "shared/protocol/plugin_skill_frontmatter_cases.json"
+    ).read_text(encoding="utf-8")
+)
+
 
 def _skill_plugin_zip(case: dict, prefix: str = "") -> bytes:
     buffer = io.BytesIO()
@@ -166,6 +173,24 @@ def test_nested_frontmatter_metadata_cannot_override_skill_identity() -> None:
     skill = parsed.components.skills[0]
     assert skill.name == "actual-name"
     assert skill.description == "Public description"
+    assert parser.parse_package(normalized).components == parsed.components
+
+
+@pytest.mark.parametrize("case", SKILL_FRONTMATTER_CASES, ids=lambda case: case["name"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_skill_frontmatter_mapping_indent_matches_shared_cases(
+    case: dict[str, str], newline: str
+) -> None:
+    buffer = io.BytesIO(_skill_plugin_zip({"manifest": {"name": "example"}}))
+    with zipfile.ZipFile(buffer, "a") as archive:
+        archive.writestr("SKILL.md", case["content"].replace("\n", newline))
+
+    parser = PluginPackageParser()
+    parsed, normalized = parser.normalize_and_parse(buffer.getvalue())
+
+    skill = parsed.components.skills[0]
+    assert skill.name == case["skill_name"]
+    assert skill.description == case["description"]
     assert parser.parse_package(normalized).components == parsed.components
 
 

@@ -415,11 +415,21 @@ pub(super) fn parse_frontmatter_content(content: &str) -> HashMap<String, String
         frontmatter.push(*line);
     }
 
+    let base_indent = frontmatter
+        .iter()
+        .filter(|line| {
+            let stripped = line.trim();
+            !stripped.is_empty() && !stripped.starts_with('#') && line.contains(':')
+        })
+        .map(|line| leading_spaces(line))
+        .min()
+        .unwrap_or(0);
     let mut index = 0;
     while index < frontmatter.len() {
         let line = frontmatter[index];
         let stripped = line.trim();
-        if line.starts_with(char::is_whitespace)
+        let current_indent = leading_spaces(line);
+        if current_indent > base_indent
             || stripped.is_empty()
             || stripped.starts_with('#')
             || !line.contains(':')
@@ -427,7 +437,6 @@ pub(super) fn parse_frontmatter_content(content: &str) -> HashMap<String, String
             index += 1;
             continue;
         }
-        let current_indent = leading_spaces(line);
         let (raw_key, raw_value) = split_once_colon(line);
         let key = raw_key.trim().to_owned();
         let raw_value = raw_value.trim().to_owned();
