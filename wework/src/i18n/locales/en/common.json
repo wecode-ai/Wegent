@@ -3683,7 +3683,6 @@
     "cloud_upgrade_busy": "{{device}} needs an upgrade. Work is still running in its sandbox. Wait for the tasks to finish before restarting.",
     "cloud_upgrade_action": "Restart to upgrade",
     "cloud_upgrade_later": "Not now",
-    "cloud_upgrade_badge": "Upgrade needed",
     "cloud_upgrade_timeout": "The device has not reported the target version. Refresh its status to check again.",
     "connection_restart_confirm_description": "{{device}} will temporarily go offline. Terminal, IDE, and other device sessions will be unavailable, and active tasks or connections may be interrupted.",
     "connection_restart_confirm_busy_description": "{{device}} has active work. Restarting will temporarily take it offline, interrupt active tasks and connections, and make terminal, IDE, and other device sessions unavailable.",

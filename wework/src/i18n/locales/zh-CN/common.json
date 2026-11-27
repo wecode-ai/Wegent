@@ -3674,7 +3674,6 @@
     "cloud_upgrade_busy": "{{device}} 需要升级，同一沙箱仍有任务在运行。请等任务完成后重启升级。",
     "cloud_upgrade_action": "立即重启升级",
     "cloud_upgrade_later": "稍后处理",
-    "cloud_upgrade_badge": "需升级",
     "cloud_upgrade_timeout": "未能确认云设备已升级到目标版本，请刷新状态。",
     "connection_restart_confirm_description": "{{device}} 将短暂离线，期间终端、IDE 等设备连接不可用，进行中的任务或连接可能中断。",
     "connection_restart_confirm_busy_description": "{{device}} 当前有任务运行。重启会使设备短暂离线并中断进行中的任务和连接，期间终端、IDE 等设备连接不可用。",
