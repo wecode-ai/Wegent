@@ -1789,21 +1789,27 @@ class SandboxManager(metaclass=SingletonMeta):
 
         heartbeat_mgr = get_heartbeat_manager()
 
-        # Mark all running executions as failed
-        try:
-            executions, _ = await self.list_executions(sandbox_id)
-            if lease.lost.is_set():
+        if lease.lost.is_set():
+            return
+        executions, error = self._repository.list_executions(sandbox_id)
+        if error is not None:
+            logger.warning(
+                "[SandboxManager] Could not read executions for sandbox %s; "
+                "deferring runtime cleanup",
+                sandbox_id,
+            )
+            return
+        for execution in executions:
+            if execution.status != ExecutionStatus.RUNNING:
+                continue
+            execution.set_failed("Sandbox crashed")
+            if not self._repository.save_execution(execution):
+                logger.warning(
+                    "[SandboxManager] Could not mark execution %s as failed; "
+                    "deferring runtime cleanup",
+                    execution.execution_id,
+                )
                 return
-            for execution in executions:
-                if execution.status == ExecutionStatus.RUNNING:
-                    execution.set_failed("Sandbox crashed")
-                    self._repository.save_execution(execution)
-                    logger.info(
-                        f"[SandboxManager] Marked execution {execution.execution_id} as failed "
-                        f"due to executor death"
-                    )
-        except Exception as e:
-            logger.error(f"[SandboxManager] Error marking executions as failed: {e}")
 
         # Clean up heartbeat key
         if lease.lost.is_set():

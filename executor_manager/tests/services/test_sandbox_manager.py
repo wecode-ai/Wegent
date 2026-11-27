@@ -2543,13 +2543,15 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("delete_status", "revoked", "lease_lost", "saved"),
+        ("delete_status", "revoked", "lease_lost", "storage_failure"),
         [
-            ("success", True, False, True),
-            ("success", False, False, True),
-            ("failed", False, False, True),
-            ("success", False, True, True),
-            ("success", False, False, False),
+            ("success", True, False, None),
+            ("success", False, False, None),
+            ("failed", False, False, None),
+            ("success", False, True, None),
+            ("success", False, False, "sandbox_write"),
+            ("success", False, False, "execution_read"),
+            ("success", False, False, "execution_write"),
         ],
     )
     async def test_handle_executor_dead_terminates_sandbox(
@@ -2557,11 +2559,12 @@ class TestSandboxManager:
         sandbox_manager_with_mock_redis,
         mock_redis_client,
         sample_sandbox_redis_data,
+        sample_execution,
         mocker,
         delete_status,
         revoked,
         lease_lost,
-        saved,
+        storage_failure,
     ):
         """Test marks sandbox as failed and cleans up when executor dies."""
         manager = sandbox_manager_with_mock_redis
@@ -2597,14 +2600,27 @@ class TestSandboxManager:
             manager._repository, "delete_executor_binding", return_value=revoked
         )
         untrack = mocker.patch.object(manager._repository, "remove_from_active_set")
-        if not saved:
+        if storage_failure == "sandbox_write":
             mocker.patch.object(manager._repository, "save_sandbox", return_value=False)
+        elif storage_failure == "execution_read":
+            mock_redis_client.hgetall.side_effect = OSError("Redis unavailable")
+        elif storage_failure == "execution_write":
+            sample_execution.set_running()
+            mock_redis_client.hgetall.return_value["1"] = json.dumps(
+                sample_execution.to_dict()
+            )
+            mocker.patch.object(
+                manager._repository, "save_execution", return_value=False
+            )
 
         await manager._handle_executor_dead(sandbox, lease)
 
-        # Verify heartbeat key was deleted
-        mock_heartbeat.delete_heartbeat.assert_called_once()
-        if not saved:
+        if storage_failure in {"execution_read", "execution_write"}:
+            mock_heartbeat.delete_heartbeat.assert_not_awaited()
+            assert sandbox.status.value == "running"
+        else:
+            mock_heartbeat.delete_heartbeat.assert_awaited_once()
+        if storage_failure:
             mock_executor.delete_executor.assert_not_called()
             revoke.assert_not_called()
             untrack.assert_not_called()
