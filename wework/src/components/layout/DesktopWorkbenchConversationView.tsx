@@ -30,6 +30,7 @@ import {
 } from './desktopWorkbenchMainHelpers'
 import type { DesktopWorkbenchPaneRenderModel } from './desktopWorkbenchPaneChrome'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+import { CloudDeviceUpgradeBadge } from '@/features/cloud-devices/CloudDeviceUpgradeBadge'
 import {
   pendingRequestUserInputPayloads,
   pendingRequestUserInputResponses,
@@ -207,9 +208,10 @@ export function DesktopWorkbenchConversationView({
         >
           {projectSpaceContext}
           {selectionSharingMounted && <div ref={setIssueShareToolbarHost} className="contents" />}
+          <CloudDeviceUpgradeBadge device={activeDevice} actionable />
         </div>
       ),
-    [projectSpaceContext, hasTask, transcriptLoading, selectionSharingMounted]
+    [projectSpaceContext, hasTask, transcriptLoading, selectionSharingMounted, activeDevice]
   )
   const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   return (
@@ -844,6 +846,9 @@ export function DesktopWorkbenchConversationView({
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
                       projectWorkBarMiddleContext={projectSpaceContext}
+                      projectWorkBarEndContext={
+                        <CloudDeviceUpgradeBadge device={activeDevice} actionable />
+                      }
                       projectWorkBarTrailingContext={
                         experimentalFeaturesEnabled ? (
                           <WorkbenchHarnessSelector

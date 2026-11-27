@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 
 import {
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
   REMOTE_DOCKER_DEVICE_ID,
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
@@ -51,6 +52,8 @@ const BACKEND_PORT_CONFLICT_PATTERN = /Address already in use|AddrInUse/
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+const CLOUD_DEVICE_LIFECYCLE_OLD_VERSION = '998.0.0'
+const CLOUD_DEVICE_LIFECYCLE_SIBLING_VERSION = '998.0.2'
 export const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
 const MYSQL_READY_TIMEOUT_MS = 60_000
 const MYSQL_HELPER = join(repoDir, 'wework', 'e2e', 'desktop', 'support', 'mysql-helper.py')
@@ -606,6 +609,16 @@ class RealCloudEnvironment {
         WEGENT_PYTHON_UPSTREAM_URL: `http://127.0.0.1:${this.pythonBackendPort}`,
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
+        ...(this.cloudLifecycle
+          ? {
+              CLOUD_DEVICE_RELEASE_HISTORY: [
+                CLOUD_DEVICE_LIFECYCLE_OLD_VERSION,
+                CLOUD_DEVICE_LIFECYCLE_SIBLING_VERSION,
+                '998.1.0',
+                CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+              ].join(','),
+            }
+          : {}),
         BREEZE_LOG_DIR: rustLogDirectory,
         RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug,wegent_backend_rs::socketio::terminal_attach=info`,
       },
@@ -970,6 +983,8 @@ class RealCloudEnvironment {
       logFile: 'remote-docker-executor-runtime.log',
     })
     if (this.cloudLifecycle) {
+      this.remoteExecutorEnv.WEGENT_EXECUTOR_VERSION = CLOUD_DEVICE_LIFECYCLE_OLD_VERSION
+      this.remoteDockerExecutorEnv.WEGENT_EXECUTOR_VERSION = CLOUD_DEVICE_LIFECYCLE_SIBLING_VERSION
       await this.provisionLifecycleSandbox()
     }
     this.remoteExecutor = await this.spawnExecutor(

@@ -5,6 +5,7 @@ import { Archive, Loader2, Sparkles, SquareTerminal, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import { Tooltip } from '@/components/ui/tooltip'
+import { CloudDeviceUpgradeBadge } from '@/features/cloud-devices/CloudDeviceUpgradeBadge'
 
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 
@@ -172,13 +173,13 @@ export function ProjectDeviceInlineStatus({
     <span
       data-testid={testId}
       title={title}
-      aria-label={label}
       className={cn(
         'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
         className
       )}
     >
       <span className="max-w-[96px] truncate">{label}</span>
+      <CloudDeviceUpgradeBadge device={deviceState.device} />
       <span
         data-testid={`${testId}-dot`}
         aria-hidden="true"

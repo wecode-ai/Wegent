@@ -1,6 +1,7 @@
 import { resolveWorkspaceFilePath } from './workspace-panels/workspaceFilePaths'
 import { workspaceFileTabId } from './workspace-panels/workspaceFileTabs'
 import { useCallback, useMemo } from 'react'
+import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import { isAbsoluteWorkspacePath, resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 import {
@@ -122,6 +123,7 @@ export function useDesktopPaneFileActions({
   latestPreviousTurnSubtaskId,
   openRightPanelTab,
 }: Input) {
+  const remindOnUse = useWorkbenchCloudDeviceRestarts()?.remindOnUse
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
       const scope = captureScope()
@@ -222,14 +224,17 @@ export function useDesktopPaneFileActions({
   const selectFilesView = useCallback(() => {
     if (!canBrowseFiles) return
     openRightPanelTab('files')
-  }, [canBrowseFiles, openRightPanelTab])
+    if (fileWorkspaceTarget?.workspaceSource !== 'local')
+      remindOnUse?.(fileWorkspaceTarget?.deviceId)
+  }, [canBrowseFiles, openRightPanelTab, remindOnUse, fileWorkspaceTarget])
   const selectFileWorkspaceTarget = useCallback(
     (target: WorkspaceTarget) => {
       setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
       setOpenFileRequest(null)
       openRightPanelTab('files')
+      if (target.workspaceSource !== 'local') remindOnUse?.(target.deviceId)
     },
-    [setOpenFileRequest, openRightPanelTab, setSelectedFileWorkspaceTargetKey]
+    [setOpenFileRequest, openRightPanelTab, setSelectedFileWorkspaceTargetKey, remindOnUse]
   )
   const openFileTab = useCallback(
     (target: WorkspaceTarget, path: string, options?: WorkspaceFileOpenOptions) => {

@@ -5,11 +5,13 @@ import type { DeviceInfo } from '@/types/api'
 
 export function CloudDeviceRestartDialog({
   devices,
+  upgrade = false,
   overlayClassName,
   onCancel,
   onConfirm,
 }: {
   devices: DeviceInfo[]
+  upgrade?: boolean
   overlayClassName?: string
   onCancel: () => void
   onConfirm: () => void
@@ -19,19 +21,25 @@ export function CloudDeviceRestartDialog({
   if (!first) return null
 
   const deviceNames = devices.map(device => device.name?.trim() || device.device_id).join(', ')
+  const busy = isDeviceRunningTask(first)
   const description = t(
-    devices.length > 1
-      ? 'workbench.connection_restart_multiple_description'
-      : isDeviceRunningTask(first)
-        ? 'workbench.connection_restart_confirm_busy_description'
-        : 'workbench.connection_restart_confirm_description',
-    { device: deviceNames }
+    upgrade
+      ? busy
+        ? 'workbench.cloud_upgrade_busy'
+        : 'workbench.cloud_upgrade_description'
+      : devices.length > 1
+        ? 'workbench.connection_restart_multiple_description'
+        : busy
+          ? 'workbench.connection_restart_confirm_busy_description'
+          : 'workbench.connection_restart_confirm_description',
+    { device: deviceNames, count: first.cloud_upgrade_reminder?.versions_behind ?? 0 }
   )
+  const latest = upgrade ? first.cloud_upgrade_reminder?.target_version : first.latest_version
   const versionDetails =
-    devices.length === 1 && first.update_available && first.executor_version && first.latest_version
+    devices.length === 1 && (upgrade || first.update_available) && first.executor_version && latest
       ? t('workbench.connection_restart_version_details', {
           current: first.executor_version.replace(/^v/i, ''),
-          latest: first.latest_version.replace(/^v/i, ''),
+          latest: latest.replace(/^v/i, ''),
         })
       : ''
 
@@ -40,15 +48,20 @@ export function CloudDeviceRestartDialog({
       open
       focusCancel
       title={t(
-        devices.length === 1
-          ? 'workbench.connection_restart_confirm_title'
-          : 'workbench.connection_restart_multiple_title'
+        upgrade
+          ? 'workbench.cloud_upgrade_title'
+          : devices.length === 1
+            ? 'workbench.connection_restart_confirm_title'
+            : 'workbench.connection_restart_multiple_title'
       )}
       description={[description, versionDetails].filter(Boolean).join(' ')}
-      cancelLabel={t('common.cancel')}
-      confirmLabel={t('workbench.connection_restart_confirm_action')}
+      cancelLabel={t(upgrade ? 'workbench.cloud_upgrade_later' : 'common.cancel')}
+      confirmLabel={t(
+        upgrade ? 'workbench.cloud_upgrade_action' : 'workbench.connection_restart_confirm_action'
+      )}
+      confirmDisabled={upgrade && (busy || first.status === 'offline')}
       confirmTestId="confirm-restart-device-button"
-      dialogTestId="confirm-restart-device-dialog"
+      dialogTestId={upgrade ? 'cloud-device-upgrade-reminder' : 'confirm-restart-device-dialog'}
       cancelTestId="cancel-restart-device-button"
       overlayClassName={overlayClassName}
       onClose={onCancel}

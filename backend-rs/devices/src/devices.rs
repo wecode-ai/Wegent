@@ -39,6 +39,7 @@ use serde_json::json;
 
 use crate::DevicesState;
 use crate::auth::SessionUser;
+use crate::cloud_release_history::CloudUpgradeReminder;
 pub use crate::device_online_state::{cache_manager_get, cache_manager_mget, online_key};
 use crate::device_running_tasks::{RunningTask, list_running_tasks};
 use crate::http_compat::FastApiError;
@@ -140,6 +141,8 @@ pub struct DeviceItem {
     executor_version: Option<String>,
     latest_version: Option<String>,
     update_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloud_upgrade_reminder: Option<CloudUpgradeReminder>,
     client_ip: Option<RawJson>,
     runtime_transfer_host: Option<RawJson>,
     runtime_instance_id: Option<RawJson>,
@@ -484,6 +487,9 @@ async fn list_cloud_devices(
         let update_available =
             is_update_available(executor_version.as_deref(), latest_version.as_deref());
         let status = online_status(online.as_ref());
+        let cloud_upgrade_reminder = executor_version
+            .as_deref()
+            .and_then(|current| state.executor_version.cloud_releases.reminder(current));
         result.push(DeviceItem {
             id: row.id,
             execution_target_id: None,
@@ -507,6 +513,7 @@ async fn list_cloud_devices(
             executor_version,
             latest_version,
             update_available,
+            cloud_upgrade_reminder,
             socket_device_id: None,
             runtime_features: state
                 .cloud_runtime_features
@@ -669,6 +676,7 @@ async fn list_mget_devices(
             executor_version,
             latest_version: latest_version.clone(),
             update_available,
+            cloud_upgrade_reminder: None,
             client_ip: spec.client_ip.as_ref().map(OpaqueJson::to_raw_value),
             runtime_transfer_host: spec
                 .runtime_transfer_host

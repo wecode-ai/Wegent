@@ -1,4 +1,5 @@
 import type { DeviceSessionTransport, DeviceSessionType } from './device-sessions'
+import type { CloudDeviceUpgradeReminderInfo } from '@wegent/chat-core/execution-project'
 import type { RuntimeFeatureSet } from './api'
 
 export interface DeviceInfo {
@@ -19,6 +20,7 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  cloud_upgrade_reminder?: CloudDeviceUpgradeReminderInfo
   error?: string | null
   client_ip?: string | null
   runtime_transfer_host?: string | null

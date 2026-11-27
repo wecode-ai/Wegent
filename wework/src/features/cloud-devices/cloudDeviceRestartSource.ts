@@ -1,4 +1,7 @@
 import type { DeviceInfo } from '@/types/api'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { isVersionAtLeast } from '@/lib/device-capabilities'
+import { claimDailyCloudUpgradeReminder, cloudUpgradeReminder } from './cloudDeviceUpgradeReminder'
 import { createDeviceOfflineLifecycleSource } from './deviceOfflineLifecycleSource'
 import {
   DEVICE_LIFECYCLE_POLL_INTERVAL_MS,
@@ -12,19 +15,26 @@ import {
 
 interface Input {
   devices: DeviceInfo[]
+  reminderScope: string | null
   refreshDevices(): Promise<void>
-  restart(deviceId: string): Promise<unknown>
+  restart(deviceId: string, forceStopTasks: boolean): Promise<unknown>
 }
 interface Request {
   target: DeviceInfo
+  upgrade: boolean
   source: ReturnType<typeof createDeviceOfflineLifecycleSource>
   stop?: () => void
 }
 
 /** Explicit confirmation admits each restart; its actual lifecycle drives the shared notices. */
 export function createCloudDeviceRestartSource() {
-  let snapshot: { confirmation: DeviceInfo[]; progress: Record<string, DeviceRestartProgress> } = {
+  let snapshot: {
+    confirmation: DeviceInfo[]
+    upgrade: boolean
+    progress: Record<string, DeviceRestartProgress>
+  } = {
     confirmation: [],
+    upgrade: false,
     progress: {},
   }
   let input: Input | undefined
@@ -49,6 +59,7 @@ export function createCloudDeviceRestartSource() {
     } else
       progress[key] = {
         device: request.target,
+        upgrade: request.upgrade,
         phase,
         error,
         onRefresh: request.source.refreshAfterTimeout,
@@ -59,11 +70,21 @@ export function createCloudDeviceRestartSource() {
   function bind(key: string, request: Request) {
     if (!input) return
     const device = input.devices.find(device => device.device_id === request.target.device_id)
+    const targetVersion = request.upgrade
+      ? request.target.cloud_upgrade_reminder?.target_version
+      : null
     const previous = request.stop
     const stop = request.source.subscribe(() => publishProgress(key, request), {
       status: device?.status ?? 'offline',
       runtimeInstanceId: device?.runtime_instance_id,
-      requestAction: () => input!.restart(request.target.device_id),
+      recoveryReady:
+        !targetVersion ||
+        Boolean(
+          device?.executor_version &&
+          /^v?\d+\.\d+\.\d+$/.test(device.executor_version) &&
+          isVersionAtLeast(device.executor_version, targetVersion)
+        ),
+      requestAction: () => input!.restart(request.target.device_id, !request.upgrade),
       refreshDevices: input.refreshDevices,
       pollIntervalMs: DEVICE_LIFECYCLE_POLL_INTERVAL_MS,
       timeoutMs: DEVICE_LIFECYCLE_TIMEOUT_MS,
@@ -91,14 +112,41 @@ export function createCloudDeviceRestartSource() {
         })
       }
     },
-    requestRestart(targets: DeviceInfo[]) {
+    remindOnUse(deviceId: string | null | undefined) {
+      const scope = input?.reminderScope
+      if (!input || !scope || !listeners.size) return
+      const device = findWorkbenchDevice(input.devices, deviceId)
+      if (!device || !cloudUpgradeReminder(device)) return
+      const key = cloudDeviceRestartKey(device)
+      const storageKey = `wework:cloud-upgrade-reminder:${JSON.stringify([scope, key])}`
+      void navigator.locks
+        .request(storageKey, () => {
+          if (
+            !input ||
+            input.reminderScope !== scope ||
+            !listeners.size ||
+            document.visibilityState !== 'visible' ||
+            snapshot.confirmation.length ||
+            locked(key)
+          )
+            return
+          const current = findWorkbenchDevice(input.devices, device.device_id)
+          if (!current || cloudDeviceRestartKey(current) !== key || !cloudUpgradeReminder(current))
+            return
+          if (!claimDailyCloudUpgradeReminder(localStorage, storageKey)) return
+          snapshot = { ...snapshot, confirmation: [current], upgrade: true }
+          notify()
+        })
+        .catch(error => console.warn('Could not show cloud device upgrade reminder', error))
+    },
+    requestRestart(targets: DeviceInfo[], upgrade = false) {
       if (!listeners.size) return
       const selected = new Map<string, DeviceInfo>()
       for (const target of targets) {
         const key = cloudDeviceRestartKey(target)
         if (!locked(key) && !selected.has(key)) selected.set(key, target)
       }
-      snapshot = { ...snapshot, confirmation: [...selected.values()] }
+      snapshot = { ...snapshot, confirmation: [...selected.values()], upgrade }
       notify()
     },
     cancel() {
@@ -107,6 +155,7 @@ export function createCloudDeviceRestartSource() {
     },
     confirm() {
       if (!listeners.size || !input) return
+      const { upgrade } = snapshot
       const targets = snapshot.confirmation.filter(target => !locked(cloudDeviceRestartKey(target)))
       snapshot = { ...snapshot, confirmation: [] }
       notify()
@@ -114,7 +163,7 @@ export function createCloudDeviceRestartSource() {
         if (!listeners.size) break
         const key = cloudDeviceRestartKey(target)
         requests.get(key)?.stop?.()
-        const request: Request = { target, source: createDeviceOfflineLifecycleSource() }
+        const request: Request = { target, upgrade, source: createDeviceOfflineLifecycleSource() }
         requests.set(key, request)
         bind(key, request)
         void request.source.run()

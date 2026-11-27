@@ -18,6 +18,44 @@ import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const BUSY_MODEL_SCENARIO = 'cloud_device_restart_busy'
 const RESTART_DIALOG = '[data-testid="confirm-restart-device-dialog"]'
+const UPGRADE_REMINDER = '[data-testid="cloud-device-upgrade-reminder"]'
+const TERMINAL_PANEL = '[data-testid="settings-device-terminal-panel"]'
+
+async function verifyUpgradeReminder(control, cloud) {
+  const device = await cloud.device(CLOUD_DEVICE_ID)
+  assert.deepEqual(device.cloud_upgrade_reminder, {
+    target_version: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+    versions_behind: 3,
+  })
+  assert.equal((await cloud.device(SANDBOX_SIBLING_ID)).cloud_upgrade_reminder, undefined)
+  const useTerminal = async deviceId => {
+    await control.command('click', `[data-testid="connection-terminal-button-${deviceId}"]`)
+    await control.command('waitFor', TERMINAL_PANEL, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  }
+  const closeTerminal = () =>
+    control.command('click', '[data-testid="settings-device-terminal-close-button"]')
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false })
+
+  await useTerminal(SANDBOX_SIBLING_ID)
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false })
+  await closeTerminal()
+
+  await useTerminal(CLOUD_DEVICE_ID)
+  await control.command('waitFor', UPGRADE_REMINDER, {
+    text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-device-upgrade-reminder.png')
+  await control.command('click', '[data-testid="cancel-restart-device-button"]')
+  assert.equal(cloud.sandboxRestartRequestCount(), 1, 'Postponing must not restart the device')
+  await closeTerminal()
+
+  await control.command('navigate', 'body', { value: '/settings/general' })
+  await control.command('navigate', 'body', { value: '/cloud-work' })
+  await useTerminal(CLOUD_DEVICE_ID)
+  await control.command('waitFor', UPGRADE_REMINDER, { visible: false })
+  await closeTerminal()
+}
 
 async function waitForCondition(predicate, timeoutMs, message) {
   const startedAt = Date.now()
@@ -348,4 +386,5 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
     await restart.finish()
     await cloud.setExecutorLatestVersion(currentDevice.executor_version)
   }
+  await verifyUpgradeReminder(control, cloud)
 }

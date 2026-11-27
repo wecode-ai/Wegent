@@ -32,6 +32,7 @@ use brz_http::Client as HttpClient;
 use brz_redis::{Redis, SetExpiration, SetOptions};
 use tokio::sync::mpsc;
 
+use crate::cloud_release_history::CloudReleaseHistory;
 use crate::config::env_or_dotenv;
 
 /// `ExecutorVersionService.EXECUTOR_VERSION_CACHE_KEY`.
@@ -273,6 +274,7 @@ fn platform_release_version(release: &serde_json::Value) -> Option<&str> {
 /// Process-lifetime `executor_version_service` singleton.
 #[derive(Clone)]
 pub struct ExecutorVersionService {
+    pub(crate) cloud_releases: Arc<CloudReleaseHistory>,
     cache: Arc<dyn ExecutorVersionCache>,
     /// `_start_refresh` admission: a request enqueues the triggering request's
     /// `X-Request-ID` here and returns.
@@ -288,11 +290,13 @@ impl ExecutorVersionService {
     /// service handle is dropped.
     pub fn from_redis(redis: Option<brz_redis::RedisService>) -> anyhow::Result<Self> {
         let checker = build_checker()?;
-        Ok(Self::with_cache(
+        let mut service = Self::with_cache(
             Arc::new(RedisVersionCache { redis }),
             checker,
             executor_version_cache_ttl(),
-        ))
+        );
+        service.cloud_releases = Arc::new(CloudReleaseHistory::from_env());
+        Ok(service)
     }
 
     fn with_cache(
@@ -309,7 +313,11 @@ impl ExecutorVersionService {
             cache_ttl,
             refresh_rx,
         ));
-        Self { cache, refresh }
+        Self {
+            cache,
+            refresh,
+            cloud_releases: Arc::default(),
+        }
     }
 
     /// `executor_version_service.get_latest_version()` before the callers'
