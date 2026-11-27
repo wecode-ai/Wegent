@@ -208,6 +208,7 @@ pub(super) fn copy_referenced_role(
     device: &str,
     role_id: &str,
     settings: &mut Value,
+    copy_prompt: Option<bool>,
 ) -> Result<(), TaskRuntimeError> {
     let invalid = || TaskRuntimeError::Invalid("Referenced assistant Team changed".into());
     let previous = read_personal(connection, user, device)?;
@@ -234,17 +235,18 @@ pub(super) fn copy_referenced_role(
     let mut team = definition(connection, user, source)?;
     team["id"] = json!(reference);
     team["imported"] = json!(true);
-    apply_identity_edit(&mut team, &before, role);
+    apply_identity_edit(&mut team, &before, role, copy_prompt);
+    role["prompt"] = json!(team["system_prompt"].as_str().unwrap_or_default());
     write_definition(connection, user, &reference, &team)?;
     role["teamRef"] = json!(reference);
     Ok(())
 }
 
-fn apply_identity_edit(team: &mut Value, before: &Value, role: &Value) {
+fn apply_identity_edit(team: &mut Value, before: &Value, role: &Value, edit_prompt: Option<bool>) {
     if before["name"] != role["name"] && role["name"].is_string() {
         team["name"] = role["name"].clone();
     }
-    if before["prompt"] != role["prompt"] {
+    if edit_prompt.unwrap_or(before["prompt"] != role["prompt"]) {
         team["system_prompt"] = role["prompt"].clone();
     }
 }
@@ -270,7 +272,7 @@ pub(super) fn update_owned_definition(
     };
     if record.created_by_user_id == user && record.metadata["imported"] == true {
         let mut team = record.metadata;
-        apply_identity_edit(&mut team, before, role);
+        apply_identity_edit(&mut team, before, role, None);
         write_definition(connection, user, reference, &team)?;
     }
     Ok(())
@@ -544,7 +546,7 @@ mod tests {
         settings["roles"] = json!([role]);
         let mut settings = store.save_personal_stand_in(7, "device", settings).unwrap();
         let original = store.personal_execution_team(7, &source.id).unwrap();
-        let save_copy = |settings| {
+        let save_copy = |settings, copy_prompt| {
             store.save_verified_personal_settings(
                 7,
                 "device",
@@ -552,19 +554,29 @@ mod tests {
                 settings,
                 VerifiedPersonalSettings {
                     copy_team_role_id: Some("review"),
+                    copy_team_prompt: copy_prompt,
                     ..Default::default()
                 },
             )
         };
+        // An explicitly cleared Team prompt can equal the old role's empty prompt.
+        let cleared = save_copy(settings.clone(), Some(true)).unwrap();
+        let cleared_ref = cleared["roles"][0]["teamRef"].as_str().unwrap();
+        assert_eq!(
+            store.personal_execution_team(7, cleared_ref).unwrap()["system_prompt"],
+            ""
+        );
+        settings["version"] = cleared["version"].clone();
+        let mut settings = store.save_personal_stand_in(7, "device", settings).unwrap();
         settings["roles"][0]["prompt"] = json!("Independent review");
         let mut stale = settings.clone();
         stale["version"] = json!(-1);
-        assert!(save_copy(stale).is_err());
+        assert!(save_copy(stale, None).is_err());
         assert_eq!(
             store.personal_stand_in(7, "device").unwrap()["roles"][0]["teamRef"],
             source.id
         );
-        let saved = save_copy(settings).unwrap();
+        let saved = save_copy(settings, None).unwrap();
         let reference = saved["roles"][0]["teamRef"].as_str().unwrap();
         assert_ne!(reference, source.id);
         let copied = store.personal_execution_team(7, reference).unwrap();

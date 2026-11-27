@@ -664,6 +664,7 @@ pub struct VerifiedPersonalSettings<'a> {
     pub account: Option<&'a Value>,
     pub workspace_owner: bool,
     pub copy_team_role_id: Option<&'a str>,
+    pub copy_team_prompt: Option<bool>,
     pub owned_team: Option<&'a Value>,
 }
 
@@ -817,7 +818,14 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(role_id) = verified.copy_team_role_id {
-            execution_team::copy_referenced_role(&connection, user, device, role_id, &mut value)?;
+            execution_team::copy_referenced_role(
+                &connection,
+                user,
+                device,
+                role_id,
+                &mut value,
+                verified.copy_team_prompt,
+            )?;
         }
         if let Some(team) = verified.owned_team {
             let role_id = team["roleId"].as_str().ok_or_else(|| {

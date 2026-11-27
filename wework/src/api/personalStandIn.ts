@@ -211,9 +211,15 @@ export type StandInConversationScope =
   | `shared:${number}:${StandInShareDefinition['kind']}:${string}`
 
 export interface PersonalStandInSettings {
+  referencedTeamPrompt?: string
   teamCopyVersion?: number
   teamImportVersion?: number
-  portableTeam?: { name: string; collaboration_model: string; bot: Record<string, unknown>[] }
+  portableTeam?: {
+    system_prompt?: string
+    name: string
+    collaboration_model: string
+    bot: Record<string, unknown>[]
+  }
   bindableTeams?: { id: string; name: string }[]
   cloudDefinitionRevision?: string
   userId: number

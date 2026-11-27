@@ -95,10 +95,16 @@ export async function saveStandInRoleDevice(
       ? {
           ...current.portableTeam,
           name: role.name,
-          ...(previous?.prompt !== role.prompt ? { system_prompt: role.prompt } : {}),
+          ...((input.definitionChange?.copyTeamPrompt ?? previous?.prompt !== role.prompt)
+            ? { system_prompt: role.prompt }
+            : {}),
         }
       : current.portableTeam
-  if (portableTeam) transferred.teamRef = null
+  if (portableTeam) {
+    if (previous?.teamRef?.startsWith('LA-') && typeof portableTeam.system_prompt === 'string')
+      transferred.prompt = portableTeam.system_prompt
+    transferred.teamRef = null
+  }
   await checkTargetConnectionProviders(api, targetDevice, role.connections)
   const staged = await api.personalSave(
     userId,

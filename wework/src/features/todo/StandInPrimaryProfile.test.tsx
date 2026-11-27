@@ -30,6 +30,11 @@ function openPrimaryProfile(
     is_default: false,
   }
   if (services.standInApi) {
+    if (teamRef)
+      services.standInApi.personalGet = async () => ({
+        ...settings,
+        referencedTeamPrompt: 'Current source instructions',
+      })
     services.standInApi.catalog = async () => ({ models: [model] })
   }
   settings.primary = {
@@ -216,9 +221,10 @@ test('a migrated default assistant keeps its shared instructions when private pr
   })
 })
 
-test('saving edits to a referenced Team requires explicit copy confirmation', () => {
+test('saving edits to a referenced Team requires explicit copy confirmation', async () => {
   const { save, onSave } = openPrimaryProfile(undefined, undefined, undefined, 'LA-original')
-  fireEvent.change(screen.getByTestId('stand-in-primary-ghost-prompt'), {
+  const editor = await screen.findByDisplayValue('Current source instructions')
+  fireEvent.change(editor, {
     target: { value: 'New instructions' },
   })
   save()

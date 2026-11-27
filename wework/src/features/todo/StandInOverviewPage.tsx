@@ -1043,7 +1043,12 @@ export function StandInOverviewPage({
                     }}
                     onSave={async (value, stayOpen, copyTeam) => {
                       const saved = copyTeam
-                        ? await state.save(value, { kind: 'update', roleId: '@primary', copyTeam })
+                        ? await state.save(value, {
+                            kind: 'update',
+                            roleId: '@primary',
+                            copyTeam,
+                            copyTeamPrompt: true,
+                          })
                         : await state.save(value)
                       if (saved && !stayOpen) {
                         setProfile(null)

@@ -702,6 +702,7 @@ impl RuntimeWorkRpcHandler {
                         workspace_owner,
                         owned_team,
                         copy_team_role_id,
+                        copy_team_prompt: payload["copyTeamPrompt"].as_bool(),
                     },
                 )
                 .map_err(settings_error)?;
@@ -729,6 +730,29 @@ impl RuntimeWorkRpcHandler {
                 settings["portableTeam"] = store
                     .portable_personal_team(user, &self.device_id, role_id)
                     .map_err(settings_error)?;
+            }
+            if let Some(role_id) = payload["promptTeamRoleId"].as_str() {
+                self.verify_local_stand_in_owner(user)?;
+                let role = if role_id == "@primary" {
+                    settings.get("primary")
+                } else {
+                    settings["roles"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|role| role["id"] == role_id)
+                };
+                let reference = role
+                    .and_then(|role| role["teamRef"].as_str())
+                    .filter(|id| id.starts_with("LA-"))
+                    .ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Role no longer references a local Team")
+                    })?;
+                let team = store
+                    .personal_execution_team(user, reference)
+                    .map_err(settings_error)?;
+                settings["referencedTeamPrompt"] =
+                    json!(team["system_prompt"].as_str().unwrap_or_default());
             }
             if payload["includeTeams"] == true {
                 self.verify_local_stand_in_owner(user)?;

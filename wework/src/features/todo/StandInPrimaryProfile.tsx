@@ -1,3 +1,5 @@
+import { useReferencedTeamPrompt } from './useReferencedTeamPrompt'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { editedReferencedTeam } from './standInRoleDraft'
 import type { PersonalStandInSettings, StandInIdentity } from '@/api/personalStandIn'
 import {
@@ -105,6 +107,13 @@ export function StandInPrimaryProfile({
   const blocked = saving || loading
   const settings = incomingSettings
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
+  const teamPrompt = useReferencedTeamPrompt(
+    api ?? services.standInApi,
+    settings.userId,
+    settings.executionDeviceId,
+    '@primary',
+    saved.teamRef
+  )
   const defaultRole = newStandInPrimaryRole(executionDeviceId)
   const defaultCollaboration = defaultRole.collaboration
   const usesSeparatePrompt = (primary: StandInIdentity) =>
@@ -196,7 +205,7 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot
   )
   const scopeView = connections && connectionScopeTitle ? connectionView : null
-  const profileDirty = !dequal(original, draft)
+  const profileDirty = teamPrompt.edited || !dequal(original, draft)
   const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
@@ -208,6 +217,9 @@ export function StandInPrimaryProfile({
       ? { ...saved, ...connectionConfigurationChanges(saved, draft, scopeView) }
       : {
           ...draft,
+          ...(teamPrompt.edited && teamPrompt.prompt !== undefined
+            ? { prompt: teamPrompt.prompt, selfLearningEnabled: draft.selfLearningEnabled ?? false }
+            : {}),
           ...(preserveLegacyInstructions
             ? { prompt: saved.prompt, preferences: saved.preferences }
             : {}),
@@ -222,7 +234,7 @@ export function StandInPrimaryProfile({
           enabled: saved.enabled || connectionChangeEnablesIdentity(saved, updated),
         })
       : updated
-    if (!copyTeam && editedReferencedTeam(saved, primary)) {
+    if (!copyTeam && ((!scopeView && teamPrompt.edited) || editedReferencedTeam(saved, primary))) {
       setConfirmTeamCopy(true)
       return
     }
@@ -327,14 +339,24 @@ export function StandInPrimaryProfile({
       />
       {view === 'main' && (
         <>
-          {separatePrompt && (
+          {teamPrompt.error != null && (
+            <StandInSettingsError
+              error={getStandInErrorMessage(teamPrompt.error, 'load_environment_failed')}
+              retry={{ testId: 'stand-in-primary-team-prompt-retry', onClick: teamPrompt.retry }}
+            />
+          )}
+          {separatePrompt && teamPrompt.ready && (
             <label className="mb-4 grid gap-2">
               <span>{t('standIn.workspace.ghost_prompt')}</span>
               <ControlTextarea
                 data-testid="stand-in-primary-ghost-prompt"
-                value={draft.prompt}
+                value={teamPrompt.linked ? teamPrompt.prompt : draft.prompt}
                 disabled={blocked}
-                onChange={event => setDraft({ ...draft, prompt: event.target.value })}
+                onChange={event =>
+                  teamPrompt.linked
+                    ? teamPrompt.setPrompt(event.target.value)
+                    : setDraft({ ...draft, prompt: event.target.value })
+                }
                 rows={4}
               />
             </label>

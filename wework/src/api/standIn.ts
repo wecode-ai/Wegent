@@ -616,6 +616,7 @@ export interface StandInExecutorApi {
       deviceSettingsOnly?: boolean
       roleDirectory?: boolean
       includeTeams?: boolean
+      promptTeamRoleId?: string
       exportTeamRoleId?: string
     }
   ): Promise<PersonalStandInSettings>
@@ -624,7 +625,12 @@ export interface StandInExecutorApi {
     settings: PersonalStandInSettings,
     deviceId: string,
     transferRoleId?: string,
-    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string; copyTeam?: boolean },
+    definitionChange?: {
+      kind: 'create' | 'update' | 'delete'
+      roleId: string
+      copyTeam?: boolean
+      copyTeamPrompt?: boolean
+    },
     portableTeam?: PersonalStandInSettings['portableTeam']
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
@@ -1004,6 +1010,7 @@ export function createStandInExecutorApi(
         userId,
         deviceId,
         Boolean(options?.includeTeams),
+        options?.promptTeamRoleId,
         options?.exportTeamRoleId,
       ])
       const pending = personalReads.get(key)
@@ -1012,6 +1019,7 @@ export function createStandInExecutorApi(
         'runtime.stand_in.personal.get',
         {
           userId,
+          ...(options?.promptTeamRoleId ? { promptTeamRoleId: options.promptTeamRoleId } : {}),
           ...(options?.includeTeams ? { includeTeams: true } : {}),
           ...(options?.exportTeamRoleId ? { exportTeamRoleId: options.exportTeamRoleId } : {}),
         },
@@ -1056,6 +1064,9 @@ export function createStandInExecutorApi(
         {
           userId,
           settings: configuration,
+          ...(change?.copyTeamPrompt !== undefined
+            ? { copyTeamPrompt: change.copyTeamPrompt }
+            : {}),
           ...(change?.copyTeam ? { copyTeamRoleId: change.roleId } : {}),
           ...(transferRoleId !== undefined ? { transferRoleId } : {}),
           ...(portableTeam ? { portableTeam } : {}),

@@ -43,6 +43,7 @@ import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInCreateTeam } from './StandInCreateTeam'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInProjectSetup } from './StandInProjectSetup'
+import { useReferencedTeamPrompt } from './useReferencedTeamPrompt'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
@@ -206,6 +207,13 @@ function StandInSettingsEditor({
     draft?.roles.find(role => role.id === (initialProject ? projectRoleId : selectedId)) ??
     draft?.roles[0]
   const previousRole = saved?.roles.find(row => row.id === role?.id)
+  const teamPrompt = useReferencedTeamPrompt(
+    services.standInApi,
+    userId,
+    state.loadedDeviceId,
+    previousRole?.id,
+    previousRole?.teamRef
+  )
   const changingDevice =
     role &&
     (previousRole
@@ -262,7 +270,10 @@ function StandInSettingsEditor({
     [onCalendarViewChange]
   )
   const dirty =
-    Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty || connectionDraftDirty
+    Boolean(draft && saved && !dequal(draft, saved)) ||
+    teamPrompt.edited ||
+    scheduleDirty ||
+    connectionDraftDirty
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
@@ -356,7 +367,7 @@ function StandInSettingsEditor({
             ...connectionConfigurationChanges(savedRole, role, scopeView),
           }
         : null
-    const value =
+    let value =
       scopeSettings && saved
         ? {
             ...saved,
@@ -395,13 +406,21 @@ function StandInSettingsEditor({
                 ),
               }
             : draft
+    const editedPrompt = !scopeSettings && teamPrompt.edited ? teamPrompt.prompt : undefined
+    if (editedPrompt !== undefined)
+      value = {
+        ...value,
+        roles: value.roles.map(row =>
+          row.id === role.id ? { ...row, prompt: editedPrompt } : row
+        ),
+      }
     const changedRole = value.roles.find(row => row.id === role.id)!
-    if (!copyTeam && editedReferencedTeam(savedRole, changedRole)) {
+    if (!copyTeam && (editedPrompt !== undefined || editedReferencedTeam(savedRole, changedRole))) {
       setPendingTeamCopy(disconnectProject)
       return
     }
     const definitionChange = {
-      ...(copyTeam ? { copyTeam: true } : {}),
+      ...(copyTeam ? { copyTeam: true, copyTeamPrompt: editedPrompt !== undefined } : {}),
       kind: role.id === createdRoleId ? ('create' as const) : ('update' as const),
       roleId: role.id,
     }
@@ -696,15 +715,25 @@ function StandInSettingsEditor({
             {(view === 'main' || (view === 'create' && !role.teamRef)) && (
               <div className="space-y-2">
                 <h2 className="font-medium">{t('standIn.personal.requirements')}</h2>
-                <StandInRequirements
-                  key={role.id}
-                  role={role}
-                  runtimeWork={runtimeWork}
-                  services={services}
-                  onChange={update => updateRole(role.id, update)}
-                  disabled={saving}
-                  onSave={() => void save()}
-                />
+                {teamPrompt.error != null && (
+                  <StandInSettingsError
+                    error={getStandInErrorMessage(teamPrompt.error, 'load_environment_failed')}
+                    retry={{ testId: 'stand-in-team-prompt-retry', onClick: teamPrompt.retry }}
+                  />
+                )}
+                {teamPrompt.ready && (
+                  <StandInRequirements
+                    key={role.id}
+                    role={role}
+                    referencedPrompt={teamPrompt.linked ? teamPrompt.prompt : undefined}
+                    onReferencedPromptChange={teamPrompt.linked ? teamPrompt.setPrompt : undefined}
+                    runtimeWork={runtimeWork}
+                    services={services}
+                    onChange={update => updateRole(role.id, update)}
+                    disabled={saving}
+                    onSave={() => void save()}
+                  />
+                )}
               </div>
             )}
             {(view === 'main' || (view === 'create' && !initialProject)) && (

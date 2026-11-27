@@ -1,3 +1,4 @@
+import { waitForValue } from './wait.mjs'
 import assert from 'node:assert/strict'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 
@@ -72,6 +73,13 @@ export async function verifyAssistantTeamCreation(control, rpc, settings, captur
   assert.equal(linked.teamRef, source.id)
   assert.ok(!linked.prompt.includes('Discard this new-Team draft'))
   await open(linked)
+  await control.command('waitFor', select('stand-in-prompt'), { timeoutMs: 5000 })
+  await waitForValue(
+    () => control.command('getValue', select('stand-in-prompt')),
+    value => value === original.system_prompt,
+    'The linked assistant editor must display the current source Team prompt',
+    5000
+  )
   const editedPrompt = 'Review this assistant’s release checklist.'
   await fill('stand-in-prompt', editedPrompt)
   await click('stand-in-save')

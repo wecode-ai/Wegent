@@ -10,12 +10,16 @@ import { standInProjectWorkspace } from './useStandInRuntimeWork'
 
 export function StandInRequirements({
   role,
+  referencedPrompt,
+  onReferencedPromptChange,
   runtimeWork,
   services,
   onChange,
   disabled,
   onSave,
 }: {
+  referencedPrompt?: string
+  onReferencedPromptChange?(prompt: string): void
   role: StandInRole
   runtimeWork?: RuntimeWorkListResponse | null
   services: WorkbenchServices
@@ -37,12 +41,14 @@ export function StandInRequirements({
     services,
     t
   )
+  const editPrompt =
+    onReferencedPromptChange ?? ((prompt: string) => onChange(current => ({ ...current, prompt })))
   return (
     <ComposerCatalogContext.Provider value={catalog}>
       <BufferedChatInput
-        value={role.prompt}
-        onChange={prompt => onChange(current => ({ ...current, prompt }))}
-        onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
+        value={referencedPrompt ?? role.prompt}
+        onChange={editPrompt}
+        onDraftEdit={editPrompt}
         onSubmit={() => onSave()}
         disabled={disabled}
         clearOnSubmit={false}
