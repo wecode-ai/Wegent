@@ -18,7 +18,10 @@ from app.schemas.project_chat import (
 from app.services.collaboration_group_execution import (
     collaboration_group_snapshot_for_dispatch,
 )
-from app.services.collaboration_revocation import execution_authorized
+from app.services.collaboration_revocation import (
+    execution_authorized,
+    execution_permission,
+)
 from app.services.device.identity import same_owned_device
 from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
@@ -99,7 +102,7 @@ def _reply_author(
                     right_device_id=identity.device_id,
                 )
             ):
-                if not execution_authorized(db, member):
+                if not execution_permission(db, member, for_comment=True).allowed:
                     raise HTTPException(403, "Member execution authority is revoked")
                 return member.agent_id, activity
             continue

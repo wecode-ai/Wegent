@@ -871,3 +871,52 @@ async def test_member_reply_uses_upstream_session_after_round_owner_handoff(
     assert queued.runtime_request["newSession"] is False
     assert queued.runtime_request["modelId"] == "member-model"
     assert queued.runtime_request["origin"]["assignmentId"] == "assignment-1"
+
+
+def test_signed_off_member_still_requires_current_assignment_to_comment(
+    member_scenario,
+):
+    from app.services.collaboration_revocation import execution_permission
+    from app.services.issue_coordination import coordination_activity
+
+    s = member_scenario
+    member = s.execution
+    context = {
+        **member.runtime_origin_context,
+        "dispatch_protocol_version": 2,
+        "dispatch_role": "member",
+    }
+    member.agent_id = s.member_agent.id
+    member.execution_payload = json.dumps(
+        {**member.execution_intent, "origin_context": context}
+    )
+    root = coordination_activity(
+        s.db, s.issue, context["dispatch_id"], context["collaboration_group"]
+    )
+    root.status = "completed"
+    s.db.flush()
+    assert execution_permission(s.db, member, for_comment=True).allowed
+    assert not execution_permission(s.db, member).allowed
+    intent = member.execution_intent
+    context.update(
+        comment_trigger_message_id="follow-up", comment_continue_task_id="recorded-task"
+    )
+    for target, expected in [("other-task", False), ("recorded-task", True)]:
+        member.execution_payload = json.dumps(
+            {
+                **intent,
+                "origin_context": context,
+                "runtime_request": {
+                    "taskId": target,
+                    "newSession": False,
+                    "origin": {"type": "board_comment"},
+                },
+            }
+        )
+        assert execution_permission(s.db, member).allowed == expected
+
+    s.issue.metadata_json = {
+        **s.issue.metadata_json,
+        "collaboration_group_assignment_key": "replacement",
+    }
+    assert not execution_permission(s.db, member, for_comment=True).allowed

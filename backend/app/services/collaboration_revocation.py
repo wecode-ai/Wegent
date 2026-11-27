@@ -113,7 +113,11 @@ def _members(group: dict) -> list[dict]:
 
 
 def _require_group(
-    db: Session, access: CloudProjectAccess, execution: LoopItemExecution
+    db: Session,
+    access: CloudProjectAccess,
+    execution: LoopItemExecution,
+    *,
+    for_comment: bool,
 ) -> None:
     context = execution.runtime_origin_context
     delegated = context.get("dispatch_protocol_version") == 2
@@ -135,7 +139,29 @@ def _require_group(
         ):
             raise HTTPException(403, "Collaboration group assignment was superseded")
         root = coordination_activity(db, item, context["dispatch_id"])
-        if not root or root.status != "active":
+        # A signed-off dispatch cannot start another assignment. Its recorded
+        # member conversation can still receive an explicitly requested reply.
+        continuation = (
+            execution.runtime_selection.get("assignment_request") or {}
+        ).get("continuation") or {}
+        intent = execution.runtime_request
+        task_id = context.get("comment_continue_task_id")
+        bound_comment = bool(
+            task_id
+            and context.get("comment_trigger_message_id")
+            and (
+                task_id == continuation.get("runtime_task_id")
+                or (
+                    intent.get("newSession") is False
+                    and (intent.get("origin") or {}).get("type") == "board_comment"
+                    and task_id == intent.get("taskId")
+                )
+            )
+        )
+        if not root or not (
+            root.status == "active"
+            or (root.status == "completed" and (for_comment or bound_comment))
+        ):
             raise HTTPException(403, "Collaboration dispatch is no longer active")
         group = root.metadata_json["group"]
     if not isinstance(group, dict):
@@ -192,7 +218,7 @@ def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
 @trace_sync("collaboration.execution_permission", "backend.collaboration")
 @execution_resource_scope()
 def execution_permission(
-    db: Session, execution: LoopItemExecution
+    db: Session, execution: LoopItemExecution, *, for_comment: bool = False
 ) -> PermissionDecision:
     from app.db.session import get_db_session
     from app.services.project_coordination_authority import (
@@ -207,16 +233,18 @@ def execution_permission(
             # in a separate short session without committing the caller's work.
             with get_db_session() as current:
                 require_binding(current, execution, scope)
-                return _execution_permission(current, execution)
+                return _execution_permission(
+                    current, execution, for_comment=for_comment
+                )
     except HTTPException as exc:
         if exc.status_code >= 500:
             raise
         return PermissionDecision(False, None, reason="project_coordination_revoked")
-    return _execution_permission(db, execution)
+    return _execution_permission(db, execution, for_comment=for_comment)
 
 
 def _execution_permission(
-    db: Session, execution: LoopItemExecution
+    db: Session, execution: LoopItemExecution, *, for_comment: bool = False
 ) -> PermissionDecision:
     decision = collaboration_permission_service.check(
         db, execution.assigner_user_id, "execute", execution.cloud_project_id
@@ -228,7 +256,7 @@ def _execution_permission(
             db, execution.cloud_project_id, execution.assigner_user_id
         )
         _require_issue(db, access, execution)
-        _require_group(db, access, execution)
+        _require_group(db, access, execution, for_comment=for_comment)
         _require_agent_use(db, execution, execution.agent_id or "", execution.team_id)
     except HTTPException as exc:
         if exc.status_code >= 500:

@@ -622,7 +622,7 @@ async def execute_comment(
         authority_user_id = execution.assigner_user_id
         if not authority_user_id:
             raise HTTPException(409, "The original execution authority is unavailable")
-    from app.services.collaboration_revocation import execution_authorized
+    from app.services.collaboration_revocation import execution_permission
 
     current_agent = (
         db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
@@ -652,7 +652,7 @@ async def execute_comment(
             origin_context=execution.runtime_origin_context,
         ),
     )
-    if not execution_authorized(db, authority):
+    if not execution_permission(db, authority, for_comment=True).allowed:
         raise HTTPException(403, "Comment execution authorization is revoked")
     if (
         not human_request
