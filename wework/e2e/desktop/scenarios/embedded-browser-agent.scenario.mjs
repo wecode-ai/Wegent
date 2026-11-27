@@ -43,6 +43,8 @@ const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
 const BROWSER_AGENT_REJECT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-reject-button"]`
+const BROWSER_AGENT_CURSOR_SELECTOR =
+  '[data-testid="workspace-browser-agent-cursor"][data-visible="true"]'
 const BROWSER_AGENT_TAB_ICON_SELECTOR =
   '[data-testid^="right-workspace-browser-tab-"][aria-selected="true"] [data-testid$="-agent-icon"]'
 const TRANSIENT_NOTICE_SELECTOR = '[data-testid="transient-notice"]'
