@@ -154,6 +154,7 @@ function StandInSettingsEditor({
   } = state
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [selectedId, setSelectedId] = useState(initialProfileId ?? '')
+  const [createdRoleId, setCreatedRoleId] = useState<string>()
   const [view, setView] = useState<View>(
     initialCalendar ? 'connections' : initialProject ? 'project' : 'main'
   )
@@ -172,6 +173,7 @@ function StandInSettingsEditor({
     setSeenInitialRoleId(initialRoleCreation.roleId)
     setHistory(current => [...current, { view, draft: initialRoleCreation.baseline }])
     setSelectedId(initialRoleCreation.roleId)
+    setCreatedRoleId(initialRoleCreation.roleId)
     setView('create')
     setRoleNameError(false)
     setNotice(false)
@@ -355,6 +357,10 @@ function StandInSettingsEditor({
             }
           : draft
     const changedRole = value.roles.find(row => row.id === role.id)!
+    const definitionChange = {
+      kind: role.id === createdRoleId ? ('create' as const) : ('update' as const),
+      roleId: role.id,
+    }
     if (changingDevice) {
       if (!services.standInApi || !saved) return
       setMoving(true)
@@ -365,7 +371,9 @@ function StandInSettingsEditor({
           source: saved,
           draft: value,
           role: changedRole,
+          definitionChange,
         })
+        setCreatedRoleId(undefined)
         onSaved?.(result)
       } catch (cause) {
         setError(getStandInErrorMessage(cause, 'save_settings_failed'))
@@ -374,8 +382,9 @@ function StandInSettingsEditor({
       }
       return
     }
-    const result = await state.save(value)
+    const result = await state.save(value, definitionChange)
     if (!result) return
+    setCreatedRoleId(undefined)
     setHistory([])
     setNotice(true)
     if ((initialProject || initialCreate) && ['project', 'main', 'create'].includes(view))
@@ -390,6 +399,7 @@ function StandInSettingsEditor({
     setHistory(current => [...current, { view, draft }])
     setDraft(created.draft)
     setSelectedId(created.role.id)
+    setCreatedRoleId(created.role.id)
     setView('create')
     setNotice(false)
   }, [draft, roleDraftRequest, setDraft, view])
@@ -862,9 +872,14 @@ function StandInSettingsEditor({
               }
             >
               <p className="text-sm">
-                {t('standIn.personal.delete_role_help', {
-                  name: role.name || t('standIn.personal.unnamed_assistant'),
-                })}
+                {t(
+                  saved.cloudDefinitionRevision
+                    ? 'standIn.account.delete_role_help'
+                    : 'standIn.personal.delete_role_help',
+                  {
+                    name: role.name || t('standIn.personal.unnamed_assistant'),
+                  }
+                )}
               </p>
               <div className="mt-3 flex justify-end gap-2">
                 <ControlButton
@@ -884,10 +899,10 @@ function StandInSettingsEditor({
                   data-testid="stand-in-role-delete-confirm"
                   disabled={saving}
                   onClick={async () => {
-                    const result = await state.save({
-                      ...saved,
-                      roles: saved.roles.filter(row => row.id !== role.id),
-                    })
+                    const result = await state.save(
+                      { ...saved, roles: saved.roles.filter(row => row.id !== role.id) },
+                      { kind: 'delete', roleId: role.id }
+                    )
                     if (result) {
                       setConfirmDelete(false)
                       onDeleted?.()

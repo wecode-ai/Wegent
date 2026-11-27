@@ -35,9 +35,11 @@ function searchPage(nextCursor, ...conversationMessagesList) {
 function fixture() {
   const calls = []
   const state = {
+    currentProfile: profile,
     userId: 'owner',
     selfId: 'self',
     orgId: 'organization',
+    tokenOrganization: 'organization',
     mentions: searchResult(conversation('group', [message('ask')])),
     search: searchResult(
       conversation('group', [
@@ -54,15 +56,22 @@ function fixture() {
       describe: async () => ({ pluginKey: 'dingtalk', connectorSlug: 'local' }),
       async callTool(_alias, input) {
         calls.push(input)
-        if (input.tool === 'authStatus') return { authenticated: true }
+        if (input.tool === 'authStatus')
+          return {
+            authenticated: true,
+            token_valid: true,
+            user_id: state.userId,
+            corp_id: state.tokenOrganization,
+          }
         if (input.tool === 'listProfiles') {
           const response = {
-            currentProfile: profile,
+            currentProfile: state.currentProfile,
             profiles: [
               {
-                profile,
+                profile: state.currentProfile,
                 userId: state.userId,
                 userName: 'Owner',
+                corpId: state.orgId,
                 orgId: state.orgId,
                 orgName: 'Team',
               },
@@ -92,7 +101,7 @@ function fixture() {
   return { ctx, calls, state }
 }
 
-async function register(ctx) {
+async function register(ctx, expectedProfile = profile) {
   const registry = new ConnectionRegistry({
     inventory: async () => [
       {
@@ -112,7 +121,7 @@ async function register(ctx) {
     { dingtalk: createProvider() }
   )
   const [{ availability }] = await registry.catalog()
-  assert.equal(availability.profile, profile)
+  assert.equal(availability.profile, expectedProfile)
   assert.equal(availability.organizationName, 'Team')
   assert.match(availability.accountId, /^[a-f0-9]{64}$/)
   return {
@@ -120,7 +129,7 @@ async function register(ctx) {
     dispose,
     source: {
       providerId,
-      profile,
+      profile: expectedProfile,
       accountId: availability.accountId,
       kind: 'group',
       id: 'group',
@@ -353,14 +362,19 @@ test('delegated recovery checks the complete 50-message limit before releasing p
   const { registry, dispose, source } = await register(ctx)
   try {
     const direct = { ...source, kind: 'direct', id: 'peer' }
-    const events = Array.from({ length: 51 }, (_, index) => message(`ask-${index}`))
+    const events = Array.from({ length: 50 }, (_, index) => message(`ask-${index}`))
+    const ownEvent = message('owner-history', at, { senderOpenDingTalkId: 'self' })
     let overflow = false
-    state.search = ({ cursor, limit }) => {
+    state.search = ({ cursor, limit, conversationIds, senderIds }) => {
       assert.equal(limit, '51')
+      assert.equal(conversationIds, 'direct')
+      assert.equal(senderIds, undefined, 'The source-event limit must include the owner')
       if (cursor === '0')
         return searchPage('second', conversation('direct', events.slice(0, 25), true))
       assert.equal(cursor, 'second')
-      return searchResult(conversation('direct', events.slice(24, overflow ? 51 : 50), true))
+      const finalPage = events.slice(24)
+      if (overflow) finalPage.push(ownEvent)
+      return searchResult(conversation('direct', finalPage, true))
     }
     const checkpoint = { after: new Date(Date.now() - 30 * 60_000).toISOString(), cursor: '0' }
     const accepted = await registry.call(providerId, 'collect', { source: direct, checkpoint })
@@ -376,6 +390,184 @@ test('delegated recovery checks the complete 50-message limit before releasing p
       from: checkpoint.after,
       until: new Date(Date.parse(clock)).toISOString(),
     })
+  } finally {
+    dispose()
+  }
+})
+
+test('short group recovery keeps the fixed window and only releases verified mentions', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const after = '2026-11-24T00:09:00.000Z'
+    const until = new Date(Date.parse(clock)).toISOString()
+    const owner = message('owner', '2026-11-24T00:10:30Z', { senderOpenDingTalkId: 'self' })
+    const later = message('outside-fixed-window', '2026-11-24T00:11:02Z')
+    const ask = message('ask')
+    const rawPage = searchPage('later', conversation('group', [ask, message('nonmention')]))
+    state.search = ({ cursor, start, end }) => {
+      assert.equal(start, after)
+      assert.equal(end, until)
+      if (cursor === '0') {
+        t.mock.timers.tick(4000)
+        return rawPage
+      }
+      return searchResult(conversation('group', [owner, later]))
+    }
+    state.mentions = searchResult(conversation('group', [ask, owner, later]))
+    const result = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: { after, cursor: '0', recover: true },
+    })
+    assert.equal(result.nextCheckpoint.after, until)
+    assert.deepEqual(
+      result.events.map(row => row.id),
+      ['ask']
+    )
+    assert.equal(calls.find(row => row.tool === 'listMentions').arguments.end, until)
+  } finally {
+    dispose()
+  }
+})
+
+test('the group recovery volume cap counts events that cannot receive replies', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const ask = message('ask')
+    const ineligible = [
+      message('manual-owner', at, { senderOpenDingTalkId: 'self' }),
+      message('automated-bot', at, { sendType: 'robot' }),
+      message('ai-reply', at, { messageAiSendFlag: 1 }),
+      message('recalled', at, { recalled: true }),
+      message('file', at, { messageType: 'file' }),
+      ...Array.from({ length: 44 }, (_, index) => message(`without-mention-${index}`)),
+    ]
+    const checkpoint = { after: '2026-11-24T00:09:00.000Z', cursor: '0', recover: true }
+    state.search = searchResult(conversation('group', [ask, ...ineligible]))
+    state.mentions = searchResult(conversation('group', [ask, ...ineligible.slice(0, 5)]))
+    const accepted = await registry.call(providerId, 'collect', { source, checkpoint })
+    assert.deepEqual(
+      accepted.events.map(row => row.id),
+      ['ask']
+    )
+    assert.equal(accepted.nextCheckpoint.delegationGap, undefined)
+
+    calls.length = 0
+    state.search.result.conversationMessagesList[0].messages.push(message('one-more-nonmention'))
+    const skipped = await registry.call(providerId, 'collect', { source, checkpoint })
+    assert.deepEqual(skipped.events, [])
+    assert.deepEqual(skipped.nextCheckpoint.delegationGap, {
+      reason: 'volume',
+      from: checkpoint.after,
+      until: new Date(Date.parse(clock)).toISOString(),
+    })
+    assert.ok(!calls.some(call => call.tool === 'listMentions'))
+  } finally {
+    dispose()
+  }
+})
+
+test('short recovery records a coverage gap without releasing a partial page', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const after = '2026-11-24T00:09:00.000Z'
+    const until = new Date(Date.parse(clock)).toISOString()
+    state.search = () => searchPage('repeating-cursor', conversation('group', [message('ask')]))
+    const result = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: { after, cursor: '0', recover: true },
+    })
+    assert.deepEqual(result, {
+      events: [],
+      hasMore: false,
+      nextCheckpoint: {
+        after: until,
+        cursor: '0',
+        delegationGap: { reason: 'coverage', from: after, until },
+      },
+    })
+  } finally {
+    dispose()
+  }
+})
+
+test('a changed recovered mention skips the entire window and subsequent live collection resumes', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const checkpoint = { after: '2026-11-24T00:09:00.000Z', cursor: '0', recover: true }
+    const unchanged = message('a-unchanged')
+    const edited = message('b-edited')
+    state.search = searchResult(conversation('group', [unchanged, edited]))
+    state.mentions = searchResult(
+      conversation('group', [unchanged, { ...edited, content: 'The question has changed' }])
+    )
+    const gap = await registry.call(providerId, 'collect', { source, checkpoint })
+    const until = new Date(Date.parse(clock)).toISOString()
+    assert.deepEqual(gap, {
+      events: [],
+      hasMore: false,
+      nextCheckpoint: {
+        after: until,
+        cursor: '0',
+        delegationGap: { reason: 'coverage', from: checkpoint.after, until },
+      },
+    })
+
+    t.mock.timers.tick(2000)
+    state.mentions = searchResult(
+      conversation('group', [edited, message('new', new Date().toISOString())])
+    )
+    const live = await registry.call(providerId, 'collect', {
+      source,
+      checkpoint: gap.nextCheckpoint,
+    })
+    assert.deepEqual(
+      live.events.map(row => row.id),
+      ['new']
+    )
+    assert.deepEqual(live.nextCheckpoint, { after: new Date().toISOString(), cursor: '0' })
+  } finally {
+    dispose()
+  }
+})
+
+test('recovery cannot release a selected organization window if its token changes mid-read', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, state, calls } = fixture()
+  state.currentProfile = `${state.orgId}:${state.userId}`
+  const { registry, dispose, source } = await register(ctx, state.currentProfile)
+  try {
+    const ask = message('ask')
+    const input = {
+      source: { ...source, organizationId: state.orgId },
+      checkpoint: { after: '2026-11-24T00:09:00.000Z', cursor: '0', recover: true },
+    }
+    state.search = searchResult(conversation('group', [ask]))
+    const intact = await registry.call(providerId, 'collect', input)
+    assert.deepEqual(
+      intact.events.map(row => row.id),
+      ['ask']
+    )
+
+    calls.length = 0
+    state.search = args => {
+      assert.equal(args.profile, state.currentProfile)
+      state.tokenOrganization = 'different-organization'
+      return searchResult(conversation('group', [ask]))
+    }
+    await assert.rejects(registry.call(providerId, 'collect', input), {
+      code: 'dingtalk_account_changed',
+    })
+    for (const { arguments: args } of calls.filter(call => call.tool === 'authStatus')) {
+      assert.equal(args.profile, state.currentProfile)
+    }
   } finally {
     dispose()
   }
@@ -433,11 +625,48 @@ test('delegated private history detects the owner taking over even on a later se
           conversationIds: args.conversationIds,
           senderIds: args.senderIds,
         })),
-      ['0', 'page-two'].map(cursor => ({
+      ['0', 'page-two', '0', 'page-two'].map(cursor => ({
         cursor,
         conversationIds: 'direct',
         senderIds: 'peer,self',
       }))
+    )
+  } finally {
+    dispose()
+  }
+})
+
+test('bounded older group history does not block a verified automatic message', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(clock) })
+  const { ctx, calls, state } = fixture()
+  const { registry, dispose, source } = await register(ctx)
+  try {
+    const questionStart = new Date(at).toISOString()
+    state.search = ({ cursor, start }) => {
+      if (start === questionStart) return searchResult(conversation('group', [message('ask')]))
+      const history = {
+        0: ['history-1', '2026-11-24T00:01:00Z', 'history-2'],
+        'history-2': ['history-2', '2026-11-24T00:02:00Z', 'history-3'],
+        'history-3': ['history-3', '2026-11-24T00:03:00Z', 'history-more'],
+      }[cursor]
+      assert.ok(history, `Unexpected history cursor ${cursor}`)
+      return searchPage(history[2], conversation('group', [message(history[0], history[1])]))
+    }
+
+    const snapshot = await registry.call(providerId, 'readSource', {
+      source,
+      query: { delegatedMessage: { id: 'ask', at, conversationId: 'group' } },
+    })
+
+    assert.equal(snapshot.target.id, 'ask')
+    assert.equal(snapshot.ownerIntervened, false)
+    assert.deepEqual(
+      snapshot.messages.map(row => row.id),
+      ['history-1', 'history-2', 'history-3']
+    )
+    assert.deepEqual(
+      calls.filter(row => row.tool === 'searchMessages').map(row => row.arguments.cursor),
+      ['0', 'history-2', 'history-3', '0']
     )
   } finally {
     dispose()

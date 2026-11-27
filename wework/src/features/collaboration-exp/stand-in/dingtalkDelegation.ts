@@ -17,6 +17,17 @@ export const defaultDingTalkDelegation: StandInDingTalkDelegation = {
 export const isDingTalkSource = (source: Pick<StandInSourceConnection, 'providerId'>) =>
   source.providerId === STAND_IN_DINGTALK_PROVIDER
 
+export function dingTalkInboxScope(delegation?: StandInDingTalkDelegation) {
+  if (!delegation?.accountId) return undefined
+  return JSON.stringify([
+    delegation.profile,
+    delegation.accountId,
+    delegation.organizationId,
+    delegation.accountInvalidated,
+    delegation.version,
+  ])
+}
+
 type SourceIdentity = Pick<
   StandInSourceConnection,
   'providerId' | 'id' | 'kind' | 'profile' | 'accountId' | 'scope' | 'collectionKey'
@@ -133,10 +144,29 @@ export function dingTalkDelegationModel(
   }
 }
 
+function isOwnerIntervention(result?: StandInDelegationResult) {
+  return (
+    result?.action === 'skip' &&
+    result.status === 'complete' &&
+    (result.reasonCode === 'owner_intervened' ||
+      (!result.reasonCode && result.reason === 'The account owner already responded.'))
+  )
+}
+
+export function isOrdinaryDelegationSkip(result?: StandInDelegationResult) {
+  return result?.action === 'skip' && !isOwnerIntervention(result)
+}
+
 export function delegationResultLabel(result?: StandInDelegationResult) {
+  if (isOwnerIntervention(result)) return 'standIn.dingtalk_delegation.result_owner_intervened'
   if (result?.action === 'needs_user') return 'standIn.dingtalk_delegation.result_needs_user'
   if (result?.action !== 'reply') return undefined
-  if (result.status === 'sent') return 'standIn.dingtalk_delegation.result_sent'
+  if (delegationReceipt(result)) return 'standIn.dingtalk_delegation.result_sent'
+  if (result.status === 'failed') return 'standIn.dingtalk_delegation.result_failed'
   if (result.status === 'submitting') return 'standIn.dingtalk_delegation.result_submitting'
   return 'standIn.dingtalk_delegation.result_unknown'
+}
+
+export function delegationReceipt(result?: StandInDelegationResult) {
+  if (result?.action === 'reply' && result.status === 'sent') return result.receiptId?.trim()
 }

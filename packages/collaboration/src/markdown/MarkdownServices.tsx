@@ -22,6 +22,7 @@ export interface MarkdownServices {
   resolveImageUrl?: (src: string) => Promise<string>
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
   windowMarkdown?: boolean
+  streamingTextFlushIntervalMs?: number
   theme: 'dark' | 'light' | 'system'
   plantumlServerUrl?: string
 }

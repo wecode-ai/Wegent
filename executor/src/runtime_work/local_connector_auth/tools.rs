@@ -29,6 +29,12 @@ pub(super) struct LocalAuthToolSpec {
     artifacts: HashMap<String, LocalAuthArtifactSpec>,
 }
 
+impl LocalAuthToolSpec {
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LocalAuthArtifactSpec {
     url: String,

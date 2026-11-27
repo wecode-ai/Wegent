@@ -3811,7 +3811,7 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
                 "workspacePath": "/tmp/project",
                 "taskId": "local-task-guide",
                 "attachments": [{
-                    "id": -1,
+                    "id": "-1",
                     "filename": "notes.txt",
                     "mime_type": "text/plain",
                     "local_path": attachment_path,

@@ -253,6 +253,17 @@ describe('shared PC and Web conversation queue', () => {
     }
   })
 
+  it.each(['Cloud responsibilities', '', undefined])(
+    'uses the queued assistant instructions instead of later pane state (%j)',
+    assistantPrompt => {
+      const request = runtimeQueuedMessageRequest(
+        { address: { deviceId: 'device', taskId: 'task' }, assistantPrompt: 'Later instructions' },
+        { ...message('assistant'), assistantPrompt }
+      )
+      expect(request.assistantPrompt).toBe(assistantPrompt)
+    }
+  )
+
   it.each([undefined, 'private_discussion'] as const)(
     'preserves queued conversation scope %s even when the active pane has the opposite scope',
     conversationContext => {

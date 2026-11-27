@@ -69,7 +69,7 @@ export async function sendRuntimeQueuedMessage(
     const terminalContext = readRuntimeTerminalAdditionalContext(address)
     const additionalContext = { ...message.additionalContext, ...terminalContext }
     const turnIdsBeforeSend =
-      options.appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
+      appendAcceptedMessage === false ? null : getRuntimeConversationTurnIds(address)
     let queued = false
     let queuePosition: number | null | undefined
     let guidanceTurnId: string | undefined

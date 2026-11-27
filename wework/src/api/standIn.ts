@@ -73,10 +73,40 @@ export interface ConnectionProviderDescriptor {
   }>
 }
 
+export interface ConnectionReadinessIdentity {
+  profile: string
+  accountId: string
+  accountName: string
+  organizationId: string
+  organizationName: string
+}
+
+export interface ConnectionReadinessSource {
+  id: string
+  kind: 'direct' | 'group'
+}
+
+export interface ConnectionReadiness {
+  status: 'ready' | 'auth_required' | 'identity_required' | 'permissions_required' | 'error'
+  identity?: ConnectionReadinessIdentity
+  candidates?: ConnectionReadinessIdentity[]
+  component?: { source: 'managed' | 'bundled' | 'external'; version: string }
+  permissions?: { read: 'verified' | 'unchecked'; reply: 'unverified' }
+  authTarget?: ConnectionProviderDescriptor['authTarget']
+}
+
 export interface StandInDelegationResult {
   action: 'reply' | 'needs_user' | 'skip'
-  status: 'complete' | 'submitting' | 'sent' | 'unknown'
+  status: 'complete' | 'submitting' | 'sent' | 'failed' | 'unknown'
   reason: string
+  reasonCode?: 'owner_intervened' | 'model_skipped'
+  deliveryReason?: string
+  deliveryReasonCode?: string
+  attemptId?: string
+  recordId?: string
+  channelTaskId?: string
+  receiptId?: string
+  takenOver?: boolean
 }
 
 export interface StandInInboxMessage {
@@ -101,6 +131,7 @@ export interface StandInInboxWork {
   messageCount: number
   latestMessage: StandInInboxMessage | null
   delegationResult?: StandInDelegationResult
+  takenOverAt?: string
   task?: RuntimeTaskSummary | null
   error?: string | null
 }
@@ -335,6 +366,8 @@ export interface RemoteStandInRoleBranch {
   taskAddress?: { deviceId: string; taskId: string } | null
   attempt: number
   retryAllowed: boolean
+  statusSource?: 'local_execution'
+  waitingForChildren?: boolean
   status:
     | 'waiting_for_device'
     | 'waiting_for_dependencies'
@@ -411,6 +444,12 @@ export interface StandInExecutorApi {
   telemetryFacts(userId: number, deviceId: string): Promise<{ items: StandInTelemetryFact[] }>
   acknowledgeTelemetry(userId: number, deviceId: string, ids: string[]): Promise<void>
   connectionProviders(deviceId: string): Promise<{ items: ConnectionProviderDescriptor[] }>
+  connectionReadiness(
+    deviceId: string,
+    providerId: string,
+    profile?: string,
+    sources?: ConnectionReadinessSource[]
+  ): Promise<ConnectionReadiness>
   installConnectionDependencies(
     deviceId: string,
     providerId: string,
@@ -469,6 +508,13 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string
   ): Promise<{ messages: StandInInboxMessage[] }>
+  takeOverWork(userId: number, deviceId: string, workId: string): Promise<void>
+  verifyWorkDelivery(
+    userId: number,
+    deviceId: string,
+    workId: string,
+    recordId: string
+  ): Promise<void>
   runWork(
     userId: number,
     deviceId: string,
@@ -489,7 +535,8 @@ export interface StandInExecutorApi {
     kind: string,
     query: string,
     cursor?: string,
-    scope?: 'all'
+    scope?: 'all',
+    profile?: string
   ): Promise<{
     items: Pick<
       StandInSourceConnection,
@@ -548,12 +595,17 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<void>
-  personalGet(userId: number, deviceId: string): Promise<PersonalStandInSettings>
+  personalGet(
+    userId: number,
+    deviceId: string,
+    options?: { deviceSettingsOnly?: boolean }
+  ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
     settings: PersonalStandInSettings,
     deviceId: string,
-    transferRoleId?: string
+    transferRoleId?: string,
+    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string }
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
     userId: number,
@@ -706,6 +758,12 @@ export function createStandInExecutorApi(
       await request('runtime.stand_in.telemetry.ack', { userId, ids }, deviceId)
     },
     connectionProviders: deviceId => request('runtime.connections.catalog', {}, deviceId),
+    connectionReadiness: (deviceId, providerId, profile, sources) =>
+      request(
+        'runtime.connections.readiness',
+        { providerId, ...(profile ? { profile } : {}), ...(sources ? { sources } : {}) },
+        deviceId
+      ),
     installConnectionDependencies: (deviceId, providerId, aliases) =>
       installStandInConnectionDependencies({
         deviceId,
@@ -769,6 +827,12 @@ export function createStandInExecutorApi(
     },
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
+    takeOverWork: async (userId, deviceId, workId) => {
+      await request('runtime.stand_in.work.takeover', { userId, workId }, deviceId)
+    },
+    verifyWorkDelivery: async (userId, deviceId, workId, recordId) => {
+      await request('runtime.stand_in.work.verify_delivery', { userId, workId, recordId }, deviceId)
+    },
     runWork: (userId, deviceId, workId, options) =>
       request('runtime.stand_in.work.run', { userId, workId, ...options }, deviceId),
     organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
@@ -791,10 +855,17 @@ export function createStandInExecutorApi(
       ),
     retrySource: (userId, deviceId, source) =>
       request('runtime.stand_in.source.retry', { userId, source }, deviceId),
-    searchConnectionResources: (deviceId, providerId, kind, query, cursor, scope) =>
+    searchConnectionResources: (deviceId, providerId, kind, query, cursor, scope, profile) =>
       request(
         'runtime.connections.resources',
-        { providerId, kind, query, cursor, ...(scope ? { scope } : {}) },
+        {
+          providerId,
+          kind,
+          query,
+          cursor,
+          ...(scope ? { scope } : {}),
+          ...(profile ? { profile } : {}),
+        },
         deviceId
       ),
     conversation: (userId, deviceId, message, roleId, options) =>

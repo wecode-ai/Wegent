@@ -16,6 +16,7 @@ export function createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbench
   const pluginRoot = join(root, 'dingtalk')
   const binaryName = process.platform === 'win32' ? 'dws-fixture.exe' : 'dws-fixture'
   const authStatePath = join(root, 'dingtalk-auth-state')
+  const operationsPath = join(root, 'dingtalk-operations')
   let codexHome
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const codex = (control, method, params) =>
@@ -38,8 +39,10 @@ export function createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbench
       await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
       await mkdir(join(pluginRoot, 'scripts'), { recursive: true })
       await writeFile(authStatePath, 'ready')
+      await writeFile(operationsPath, '')
       context.appEnvironment.DWS_BINARY_PATH = binary
       context.appEnvironment.WEWORK_E2E_DINGTALK_AUTH_STATE = authStatePath
+      context.appEnvironment.WEWORK_E2E_DINGTALK_OPERATIONS = operationsPath
       await writeFile(
         join(pluginRoot, 'scripts/health.sh'),
         '#!/bin/sh\nexec "$DWS_BINARY_PATH" health\n'
@@ -88,6 +91,9 @@ export function createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbench
     },
     async authState() {
       return (await readFile(authStatePath, 'utf8')).trim()
+    },
+    async operations() {
+      return (await readFile(operationsPath, 'utf8')).trim().split('\n').filter(Boolean)
     },
     async install(control) {
       await writeFile(authStatePath, 'ready')

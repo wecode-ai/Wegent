@@ -900,8 +900,25 @@ impl RuntimeWorkRpcHandler {
             if owner_request.is_some_and(|actor| !self.has_current_stand_in_owner_request(actor)) {
                 return Err(super::stand_in_role_delegation::denied());
             }
-            self.retain_runtime_model_config(&local_task_id, &request.model_config);
-            self.upsert_local_task(link);
+            if link.runtime_handle["origin"]["type"] == "stand_in_task"
+                && link.runtime_handle["origin"]["roleDelegation"].is_object()
+            {
+                let link = self.store.try_upsert_task(link).map_err(|error| {
+                    log_executor_event(
+                        "Specialist task persistence failed",
+                        &[
+                            ("task_id", local_task_id.clone()),
+                            ("error", error.to_string()),
+                        ],
+                    );
+                    AppIpcError::new("runtime_task_save_failed", "Could not save delegated task")
+                })?;
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.project_runtime_link_status(&link);
+            } else {
+                self.retain_runtime_model_config(&local_task_id, &request.model_config);
+                self.upsert_local_task(link);
+            }
         }
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
@@ -1366,8 +1383,16 @@ impl RuntimeWorkRpcHandler {
         } else {
             payload
         };
-        if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
-            return Ok(receipt);
+        let question_response = request_user_input_response(&payload);
+        // Async answers own the saved execution profile. Look up their command
+        // only after the reply has restored that profile.
+        let async_answer = question_response
+            .as_ref()
+            .is_some_and(|response| response["delivery"] == "async");
+        if !async_answer {
+            if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                return Ok(receipt);
+            }
         }
         if payload.get("resourceEventKeys").is_some()
             && existing_link
@@ -1380,7 +1405,6 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
-        let question_response = request_user_input_response(&payload);
         // The desktop delivers an async answer as the next ordinary user message.
         let reply_input = question_response.is_some()
             || existing_link.as_ref().is_some_and(|link| {
@@ -1389,7 +1413,7 @@ impl RuntimeWorkRpcHandler {
         let owner_input = matches!(owner_message, Some(OwnerMessage::Direct)) && !reply_input;
         let ordinary_input = question_response.is_none();
         if let Some(response) = question_response {
-            if response["delivery"] == "async" {
+            if async_answer {
                 self.apply_prepared_async_question_reply(
                     &local_task_id,
                     &response,
@@ -1397,6 +1421,9 @@ impl RuntimeWorkRpcHandler {
                     prepared,
                 )
                 .await?;
+                if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
+                    return Ok(receipt);
+                }
                 if self.is_busy_local_task(&local_task_id) {
                     let guided = self.send_guidance(payload.clone()).await?;
                     if guided["code"] != "no_active_turn" {
@@ -1564,6 +1591,7 @@ impl RuntimeWorkRpcHandler {
                 delegation["attempt"] = json!(attempt);
             }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            self.apply_shared_stand_in_prompt(&mut request, payload["assistantPrompt"].as_str())?;
             self.refresh_shared_conversation_request(&mut request)
                 .await?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
@@ -2706,14 +2734,19 @@ impl RuntimeWorkRpcHandler {
         attachments: &[Value],
     ) -> Result<Vec<Value>, AppIpcError> {
         let unavailable = |error| AppIpcError::new("guidance_attachment_unavailable", error);
+        let attachment_ids = attachments
+            .iter()
+            .map(|attachment| id_field(attachment, "id")?.parse::<i64>().ok())
+            .collect::<Option<HashSet<_>>>()
+            .ok_or_else(|| unavailable("One or more attachments are unavailable".to_owned()))?;
         if payload["attachmentIds"]
             .as_array()
             .into_iter()
             .flatten()
-            .any(|id| !attachments.iter().any(|attachment| &attachment["id"] == id))
-            || attachments
-                .iter()
-                .any(|attachment| attachment["id"].as_i64().is_none())
+            .any(|id| {
+                let id = id.as_i64().or_else(|| id.as_str()?.parse().ok());
+                !id.is_some_and(|id| attachment_ids.contains(&id))
+            })
         {
             return Err(unavailable(
                 "One or more attachments are unavailable".to_owned(),
@@ -2761,8 +2794,9 @@ impl RuntimeWorkRpcHandler {
             presentation["turnId"] = json!(turn_id);
             presentation["ensureVisible"] = json!(false);
             presentation["restoreContent"] = json!(true);
+            presentation["guidance"] = json!(true);
             presentation["runtimeGuidance"] = json!(true);
-            self.store.update_task(task_id, |link| {
+            self.store.update_task_without_snapshot(task_id, |link| {
                 append_runtime_handle_user_message_presentation(
                     &mut link.runtime_handle,
                     presentation,

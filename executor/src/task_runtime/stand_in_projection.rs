@@ -5,6 +5,7 @@
 //! Account-scoped projections for persisted stand-in work summaries.
 
 use serde_json::{json, Value};
+use wegent_local_task_store::project_dingtalk_delegation_result;
 
 use super::personal_stand_in::matches_delegation_account;
 
@@ -27,6 +28,8 @@ pub(crate) fn project_visible_work(
     mut work: Value,
     messages: Vec<Value>,
 ) -> Option<VisibleWork> {
+    let saved_delegation_is_visible = work["source"]["delegated"] == true
+        && source_visible_to_account(settings, &work["roleId"], &work["source"]);
     let raw_message_count = messages.len();
     let messages = visible_messages(settings, &work["roleId"], messages);
     if messages.is_empty() {
@@ -43,10 +46,21 @@ pub(crate) fn project_visible_work(
         work["roleId"] = latest["roleId"].clone();
     }
     work["source"] = latest["source"].clone();
+    let delegated = work["source"]["delegated"] == true;
+    if !(saved_delegation_is_visible && delegated) {
+        if let Some(work) = work.as_object_mut() {
+            work.remove("takenOverAt");
+        }
+    }
     work["messageCount"] = json!(messages.len());
     work["latestMessage"] = latest.clone();
     work["title"] = json!(title_from_message(latest));
-    work["status"] = json!(visible_status(&messages));
+    let status = visible_status(&messages);
+    work["status"] = json!(if !work["takenOverAt"].is_null() && status != "sending" {
+        "sent"
+    } else {
+        status
+    });
     if let Some(updated_at) = ["at", "receivedAt", "createdAt"]
         .iter()
         .find_map(|key| latest.get(*key).filter(|value| !value.is_null()))
@@ -56,8 +70,8 @@ pub(crate) fn project_visible_work(
         work["updatedAt"] = created_at.clone();
     }
 
-    if work["source"]["delegated"] == true {
-        work["delegationResult"] = visible_delegation_result(&messages);
+    if delegated {
+        work["delegationResult"] = project_dingtalk_delegation_result(&work, messages.iter().rev());
     } else if let Some(work) = work.as_object_mut() {
         work.remove("delegationResult");
     }
@@ -225,26 +239,6 @@ fn visible_status(messages: &[Value]) -> &'static str {
         .unwrap_or("sent")
 }
 
-fn visible_delegation_result(messages: &[Value]) -> Value {
-    let outcomes = messages
-        .iter()
-        .rev()
-        .map(|message| &message["delegationResult"])
-        .collect::<Vec<_>>();
-    outcomes
-        .iter()
-        .find(|result| matches!(result["action"].as_str(), Some("reply" | "needs_user")))
-        .map(|result| (*result).clone())
-        .or_else(|| {
-            outcomes
-                .iter()
-                .all(|result| result["action"] == "skip")
-                .then(|| outcomes.first().map(|result| (*result).clone()))
-                .flatten()
-        })
-        .unwrap_or(Value::Null)
-}
-
 /// A deterministic revision of the visible work detail state.
 ///
 /// Dispatch and delegation transitions can change while the message timestamp and
@@ -253,7 +247,7 @@ fn visible_refresh_version(work: &Value, messages: &[Value]) -> String {
     let mut hash = 0xcbf29ce484222325u64;
     hash_text(&mut hash, work["status"].as_str().unwrap_or_default());
     hash_text(&mut hash, work["error"].as_str().unwrap_or_default());
-    hash_delegation(&mut hash, &work["delegationResult"]);
+    hash_text(&mut hash, &work["delegationResult"].to_string());
     for message in messages {
         hash_text(&mut hash, message["recordId"].as_str().unwrap_or_default());
         hash_text(
@@ -262,16 +256,10 @@ fn visible_refresh_version(work: &Value, messages: &[Value]) -> String {
         );
         hash_text(&mut hash, &message["dispatchFailureCount"].to_string());
         hash_text(&mut hash, message["error"].as_str().unwrap_or_default());
-        hash_delegation(&mut hash, &message["delegationResult"]);
+        hash_text(&mut hash, &message["delegationResult"].to_string());
         hash_text(&mut hash, "");
     }
     format!("{hash:016x}")
-}
-
-fn hash_delegation(hash: &mut u64, result: &Value) {
-    hash_text(hash, result["action"].as_str().unwrap_or_default());
-    hash_text(hash, result["status"].as_str().unwrap_or_default());
-    hash_text(hash, result["reason"].as_str().unwrap_or_default());
 }
 
 fn hash_text(hash: &mut u64, text: &str) {
@@ -564,6 +552,59 @@ mod tests {
     }
 
     #[test]
+    fn projection_keeps_reply_receipts_and_owner_intervention_ahead_of_later_actions() {
+        let mut reply = delegated_message("reply", "sent", "sent", "Automatic reply sent");
+        reply["delegationResult"]["receiptId"] = json!("delivery-receipt");
+        let work = json!({"roleId":"@primary","source":reply["source"]});
+        let later = delegated_message("needs_user", "sent", "complete", "Needs user decision");
+        let visible = project_visible_work(&settings(), work.clone(), vec![reply, later]).unwrap();
+        assert_eq!(
+            visible.work["delegationResult"]["receiptId"],
+            "delivery-receipt"
+        );
+        assert_eq!(
+            visible.work["delegationResult"]["recordId"],
+            "delegated-record"
+        );
+
+        let mut owner = delegated_message("skip", "sent", "complete", "The owner already replied");
+        owner["delegationResult"]["reasonCode"] = json!("owner_intervened");
+        let skipped = delegated_message("skip", "sent", "complete", "No reply needed");
+        let visible = project_visible_work(&settings(), work, vec![owner, skipped]).unwrap();
+        assert_eq!(
+            visible.work["delegationResult"]["reasonCode"],
+            "owner_intervened"
+        );
+    }
+
+    #[test]
+    fn projection_keeps_takeover_only_for_the_current_saved_delegation_account() {
+        let message = delegated_message("reply", "pending", "complete", "Existing decision");
+        let mut work = json!({"roleId":"@primary","source":message["source"]});
+        let before =
+            project_visible_work(&settings(), work.clone(), vec![message.clone()]).unwrap();
+        work["takenOverAt"] = json!("2026-01-01T00:02:00Z");
+        let visible =
+            project_visible_work(&settings(), work.clone(), vec![message.clone()]).unwrap();
+        assert_eq!(visible.work["status"], "sent");
+        assert_eq!(visible.work["delegationResult"]["takenOver"], true);
+        assert_ne!(
+            visible.work["refreshVersion"],
+            before.work["refreshVersion"]
+        );
+
+        work["source"] = old_account_message()["source"].clone();
+        let visible = project_visible_work(&settings(), work, vec![message]).unwrap();
+        assert_eq!(visible.work["status"], "pending");
+        assert!(visible.work.get("takenOverAt").is_none());
+        assert!(visible.work["delegationResult"].get("takenOver").is_none());
+        assert_eq!(
+            visible.work["refreshVersion"],
+            before.work["refreshVersion"]
+        );
+    }
+
+    #[test]
     fn refresh_version_tracks_visible_message_state_without_count_or_time_changes() {
         let work = json!({
             "id": "delegated",
@@ -571,9 +612,13 @@ mod tests {
             "source": delegated_message("reply", "sending", "submitting", "Sending reply")["source"],
             "createdAt": "2026-01-01T00:00:00Z"
         });
+        let sent = delegated_message("reply", "sent", "sent", "Automatic reply sent");
+        let mut with_receipt = sent.clone();
+        with_receipt["delegationResult"]["receiptId"] = json!("delivery-receipt");
         let variants = [
             delegated_message("reply", "sending", "submitting", "Sending reply"),
-            delegated_message("reply", "sent", "sent", "Automatic reply sent"),
+            sent,
+            with_receipt,
             delegated_message("reply", "sent", "unknown", "Reply delivery unconfirmed"),
             delegated_message("needs_user", "sent", "complete", "Needs user decision"),
         ];

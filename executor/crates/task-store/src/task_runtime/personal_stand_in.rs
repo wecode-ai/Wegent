@@ -586,6 +586,13 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
         .unwrap_or_else(|| json!({"automatic":role["enabled"] == true,"askBeforeAct":false}))
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct StandInSaveOptions<'a> {
+    pub(super) direct_save: bool,
+    pub(super) verified_account: Option<&'a Value>,
+    pub(super) backend: Option<&'a str>,
+}
+
 impl LocalTaskStore {
     pub fn materialize_implicit_primary(
         &self,
@@ -685,10 +692,38 @@ impl LocalTaskStore {
         backend: Option<&str>,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        self.save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+            user, device, backend, value, None,
+        )
+    }
+
+    /// Keep connector-verified identity out of client input when saving a delegation.
+    pub fn save_personal_stand_in_with_verified_dingtalk_account_for_backend(
+        &self,
+        user: i64,
+        device: &str,
+        backend: Option<&str>,
+        value: Value,
+        verified_account: Option<&Value>,
+    ) -> Result<Value, TaskRuntimeError> {
+        if value["primary"]["delegation"]["action"] == "prepare" && verified_account.is_none() {
+            return Err(TaskRuntimeError::Invalid(
+                "Verify the selected DingTalk account before preparing delegation".into(),
+            ));
+        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved =
-            self.save_personal_stand_in_on(&connection, user, device, value, backend, true)?;
+        let saved = self.save_personal_stand_in_on(
+            &connection,
+            user,
+            device,
+            value,
+            StandInSaveOptions {
+                direct_save: true,
+                verified_account,
+                backend,
+            },
+        )?;
         connection.commit()?;
         Ok(saved)
     }
@@ -782,12 +817,20 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         value: Value,
-    ) -> Result<(), TaskRuntimeError> {
+    ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let result = self
-            .save_personal_stand_in_on(&transaction, user, device, value, None, true)
-            .map(|_| ());
+        let result = self.save_personal_stand_in_on(
+            &transaction,
+            user,
+            device,
+            value,
+            StandInSaveOptions {
+                direct_save: true,
+                verified_account: None,
+                backend: None,
+            },
+        );
         transaction.rollback()?;
         result
     }
@@ -799,8 +842,7 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         mut value: Value,
-        backend: Option<&str>,
-        direct_save: bool,
+        options: StandInSaveOptions<'_>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
         if let Some(object) = value.as_object_mut() {
@@ -859,7 +901,8 @@ impl LocalTaskStore {
             dots_delegation::save_delegation(
                 &mut value["primary"],
                 &previous["primary"],
-                direct_save,
+                options.direct_save,
+                options.verified_account,
             )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
@@ -888,7 +931,7 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
-        if let Some(backend) = backend.filter(|backend| {
+        if let Some(backend) = options.backend.filter(|backend| {
             !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
         }) {
             share_sync::queue_assistant_share_sync(connection, user, backend, &value)?;

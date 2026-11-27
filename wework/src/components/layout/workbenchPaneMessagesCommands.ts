@@ -180,8 +180,10 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     const operation = beginRuntimeConversationOperation(currentRuntimeTask)
     let pendingAdmission = false
     try {
+      const shouldAppendLocalMessage =
+        options.appendLocalMessage !== false && !message.guidanceCorrection
       const appendedLocalMessage =
-        options.appendLocalMessage !== false &&
+        shouldAppendLocalMessage &&
         !pendingRequestUserInputPayload(
           getRuntimeConversationMessages(currentRuntimeTask),
           answeredRequestUserInputIds
@@ -192,7 +194,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
           message: createRuntimeQueuedUserMessage(message),
         })
       }
-      if (options.appendLocalMessage !== false && !appendedLocalMessage) {
+      if (shouldAppendLocalMessage && !appendedLocalMessage) {
         setQueuedMessages(messages => {
           if (messages.some(item => item.id === message.id)) return messages
           pendingAdmission = true

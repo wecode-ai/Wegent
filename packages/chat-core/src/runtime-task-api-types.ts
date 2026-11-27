@@ -180,6 +180,7 @@ export interface RuntimeSendRequest {
   resourceEventKeys?: string[]
   /** Private discussion retains the task identity without automatic Issue writeback. */
   conversationContext?: 'private_discussion'
+  assistantPrompt?: string
   startNewSession?: boolean
   expectedThreadId?: string
   retrySourceTurnId?: string

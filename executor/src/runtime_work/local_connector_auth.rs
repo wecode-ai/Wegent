@@ -30,7 +30,8 @@ use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 mod connection_tools;
 mod diagnostics;
 pub(crate) use connection_tools::{
-    connection_auth_target, run_connection_tool, run_declared_plugin_tool,
+    connection_auth_target, prepare_declared_plugin_tool, run_connection_tool,
+    run_declared_plugin_tool, PreparedPluginTool,
 };
 mod github_cli;
 pub(crate) mod gitlab_cli;
