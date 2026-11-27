@@ -3045,13 +3045,21 @@ fn assigned_collaboration_agents_use_native_delegation_in_local_and_cloud_origin
                 .insert("origin".into(), json!({"type":kind,"dispatchRole":role}));
             request
                 .extra
-                .insert("collaboration_model".into(), json!("single"));
+                .insert("collaboration_model".into(), json!("solo"));
             assert!(codex_collaboration_config_overrides(&request).is_empty());
             let config = collaboration::thread_config(&request);
             assert_eq!(config["agents.enabled"], true);
             assert_eq!(config["features.multi_agent_v2"], true);
             assert!(collaboration::thread_config(&request)
                 .contains_key("features.multi_agent_v2.multi_agent_mode_hint_text"));
+            request
+                .extra
+                .insert("collaborationMode".into(), json!("single"));
+            assert_eq!(codex_collaboration_config_overrides(&request).len(), 3);
+            assert_ne!(
+                collaboration::thread_config(&request).get("agents.enabled"),
+                Some(&json!(true))
+            );
         }
     }
 }

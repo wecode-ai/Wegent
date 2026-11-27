@@ -85,13 +85,29 @@ pub(super) fn update_agent_comment(
     Ok(())
 }
 
+/// The saved single-Bot topology is distinct from the native single-agent policy.
+fn agent_team_mode(mode: &Value) -> Value {
+    if mode == "single" {
+        json!("solo")
+    } else {
+        mode.clone()
+    }
+}
+
 pub(super) fn local_execution_runtime_payload(execution: &LocalExecution) -> Value {
-    let stored = execution
+    let mut stored = execution
         .execution_payload
         .as_ref()
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    // The local queue snapshots Team topology alongside its Bot list. Native
+    // policy supplied in runtimePayload takes precedence when it is present.
+    if stored.contains_key("teamRef") && stored.get("bot").is_some_and(Value::is_array) {
+        if let Some(mode) = stored.get_mut("collaboration_model") {
+            *mode = agent_team_mode(mode);
+        }
+    }
     let mut payload = stored
         .get("runtimePayload")
         .or_else(|| stored.get("runtime_payload"))
@@ -278,7 +294,7 @@ pub(super) fn apply_execution_agent_profile(
         .or_insert_with(|| json!(execution.agent_id));
     payload
         .entry("collaboration_model")
-        .or_insert_with(|| execution.agent_collaboration_model.clone());
+        .or_insert_with(|| agent_team_mode(&execution.agent_collaboration_model));
     payload
         .entry("runtime")
         .or_insert_with(|| json!(execution.agent_runtime));

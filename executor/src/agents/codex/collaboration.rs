@@ -11,11 +11,6 @@ fn issue_origin(request: &ExecutionRequest) -> Option<&Value> {
     })
 }
 
-pub(super) fn single_without_issue_delegation(request: &ExecutionRequest) -> bool {
-    codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single"))
-        && !issue_origin(request).is_some_and(|origin| origin["initiatedBy"] != "stand_in")
-}
-
 pub(super) fn is_project_collaboration_agent(request: &ExecutionRequest) -> bool {
     issue_origin(request).is_some_and(|origin| {
         matches!(origin["dispatchRole"].as_str(), Some("manager" | "member"))
@@ -44,7 +39,7 @@ pub(super) fn thread_config(request: &ExecutionRequest) -> Map<String, Value> {
             json!(false),
         );
     }
-    if issue_origin(request).is_none() || single_without_issue_delegation(request) {
+    if issue_origin(request).is_none() || codex_single_mode(request) {
         return config;
     }
     let policy = concat!(

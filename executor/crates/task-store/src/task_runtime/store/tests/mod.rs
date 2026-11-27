@@ -363,7 +363,7 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
     assert_eq!(payload["origin"]["dispatchRole"], "manager");
     let dispatch_id = payload["origin"]["dispatchId"].clone();
     assert!(Uuid::parse_str(dispatch_id.as_str().unwrap()).is_ok());
-    assert_eq!(payload["collaboration_model"], "single");
+    assert_eq!(payload["collaboration_model"], "solo");
     let mut explicit = claimed.clone();
     explicit.execution_payload.as_mut().unwrap()["runtimePayload"] =
         json!({"collaboration_model":"single"});
@@ -577,7 +577,7 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
     );
     assert_eq!(
         first_member_execution.execution_payload.as_ref().unwrap()["collaboration_model"],
-        "single"
+        "solo"
     );
     let member_system_prompt = first_member_execution.execution_payload.as_ref().unwrap()
         ["executionRequest"]["system_prompt"]
@@ -745,7 +745,7 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
     );
     assert_eq!(
         resumed_manager.execution_payload.as_ref().unwrap()["collaboration_model"],
-        "single"
+        "solo"
     );
     assert!(
         resumed_manager.execution_payload.as_ref().unwrap()["message"]

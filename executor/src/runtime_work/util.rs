@@ -237,7 +237,11 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
-        .or_else(|| payload.get("collaboration_model"))
+        .or_else(|| {
+            payload
+                .get("collaboration_model")
+                .filter(|mode| *mode != "solo")
+        })
         .or_else(|| {
             payload
                 .get("modelOptions")
@@ -1208,7 +1212,7 @@ mod tests {
 
         apply_runtime_payload_metadata(
             &mut request,
-            &json!({"modelOptions": {"collaborationMode": "coordinate"}}),
+            &json!({"collaboration_model": "solo", "modelOptions": {"collaborationMode": "coordinate"}}),
         );
 
         assert_eq!(
