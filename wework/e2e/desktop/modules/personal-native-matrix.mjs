@@ -265,7 +265,17 @@ export function personalNativeMatrix({
       const taskId = `stand-in-chat-${userId}-role-${id}`
       if (cell.denied) {
         const reason = 'native subagents cannot isolate distinct Bot tool grants'
-        await control.command('waitFor', chat, { text: reason, timeoutMs: 30000 })
+        await control.command(
+          'clickWhenEnabled',
+          chat + ' [data-testid="assistant-error-details-toggle"]',
+          {
+            timeoutMs: 30000,
+          }
+        )
+        await control.command('waitFor', chat + ' [data-testid="assistant-error-details"]', {
+          text: reason,
+          timeoutMs: uiTimeoutMs,
+        })
         await captureScreenshot(control, id + '-denied.png', chat)
         assert.equal(cell.modelCalls, 0)
         assert.equal(probe.receipts.length, initialReceipts)
