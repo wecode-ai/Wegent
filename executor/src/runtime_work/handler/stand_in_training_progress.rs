@@ -10,6 +10,10 @@ use std::collections::BTreeMap;
 pub(super) const SOURCE_PREFIX: &str = "training-source:";
 const LIST_PREFIX: &str = "training-list:";
 const FIRST_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
+const HISTORY_READ_TIMEOUT: Duration = Duration::from_secs(20);
+const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(40);
+const SOURCE_AUTH_TIMEOUT: Duration = Duration::from_secs(4);
+const SOURCE_CONCURRENCY: usize = 8;
 
 #[derive(Clone, Default)]
 pub(super) struct TrainingPreflight {
@@ -30,6 +34,40 @@ fn source_id(binding: &Value) -> String {
         binding["roleId"].as_str().unwrap_or_default(),
         &binding["source"],
     )
+}
+
+fn training_read_timeout() -> AppIpcError {
+    AppIpcError::new(
+        "request_timeout",
+        "Memory review source exceeded its read budget",
+    )
+}
+
+fn log_training_stage(run: &str, binding: &Value, stage: &str, outcome: &str, started: Instant) {
+    log_executor_event(
+        "stand-in memory connection",
+        &[
+            ("run", run.to_owned()),
+            ("source", source_id(binding)),
+            (
+                "provider",
+                binding["source"]["providerId"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            ),
+            (
+                "kind",
+                binding["source"]["kind"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            ),
+            ("stage", stage.to_owned()),
+            ("outcome", outcome.to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
 }
 
 fn coverage_since(
@@ -90,24 +128,35 @@ impl RuntimeWorkRpcHandler {
         &self,
         store: &LocalTaskStore,
         user: i64,
+        run: &str,
         binding: &Value,
     ) -> Result<(), AppIpcError> {
-        if binding["source"]["providerId"] == ISSUE_COMMENTS_PROVIDER {
+        if binding["source"]["providerId"] != ISSUE_COMMENTS_PROVIDER {
+            return Ok(());
+        }
+        let started = Instant::now();
+        let result = tokio::time::timeout(
+            SOURCE_AUTH_TIMEOUT,
             self.authorize_issue_training_source(
                 store,
                 user,
                 binding["roleId"].as_str().ok_or_else(denied)?,
                 &binding["source"],
-            )
-            .await?;
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| Err(training_read_timeout()));
+        if let Err(error) = &result {
+            log_training_stage(run, binding, "authorize", &error.code, started);
         }
-        Ok(())
+        result
     }
 
     async fn current_training_binding(
         &self,
         store: &LocalTaskStore,
         user: i64,
+        run: &str,
         source: &str,
     ) -> Result<Value, AppIpcError> {
         let binding = self
@@ -115,7 +164,7 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .find(|binding| source_id(binding) == source)
             .ok_or_else(denied)?;
-        self.authorize_training_binding(store, user, &binding)
+        self.authorize_training_binding(store, user, run, &binding)
             .await?;
         Ok(binding)
     }
@@ -133,20 +182,27 @@ impl RuntimeWorkRpcHandler {
         store: &LocalTaskStore,
         user: i64,
         binding: &Value,
-        since: i64,
-        through: i64,
+        window: std::ops::Range<i64>,
         cursor: Option<&Value>,
+        (run, stage): (&str, &str),
     ) -> Result<Value, AppIpcError> {
         let role = binding["roleId"].as_str().ok_or_else(denied)?;
-        self.training_connection_page(
-            store,
-            user,
-            role,
-            &binding["source"],
-            since..through,
-            cursor,
+        let started = Instant::now();
+        log_training_stage(run, binding, stage, "started", started);
+        let result = tokio::time::timeout(
+            HISTORY_READ_TIMEOUT,
+            self.training_connection_page(store, user, role, &binding["source"], window, cursor),
         )
         .await
+        .unwrap_or_else(|_| Err(training_read_timeout()));
+        let outcome = match &result {
+            Ok(page) if page["reviewCoverage"] == "partial" => "partial",
+            Ok(page) if page["messages"].as_array().is_some_and(Vec::is_empty) => "empty",
+            Ok(_) => "read",
+            Err(error) => &error.code,
+        };
+        log_training_stage(run, binding, stage, outcome, started);
+        result
     }
 
     async fn cache_training_page(
@@ -168,6 +224,7 @@ impl RuntimeWorkRpcHandler {
         store: &LocalTaskStore,
         user: i64,
         binding: &Value,
+        run: &str,
         since: i64,
         page: &mut Value,
     ) {
@@ -177,9 +234,9 @@ impl RuntimeWorkRpcHandler {
                 store,
                 user,
                 binding,
-                since.saturating_sub(FIRST_WINDOW_MS),
-                since,
+                since.saturating_sub(FIRST_WINDOW_MS)..since,
                 None,
+                (run, "prior-context"),
             )
             .await;
         match earlier {
@@ -245,7 +302,14 @@ impl RuntimeWorkRpcHandler {
         let mut complete = true;
         loop {
             let mut page = self
-                .fetch_training_page(store, user, binding, since, through, cursor.as_ref())
+                .fetch_training_page(
+                    store,
+                    user,
+                    binding,
+                    since..through,
+                    cursor.as_ref(),
+                    (run, "preflight-page"),
+                )
                 .await?;
             complete &= page["reviewCoverage"] == "complete";
             if page["coverageGap"].is_object() {
@@ -272,7 +336,7 @@ impl RuntimeWorkRpcHandler {
                     page["coverageGap"] = gap;
                 }
                 if state["completedThrough"].as_i64().is_some_and(|at| at > 0) {
-                    self.add_preceding_context(store, user, binding, since, &mut page)
+                    self.add_preceding_context(store, user, binding, run, since, &mut page)
                         .await;
                 }
                 return self.cache_training_page(run, &source, page).await.map(Some);
@@ -282,7 +346,8 @@ impl RuntimeWorkRpcHandler {
                 None => break,
             }
         }
-        self.current_training_binding(store, user, &source).await?;
+        self.current_training_binding(store, user, run, &source)
+            .await?;
         let current_run = self
             .automation_store
             .get_run(run)
@@ -328,30 +393,6 @@ impl RuntimeWorkRpcHandler {
         Ok(None)
     }
 
-    async fn training_preflight(
-        &self,
-        store: &LocalTaskStore,
-        user: i64,
-        run: &str,
-        through: i64,
-    ) -> Result<TrainingPreflight, AppIpcError> {
-        let gate = self.task_send_gate(&format!("training-preflight:{run}"));
-        let _guard = gate.lock().await;
-        if let Some(cached) = self
-            .training_preflights
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .get(run)
-            .cloned()
-        {
-            return Ok(cached);
-        }
-        let sources = self.training_connection_sources(store, user)?;
-        Ok(self
-            .scan_training_sources(store, user, run, through, sources)
-            .await)
-    }
-
     async fn scan_training_sources(
         &self,
         store: &LocalTaskStore,
@@ -359,23 +400,32 @@ impl RuntimeWorkRpcHandler {
         run: &str,
         through: i64,
         sources: Vec<Value>,
-    ) -> TrainingPreflight {
+    ) {
         let mut result = TrainingPreflight::default();
-        for binding in sources {
-            let id = source_id(&binding);
-            match self
-                .preflight_training_source(store, user, run, through, &binding)
-                .await
-            {
+        let mut checks = stream::iter(sources.into_iter().map(|binding| async move {
+            let started = Instant::now();
+            let result = tokio::time::timeout(
+                PREFLIGHT_TIMEOUT,
+                self.preflight_training_source(store, user, run, through, &binding),
+            )
+            .await
+            .unwrap_or_else(|_| Err(training_read_timeout()));
+            let outcome = match &result {
+                Ok(Some(_)) => "ready",
+                Ok(None) => "empty",
+                Err(error) => &error.code,
+            };
+            log_training_stage(run, &binding, "preflight", outcome, started);
+            (source_id(&binding), result)
+        }))
+        .buffer_unordered(SOURCE_CONCURRENCY);
+        while let Some((id, checked)) = checks.next().await {
+            match checked {
                 Ok(Some(token)) => {
                     result.pages.insert(id, token);
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    log_executor_event(
-                        "connection training source unavailable",
-                        &[("source", id.clone()), ("code", error.code.clone())],
-                    );
                     result.unavailable.insert(id, error.code);
                 }
             }
@@ -392,8 +442,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })
         });
-        cache.insert(run.to_owned(), result.clone());
-        result
+        cache.insert(run.to_owned(), result);
     }
 
     pub(super) fn connection_training_due(
@@ -493,44 +542,58 @@ impl RuntimeWorkRpcHandler {
         if page["hasMore"] == true {
             return Ok(page);
         }
+        if page["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+        {
+            page["hasMore"] = json!(true);
+            page["nextCursor"] = json!(LIST_PREFIX);
+            return Ok(page);
+        }
         let continuation = args["cursor"]
             .as_str()
             .and_then(|cursor| cursor.strip_prefix(LIST_PREFIX));
         let (run, through) = self.memory_review_window(store, identity)?;
+        let started = Instant::now();
+        log_executor_event(
+            "stand-in memory connection inventory started",
+            &[
+                ("run", run.clone()),
+                (
+                    "continued",
+                    continuation
+                        .is_some_and(|cursor| !cursor.is_empty())
+                        .to_string(),
+                ),
+            ],
+        );
         let scan = self
-            .training_preflight(store, identity.user, &run, through)
-            .await?;
+            .training_preflights
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&run)
+            .cloned();
         let grants: BTreeMap<_, _> = self
             .training_connection_sources(store, identity.user)?
             .into_iter()
             .map(|binding| (source_id(&binding), binding))
             .collect();
-        self.memory_review_window(store, identity)?;
-        page["unavailableConnections"] = json!(scan
-            .unavailable
+        let mut unavailable: Vec<_> = scan
             .iter()
+            .flat_map(|scan| &scan.unavailable)
             .filter(|(id, _)| grants.contains_key(*id))
             .map(|(id, code)| json!({"taskId":id,"code":code}))
-            .collect::<Vec<_>>());
+            .collect();
         let limit = args["limit"].as_u64().unwrap_or(50) as usize;
         if !(1..=50).contains(&limit) {
             return Err(AppIpcError::new("bad_request", "limit must be 1-50"));
         }
-        let mut items = page["items"].take().as_array().cloned().unwrap_or_default();
-        let mut last_connection = continuation.unwrap_or("");
-        let mut more = false;
-        for id in scan
-            .pages
-            .keys()
-            .filter(|id| id.as_str() > continuation.unwrap_or(""))
-        {
-            let Some(binding) = grants.get(id) else {
-                continue;
-            };
-            if self
-                .authorize_training_binding(store, identity.user, binding)
-                .await
-                .is_err()
+        let mut candidates = Vec::new();
+        for (id, binding) in grants.range(continuation.unwrap_or("").to_owned()..) {
+            if id == continuation.unwrap_or("")
+                || scan
+                    .as_ref()
+                    .is_some_and(|scan| !scan.pages.contains_key(id))
             {
                 continue;
             }
@@ -540,19 +603,58 @@ impl RuntimeWorkRpcHandler {
             if state["completedThrough"].as_i64().unwrap_or(0) >= through {
                 continue;
             }
-            if items.len() == limit {
-                more = true;
+            candidates.push((id.clone(), binding.clone()));
+            if candidates.len() > limit {
                 break;
             }
-            last_connection = id;
-            items.push(
-                json!({"taskId":id, "kind":"connection", "trainingEligible":true,
-                "roleId":binding["roleId"], "source":binding["source"], "canContinue":false}),
-            );
         }
+        let next =
+            (candidates.len() > limit).then(|| format!("{LIST_PREFIX}{}", candidates[limit - 1].0));
+        let checks = stream::iter(candidates.into_iter().take(limit).map(|(id, binding)| {
+            let run = &run;
+            async move {
+                self.authorize_training_binding(store, identity.user, run, &binding)
+                    .await
+                    .map(|()| json!({"taskId":id, "kind":"connection", "trainingEligible":true,
+                        "roleId":binding["roleId"], "source":binding["source"], "canContinue":false}))
+                    .map_err(|error| json!({"taskId":id,"code":error.code}))
+            }
+        }))
+        .buffered(SOURCE_CONCURRENCY);
+        let mut items = Vec::new();
+        for checked in checks.collect::<Vec<_>>().await {
+            match checked {
+                Ok(item) => items.push(item),
+                Err(error) => unavailable.push(error),
+            }
+        }
+        self.memory_review_window(store, identity)?;
+        let current_grants: HashSet<_> = self
+            .training_connection_sources(store, identity.user)?
+            .iter()
+            .map(source_id)
+            .collect();
+        let still_granted = |item: &Value| {
+            item["taskId"]
+                .as_str()
+                .is_some_and(|id| current_grants.contains(id))
+        };
+        items.retain(still_granted);
+        unavailable.retain(still_granted);
+        log_executor_event(
+            "stand-in memory connection inventory finished",
+            &[
+                ("run", run),
+                ("listed", items.len().to_string()),
+                ("unavailable", unavailable.len().to_string()),
+                ("has_more", next.is_some().to_string()),
+                ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
         page["items"] = Value::Array(items);
-        page["nextCursor"] = json!(more.then(|| format!("{LIST_PREFIX}{last_connection}")));
-        page["hasMore"] = json!(more);
+        page["unavailableConnections"] = json!(unavailable);
+        page["hasMore"] = json!(next.is_some());
+        page["nextCursor"] = json!(next);
         Ok(page)
     }
 
@@ -566,7 +668,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let (run, through) = self.memory_review_window(store, identity)?;
         let binding = self
-            .current_training_binding(store, identity.user, source)
+            .current_training_binding(store, identity.user, &run, source)
             .await?;
         let state = store
             .memory_review_progress(identity.user, source)
@@ -627,7 +729,14 @@ impl RuntimeWorkRpcHandler {
             )
         } else {
             let mut page = self
-                .fetch_training_page(store, identity.user, &binding, since, through, cursor)
+                .fetch_training_page(
+                    store,
+                    identity.user,
+                    &binding,
+                    since..through,
+                    cursor,
+                    (&run, "history-page"),
+                )
                 .await?;
             if cursor.is_none()
                 && state["completedThrough"].as_i64().is_some_and(|at| at > 0)
@@ -636,14 +745,14 @@ impl RuntimeWorkRpcHandler {
                         .as_array()
                         .is_some_and(|messages| !messages.is_empty()))
             {
-                self.add_preceding_context(store, identity.user, &binding, since, &mut page)
+                self.add_preceding_context(store, identity.user, &binding, &run, since, &mut page)
                     .await;
             }
             let token = self.cache_training_page(&run, source, page.clone()).await?;
             (page, token)
         };
         self.memory_review_window(store, identity)?;
-        self.current_training_binding(store, identity.user, source)
+        self.current_training_binding(store, identity.user, &run, source)
             .await?;
         let next = next_cursor(&page, cursor)?;
         let state = store
@@ -677,7 +786,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(Value, Value), AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let (run, _) = self.memory_review_window(&store, identity)?;
-        self.current_training_binding(&store, identity.user, task_id)
+        self.current_training_binding(&store, identity.user, &run, task_id)
             .await?;
         let args = &reference["readArguments"];
         if args["taskId"] != task_id {
@@ -708,7 +817,7 @@ impl RuntimeWorkRpcHandler {
         }
         self.memory_review_window(&store, identity)?;
         let binding = self
-            .current_training_binding(&store, identity.user, task_id)
+            .current_training_binding(&store, identity.user, &run, task_id)
             .await?;
         Ok((binding, message))
     }
@@ -798,6 +907,34 @@ mod tests {
             memory_review: true,
             readonly_worker: false,
         };
+        // A provider scan in progress must never hold up either inventory page.
+        let scan_gate = handler.task_send_gate(&format!("training-preflight:{}", run.id));
+        let scan_guard = scan_gate.lock().await;
+        let local_page = handler
+            .append_training_sources(
+                &store,
+                &identity,
+                &json!({}),
+                json!({"items":[{"taskId":"local","kind":"task"}],"hasMore":false}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(local_page["nextCursor"], LIST_PREFIX);
+        assert_eq!(local_page["items"][0]["taskId"], "local");
+        let uncached = tokio::time::timeout(
+            Duration::from_secs(3),
+            handler.memory_progress_operation(
+                &identity,
+                "list_memory_sources",
+                &json!({"cursor":local_page["nextCursor"]}),
+            ),
+        )
+        .await
+        .expect("The connection inventory must not wait for the scan")
+        .unwrap();
+        assert_eq!(uncached["items"][0]["taskId"], source);
+        assert!(handler.training_preflights.lock().unwrap().is_empty());
+        drop(scan_guard);
         let page = json!({"messages":[{"id":"response","author":"owner","content":"Please include the original date."}],"hasMore":false});
         let token = handler
             .cache_training_page(&run.id, &source, page)

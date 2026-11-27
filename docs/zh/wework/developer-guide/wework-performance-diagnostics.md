@@ -195,7 +195,7 @@ pnpm --filter wework e2e:desktop -- --cloud-only --segment core-task-flow
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。
 
-Developer Commands 菜单中的 **Enable Stream Logs** / **Disable Stream Logs** 会同时切换前端本地 chat stream 日志和 Codex executor stream 日志。优先使用这个菜单项做现场排查；它会让前端 `console.debug` 中的 stream 订阅/事件日志与 executor 的 Codex stream 详情保持同一个开关状态。
+Developer Commands 菜单中的 **Enable Stream Logs** / **Disable Stream Logs** 会同时切换前端本地 chat stream 日志和 Codex executor stream 日志。桌面前端的流式诊断默认关闭。开启后，在 Electron 日志目录的 `runtime-launch.log` 中按任务 ID 和轮次 ID 对照 `runtime-stream-native-event`、`runtime-terminal-received`、`runtime-terminal-projected` 与 `pane-assistant-published`，确认事件接收、完成回复入缓存和面板发布的时间。前端诊断仅记录事件元数据、状态和内容长度，不记录消息正文。
 
 为避免 debug 包在长回复或高频 token 输出时产生过多日志，runtime work 内部的 cache/emit mapping 日志默认关闭。这类日志会为同一个 delta 额外记录缓存和 UI 事件分发路径，只有排查本地 runtime work 路由时才需要打开。
 
@@ -209,7 +209,7 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # 开启 runtime work cache/emit mapping �
 
 ## 流式消息渲染
 
-桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 把每次发布的最新前缀直接交给 Streamdown，终态和交互操作即时发布。
+桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 将追加的正文合并为一批再交给 Streamdown，终态和交互操作即时发布。内联可视化回调仅在渲染函数或文件变更摘要更新时重建，避免正文增量触发额外的 Markdown 渲染。
 
 过程文本、thinking 和 plan block 的实时更新只传输 `content_delta`，不能在每个 delta 或完成节点重复发送从开头累计的完整 `content`。完成节点通常只携带 `status: done`；若 provider 的完成快照仅比已流式内容多一个尾部，则只补发该尾部增量。Wework 在运行时事件层按 16 ms 窗口合并同一 block 的连续增量，避免长程任务形成二次方级别的 IPC 复制和渲染压力。流式 block 更新属于可丢弃的 bulk 事件；发生 app IPC 背压时，终态事件仍保持优先，并由 transcript 对账恢复权威内容。Electron 主进程不得为每个 `response.*` 增量写 stdout；终端或父进程未及时消费输出时，同步 console 写入会阻塞 Browser 主线程和全部窗口输入。
 

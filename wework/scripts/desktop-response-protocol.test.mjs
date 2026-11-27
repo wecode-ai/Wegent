@@ -386,6 +386,44 @@ for (const [surface, createScenario] of [
       assert.equal(command.sandbox_permissions, 'require_escalated')
       assert.equal(command.justification, '确认后创建隔离测试工作区中的验证文件。')
       assert.equal(scenario.diagnostics().failedShellRequest, null)
+      if (surface === 'action' && mode === 'code_mode') {
+        const readEvents = async () => {
+          const followUp = Readable.from([JSON.stringify(body)])
+          followUp.method = 'POST'
+          followUp.headers = {}
+          await scenario.handleHttp(followUp, response, new URL('http://localhost/v1/responses'))
+          return output
+            .split('\n')
+            .filter(line => line.startsWith('data: {'))
+            .map(line => JSON.parse(line.slice(6)))
+        }
+        body.tools = [{ type: 'function', name: 'functions__wait' }]
+        body.input.push(
+          { type: 'message', role: 'user', content: 'STAND_IN_CONFIRMATION_FOLLOWUP' },
+          {
+            type: 'function_call_output',
+            call_id: call.call_id,
+            output: 'Script running with cell ID 1\nWall time 2.1 seconds\nOutput:\n',
+          }
+        )
+        const wait = (await readEvents()).find(
+          event => event.type === 'response.output_item.done'
+        ).item
+        assert.equal(wait.name, 'functions__wait')
+        assert.deepEqual(JSON.parse(wait.arguments), { cell_id: '1', yield_time_ms: 1000 })
+        const result = {
+          type: 'function_call_output',
+          call_id: wait.call_id,
+          output: 'Script completed\nOutput:\nProcess exited with code 1\n',
+        }
+        body.input.push(result)
+        await assert.rejects(readEvents, /Process exited with code 1/)
+        result.output = 'Script completed\nOutput:\nProcess exited with code 0\n'
+        const completed = (await readEvents()).find(
+          event => event.type === 'response.output_item.done'
+        )
+        assert.match(completed.item.content[0].text, /已按你的单次确认完成操作/)
+      }
     })
   }
 }

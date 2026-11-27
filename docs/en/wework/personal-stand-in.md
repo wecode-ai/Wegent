@@ -22,6 +22,16 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 
+<a id="stand-in-message-center"></a>
+
+## Message center
+
+After initial setup, open **Left sidebar → My assistants → Message center** to review DingTalk results. On desktop clients that support DingTalk delegation, the workspace opens this view on first entry. Select **Default assistant** in the header to return to its conversation.
+
+When the local executor verifies the DingTalk identity, review **Replied**, **Needs your attention**, **Not handled automatically**, and **Exceptions**. Only confirmed deliveries count as replies. The header shows **Pause delegation** or **Resume delegation** when the action is available. Select **Delegation settings** to open the default assistant's connection settings. Closing settings returns to the message center. If desktop notifications are turned off, select **Open notification settings** in the center to turn them on again.
+
+Open a record to see the original message, reply evidence, handling details, and delivery receipt. When delivery is unknown and a channel task is available, select **Check delivery status**. To take over work that needs your attention, select **I'll handle this** when available. Select **Edit this source** to open settings for the corresponding conversation.
+
 <a id="stand-in-chat-and-desktop-notifications"></a>
 
 ## Stand-in chat and desktop notifications
@@ -197,6 +207,8 @@ Pausing new-work intake for the stand-in or a role does not revoke saved source 
 Memory consolidation tasks are hidden from the left task sidebar, including running and finished records. Open **My assistants → Default assistant → Assistant details → Manage assistant → Connections → Calendar → 助理记忆整理** to view run history and open the original task. Hiding these tasks does not affect background consolidation or saved history.
 
 Memory consolidation and Assistant learning run silently in the background. Open the calendar for run results and the identity’s **Pending configuration** for suggested role revisions.
+
+Conversation and external connection histories are read separately. If an external source is unavailable, review can continue for other sources and resume the unfinished source in a later run. To investigate, look up the calendar run ID in the execution device logs under `stand-in memory connection` for the source type, read stage, elapsed time, and error code.
 
 After the default assistant is enabled, its execution device provisions a **助理记忆整理** (memory consolidation) arrangement once, checking every six hours by default. Open **My assistants → Default assistant → Assistant details → Manage assistant → Connections → Calendar → 助理记忆整理** to inspect its schedule and run history, pause, edit or delete it. Background provisioning does not recreate a paused or deleted arrangement. Consolidation uses an independent conversation, leaving the current chat free; the execution device and model must be available. Open the original task from its run history to inspect the result. Consolidation does not automatically start a primary conversation with ordinary tool permissions just to report completion.
 

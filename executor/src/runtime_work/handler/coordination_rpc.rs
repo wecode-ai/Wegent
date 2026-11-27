@@ -110,8 +110,10 @@ impl RuntimeWorkRpcHandler {
                 Ok(json!({"accepted":true}))
             }
             "runtime.coordination.snapshot" => {
-                self.coordination_snapshot(&store, user, &settings, &payload)
-                    .await
+                super::dispatch::boxed_rpc(|| {
+                    self.coordination_snapshot(&store, user, &settings, &payload)
+                })
+                .await
             }
             "runtime.coordination.commit" => {
                 self.coordination_commit(&store, user, &settings, &payload)

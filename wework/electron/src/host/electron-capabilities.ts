@@ -248,7 +248,10 @@ export function showElectronNotification(
           })
           navigation.events?.publish('notification-reply', {})
         }
-      : undefined
+      : undefined,
+    () => {
+      navigation.events?.publish('notification-lifecycle', { status: 'failed' })
+    }
   )
 }
 
@@ -1183,6 +1186,7 @@ export function createElectronCapabilityRouter(
       requiredIntegerParam(params, 'length')
     )
   )
+  router.register('notification.isSupported', () => Notification.isSupported())
   router.register('notification.openSettings', async () => {
     const url =
       process.platform === 'darwin'

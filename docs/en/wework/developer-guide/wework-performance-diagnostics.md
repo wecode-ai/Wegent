@@ -197,7 +197,7 @@ Acceptance targets, not measured local-script performance claims:
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
 
-The **Enable Stream Logs** / **Disable Stream Logs** command in the Developer Commands menu toggles both frontend local chat stream logs and Codex executor stream logs. Prefer this command during live investigation; it keeps frontend `console.debug` stream subscription/event logs and executor Codex stream details under the same switch.
+The **Enable Stream Logs** / **Disable Stream Logs** command in Developer Commands toggles both frontend local chat stream logs and Codex executor stream logs. Desktop frontend stream diagnostics are off by default. When enabled, correlate `runtime-stream-native-event`, `runtime-terminal-received`, `runtime-terminal-projected`, and `pane-assistant-published` in `runtime-launch.log` by task and turn ID to compare event receipt, terminal reply projection, and pane publication. Frontend diagnostics record event metadata, status, and content lengths without storing message text.
 
 To avoid excessive logs in debug builds during long responses or high-frequency token output, runtime work cache/emit mapping logs are disabled by default. Those logs add extra records for the cache path and UI event dispatch path of the same delta, and are only needed when diagnosing local runtime work routing.
 
@@ -211,7 +211,7 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping de
 
 ## Streaming Message Rendering
 
-The desktop conversation cache keeps the full executor text as deltas arrive and coalesces high-frequency presentation notifications. Shared Markdown passes each published prefix directly to Streamdown. Terminal and interactive updates publish immediately.
+The desktop conversation cache keeps the full executor text as deltas arrive and coalesces high-frequency presentation notifications. Shared Markdown batches appended text before passing it to Streamdown. Terminal and interactive updates publish immediately. The inline visualization callback changes only when its renderer or file-change summary changes, so text deltas do not cause extra Markdown renders.
 
 Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block in a 16 ms window at the runtime event boundary, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
 
