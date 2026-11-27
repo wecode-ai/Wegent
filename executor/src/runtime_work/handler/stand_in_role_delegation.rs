@@ -1,5 +1,4 @@
 //! Specialist tasks share the existing stand-in task lifecycle.
-use super::stand_in_role_dependencies::with_prerequisite_results;
 use super::stand_in_task_results::completion_generation;
 use super::*;
 use crate::protocol::StandInTaskPermissions;
@@ -12,6 +11,9 @@ use crate::task_runtime::{
 use sha2::{Digest, Sha256};
 
 mod branches;
+mod continuation;
+use continuation::role_dependencies;
+mod remote;
 
 const MAX_ROLE_TASKS: usize = 16;
 
@@ -35,7 +37,7 @@ pub(super) fn remote_role_intent_matches_link(link: &RuntimeTaskLink, intent: &V
         && link.runtime_handle["origin"]["sourceDeviceId"] == intent["sourceDevice"]
 }
 
-fn role_intent_matches_link(link: &RuntimeTaskLink, intent: &Value) -> bool {
+pub(super) fn role_intent_matches_link(link: &RuntimeTaskLink, intent: &Value) -> bool {
     let origin = &link.runtime_handle["origin"];
     origin["type"] == "stand_in_task"
         && origin["standInId"] == intent["roleId"]
@@ -76,9 +78,10 @@ impl RuntimeWorkRpcHandler {
             .stand_in_role_request(id, user)
             .map_err(super::stand_in::settings_error)?
             .ok_or_else(denied)?;
-        if attempt
-            .checked_add(1)
-            .is_some_and(|next| row["attempt"] == next)
+        if role_request_is_retry(&row)
+            && attempt
+                .checked_add(1)
+                .is_some_and(|next| row["attempt"] == next)
         {
             return Ok(json!({"accepted":true}));
         }
@@ -93,7 +96,7 @@ impl RuntimeWorkRpcHandler {
         if !(native_failed || recorded_failure)
             || !store
                 .retry_stand_in_role_request(id, user, attempt)
-                .map_err(super::stand_in::settings_error)?
+                .map_err(reservation_error)?
         {
             return Err(AppIpcError::new(
                 "conflict",
@@ -202,6 +205,33 @@ impl RuntimeWorkRpcHandler {
         {
             return Err(denied());
         }
+        let metadata = delegation_metadata(&actor, actor_role, role_id)?;
+        let root = metadata["root"].as_str().ok_or_else(denied)?;
+        let request = super::stand_in_tasks::required(args, "requestId")?;
+        let id = role_task_id(root, &identity.task_id, request);
+        let brief = super::stand_in_tasks::required(args, "message")?;
+        let message = role["teamDuty"]
+            .as_str()
+            .filter(|duty| !duty.trim().is_empty())
+            .map_or_else(
+                || brief.to_owned(),
+                |duty| format!("Team duty: {duty}\n\n{brief}"),
+            );
+        let mut intent = json!({
+            "sourceDevice":self.device_id, "sourceTaskId":identity.task_id,
+            "targetDevice":role["executionDeviceId"], "roleId":role_id, "roleName":role["name"],
+            "roleDelegation":metadata, "requestId":request, "message":message, "requestBrief":brief
+        });
+        let dependencies = role_dependencies(args)?;
+        if !dependencies.is_null() {
+            intent["dependsOn"] = dependencies;
+        }
+        if args.get("taskId").is_some() {
+            let id = super::stand_in_tasks::required(args, "taskId")?;
+            return self
+                .continue_role_task(&store, identity, &actor, id, &mut role, intent)
+                .await;
+        }
         let target = role["executionDeviceId"].as_str().ok_or_else(denied)?;
         let connection = if target == self.device_id {
             None
@@ -216,48 +246,23 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .map(|_| self.cloud_device_id())
             .transpose()?;
-        let metadata = delegation_metadata(&actor, actor_role, role_id)?;
-        let root = metadata["root"].as_str().ok_or_else(denied)?;
-        let request = super::stand_in_tasks::required(args, "requestId")?;
-        let id = role_task_id(root, &identity.task_id, request);
-        let brief = super::stand_in_tasks::required(args, "message")?;
-        let message = role["teamDuty"]
-            .as_str()
-            .filter(|duty| !duty.trim().is_empty())
-            .map_or_else(
-                || brief.to_owned(),
-                |duty| format!("Team duty: {duty}\n\n{brief}"),
-            );
-        let mut intent = json!({
-            "sourceDevice": self.device_id,
-            "sourceTaskId": identity.task_id,
-            "sourceRoute": source_route,
-            "backendUrl": connection.as_ref().map(|connection| &connection.backend_url),
-            "targetDevice": target,
-            "requestId": request,
-            "roleId": role_id,
-            "roleName": role["name"],
-            "title": super::stand_in_tasks::required(args, "title")?,
-            "message": message,
-            "roleDelegation": metadata,
-        });
-        if let Some(dependencies) = args.get("dependsOn") {
-            let dependencies = dependencies
-                .as_array()
-                .filter(|ids| ids.len() <= MAX_ROLE_TASKS)
-                .ok_or_else(|| {
-                    AppIpcError::new(
-                        "delegation_dependency_invalid",
-                        "Expected a list of prerequisite tasks",
-                    )
-                })?;
-            if !dependencies.is_empty() {
-                intent["dependsOn"] = json!(dependencies);
-            }
-        }
+        intent["sourceRoute"] = json!(source_route);
+        intent["backendUrl"] = json!(connection
+            .as_ref()
+            .map(|connection| &connection.backend_url));
+        intent["title"] = json!(super::stand_in_tasks::required(args, "title")?);
         let reservation = store
             .reserve_stand_in_role_request(&id, identity.user, root, &intent, MAX_ROLE_TASKS)
             .map_err(reservation_error)?;
+        let intent = &reservation["intent"];
+        if reservation["alreadyAccepted"] == true
+            && reservation["cancelRequested"] != true
+            && (reservation["attempt"].as_u64().unwrap_or(0) > 0
+                || !reservation["taskAddress"].is_null()
+                || !reservation["terminalError"].is_null())
+        {
+            return Ok(self.role_submission_response(identity.user, &id, &reservation, true));
+        }
         if reservation["cancelRequested"] == true {
             return Ok(
                 json!({"accepted":false,"taskId":id,"deviceId":target,"status":"cancelling"}),
@@ -267,7 +272,7 @@ impl RuntimeWorkRpcHandler {
             let status = remote_role_status(&reservation);
             return Ok(
                 json!({"accepted":status != "failed","taskId":id,"deviceId":target,
-                "status":status,"errorCode":reservation["terminalError"]}),
+                "status":status,"alreadyAccepted":reservation["alreadyAccepted"] == true,"errorCode":reservation["terminalError"]}),
             );
         }
         if let Some(link) = self.local_task_link(&id) {
@@ -279,14 +284,14 @@ impl RuntimeWorkRpcHandler {
                 return Err(denied());
             }
             store
-                .record_stand_in_role_task_address(&id, identity.user, &self.device_id)
+                .record_stand_in_role_task_address(&id, identity.user, 0, &self.device_id)
                 .map_err(super::stand_in::settings_error)?;
             return Ok(json!({"taskId":id,"status":link.status,"alreadyExists":true}));
         }
         role["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
         let result = self
             .start_delegated_task(
-                &intent,
+                intent,
                 &id,
                 &role,
                 json!({
@@ -300,281 +305,18 @@ impl RuntimeWorkRpcHandler {
             .await;
         match &result {
             Ok(result) if result["accepted"] == true => {
-                store.record_stand_in_role_task_address(&id, identity.user, &self.device_id)
+                store.record_stand_in_role_task_address(&id, identity.user, 0, &self.device_id)
             }
             outcome => {
                 let code = match outcome {
                     Err(error) => &error.code,
                     Ok(result) => result["code"].as_str().unwrap_or("dispatch_rejected"),
                 };
-                store.record_stand_in_role_route_failure(&id, identity.user, code, false)
+                store.record_stand_in_role_route_failure(&id, identity.user, 0, code, false)
             }
         }
         .map_err(super::stand_in::settings_error)?;
         result
-    }
-
-    pub(super) async fn flush_remote_stand_in_role_requests(&self) -> Result<(), AppIpcError> {
-        let Some(connection) = self.backend_connection_snapshot()? else {
-            return Ok(());
-        };
-        if connection.auth_token.is_empty() || connection.backend_url.is_empty() {
-            return Ok(());
-        }
-        let user = Self::connected_runtime_user(&connection).await?;
-        let gate = self.task_send_gate(&format!("stand-in-role-relay:{user}"));
-        let _guard = gate.lock().await;
-        let store = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(super::stand_in::settings_error)?;
-        let pending = store
-            .pending_remote_stand_in_role_requests(user, &self.device_id, &connection.backend_url)
-            .map_err(super::stand_in::settings_error)?;
-        let results = store
-            .due_remote_stand_in_role_results(user, &self.device_id, &connection.backend_url)
-            .map_err(super::stand_in::settings_error)?;
-        if pending.is_empty() && results.is_empty() {
-            return Ok(());
-        }
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(super::stand_in::settings_error)?;
-        let stopped = !settings["lifecycle"]["status"].is_null();
-        let relay = connect_role_relay(&connection).await?;
-        for (id, intent) in pending.into_iter().filter(|_| !stopped) {
-            let (Some(source), Some(target)) = (
-                intent["sourceTaskId"].as_str(),
-                intent["targetDevice"].as_str(),
-            ) else {
-                continue;
-            };
-            if !self.local_task_link(source).is_some_and(|link| {
-                owned_role_task(&link, user, &self.device_id)
-                    && !matches!(link.status.as_str(), "archived" | "cancelled")
-            }) {
-                store
-                    .record_stand_in_role_route_failure(&id, user, "source_unavailable", false)
-                    .map_err(super::stand_in::settings_error)?;
-                continue;
-            }
-            let row = store
-                .stand_in_role_request(&id, user)
-                .map_err(super::stand_in::settings_error)?
-                .ok_or_else(denied)?;
-            let attempt = row["attempt"].as_u64().unwrap_or(0);
-            let result = relay
-                .start_role_task(
-                    target,
-                    json!({"userId":user,"taskId":id,"intent":intent,"attempt":attempt}),
-                )
-                .await;
-            match result {
-                Ok(result) if result["accepted"] == true && result["taskId"] == id => {
-                    store.record_stand_in_role_task_address(&id, user, target)
-                }
-                Ok(_) => {
-                    store.record_stand_in_role_route_failure(&id, user, "invalid_response", true)
-                }
-                Err(error) => store.record_stand_in_role_route_failure(
-                    &id,
-                    user,
-                    &error.code,
-                    retryable_role_dispatch(&error.code),
-                ),
-            }
-            .map_err(super::stand_in::settings_error)?;
-        }
-        for (id, metadata) in results
-            .into_iter()
-            .filter(|(_, row)| !stopped || row["cancelRequested"] == true)
-        {
-            if let Err(error) = self
-                .reconcile_remote_role_result(&store, &relay, user, &id, &metadata)
-                .await
-            {
-                log_executor_event(
-                    "Specialist result reconciliation failed",
-                    &[("code", error.code)],
-                );
-            }
-        }
-        relay.close().await;
-        Ok(())
-    }
-
-    pub(super) async fn accept_remote_role_task(
-        &self,
-        payload: &Value,
-    ) -> Result<Value, AppIpcError> {
-        let user = super::runtime_owner::runtime_user(payload)?;
-        self.verify_runtime_user(payload).await?;
-        let id = super::stand_in_tasks::required(payload, "taskId")?;
-        let intent = &payload["intent"];
-        let attempt = payload["attempt"].as_u64().unwrap_or(0);
-        let root = validate_remote_intent(intent, id)?;
-        let target = intent["targetDevice"].as_str().ok_or_else(denied)?;
-        if target != self.device_id && self.cloud_device_id()?.as_str() != target {
-            return Err(denied());
-        }
-        let source_route = intent["sourceRoute"].as_str().ok_or_else(denied)?;
-        let connection = self.require_runtime_connection()?;
-        let relay = connect_role_relay(&connection).await?;
-        let verified = relay.verify_role_task(source_route, payload.clone()).await;
-        relay.close().await;
-        let verified = verified?;
-        if verified["verified"] != true {
-            return Err(denied());
-        }
-        let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
-        let _guard = gate.lock().await;
-        let store = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(super::stand_in::settings_error)?;
-        if let Some(link) = self.local_task_link(id) {
-            if !owned_role_task(&link, user, &self.device_id)
-                || !remote_role_intent_matches_link(&link, intent)
-            {
-                return Err(denied());
-            }
-            let reservation = store
-                .reserve_verified_stand_in_role_request(id, user, root, intent, MAX_ROLE_TASKS)
-                .map_err(reservation_error)?;
-            if reservation["cancelRequested"] == true {
-                return Err(AppIpcError::new(
-                    "delegation_cancelled",
-                    "This task was cancelled",
-                ));
-            }
-            if role_attempt(&link) == attempt {
-                return Ok(
-                    json!({"accepted":true,"taskId":id,"deviceId":target,"status":link.status,"alreadyExists":true}),
-                );
-            }
-            if attempt < role_attempt(&link)
-                || link.status != "failed"
-                || self.is_busy_local_task(id)
-            {
-                return Err(AppIpcError::new(
-                    "conflict",
-                    "The specialist task already has an active attempt",
-                ));
-            }
-        }
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(super::stand_in::settings_error)?;
-        let mut role = stand_in_identities(&settings)
-            .into_iter()
-            .find(|role| {
-                role["id"] == intent["roleId"]
-                    && role["id"] != "@primary"
-                    && role["enabled"] == true
-                    && role["executionDeviceId"] == self.device_id
-            })
-            .filter(|_| settings["lifecycle"]["status"].is_null())
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "role_unavailable",
-                    "Role is no longer enabled on this execution device",
-                )
-            })?;
-        let reservation = store
-            .reserve_verified_stand_in_role_request(id, user, root, intent, MAX_ROLE_TASKS)
-            .map_err(reservation_error)?;
-        if reservation["cancelRequested"] == true {
-            return Err(AppIpcError::new(
-                "delegation_cancelled",
-                "This task was cancelled",
-            ));
-        }
-        role["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":true});
-        let args = with_prerequisite_results(intent, &verified["dependencyEvidence"]);
-        let result = self.start_delegated_task(&args, id, &role, json!({
-            "userId":user,"sourceTaskId":intent["sourceTaskId"],"sourceDeviceId":intent["sourceDevice"],
-            "sourceRoute":intent["sourceRoute"],"askBeforeAct":true,"readSources":[],
-            "roleDelegation":intent["roleDelegation"],"roleDirectory":verified["roleDirectory"],"attempt":attempt,
-        }), Some(StandInTaskPermissions::from_role(&role)), None).await?;
-        if result["accepted"] == true {
-            store
-                .record_stand_in_role_task_address(id, user, target)
-                .map_err(super::stand_in::settings_error)?;
-        }
-        Ok(
-            json!({"accepted":result["accepted"],"taskId":id,"deviceId":target,"status":result["status"]}),
-        )
-    }
-
-    pub(super) async fn verify_remote_role_task(
-        &self,
-        payload: &Value,
-    ) -> Result<Value, AppIpcError> {
-        let user = super::runtime_owner::runtime_user(payload)?;
-        let connection = self.require_runtime_connection()?;
-        if Self::connected_runtime_user(&connection).await? != user {
-            return Err(denied());
-        }
-        let id = super::stand_in_tasks::required(payload, "taskId")?;
-        let intent = &payload["intent"];
-        validate_remote_intent(intent, id)?;
-        let source = intent["sourceTaskId"].as_str().ok_or_else(denied)?;
-        let cancelling = payload["cancel"] == true;
-        let actor = self
-            .local_task_link(source)
-            .filter(|link| {
-                owned_role_task(link, user, &self.device_id)
-                    && (cancelling || !matches!(link.status.as_str(), "archived" | "cancelled"))
-            })
-            .ok_or_else(denied)?;
-        if intent["sourceDevice"] != self.device_id
-            || intent["backendUrl"] != connection.backend_url
-        {
-            return Err(denied());
-        }
-        let store = LocalTaskStore::open(self.task_store_path.as_ref())
-            .map_err(super::stand_in::settings_error)?;
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(super::stand_in::settings_error)?;
-        let verified = (cancelling || settings["lifecycle"]["status"].is_null())
-            && store
-                .stand_in_role_intent_matches(id, user, intent, cancelling)
-                .map_err(super::stand_in::settings_error)?;
-        if cancelling {
-            return Ok(json!({"verified":verified}));
-        }
-        if !verified {
-            return Ok(json!({"verified":false}));
-        }
-        let directory = actor_role_directory(
-            &actor,
-            &settings,
-            &actor.runtime_handle["executionRequest"]["standInDelegation"]["roleDirectory"],
-        );
-        if team_scope_id(&actor.runtime_handle["origin"]["conversationScope"]).is_some()
-            && !directory.iter().any(|role| role["id"] == intent["roleId"])
-        {
-            return Ok(json!({"verified":false}));
-        }
-        let routes = directory
-            .into_iter()
-            .filter(|_| intent["roleDelegation"]["team"] != true)
-            .filter(|role| role["id"] != "@primary")
-            .map(|role| {
-                json!({
-                    "id":role["id"],"name":role["name"],"prompt":role["prompt"],
-                    "enabled":role["enabled"],"executionDeviceId":role["executionDeviceId"],
-                })
-            })
-            .collect::<Vec<_>>();
-        let request = store
-            .stand_in_role_request(id, user)
-            .map_err(super::stand_in::settings_error)?
-            .ok_or_else(denied)?;
-        if request["attempt"].as_u64().unwrap_or(0) != payload["attempt"].as_u64().unwrap_or(0)
-            || (intent["dependsOn"].is_array() && !request["dependencyEvidence"].is_array())
-        {
-            return Ok(json!({"verified":false}));
-        }
-        let evidence = &request["dependencyEvidence"];
-        Ok(json!({"verified":true,"roleDirectory":routes,"dependencyEvidence":evidence}))
     }
 
     fn role_task_status(
@@ -619,7 +361,11 @@ impl RuntimeWorkRpcHandler {
             {
                 let status = remote_role_status(&request);
                 row["status"] = json!(if status == "dispatched" {
-                    "retrying"
+                    if role_request_is_retry(&request) {
+                        "retrying"
+                    } else {
+                        "running"
+                    }
                 } else {
                     status
                 });
@@ -682,8 +428,6 @@ fn remote_role_status(metadata: &Value) -> &str {
         "failed"
     } else if metadata["taskAddress"].is_object() {
         "dispatched"
-    } else if metadata["attempt"].as_u64().unwrap_or(0) > 0 {
-        "retrying"
     } else if metadata["intent"]["dependsOn"].is_array()
         && !metadata["dependencyEvidence"].is_array()
     {
@@ -692,13 +436,20 @@ fn remote_role_status(metadata: &Value) -> &str {
         } else {
             "waiting_for_dependencies"
         }
-    } else if metadata["intent"]["sourceRoute"].is_null()
-        && metadata["dependencyEvidence"].is_array()
-    {
+    } else if role_request_is_retry(metadata) {
+        "retrying"
+    } else if metadata["intent"]["sourceRoute"].is_null() {
         "running"
     } else {
         "waiting_for_device"
     }
+}
+
+pub(super) fn role_request_is_retry(request: &Value) -> bool {
+    // Before follow-ups, a nonzero attempt always meant a manual retry.
+    request["retrying"]
+        .as_bool()
+        .unwrap_or_else(|| request["attempt"].as_u64().unwrap_or(0) > 0)
 }
 
 pub(super) fn actor_role_directory(
@@ -794,6 +545,9 @@ pub(super) fn reservation_error(error: TaskRuntimeError) -> AppIpcError {
         }
         TaskRuntimeError::StandInRoleDependencyInvalid => {
             AppIpcError::new("delegation_dependency_invalid", error.to_string())
+        }
+        TaskRuntimeError::StandInRoleTurnIncomplete => {
+            AppIpcError::new("conflict", error.to_string())
         }
         TaskRuntimeError::VersionConflict => AppIpcError::new(
             "conflict",
@@ -910,6 +664,21 @@ fn delegation_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_status_distinguishes_legacy_retries_from_followup_work() {
+        let mut row = json!({"attempt":1,"intent":{"sourceRoute":"relay"}});
+        assert_eq!(remote_role_status(&row), "retrying");
+        row["retrying"] = json!(false);
+        assert_eq!(remote_role_status(&row), "waiting_for_device");
+        row["intent"]["sourceRoute"] = Value::Null;
+        assert_eq!(remote_role_status(&row), "running");
+        row["intent"]["dependsOn"] = json!(["review"]);
+        assert_eq!(remote_role_status(&row), "waiting_for_dependencies");
+        row["retrying"] = json!(true);
+        row["dependencyStatus"] = json!("blocked_by_dependency");
+        assert_eq!(remote_role_status(&row), "blocked_by_dependency");
+    }
 
     #[test]
     fn specialist_directory_adds_verified_routes_without_restoring_revoked_local_roles() {

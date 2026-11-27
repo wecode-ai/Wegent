@@ -322,7 +322,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| json!({"user_id":user}));
         let message = if role_task {
             request["standInRoleResultRoot"] = role_branch["root"].clone();
-            format!("{message}\nCheck list_role_tasks for related specialist branches. If any required branch is still pending, continue coordination and wait before presenting the final result. Describe work using task titles and role names. Keep internal identifiers out of the user response. A cancelled branch needs a new owner request before restarting.")
+            format!("{message}\nCheck list_role_tasks for related specialist branches. For revisions to this completed branch in the same request, pass its taskId and roleId={} to delegate_role_task. If any required branch is still pending, continue coordination and wait before presenting the final result. Describe work using task titles and role names. Keep internal identifiers out of the user response. A cancelled branch needs a new owner request before restarting.", origin["standInId"])
         } else if source_parent {
             format!("{message}\nThis result belongs to the owner self-channel request with immutable recordId={}. Use current scoped provider assistance and the original source reply operation to report the verified outcome there under unchanged native approvals. A private Wework response alone is not a source reply. Do not repeat a reply already sent or retry an uncertain send.", saved["standInDelegation"]["sourceMessageId"].as_str()?)
         } else {
@@ -337,18 +337,71 @@ impl RuntimeWorkRpcHandler {
         )
     }
 
+    // The caller holds the role processing gate and has not advanced the reservation yet.
+    pub(super) async fn ensure_role_result_delivered_before_continuation(
+        &self,
+        link: &RuntimeTaskLink,
+    ) -> Result<(), AppIpcError> {
+        if link.runtime_handle["standInResult"].is_null() {
+            // Legacy completed tasks did not persist a result outbox.
+            return Ok(());
+        }
+        let pending = || AppIpcError::new("conflict", "The previous specialist result is pending");
+        let (status, completed) = stand_in_result_completion(link).ok_or_else(pending)?;
+        let command = stand_in_result_command(link, completed, status);
+        if link.runtime_handle["standInResultReceipt"] == command {
+            return Ok(());
+        }
+        let payload = self.stand_in_result_delivery(link).ok_or_else(pending)?;
+        self.deliver_local_role_result(&link.local_task_id, payload)
+            .await
+    }
+
+    async fn deliver_local_role_result(&self, id: &str, payload: Value) -> Result<(), AppIpcError> {
+        let command = payload["commandId"].clone();
+        let result = Box::pin(self.send_stand_in_role_result(payload)).await?;
+        if result["success"] == false
+            || result["accepted"] == false
+            || (result["accepted"] != true && result["success"] != true)
+        {
+            return Err(AppIpcError::new(
+                result["code"].as_str().unwrap_or("not_accepted"),
+                "The parent did not accept the specialist result",
+            ));
+        }
+        let mut recorded = false;
+        self.store
+            .try_update_task(id, |current| {
+                if stand_in_result_completion(current).is_some_and(|(status, completed)| {
+                    command == stand_in_result_command(current, completed, status)
+                }) {
+                    current.runtime_handle["standInResultReceipt"] = command;
+                    recorded = true;
+                }
+            })
+            .map_err(|error| AppIpcError::new("runtime_task_save_failed", error.to_string()))?;
+        if recorded {
+            Ok(())
+        } else {
+            Err(AppIpcError::new(
+                "conflict",
+                "The specialist result changed during delivery",
+            ))
+        }
+    }
+
     pub(super) async fn flush_stand_in_task_results(&self) {
         for child in self.local_task_links(false) {
-            let Some(mut payload) = self.stand_in_result_delivery(&child) else {
+            let Some(payload) = self.stand_in_result_delivery(&child) else {
                 continue;
             };
             let role_task = child.runtime_handle["origin"]["roleDelegation"].is_object();
             // Local retry admission changes the durable attempt before the link
             // is updated. Share its gate until the parent accepts the result.
-            let _processing = if role_task {
+            if role_task {
                 let user = payload["userId"].as_i64().unwrap();
                 let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
-                let guard = gate.lock_owned().await;
+                let _guard = gate.lock().await;
                 let Some(current) = self.local_task_link(&child.local_task_id).filter(|link| {
                     link.runtime_handle["origin"]["roleDelegation"].is_object()
                         && link.runtime_handle["executionRequest"]["user_id"] == user
@@ -358,17 +411,19 @@ impl RuntimeWorkRpcHandler {
                 let Some(current_payload) = self.stand_in_result_delivery(&current) else {
                     continue;
                 };
-                payload = current_payload;
-                Some(guard)
-            } else {
-                None
-            };
-            let command = payload["commandId"].clone();
-            let result = if role_task {
-                Box::pin(self.send_stand_in_role_result(payload.clone()))
+                if let Err(error) = self
+                    .deliver_local_role_result(&child.local_task_id, current_payload)
                     .await
-                    .map(Some)
-            } else if child.runtime_handle["executionRequest"]["standInDelegation"]
+                {
+                    log_executor_event(
+                        "stand-in result delivery not accepted",
+                        &[("task_id", child.local_task_id), ("error", error.code)],
+                    );
+                }
+                continue;
+            }
+            let command = payload["commandId"].clone();
+            let result = if child.runtime_handle["executionRequest"]["standInDelegation"]
                 ["sourceMessageId"]
                 .is_string()
             {
@@ -394,15 +449,7 @@ impl RuntimeWorkRpcHandler {
             match result {
                 Ok(Some(result)) if result["success"] != false && result["accepted"] != false => {
                     self.store.update_task(&child.local_task_id, |link| {
-                        if !role_task
-                            || stand_in_result_completion(link).is_some_and(
-                                |(status, completed)| {
-                                    command == stand_in_result_command(link, completed, status)
-                                },
-                            )
-                        {
-                            link.runtime_handle["standInResultReceipt"] = command;
-                        }
+                        link.runtime_handle["standInResultReceipt"] = command;
                     });
                 }
                 Ok(None) => {}
@@ -490,6 +537,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_stand_in_role_completion_reaches_the_parent_queue_before_a_followup() {
+        let (root, handler, _) = completion_fixture();
+        let parent = "stand-in-chat-7-primary";
+        let branch = json!({"root":"root","ancestors":[parent]});
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: parent.into(),
+            runtime: "codex".into(),
+            thread_id: Some("parent-thread".into()),
+            workspace_path: root.path().display().to_string(),
+            runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac"},
+                "executionRequest":{"user_id":7}}),
+            ..Default::default()
+        });
+        handler.store.update_task("child", |link| {
+            link.status = "done".into();
+            link.completed_at = Some(123);
+            link.runtime_handle["origin"]["standInId"] = json!("writer");
+            link.runtime_handle["origin"]["roleDelegation"] = branch.clone();
+            link.runtime_handle["executionRequest"]["standInDelegation"] =
+                json!({"userId":7,"sourceTaskId":parent,"roleDelegation":branch});
+        });
+        handler.record_stand_in_completion_outbox("child", "done");
+        let completed = handler.local_task_link("child").unwrap();
+        let command = handler.stand_in_result_delivery(&completed).unwrap()["commandId"].clone();
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        let execution = handler.start_local_task_execution(parent.into(), cancel, stopped);
+        handler
+            .ensure_role_result_delivered_before_continuation(&completed)
+            .await
+            .unwrap();
+        let delivered = handler.local_task_link("child").unwrap();
+        assert_eq!(delivered.runtime_handle["standInResultReceipt"], command);
+        handler
+            .ensure_role_result_delivered_before_continuation(&delivered)
+            .await
+            .unwrap();
+        let queued = handler.turn_scheduler.lock().unwrap().queued_turns.clone();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].local_task_id, parent);
+        assert_eq!(queued[0].request.extra["runtime_command_id"], command);
+        assert!(handler.finish_local_task_execution(parent, execution));
+    }
+
+    #[tokio::test]
     async fn queued_role_retry_supersedes_the_failed_local_result_and_status() {
         use crate::task_runtime::mcp::StandInMcpIdentity;
 
@@ -530,7 +622,7 @@ mod tests {
             )
             .unwrap();
         store
-            .record_stand_in_role_task_address("child", 7, "mac")
+            .record_stand_in_role_task_address("child", 7, 0, "mac")
             .unwrap();
         let identity = StandInMcpIdentity {
             task_id: parent.into(),
@@ -584,7 +676,7 @@ mod tests {
         assert_eq!(retrying["status"], "retrying");
         assert!(retrying["errorCode"].is_null());
         store
-            .record_stand_in_role_task_address("child", 7, "mac")
+            .record_stand_in_role_task_address("child", 7, 1, "mac")
             .unwrap();
         assert_eq!(read_row().await["status"], "retrying");
 

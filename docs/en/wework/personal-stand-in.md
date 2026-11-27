@@ -78,6 +78,8 @@ When two teams include the same source assistant, copying them on the same devic
 
 In **My assistants**, name an assistant when you hand off work. When you leave the choice open, the assistant can assign work automatically if the responsibilities clearly match. If the choice affects the outcome and several assistants fit, the assistant asks first. One request can be split across assistants, and an assistant can hand off a part that calls for different expertise.
 
+For example, after a reviewer suggests changes, the assigning assistant can send those changes back to the developer in the original task. The developer can read the earlier conversation and use the same workspace and task permissions. The same assistant can also take on separate tasks in parallel.
+
 Expand a **Delegated tasks** card in the message history to see roles, progress, and errors. Open **Assistant details** at the top right to see **Active delegations** in the popover. Select **Tasks and delegations** at the top right to see task activity and delegation history in one list in the right-hand panel. After the work ends, the card stays in the message history and the right-hand panel. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
 
 Cross-device delegation uses the role's configured execution device on the same Wework account. While that device is offline, the task shows **Waiting for device**. You can open the task from the original conversation once the device is online and accepts it.

@@ -11,6 +11,7 @@ import {
   shellCommandPollResponse,
   shellCommandResponse,
 } from '../modules/shell-command-response.mjs'
+import { createRoleReworkStory } from '../modules/stand-in-role-rework.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import {
@@ -60,11 +61,6 @@ const READ_ONLY_FOLLOW_UP = '请核对这条任务恢复只读后的工作区写
 const READ_ONLY_RESULT = '已确认只读任务无法直接写入工作区。'
 const FINAL = '发布方案已汇总：迁移可回滚，公告草稿已就绪。'
 const CANCEL_REQUEST = '请并行核对下次发布窗口和公告读者。'
-const DEPENDENCY_REQUEST = '先核对维护窗口，再写一条使用核验结果的通知。'
-const PREREQUISITE_BRIEF = '核对维护窗口的确切时间。'
-const DEPENDENT_BRIEF = '依据已核验的维护窗口起草通知。'
-const PREREQUISITE_RESULT = '维护窗口为周二 15:30 至 16:00。'
-const DEPENDENCY_FINAL = '已根据核验结果起草周二维护通知。'
 const RETRY_REQUEST = '请分别核验备用环境和通知渠道。'
 const RETRY_WORK = [
   { title: '核验备用环境', message: '核验备用环境是否就绪。' },
@@ -103,11 +99,8 @@ export function createDesktopScenario({
   const reported = new Map()
   const waitingModels = new Map()
   const cancellationTasks = new Map()
-  const dependencyTasks = new Map()
   const retryTasks = new Map()
   const retryRuns = [0, 0]
-  let dependentStarted = false
-  let prerequisiteReleased = false
   let readOnlyFollowUpReported = false
   let writingWorkspace
   let sequence = 0
@@ -124,6 +117,16 @@ export function createDesktopScenario({
       searchCallId: `${id}-discovery`,
       toolCallId: id,
     }).events
+
+  const rework = createRoleReworkStory({
+    roles,
+    reply,
+    tool,
+    writeProbe,
+    writeAllowed: WRITE_ALLOWED,
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
 
   function delegate(body, index) {
     const role = roles[index]
@@ -228,16 +231,7 @@ export function createDesktopScenario({
           reply(response, completedRetry ? [assistantMessage(RETRY_FINAL)] : [])
           return true
         }
-        if (
-          results[0]?.item?.role === 'assistant' &&
-          [...dependencyTasks.values()].includes(child)
-        ) {
-          reply(
-            response,
-            child === dependencyTasks.get(1) ? [assistantMessage(DEPENDENCY_FINAL)] : []
-          )
-          return true
-        }
+        if (rework.handleResult(body, response, child, latest, results)) return true
         if ([...cancellationTasks.values()].includes(child)) {
           reply(response, [])
           return true
@@ -270,50 +264,7 @@ export function createDesktopScenario({
         }
         return true
       }
-      if (latest.includes(PREREQUISITE_BRIEF)) {
-        waitingModels.set('prerequisite', { response, body })
-        return true
-      }
-      if (latest.includes(DEPENDENT_BRIEF)) {
-        assert.equal(
-          prerequisiteReleased,
-          true,
-          'Dependent execution started before its prerequisite'
-        )
-        assert.ok(
-          latest.includes(PREREQUISITE_RESULT),
-          'Dependent execution needs the real prerequisite result'
-        )
-        dependentStarted = true
-        reply(response, [assistantMessage('通知草稿已写入周二的准确维护时间。')])
-        return true
-      }
-      if (latest.includes(DEPENDENCY_REQUEST)) {
-        for (const [index, item] of [
-          { title: '核对维护时间', message: PREREQUISITE_BRIEF },
-          { title: '起草维护通知', message: DEPENDENT_BRIEF },
-        ].entries()) {
-          const id = `dependency-delegation-${index}`
-          if (!requestContainsToolOutput(body, id)) {
-            reply(
-              response,
-              tool(body, 'delegate_role_task', id, {
-                roleId: roles[index].id,
-                requestId: id,
-                ...item,
-                ...(index === 1 ? { dependsOn: [dependencyTasks.get(0)] } : {}),
-              })
-            )
-            return true
-          }
-          const result = JSON.parse(readMcpToolOutput(body, id))
-          assert.equal(result.accepted, true)
-          if (index === 1) assert.equal(result.status, 'waiting_for_dependencies')
-          dependencyTasks.set(index, result.taskId)
-        }
-        reply(response, [assistantMessage('已分派核对和起草，通知会等待核验结果。')])
-        return true
-      }
+      if (rework.handleRequest(body, response, latest)) return true
       for (const [index, item] of RETRY_WORK.entries()) {
         if (!latest.includes(item.message)) continue
         retryRuns[index] += 1
@@ -838,38 +789,22 @@ export function createDesktopScenario({
         })
         await captureScreenshot(control, '09-cancel-delegation.png', ROOT)
 
-        await send(DEPENDENCY_REQUEST)
-        await waitForReply('通知会等待核验结果。')
-        await selectDelegation(dependencyTasks.get(0))
-        await expandDelegation()
-        await control.command('waitFor', row, {
-          text: '等待前置任务',
-          visible: true,
-          timeoutMs: uiTimeoutMs,
+        await rework.verify({
+          control,
+          send,
+          rpc,
+          waitForReply,
+          waitForLocalCompletion,
+          openCard: async taskId => {
+            await selectDelegation(taskId)
+            await expandDelegation()
+            return { row, card, toggle }
+          },
+          expandDelegation,
+          capture: name => captureScreenshot(control, name, ROOT),
+          workspace: workspaces[0],
+          userId: USER,
         })
-        await control.command('waitFor', `${card} li`, {
-          text: '依赖 核对维护时间',
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        })
-        assert.equal(dependentStarted, false)
-        await storyUntil(
-          () => Promise.resolve(waitingModels.has('prerequisite')),
-          Boolean,
-          modelResponseTimeoutMs,
-          'The prerequisite should start'
-        )
-        await captureScreenshot(control, '10-wait-for-prerequisite.png', ROOT)
-        prerequisiteReleased = true
-        reply(waitingModels.get('prerequisite').response, [assistantMessage(PREREQUISITE_RESULT)])
-        await waitForReply(DEPENDENCY_FINAL)
-        assert.equal(dependentStarted, true)
-        await control.command('waitFor', toggle, {
-          text: '已完成 2/2',
-          timeoutMs: uiTimeoutMs,
-        })
-        await expandDelegation()
-        await captureScreenshot(control, '11-dependency-completed.png', ROOT)
         await send(RETRY_REQUEST)
         await waitForReply('已分派两项核验。')
         await selectDelegation(retryTasks.get(0))
@@ -916,7 +851,7 @@ export function createDesktopScenario({
         })
         await expandDelegation()
         await captureScreenshot(control, '14-retry-result.png', ROOT)
-        const earlier = branches.items.find(branch => branch.taskId === dependencyTasks.get(0))
+        const earlier = branches.items.find(branch => branch.taskId === rework.prerequisiteId)
         const earlierCard = `${PANEL} [data-testid="stand-in-delegated-work"][data-delegation-root="${earlier.root}"]`
         await control.command('clickWhenEnabled', PANEL_TOGGLE)
         const earlierToggle = `${earlierCard} [data-testid="stand-in-delegated-work-toggle"]`
@@ -1006,6 +941,7 @@ export function createDesktopScenario({
           'Changing one task must leave its role default intact'
         )
       } finally {
+        rework.close()
         for (const { response } of waitingModels.values()) {
           if (!response.writableEnded) response.end()
         }

@@ -156,6 +156,8 @@ pub enum TaskRuntimeError {
     TaskNotFound,
     #[error("task changed")]
     VersionConflict,
+    #[error("The specialist must complete its current turn")]
+    StandInRoleTurnIncomplete,
     #[error("This request reached its specialist task limit")]
     StandInRoleRequestLimit,
     #[error("This delegation branch or request has been cancelled")]

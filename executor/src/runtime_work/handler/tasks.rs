@@ -1162,6 +1162,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn send_stand_in_role_retry(
         &self,
+        intent: &Value,
         payload: Value,
         attempt: u64,
     ) -> Result<Value, AppIpcError> {
@@ -1169,6 +1170,28 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
+        if intent["followupRequestId"].is_string() {
+            let delegation = &payload["executionRequest"]["standInDelegation"];
+            let user = delegation["userId"]
+                .as_i64()
+                .ok_or_else(super::stand_in_role_delegation::denied)?;
+            let link = self.local_task_link(&task);
+            if link
+                .as_ref()
+                .is_some_and(|link| self.role_attempt_is_admitted(link, user, attempt))
+            {
+                if let Some(receipt) = self.existing_payload_command(&payload, false).await? {
+                    return Ok(receipt);
+                }
+            }
+            self.validate_role_attempt_start(
+                link.as_ref(),
+                intent,
+                user,
+                attempt,
+                delegation["retrying"] == true,
+            )?;
+        }
         self.send_message_with_activity_checks(payload, false, None, false, None, Some(attempt))
             .await
     }

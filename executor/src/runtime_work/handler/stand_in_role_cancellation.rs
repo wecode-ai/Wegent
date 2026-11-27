@@ -47,14 +47,9 @@ impl RuntimeWorkRpcHandler {
         let tasks = store
             .pending_local_stand_in_role_cancellations(&self.device_id)
             .map_err(settings_error)?;
-        for (id, user) in tasks {
-            match self.stop_role_execution(user, &id).await {
+        for (id, user, attempt) in tasks {
+            match self.stop_role_execution(user, &id, attempt).await {
                 Ok(true) => {
-                    let attempt = store
-                        .stand_in_role_request(&id, user)
-                        .map_err(settings_error)?
-                        .and_then(|row| row["attempt"].as_u64())
-                        .unwrap_or(0);
                     let status = self
                         .local_task_link(&id)
                         .filter(|link| role_attempt(link) == attempt)
@@ -63,16 +58,17 @@ impl RuntimeWorkRpcHandler {
                     store.record_remote_stand_in_role_result(
                         &id,
                         user,
+                        attempt,
                         status.as_deref().unwrap_or("cancelled"),
                         Some("local-stop-confirmed"),
                     )
                 }
                 Ok(false) => {
-                    store.record_remote_stand_in_role_result(&id, user, "cancelling", None)
+                    store.record_remote_stand_in_role_result(&id, user, attempt, "cancelling", None)
                 }
                 Err(error) => {
                     log_executor_event("Specialist cancellation failed", &[("code", error.code)]);
-                    store.record_remote_stand_in_role_result(&id, user, "cancelling", None)
+                    store.record_remote_stand_in_role_result(&id, user, attempt, "cancelling", None)
                 }
             }
             .map_err(settings_error)?;
@@ -80,7 +76,12 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn stop_role_execution(&self, user: i64, id: &str) -> Result<bool, AppIpcError> {
+    async fn stop_role_execution(
+        &self,
+        user: i64,
+        id: &str,
+        attempt: u64,
+    ) -> Result<bool, AppIpcError> {
         let Some(link) = self.local_task_link(id) else {
             return Ok(true);
         };
@@ -88,6 +89,9 @@ impl RuntimeWorkRpcHandler {
             || link.runtime_handle["origin"]["type"] != "stand_in_task"
             || !link.runtime_handle["origin"]["roleDelegation"].is_object()
         {
+            return Err(denied());
+        }
+        if role_attempt(&link) > attempt {
             return Err(denied());
         }
         if !self.is_busy_local_task(id)
@@ -112,6 +116,7 @@ impl RuntimeWorkRpcHandler {
         self.verify_runtime_user(payload).await?;
         let id = required(payload, "taskId")?;
         let intent = &payload["intent"];
+        let attempt = payload["attempt"].as_u64().unwrap_or(0);
         let root = validate_remote_intent(intent, id)?;
         let target = intent["targetDevice"].as_str().ok_or_else(denied)?;
         if target != self.device_id && self.cloud_device_id()?.as_str() != target {
@@ -123,7 +128,7 @@ impl RuntimeWorkRpcHandler {
         let verification = relay
             .verify_role_task(
                 source,
-                json!({"userId":user,"taskId":id,"intent":intent,"cancel":true}),
+                json!({"userId":user,"taskId":id,"intent":intent,"attempt":attempt,"cancel":true}),
             )
             .await;
         relay.close().await;
@@ -140,14 +145,15 @@ impl RuntimeWorkRpcHandler {
             if self.local_task_link(id).is_some_and(|link| {
                 !owned_role_task(&link, user, &self.device_id)
                     || !remote_role_intent_matches_link(&link, intent)
+                    || role_attempt(&link) > attempt
             }) {
                 return Err(denied());
             }
             store
-                .reserve_verified_stand_in_role_request(id, user, root, intent, usize::MAX)
+                .reserve_verified_stand_in_role_request(id, user, root, intent, usize::MAX, attempt)
                 .map_err(reservation_error)?;
             store
-                .mark_inbound_stand_in_role_cancellation(id, user)
+                .mark_inbound_stand_in_role_cancellation(id, user, attempt)
                 .map_err(settings_error)?;
             store
                 .request_stand_in_role_cancellation(
@@ -159,20 +165,19 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error)?;
         }
-        let stopped = self.stop_role_execution(user, id).await?;
+        let stopped = self.stop_role_execution(user, id, attempt).await?;
         let dependents = store
             .has_pending_stand_in_role_descendant_cancellations(user, &self.device_id, root, id)
             .map_err(settings_error)?;
         let stopped = stopped && !dependents;
         let completed = if stopped
-            && self
-                .local_task_link(id)
-                .is_some_and(|link| matches!(link.status.as_str(), "done" | "failed"))
-        {
+            && self.local_task_link(id).is_some_and(|link| {
+                role_attempt(&link) == attempt && matches!(link.status.as_str(), "done" | "failed")
+            }) {
             self.remote_role_task_status(payload).await?
         } else {
             Value::Null
         };
-        Ok(json!({"taskId":id,"stopped":stopped,"completed":completed}))
+        Ok(json!({"taskId":id,"stopped":stopped,"completed":completed,"attempt":attempt}))
     }
 }

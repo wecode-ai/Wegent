@@ -1,165 +1,40 @@
 //! Reserve the task address before either executor can start the work.
 use super::*;
 
+mod admission;
+mod ledger;
+mod replica;
+
 impl LocalTaskStore {
-    pub fn has_stand_in_role_intent(
+    pub fn matching_stand_in_role_request(
         &self,
         id: &str,
         user: i64,
         intent: &Value,
-    ) -> Result<bool, TaskRuntimeError> {
-        self.stand_in_role_intent_matches(id, user, intent, false)
-    }
-
-    pub fn stand_in_role_intent_matches(
-        &self,
-        id: &str,
-        user: i64,
-        intent: &Value,
-        cancelling: bool,
-    ) -> Result<bool, TaskRuntimeError> {
-        let raw: Option<String> = self
-            .connection()?
-            .query_row(
-                "SELECT json_extract(metadata,'$.intent') FROM loop_items
-             WHERE id=?1 AND resource_type='stand_in_role_request'
-               AND json_extract(metadata,'$.userId')=?2
-               AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=?3
-               AND json_extract(metadata,'$.terminalError') IS NULL",
-                params![id, user, cancelling],
-                |row| row.get(0),
-            )
-            .optional()?;
-        raw.map(|raw| serde_json::from_str::<Value>(&raw).map(|saved| saved == *intent))
-            .transpose()
-            .map(|same| same.unwrap_or_default())
-            .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-    }
-    pub fn reserve_stand_in_role_request(
-        &self,
-        id: &str,
-        user: i64,
-        root: &str,
-        intent: &Value,
-        limit: usize,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.reserve_role_request(id, user, root, intent, limit, false)
-    }
-
-    /// A receiver can replicate a request only after its source verifies it.
-    pub fn reserve_verified_stand_in_role_request(
-        &self,
-        id: &str,
-        user: i64,
-        root: &str,
-        intent: &Value,
-        limit: usize,
-    ) -> Result<Value, TaskRuntimeError> {
-        self.reserve_role_request(id, user, root, intent, limit, true)
-    }
-
-    fn reserve_role_request(
-        &self,
-        id: &str,
-        user: i64,
-        root: &str,
-        intent: &Value,
-        limit: usize,
-        replica: bool,
-    ) -> Result<Value, TaskRuntimeError> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let saved: Option<String> = transaction
-            .query_row(
-                "SELECT metadata FROM loop_items WHERE id=?1 AND resource_type='stand_in_role_request'",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let metadata = json!({"userId":user,"root":root,"intent":intent});
-        if let Some(saved) = saved {
-            let saved: Value = serde_json::from_str(&saved)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            return if saved["userId"] == user && saved["root"] == root && saved["intent"] == *intent
-            {
-                Ok(saved)
-            } else {
-                Err(TaskRuntimeError::VersionConflict)
-            };
-        }
-        let count: usize = transaction.query_row(
-            "SELECT count(*) FROM loop_items WHERE resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.root')=?2",
-            params![user, root],
-            |row| row.get(0),
-        )?;
-        if count >= limit {
-            return Err(TaskRuntimeError::StandInRoleRequestLimit);
-        }
-        let cancelled: bool = transaction.query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM loop_items
-                  WHERE resource_type='stand_in_role_request'
-                    AND json_extract(metadata,'$.userId')=?1
-                    AND json_extract(metadata,'$.root')=?2
-                    AND json_extract(metadata,'$.intent.sourceDevice')=json_extract(?3,'$.sourceDevice')
-                    AND json_extract(metadata,'$.intent.roleDelegation.ancestors[0]')=
-                        json_extract(?3,'$.roleDelegation.ancestors[0]')
-                    AND json_extract(metadata,'$.cancelRequested')=1
-                    AND (json_extract(metadata,'$.cancelGroup')=1 OR id IN (
-                        SELECT value FROM json_each(?3,'$.roleDelegation.ancestors') WHERE type='text'))
-             )",
-            params![user, root, intent.to_string()],
-            |row| row.get(0),
-        )?;
-        if cancelled {
-            return Err(TaskRuntimeError::StandInRoleRequestCancelled);
-        }
-        if let Some(dependencies) = intent.get("dependsOn").filter(|_| !replica) {
-            let dependencies = dependencies
-                .as_array()
-                .ok_or(TaskRuntimeError::StandInRoleDependencyInvalid)?;
-            for dependency in dependencies {
-                let dependency = dependency
-                    .as_str()
-                    .ok_or(TaskRuntimeError::StandInRoleDependencyInvalid)?;
-                let known: bool = transaction.query_row(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM loop_items
-                         WHERE id=?4 AND resource_type='stand_in_role_request'
-                           AND json_extract(metadata,'$.userId')=?1
-                           AND json_extract(metadata,'$.root')=?2
-                           AND json_extract(metadata,'$.intent.sourceDevice')=json_extract(?3,'$.sourceDevice')
-                           AND EXISTS (
-                               SELECT 1 FROM json_each(metadata,'$.intent.roleDelegation.ancestors')
-                                WHERE type='text' AND value=json_extract(?3,'$.sourceTaskId'))
-                     )",
-                    params![user, root, intent.to_string(), dependency],
-                    |row| row.get(0),
-                )?;
-                if !known {
-                    return Err(TaskRuntimeError::StandInRoleDependencyInvalid);
-                }
-            }
-        }
-        transaction.execute(
-            "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_role_request',?2,?3,?3)",
-            params![id, metadata.to_string(), now()],
-        )?;
-        transaction.commit()?;
-        Ok(metadata)
+        cancelling: Option<bool>,
+    ) -> Result<Option<Value>, TaskRuntimeError> {
+        Ok(self.stand_in_role_request(id, user)?.filter(|row| {
+            row["intent"] == *intent
+                && row["terminalError"].is_null()
+                && cancelling.map_or(true, |expected| {
+                    (row["cancelRequested"] == true) == expected
+                })
+        }))
     }
 
     pub fn record_stand_in_role_task_address(
         &self,
         id: &str,
         user: i64,
+        attempt: u64,
         device: &str,
     ) -> Result<(), TaskRuntimeError> {
         let changed = self.connection()?.execute(
             "UPDATE loop_items SET metadata=json_remove(json_set(metadata,'$.taskAddress',json_object('deviceId',?3,'taskId',?1)),'$.lastError','$.retryAt'),updated_at=?4
              WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2
+               AND coalesce(json_extract(metadata,'$.attempt'),0)=?5
                AND json_extract(metadata,'$.intent.targetDevice')=?3 AND json_extract(metadata,'$.terminalError') IS NULL",
-            params![id, user, device, now()],
+            params![id, user, device, now(), attempt],
         )?;
         if changed == 0 {
             return Err(TaskRuntimeError::TaskNotFound);
@@ -175,7 +50,7 @@ impl LocalTaskStore {
     ) -> Result<Vec<(String, Value)>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id,json_extract(metadata,'$.intent') FROM loop_items
+            "SELECT id,metadata FROM loop_items
              WHERE resource_type='stand_in_role_request'
                AND json_extract(metadata,'$.userId')=?1
                AND json_extract(metadata,'$.intent.sourceDevice')=?2
@@ -195,9 +70,9 @@ impl LocalTaskStore {
         )?;
         rows.map(|row| {
             let (id, raw) = row?;
-            let intent = serde_json::from_str(&raw)
+            let metadata = serde_json::from_str(&raw)
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            Ok((id, intent))
+            Ok((id, metadata))
         })
         .collect()
     }
@@ -215,24 +90,6 @@ impl LocalTaskStore {
         raw.map(|raw| serde_json::from_str(&raw))
             .transpose()
             .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-    }
-
-    pub fn retry_stand_in_role_request(
-        &self,
-        id: &str,
-        user: i64,
-        attempt: u64,
-    ) -> Result<bool, TaskRuntimeError> {
-        Ok(self.connection()?.execute(
-            "UPDATE loop_items SET metadata=json_remove(json_set(metadata,'$.attempt',?3+1),
-                   '$.resultStatus','$.resultReceipt','$.pendingResult','$.resolvedResult',
-                   '$.lastError','$.retryAt','$.terminalError','$.taskAddress'),updated_at=?4
-             WHERE id=?1 AND resource_type='stand_in_role_request'
-               AND json_extract(metadata,'$.userId')=?2
-               AND coalesce(json_extract(metadata,'$.attempt'),0)=?3
-               AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0",
-            params![id, user, attempt, now()],
-        )? == 1)
     }
 
     pub fn pending_stand_in_role_dependencies(
@@ -273,6 +130,7 @@ impl LocalTaskStore {
         &self,
         id: &str,
         user: i64,
+        attempt: u64,
         status: &str,
         evidence: Option<&Value>,
     ) -> Result<bool, TaskRuntimeError> {
@@ -283,6 +141,7 @@ impl LocalTaskStore {
                   END,updated_at=?6
               WHERE id=?1 AND resource_type='stand_in_role_request'
                 AND json_extract(metadata,'$.userId')=?2
+                AND coalesce(json_extract(metadata,'$.attempt'),0)=?7
                 AND json_type(metadata,'$.dependencyEvidence') IS NULL
                 AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0",
             params![
@@ -291,7 +150,8 @@ impl LocalTaskStore {
                 status,
                 evidence.map(Value::to_string),
                 Utc::now().timestamp() + 5,
-                now()
+                now(),
+                attempt
             ],
         )? == 1)
     }
@@ -426,12 +286,17 @@ impl LocalTaskStore {
         &self,
         id: &str,
         user: i64,
+        attempt: u64,
     ) -> Result<(), TaskRuntimeError> {
-        self.connection()?.execute(
+        let changed = self.connection()?.execute(
             "UPDATE loop_items SET metadata=json_set(metadata,'$.cancelRequested',json('true')),updated_at=?3
-             WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2",
-            params![id, user, now()],
+             WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2
+               AND coalesce(json_extract(metadata,'$.attempt'),0)=?4",
+            params![id, user, now(), attempt],
         )?;
+        if changed == 0 {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
         Ok(())
     }
 
@@ -457,10 +322,10 @@ impl LocalTaskStore {
     pub fn pending_local_stand_in_role_cancellations(
         &self,
         device: &str,
-    ) -> Result<Vec<(String, i64)>, TaskRuntimeError> {
+    ) -> Result<Vec<(String, i64, u64)>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id,json_extract(metadata,'$.userId') FROM loop_items
+            "SELECT id,json_extract(metadata,'$.userId'),coalesce(json_extract(metadata,'$.attempt'),0) FROM loop_items
              WHERE resource_type='stand_in_role_request'
                AND json_extract(metadata,'$.intent.sourceDevice')=?1
                AND json_extract(metadata,'$.intent.targetDevice')=?1
@@ -470,7 +335,7 @@ impl LocalTaskStore {
              ORDER BY updated_at,id LIMIT 8",
         )?;
         let rows = statement.query_map(params![device, Utc::now().timestamp()], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -503,15 +368,17 @@ impl LocalTaskStore {
         &self,
         id: &str,
         user: i64,
+        attempt: u64,
         code: &str,
         retryable: bool,
     ) -> Result<(), TaskRuntimeError> {
         self.connection()?.execute(
             "UPDATE loop_items SET metadata=json_set(metadata,'$.lastError',?3,'$.retryAt',?4,'$.terminalError',?5),updated_at=?6
              WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2
+               AND coalesce(json_extract(metadata,'$.attempt'),0)=?7
                AND json_extract(metadata,'$.taskAddress') IS NULL
                AND coalesce(json_extract(metadata,'$.cancelRequested'),0)=0",
-            params![id, user, code, Utc::now().timestamp() + 15, (!retryable).then_some(code), now()],
+            params![id, user, code, Utc::now().timestamp() + 15, (!retryable).then_some(code), now(), attempt],
         )?;
         Ok(())
     }
@@ -583,6 +450,7 @@ impl LocalTaskStore {
         &self,
         id: &str,
         user: i64,
+        attempt: u64,
         status: &str,
         receipt: Option<&str>,
     ) -> Result<(), TaskRuntimeError> {
@@ -591,8 +459,9 @@ impl LocalTaskStore {
                THEN json_remove(json_set(metadata,'$.resultStatus',?3,'$.resultReceipt',?5,
                    '$.resolvedResult',json_extract(metadata,'$.pendingResult')),'$.pendingResult','$.retryAt')
                ELSE json_set(metadata,'$.resultStatus',?3,'$.retryAt',?4) END,updated_at=?6
-             WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2 AND json_extract(metadata,'$.resultReceipt') IS NULL",
-            params![id, user, status, Utc::now().timestamp() + 15, receipt, now()],
+             WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2 AND coalesce(json_extract(metadata,'$.attempt'),0)=?7
+               AND json_extract(metadata,'$.resultReceipt') IS NULL",
+            params![id, user, status, Utc::now().timestamp() + 15, receipt, now(), attempt],
         )?;
         Ok(())
     }
@@ -601,15 +470,18 @@ impl LocalTaskStore {
         &self,
         id: &str,
         user: i64,
+        attempt: u64,
         result: &Value,
-    ) -> Result<(), TaskRuntimeError> {
-        self.connection()?.execute(
+    ) -> Result<bool, TaskRuntimeError> {
+        Ok(self.connection()?.execute(
             "UPDATE loop_items SET metadata=json_set(metadata,'$.pendingResult',json(?3),'$.resultStatus',?4),updated_at=?5
              WHERE id=?1 AND resource_type='stand_in_role_request' AND json_extract(metadata,'$.userId')=?2
-               AND json_extract(metadata,'$.resultReceipt') IS NULL AND json_extract(metadata,'$.pendingResult') IS NULL",
-            params![id,user,result.to_string(),result["status"].as_str(),now()],
-        )?;
-        Ok(())
+               AND coalesce(json_extract(metadata,'$.attempt'),0)=?6
+               AND json_extract(metadata,'$.resultReceipt') IS NULL
+               AND (json_extract(metadata,'$.pendingResult') IS NULL
+                    OR json_extract(metadata,'$.pendingResult')=json(?3))",
+            params![id,user,result.to_string(),result["status"].as_str(),now(),attempt],
+        )? == 1)
     }
 }
 
@@ -628,11 +500,11 @@ mod tests {
             .unwrap();
         let store = LocalTaskStore::open(path).unwrap();
         assert!(matches!(
-            store.record_stand_in_role_task_address("first", 7, "another-device"),
+            store.record_stand_in_role_task_address("first", 7, 0, "another-device"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
         store
-            .record_stand_in_role_task_address("first", 7, "cloud")
+            .record_stand_in_role_task_address("first", 7, 0, "cloud")
             .unwrap();
         store
             .reserve_stand_in_role_request("first", 7, "request", &intent, 1)
@@ -706,7 +578,7 @@ mod tests {
                 .unwrap();
         }
         store
-            .record_stand_in_role_task_address("engineering", 7, "cloud")
+            .record_stand_in_role_task_address("engineering", 7, 0, "cloud")
             .unwrap();
         let mut cancelled = store
             .request_stand_in_role_cancellation(
@@ -764,9 +636,10 @@ mod tests {
             "foreign"
         );
         let database = branches.iter().find(|(id, _)| id == "database").unwrap();
-        assert!(!store
-            .has_stand_in_role_intent("database", 7, &database.1["intent"])
-            .unwrap());
+        assert!(store
+            .matching_stand_in_role_request("database", 7, &database.1["intent"], Some(false))
+            .unwrap()
+            .is_none());
         assert!(matches!(
             store.reserve_stand_in_role_request("late-child", 7, "root", &database.1["intent"], 16),
             Err(TaskRuntimeError::StandInRoleRequestCancelled)
@@ -807,22 +680,22 @@ mod tests {
                 .unwrap();
         }
         store
-            .record_stand_in_role_task_address("accepted", 7, "cloud")
+            .record_stand_in_role_task_address("accepted", 7, 0, "cloud")
             .unwrap();
         store
-            .record_stand_in_role_route_failure("denied", 7, "permission_denied", false)
+            .record_stand_in_role_route_failure("denied", 7, 0, "permission_denied", false)
             .unwrap();
         store
-            .record_stand_in_role_route_failure("offline", 7, "device_offline", true)
+            .record_stand_in_role_route_failure("offline", 7, 0, "device_offline", true)
             .unwrap();
         drop(store);
         let store = LocalTaskStore::open(path).unwrap();
-        assert_eq!(
-            store
-                .pending_remote_stand_in_role_requests(7, "desktop", backend)
-                .unwrap(),
-            vec![("pending".into(), intent.clone())]
-        );
+        let pending = store
+            .pending_remote_stand_in_role_requests(7, "desktop", backend)
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].0, "pending");
+        assert_eq!(pending[0].1["intent"], intent);
         assert!(store
             .pending_remote_stand_in_role_requests(8, "desktop", backend)
             .unwrap()
@@ -848,12 +721,14 @@ mod tests {
                 .unwrap()
                 .is_empty());
         }
-        assert!(!store
-            .has_stand_in_role_intent("accepted", 8, &intent)
-            .unwrap());
         assert!(store
-            .has_stand_in_role_intent("accepted", 7, &intent)
-            .unwrap());
+            .matching_stand_in_role_request("accepted", 8, &intent, Some(false))
+            .unwrap()
+            .is_none());
+        assert!(store
+            .matching_stand_in_role_request("accepted", 7, &intent, Some(false))
+            .unwrap()
+            .is_some());
         store.connection().unwrap().execute(
             "UPDATE loop_items SET metadata=json_set(metadata,'$.retryAt',0) WHERE id='offline'",
             [],
@@ -864,9 +739,9 @@ mod tests {
         assert_eq!(recovered.len(), 2);
         assert!(recovered
             .iter()
-            .any(|(id, saved)| id == "offline" && saved == &intent));
+            .any(|(id, saved)| id == "offline" && saved["intent"] == intent));
         assert!(matches!(
-            store.record_stand_in_role_task_address("denied", 7, "cloud"),
+            store.record_stand_in_role_task_address("denied", 7, 0, "cloud"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
     }
@@ -883,19 +758,23 @@ mod tests {
             .reserve_stand_in_role_request("task", 7, "root", &intent, 1)
             .unwrap();
         store
-            .record_stand_in_role_task_address("task", 7, "cloud")
+            .record_stand_in_role_task_address("task", 7, 0, "cloud")
             .unwrap();
         let result = json!({"status":"done","resultId":"first","conclusion":"Verified result"});
-        store
-            .stage_remote_stand_in_role_result("task", 7, &result)
-            .unwrap();
-        store
+        assert!(store
+            .stage_remote_stand_in_role_result("task", 7, 0, &result)
+            .unwrap());
+        assert!(store
+            .stage_remote_stand_in_role_result("task", 7, 0, &result)
+            .unwrap());
+        assert!(!store
             .stage_remote_stand_in_role_result(
                 "task",
                 7,
+                0,
                 &json!({"status":"failed","resultId":"later"}),
             )
-            .unwrap();
+            .unwrap());
         drop(store);
         let store = LocalTaskStore::open(path).unwrap();
         let pending = store
@@ -903,7 +782,7 @@ mod tests {
             .unwrap();
         assert_eq!(pending[0].1["pendingResult"], result);
         store
-            .record_remote_stand_in_role_result("task", 7, "done", Some("first"))
+            .record_remote_stand_in_role_result("task", 7, 0, "done", Some("first"))
             .unwrap();
         assert!(store
             .due_remote_stand_in_role_results(7, "desktop", backend)
@@ -928,13 +807,13 @@ mod tests {
             .reserve_stand_in_role_request("task", 7, "root", &intent, 1)
             .unwrap();
         store
-            .record_stand_in_role_task_address("task", 7, "cloud")
+            .record_stand_in_role_task_address("task", 7, 0, "cloud")
             .unwrap();
         store
-            .stage_remote_stand_in_role_result("task", 7, &json!({"status":"failed"}))
+            .stage_remote_stand_in_role_result("task", 7, 0, &json!({"status":"failed"}))
             .unwrap();
         store
-            .record_remote_stand_in_role_result("task", 7, "failed", Some("first"))
+            .record_remote_stand_in_role_result("task", 7, 0, "failed", Some("first"))
             .unwrap();
         assert!(!store.retry_stand_in_role_request("task", 8, 0).unwrap());
         assert!(store.retry_stand_in_role_request("task", 7, 0).unwrap());
@@ -949,7 +828,7 @@ mod tests {
             store
                 .pending_remote_stand_in_role_requests(7, "desktop", "backend")
                 .unwrap(),
-            vec![("task".into(), intent)]
+            vec![("task".into(), row)]
         );
     }
 }
