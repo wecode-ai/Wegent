@@ -45,7 +45,8 @@ export function personalNativeMatrix({
       child ||
       (cell.mode === 'pipeline' && request.includes(cell.second) && input.includes(cell.handoff))
     assert.ok(request.includes(reviewer ? cell.second : cell.first), 'Unexpected Bot instructions')
-    if (checkPersonalBotTurn({ cell, reviewer, body, response, writeToolCall })) return true
+    if (checkPersonalBotTurn({ cell, reviewer, body, headers, response, writeToolCall }))
+      return true
     if (reviewer) {
       cell.reviewed = true
       writeText(response, cell.id + '-second', child ? cell.handoff : cell.result)
@@ -190,6 +191,15 @@ export function personalNativeMatrix({
         })
         const teamRef = saved.roles.find(row => row.id === id)?.teamRef
         assert.ok(teamRef)
+        const { portableTeam } = await rpc('runtime.stand_in.personal.get', {
+          userId,
+          exportTeamRoleId: id,
+        })
+        const boundBots = portableTeam.bot.map(({ id, name, role }) => ({ id, name, role }))
+        assert.deepEqual(
+          boundBots,
+          bots.map(({ id, name, role }) => ({ id, name, role }))
+        )
         const provisioned = await rpc('runtime.stand_in.personal.save', {
           userId,
           settings: saved,
@@ -202,7 +212,7 @@ export function personalNativeMatrix({
           },
         })
         assert.equal(provisioned.roles.find(row => row.id === id)?.teamRef, teamRef)
-        cells.push({ ...definition, teamRef })
+        cells.push({ ...definition, teamRef, boundBots })
       }
     }
     await control.command('navigate', 'body', {
@@ -226,13 +236,18 @@ export function personalNativeMatrix({
       await captureScreenshot(control, id + '-entry.png', chat)
       const initialReceipts = probe.receipts.length
       await control.command('clickWhenEnabled', chat + ' [data-testid="send-message-button"]')
+      const taskId = `stand-in-chat-${userId}-role-${id}`
       if (cell.denied) {
         const reason = 'native subagents cannot isolate distinct Bot tool grants'
         await control.command('waitFor', chat, { text: reason, timeoutMs: 30000 })
         await captureScreenshot(control, id + '-denied.png', chat)
         assert.equal(cell.modelCalls, 0)
         assert.equal(probe.receipts.length, initialReceipts)
+        const { task } = await rpc('runtime.tasks.get', { taskId })
+        assert.equal(task.taskId, taskId)
         evidence.push({
+          taskId: task.taskId,
+          boundBots: cell.boundBots,
           teamRef,
           runtime,
           mode,
@@ -254,7 +269,6 @@ export function personalNativeMatrix({
       })
       if (mode !== 'solo') assert.ok(cell.reviewed, 'The worker Bot must execute before delivery')
       await captureScreenshot(control, id + '-delivery.png', chat)
-      const taskId = `stand-in-chat-${userId}-role-${id}`
       const { task } = await rpc('runtime.tasks.get', { taskId })
       assert.equal(task.taskId, taskId)
       assert.equal(task.runtime, runtime)
@@ -268,6 +282,7 @@ export function personalNativeMatrix({
           .sort()
       )
       evidence.push({
+        boundBots: cell.boundBots,
         botCapabilities: Object.values(cell.observed),
         taskId: task.taskId,
         teamRef,

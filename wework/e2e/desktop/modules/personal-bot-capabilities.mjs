@@ -60,7 +60,7 @@ export function startPersonalBotProbe(resultDir) {
   })
 }
 
-export function checkPersonalBotTurn({ cell, reviewer, body, response, writeToolCall }) {
+export function checkPersonalBotTurn({ cell, reviewer, body, headers, response, writeToolCall }) {
   const botId = reviewer ? 2 : 1
   const capability = cell.capabilities[reviewer && cell.mode === 'pipeline' ? 1 : 0]
   const key = cell.id + '-bot-' + botId
@@ -127,6 +127,10 @@ export function checkPersonalBotTurn({ cell, reviewer, body, response, writeTool
     cell.probe.receipts.some(row => row.token === capability.token && row.receipt === receipt)
   )
   cell.observed[botId] = {
+    threadId: headers?.['thread-id'],
+    parentThreadId: headers?.['x-codex-parent-thread-id'],
+    sessionId: headers?.['session-id'],
+    nativeSubagent: headers?.['x-openai-subagent'],
     receipt,
     botId,
     skill: capability.name,
