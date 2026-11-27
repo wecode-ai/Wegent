@@ -35,11 +35,14 @@ import {
   stopPerformanceRecording,
   writeDiagnosticFile,
 } from './ai-verify-devtools.mjs'
+import { captureRendererCpuFailure } from './profile-renderer-native-diagnostics.mjs'
 
 const run = promisify(execFile)
 const prompt = 'WEWORK_CPU_BENCHMARK_SINGLE_TASK'
 const prefix = 'RENDERER_CPU_BENCHMARK_STREAM_STARTED'
 const suffix = 'RENDERER_CPU_BENCHMARK_STREAM_FINISHED'
+const diagnosticPrompt = 'WEWORK_CPU_BENCHMARK_FAILURE_DIAGNOSTIC'
+const diagnosticStreamPieces = 12
 const idleSamples = 7
 const sampleIntervalMs = 1000
 const streamPieces = 120
@@ -249,13 +252,13 @@ async function observeText(client, target, text, timeoutMs) {
   assert.equal(result.result?.value, true, `Timed out waiting for the assistant text ${text}`)
 }
 
-async function emitStream(response, id, pieces = streamPieces, onPiece) {
+async function emitStream(response, id, pieces = streamPieces, onPiece, signal) {
   const { itemId, start } = streamingEvents(id)
   response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
   let text = prefix
   response.write(sse([...start, ...textDeltaEvents(itemId, text)]))
   for (let i = 0; i < pieces; i++) {
-    await delay(streamIntervalMs)
+    await delay(streamIntervalMs, undefined, { signal })
     const delta =
       i === pieces - 1
         ? '\n\n' + suffix
@@ -546,6 +549,9 @@ export function createDesktopScenario({
   let readSingleTaskRendererMetrics
   let singleTaskStartMetrics
   const singleModelRequest = Promise.withResolvers()
+  let diagnosticModelRequest
+  let diagnosticStream
+  let diagnosticController
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
   const finishConcurrent = new Map()
@@ -590,6 +596,8 @@ export function createDesktopScenario({
     },
     cleanup() {
       startConcurrent.resolve()
+      diagnosticController?.abort()
+      diagnosticStream?.resolve()
     },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
@@ -598,6 +606,25 @@ export function createDesktopScenario({
       const body = await readRawRequestBody(request)
       const modelRequest = JSON.parse(body)
       if (handleModelMaintenanceRequest(modelRequest, response)) return true
+      if (diagnosticController && body.includes(diagnosticPrompt)) {
+        const controller = diagnosticController
+        const stream = diagnosticStream
+        diagnosticModelRequest.resolve()
+        await stream.promise
+        try {
+          await emitStream(
+            response,
+            'wework-benchmark-failure-diagnostic',
+            diagnosticStreamPieces,
+            undefined,
+            controller.signal
+          )
+        } catch (error) {
+          if (error.name !== 'AbortError') throw error
+          response.end()
+        }
+        return true
+      }
       const index =
         body.match(new RegExp(`${concurrentPrompt}(\\d{2})`))?.[1] ??
         body.match(/renderer-profile-command-(\d{2})-/)?.[1]
@@ -1059,12 +1086,13 @@ export function createDesktopScenario({
           await stopPerformanceRecording(client, resultDir, target, reportPath)
         }
         if (enforceBudgets) {
+          let sourceMapEvidence
           if (
             turnCpuEvidence &&
             (turnCpuEvidence.slowUpdates.length > 0 ||
               measurements.singleTaskCpuPercent >= limits.singleTaskCpuPercent)
           ) {
-            const sourceMapEvidence = await resolveCpuProfileLocations(
+            sourceMapEvidence = await resolveCpuProfileLocations(
               client,
               target,
               turnCpuEvidence.profile
@@ -1074,10 +1102,81 @@ export function createDesktopScenario({
               sourceMapEvidence,
             })
           }
-          assert.ok(
-            report.withinLimits,
-            'Renderer exceeds a limit; see renderer-threshold-measurements.json'
-          )
+          try {
+            assert.ok(
+              report.withinLimits,
+              'Renderer exceeds a limit; see renderer-threshold-measurements.json'
+            )
+          } catch (error) {
+            try {
+              const diagnosticClient = await createDevtoolsClient(resultDir, 500)
+              const nativeDiagnostic = await captureRendererCpuFailure({
+                pids,
+                command: (method, params) =>
+                  diagnosticClient({ action: 'command', target, method, params }),
+                readCpuSnapshot: () =>
+                  withTimeout(
+                    cpuSnapshot(pids),
+                    500,
+                    'The post-failure renderer CPU snapshot did not complete'
+                  ),
+                cpuPercent,
+                startWork: async signal => {
+                  diagnosticController = new AbortController()
+                  diagnosticModelRequest = Promise.withResolvers()
+                  diagnosticStream = Promise.withResolvers()
+                  const action = async (method, selector, options) => {
+                    signal.throwIfAborted()
+                    await withTimeout(
+                      control.command(method, selector, { ...options, timeoutMs: 500 }),
+                      500,
+                      'The post-failure diagnostic action did not complete'
+                    )
+                  }
+                  await action('clickWhenEnabled', '[data-testid="new-chat-button"]', {
+                    visible: true,
+                  })
+                  await action('fill', composer, { value: diagnosticPrompt })
+                  await action('press', composer, { key: 'Enter' })
+                  await withTimeout(
+                    diagnosticModelRequest.promise,
+                    1000,
+                    'The post-failure diagnostic stream did not start'
+                  )
+                  assert.ok(
+                    await withTimeout(
+                      evaluate(
+                        `![...document.querySelectorAll(${JSON.stringify(pane + ' [data-testid="message-assistant"]')})].some(message => message.textContent?.includes(${JSON.stringify(suffix)}))`
+                      ),
+                      500,
+                      'The diagnostic conversation did not become active'
+                    ),
+                    'The diagnostic conversation still shows a previous settled stream'
+                  )
+                  return {
+                    begin: () => diagnosticStream.resolve(),
+                    settled: () => observeText(client, target, suffix, 2000),
+                  }
+                },
+                stopWork: () => {
+                  diagnosticController?.abort()
+                  diagnosticStream?.resolve()
+                },
+              })
+              await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
+                ...turnCpuEvidence,
+                sourceMapEvidence,
+                nativeDiagnostic: {
+                  streamPieces: diagnosticStreamPieces,
+                  streamIntervalMs,
+                  ...nativeDiagnostic,
+                },
+              })
+            } catch {
+              console.log('[renderer-profile-diagnostic]', 'unavailable')
+            }
+            throw error
+          }
         }
       } finally {
         try {

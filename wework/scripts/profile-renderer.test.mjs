@@ -2,6 +2,83 @@
 import { runInNewContext } from 'node:vm'
 import { expect, test } from 'vitest'
 import { installTurnUpdateProbe, peakTenSecondCpu } from './profile-renderer.mjs'
+import {
+  summarizeJavascriptProfile,
+  summarizeNativeSample,
+} from './profile-renderer-native-diagnostics.mjs'
+
+test('retains exclusive native stack counts without process headers or paths', () => {
+  const sample = `Process: WeWork Helper [42]
+Path: /Users/runner/private/credential-value/WeWork
+Call graph:
+    10 Thread_123 DispatchQueue_1: CrRendererMain
+    + 10 start (in Electron Framework) [0x1234]
+    +   8 Render (in Electron Framework) [0x1235]
+    +     5 ParseMarkdown (in Electron Framework) [0x1236]
+    +     3 mach_msg_trap (in libsystem_kernel.dylib) [0x1237]
+    +   2 Update (in Electron Framework) [0x1238]
+    10 Thread_456
+    + 10 v8::internal::SamplingThread::Run (in Electron Framework) [0x1239]
+    +   10 Sleep (in libsystem_kernel.dylib) [0x1240]
+    10 Thread_789: V8 Profiler
+    + 10 Sleep (in libsystem_kernel.dylib) [0x1241]
+Total number in stack (recursive counted multiple, when >=5):
+Binary Images:
+0x1234 /Users/runner/private/credential-value/WeWork
+`
+  expect(summarizeNativeSample(sample)).toEqual([
+    {
+      category: 'renderer-main',
+      samples: 10,
+      functions: [
+        { function: 'ParseMarkdown', samples: 5 },
+        { function: 'mach_msg_trap', samples: 3 },
+        { function: 'Update', samples: 2 },
+      ],
+    },
+    { category: 'v8-profiler', samples: 10, functions: [{ function: 'Sleep', samples: 10 }] },
+    { category: 'v8-profiler', samples: 10, functions: [{ function: 'Sleep', samples: 10 }] },
+  ])
+  expect(summarizeNativeSample('Sampling failed: credential-value')).toEqual([])
+})
+
+test('summarizes JS self time without source URLs, source text or unexpected frame names', () => {
+  expect(
+    summarizeJavascriptProfile({
+      startTime: 1000,
+      endTime: 5000,
+      nodes: [
+        { id: 1, callFrame: { functionName: '(idle)', lineNumber: -1, columnNumber: -1 } },
+        {
+          id: 2,
+          callFrame: {
+            functionName: 'Render',
+            lineNumber: 10,
+            columnNumber: 20,
+            url: 'https://service/?key=credential-value',
+          },
+        },
+        {
+          id: 3,
+          callFrame: {
+            functionName: 'https://service/?key=credential-value',
+            lineNumber: 1,
+            columnNumber: 1,
+          },
+        },
+      ],
+      samples: [2, 1, 2, 3],
+      timeDeltas: [1000, 1000, 500, 500],
+    })
+  ).toEqual({
+    durationMs: 4,
+    functions: [
+      { function: 'Render', line: 11, column: 21, samples: 2, selfMs: 1.5 },
+      { function: '(idle)', line: 0, column: 0, samples: 1, selfMs: 1 },
+      { function: '(unresolved)', line: 2, column: 2, samples: 1, selfMs: 0.5 },
+    ],
+  })
+})
 
 test('uses full ten-second windows to measure the concurrent CPU peak', () => {
   expect(
