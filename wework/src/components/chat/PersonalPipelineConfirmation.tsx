@@ -46,6 +46,7 @@ export function PersonalPipelineConfirmation({
   return (
     <div>
       <Button
+        className="max-md:min-h-11 max-md:min-w-11"
         type="button"
         data-testid="personal-pipeline-confirm"
         disabled={sending}

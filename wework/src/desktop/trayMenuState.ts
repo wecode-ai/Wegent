@@ -1,7 +1,6 @@
 import {
   getRuntimeChatSidebarTaskItems,
   getRuntimeSidebarTaskItems,
-  getRuntimeTaskAddress,
   sortRuntimeTaskItems,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
 import type {
@@ -97,17 +96,7 @@ function collectRuntimeTaskItems(
     ...item,
     projectName: getProjectDisplayName(null, item.workspace, item.workspace.workspacePath),
   }))
-  const seenTaskKeys = new Set<string>()
-  const sortedItems = sortRuntimeTaskItems([...projectItems, ...chatItems]) as TrayRuntimeTaskItem[]
-
-  return sortedItems.filter(({ workspace, task }) => {
-    const taskKey = `${workspace.deviceId}\n${task.taskId}`
-    if (seenTaskKeys.has(taskKey)) {
-      return false
-    }
-    seenTaskKeys.add(taskKey)
-    return true
-  })
+  return sortRuntimeTaskItems([...projectItems, ...chatItems]) as TrayRuntimeTaskItem[]
 }
 
 function getProjectDisplayName(
@@ -127,19 +116,6 @@ function getTrayTaskTitle(task: RuntimeTaskSummary): string {
   return task.title.trim() || String(task.taskId)
 }
 
-function toTrayMenuTaskItem({
-  workspace,
-  task,
-  projectName,
-}: TrayRuntimeTaskItem): TrayMenuTaskItem {
-  const address = getRuntimeTaskAddress(workspace, task)
-  return {
-    id: createTrayTaskMenuId(address),
-    title: getTrayTaskTitle(task),
-    projectName,
-  }
-}
-
 function splitTrayMenuTasks(items: TrayMenuTaskItem[]) {
   return {
     visible: items.slice(0, TRAY_MENU_TASK_LIMIT),
@@ -148,18 +124,19 @@ function splitTrayMenuTasks(items: TrayMenuTaskItem[]) {
 }
 
 function indexTrayMenuTasks(runtimeWork?: RuntimeWorkListResponse | null) {
-  const items = collectRuntimeTaskItems(runtimeWork).map((item, index) => ({
-    item: toTrayMenuTaskItem(item),
-    key: getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(item.workspace, item.task)),
-    taskId: item.task.taskId,
-    pinned: isPinnedRuntimeTask(item.task),
-    index,
-  }))
-  return {
-    byKey: new Map(items.map(item => [item.key, item])),
-    pinned: splitTrayMenuTasks(items.filter(item => item.pinned).map(item => item.item)),
-    recent: splitTrayMenuTasks(items.map(item => item.item)),
+  const byKey = new Map<string, { item: TrayMenuTaskItem; taskId: string; index: number }>()
+  const pinned: TrayMenuTaskItem[] = []
+  const recent: TrayMenuTaskItem[] = []
+  for (const { workspace, task, projectName } of collectRuntimeTaskItems(runtimeWork)) {
+    const address = { deviceId: workspace.deviceId, taskId: task.taskId }
+    const key = getRuntimeTaskLifecycleKey(address)
+    if (byKey.has(key)) continue
+    const item = { id: createTrayTaskMenuId(address), title: getTrayTaskTitle(task), projectName }
+    byKey.set(key, { item, taskId: task.taskId, index: recent.length })
+    recent.push(item)
+    if (isPinnedRuntimeTask(task)) pinned.push(item)
   }
+  return { byKey, pinned: splitTrayMenuTasks(pinned), recent: splitTrayMenuTasks(recent) }
 }
 
 const emptyTrayIndex = indexTrayMenuTasks()
