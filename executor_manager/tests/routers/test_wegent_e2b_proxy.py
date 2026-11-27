@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -12,19 +14,62 @@ from fastapi import FastAPI, HTTPException
 from executor_manager.routers import wegent_e2b_proxy
 
 
-def test_touch_sandbox_activity_persists_proxy_activity(mocker):
+@pytest.mark.asyncio
+async def test_cancelled_proxy_waits_for_forwarded_workspace_write():
+    started = asyncio.Event()
+    published = asyncio.Event()
+
+    async def upload() -> httpx.Response:
+        started.set()
+        await published.wait()
+        return httpx.Response(200)
+
+    caller = asyncio.create_task(wegent_e2b_proxy._await_workspace_write(upload()))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        for _ in range(2):
+            caller.cancel()
+            await asyncio.sleep(0)
+            assert not caller.done()
+    finally:
+        published.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(caller, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_proxy_health_lookup_uses_the_selected_e2b_runtime(mocker):
+    selected = SimpleNamespace(sandbox_id="12345")
+    get_sandbox = mocker.AsyncMock(return_value=None)
+    manager = SimpleNamespace(get_sandbox=get_sandbox)
+    mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
+    mocker.patch.object(
+        wegent_e2b_proxy, "_find_sandbox_by_e2b_id", return_value=selected
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await wegent_e2b_proxy._get_sandbox_info("original-e2b-id")
+
+    assert exc_info.value.status_code == 404
+    get_sandbox.assert_awaited_once_with(
+        "12345", check_health=True, expected_runtime=selected
+    )
+
+
+@pytest.mark.asyncio
+async def test_touch_sandbox_activity_rejects_a_terminated_runtime(mocker):
     """Proxied E2B SDK calls should refresh sandbox activity for GC."""
-    repository = MagicMock()
-    manager = SimpleNamespace(_repository=repository)
+    refresh = mocker.AsyncMock(return_value=(None, "Sandbox 1385 not found"))
+    manager = SimpleNamespace(refresh_sandbox_activity=refresh)
     sandbox = MagicMock()
     sandbox.sandbox_id = "1385"
 
     mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
 
-    wegent_e2b_proxy._touch_sandbox_activity(sandbox)
-
-    sandbox.touch.assert_called_once_with()
-    repository.save_sandbox.assert_called_once_with(sandbox)
+    with pytest.raises(HTTPException) as exc_info:
+        await wegent_e2b_proxy._touch_sandbox_activity(sandbox)
+    assert exc_info.value.status_code == 503
+    refresh.assert_awaited_once_with("1385", expected_runtime=sandbox)
 
 
 def test_legacy_process_start_keeps_default_read_timeout():
@@ -117,7 +162,10 @@ async def test_proxy_transport_error_returns_typed_bad_gateway(mocker):
         "_get_sandbox_info",
         new=mocker.AsyncMock(return_value=("http://sandbox:8080", sandbox)),
     )
-    mocker.patch.object(wegent_e2b_proxy, "_touch_sandbox_activity")
+    manager = SimpleNamespace(
+        sandbox_workspace_write=mocker.Mock(return_value=nullcontext())
+    )
+    mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
     mocker.patch.object(
         wegent_e2b_proxy.httpx,
         "AsyncClient",
@@ -135,6 +183,7 @@ async def test_proxy_transport_error_returns_typed_bad_gateway(mocker):
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail["code"] == "sandbox_transport_error"
     assert "ReadError" in exc_info.value.detail["message"]
+    manager.sandbox_workspace_write.assert_called_once_with(sandbox)
 
 
 @pytest.mark.asyncio
@@ -160,7 +209,10 @@ async def test_proxy_preserves_upstream_response(mocker):
         "_get_sandbox_info",
         new=mocker.AsyncMock(return_value=("http://sandbox:8080", sandbox)),
     )
-    mocker.patch.object(wegent_e2b_proxy, "_touch_sandbox_activity")
+    manager = SimpleNamespace(
+        sandbox_workspace_write=mocker.Mock(return_value=nullcontext())
+    )
+    mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
     mocker.patch.object(
         wegent_e2b_proxy.httpx,
         "AsyncClient",

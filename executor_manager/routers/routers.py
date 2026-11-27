@@ -1704,6 +1704,14 @@ async def archive_executor_workspace(
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
+            if (
+                response.status_code == httpx.codes.NO_CONTENT
+                and request.runtime_type == "sandbox"
+            ):
+                logger.info(
+                    "[Archive] Sandbox has no data for task %s", request.task_id
+                )
+                return Response(status_code=httpx.codes.NO_CONTENT)
             archive_result = response.json()
 
         logger.info(

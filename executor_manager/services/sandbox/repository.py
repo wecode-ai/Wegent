@@ -33,6 +33,7 @@ import redis
 import redis.asyncio as aioredis
 
 from executor_manager.common.config import get_config
+from executor_manager.common.distributed_lock import LOCK_KEY_PREFIX
 from executor_manager.common.redis_factory import RedisClientFactory
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.models.sandbox import (
@@ -51,6 +52,79 @@ SANDBOX_FIELD_NAME = "__sandbox__"
 LEGACY_ACTIVE_SANDBOXES_ZSET = "wegent-sandbox:active"
 ACTIVE_SANDBOXES_ZSET_PREFIX = f"{LEGACY_ACTIVE_SANDBOXES_ZSET}:"
 E2B_SANDBOX_ID_INDEX_PREFIX = "wegent-sandbox-e2b-index:"
+
+# Status updates must not recreate a deleted session. Checking and writing in
+# one Redis operation also avoids losing valid updates during a keep-alive.
+_SAVE_EXECUTION_FOR_RUNTIME = """
+local raw = redis.call("HGET", KEYS[1], ARGV[1])
+if not raw then
+    return 0
+end
+local sandbox = cjson.decode(raw)
+if sandbox.created_at ~= tonumber(ARGV[2]) or sandbox.container_name ~= ARGV[3]
+    or sandbox.status == "terminating" or sandbox.status == "terminated" then
+    return 0
+end
+if ARGV[7] ~= "" then
+    if redis.call("GET", KEYS[2]) ~= ARGV[7] then
+        return 0
+    end
+else
+    local current_raw = redis.call("HGET", KEYS[1], ARGV[4])
+    if not current_raw then
+        return 0
+    end
+    local current = cjson.decode(current_raw)
+    local updated = cjson.decode(ARGV[5])
+    if current.execution_id ~= updated.execution_id
+        or (ARGV[8] ~= "" and current.status ~= ARGV[8]) then
+        return 0
+    end
+    if updated.status == "running" and current.status ~= "pending"
+        and (current.status ~= "running" or current.started_at ~= updated.started_at) then
+        return 0
+    end
+    if updated.status == "running" and current.status == "pending"
+        and type(current.metadata) == "table" and type(current.metadata.admission_deadline) == "number"
+        and tonumber(redis.call("TIME")[1]) >= current.metadata.admission_deadline then
+        return 0
+    end
+end
+redis.call("HSET", KEYS[1], ARGV[4], ARGV[5])
+redis.call("EXPIRE", KEYS[1], ARGV[6])
+return 1
+"""
+
+_SAVE_SANDBOX_WHILE_OWNED = """
+if redis.call("GET", KEYS[2]) ~= ARGV[1] then
+    return 0
+end
+local raw = redis.call("HGET", KEYS[1], ARGV[2])
+if not raw then
+    return 0
+end
+local current = cjson.decode(raw)
+local updated = cjson.decode(ARGV[3])
+if current.created_at ~= updated.created_at or current.container_name ~= updated.container_name then
+    return 0
+end
+if current.status == "terminated"
+    or (current.status == "terminating" and updated.status ~= "terminating") then
+    return 0
+end
+redis.call("ZADD", KEYS[3], ARGV[6], ARGV[5])
+redis.call("ZREM", KEYS[4], ARGV[5])
+redis.call("HSET", KEYS[1], ARGV[2], ARGV[3])
+redis.call("EXPIRE", KEYS[1], ARGV[4])
+if #KEYS == 5 then
+    redis.call("SETEX", KEYS[5], ARGV[4], ARGV[5])
+end
+return 1
+"""
+
+
+class ExecutionStorageUnavailable(RuntimeError):
+    """An execution status write failed to reach storage."""
 
 
 def _build_active_sandboxes_zset(manager_scope: str) -> str:
@@ -120,7 +194,9 @@ class SandboxRepository(metaclass=SingletonMeta):
     # Sandbox Operations
     # =========================================================================
 
-    def save_sandbox(self, sandbox: Sandbox) -> bool:
+    def save_sandbox(
+        self, sandbox: Sandbox, *, lease_owner: tuple[str, str] | None = None
+    ) -> bool:
         """Save sandbox metadata to session Hash.
 
         Stores minimal sandbox info in the __sandbox__ field of the session Hash.
@@ -158,10 +234,36 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "started_at": sandbox.started_at,
                 "last_activity_at": sandbox.last_activity_at,
                 "expires_at": sandbox.expires_at,
+                "cleanup_archive": sandbox.cleanup_archive,
+                "cleanup_container_removed": sandbox.cleanup_container_removed,
             }
 
             hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
             data = json.dumps(sandbox_info)
+            e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
+            if lease_owner is not None:
+                lock_name, owner = lease_owner
+                keys = [
+                    hash_key,
+                    f"{LOCK_KEY_PREFIX}{lock_name}",
+                    self._active_sandboxes_zset,
+                    LEGACY_ACTIVE_SANDBOXES_ZSET,
+                ]
+                if e2b_sandbox_id:
+                    keys.append(f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_sandbox_id}")
+                return bool(
+                    self.redis_client.eval(
+                        _SAVE_SANDBOX_WHILE_OWNED,
+                        len(keys),
+                        *keys,
+                        owner,
+                        SANDBOX_FIELD_NAME,
+                        data,
+                        self._config.timeout.session_hash_ttl,
+                        str(task_id),
+                        sandbox.last_activity_at,
+                    )
+                )
             self.redis_client.hset(hash_key, SANDBOX_FIELD_NAME, data)
             # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
             self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
@@ -170,7 +272,6 @@ class SandboxRepository(metaclass=SingletonMeta):
             self._mark_sandbox_active(str(task_id), time.time())
 
             # Save e2b_sandbox_id index for O(1) lookup
-            e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
             if e2b_sandbox_id:
                 self._save_e2b_index(e2b_sandbox_id, str(task_id))
 
@@ -231,6 +332,10 @@ class SandboxRepository(metaclass=SingletonMeta):
                 expires_at=sandbox_info.get("expires_at"),
                 error_message=sandbox_info.get("error_message"),
                 metadata=sandbox_info.get("metadata", {}),
+                cleanup_archive=sandbox_info.get("cleanup_archive"),
+                cleanup_container_removed=sandbox_info.get(
+                    "cleanup_container_removed", False
+                ),
             )
 
             return sandbox
@@ -295,6 +400,10 @@ class SandboxRepository(metaclass=SingletonMeta):
                 expires_at=sandbox_info.get("expires_at"),
                 error_message=sandbox_info.get("error_message"),
                 metadata=sandbox_info.get("metadata", {}),
+                cleanup_archive=sandbox_info.get("cleanup_archive"),
+                cleanup_container_removed=sandbox_info.get(
+                    "cleanup_container_removed", False
+                ),
             )
 
             return sandbox
@@ -339,6 +448,47 @@ class SandboxRepository(metaclass=SingletonMeta):
             return True
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to delete sandbox: {e}")
+            return False
+
+    def delete_sandbox_if_current(
+        self, sandbox_id: str, expected_runtime: Sandbox | None
+    ) -> bool:
+        """Remove the session and indexes if the expected runtime has not changed."""
+        client = self.redis_client
+        if client is None:
+            return False
+
+        task_id = str(int(sandbox_id))
+        hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
+        try:
+            with client.pipeline() as pipe:
+                pipe.watch(hash_key)
+                raw = pipe.hget(hash_key, SANDBOX_FIELD_NAME)
+                current = json.loads(raw) if raw is not None else {}
+                if expected_runtime is None:
+                    if raw is not None:
+                        return False
+                elif (
+                    current.get("created_at") != expected_runtime.created_at
+                    or current.get("container_name") != expected_runtime.container_name
+                    or current.get("status") != SandboxStatus.TERMINATING.value
+                ):
+                    return False
+                pipe.multi()
+                pipe.delete(hash_key)
+                pipe.zrem(self._active_sandboxes_zset, task_id)
+                pipe.zrem(LEGACY_ACTIVE_SANDBOXES_ZSET, task_id)
+                e2b_id = (current.get("metadata") or {}).get("e2b_sandbox_id")
+                if e2b_id:
+                    pipe.delete(f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_id}")
+                pipe.execute()
+                return True
+        except redis.WatchError:
+            return False
+        except Exception as exc:
+            logger.error(
+                "[SandboxRepository] Conditional sandbox deletion failed: %s", exc
+            )
             return False
 
     def get_active_sandbox_ids(self) -> List[str]:
@@ -466,18 +616,28 @@ class SandboxRepository(metaclass=SingletonMeta):
     # =========================================================================
 
     def save_execution(
-        self, execution: Execution, update_activity: bool = False
+        self,
+        execution: Execution,
+        update_activity: bool = False,
+        *,
+        expected_runtime: Sandbox | None = None,
+        lease_owner: tuple[str, str] | None = None,
+        raise_on_storage_error: bool = False,
+        expected_status: ExecutionStatus | None = None,
     ) -> bool:
         """Save execution to session Hash with field {subtask_id}.
 
         Args:
             execution: Execution to save
             update_activity: If True, update the ZSet timestamp (only for new executions)
+            expected_runtime: Require this runtime for asynchronous status updates
 
         Returns:
             True if successful, False otherwise
         """
         if self.redis_client is None:
+            if raise_on_storage_error:
+                raise ExecutionStorageUnavailable("Redis client is unavailable")
             logger.error(
                 "[SandboxRepository] Redis client not available for save_execution"
             )
@@ -496,9 +656,30 @@ class SandboxRepository(metaclass=SingletonMeta):
                 f"field={field}, execution_id={execution.execution_id}"
             )
 
-            self.redis_client.hset(hash_key, field, data)
-            # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
-            self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
+            ttl = self._config.timeout.session_hash_ttl
+            if expected_runtime is None:
+                self.redis_client.hset(hash_key, field, data)
+                self.redis_client.expire(hash_key, ttl)
+            else:
+                keys = [hash_key]
+                owner = ""
+                if lease_owner is not None:
+                    lock_name, owner = lease_owner
+                    keys.append(f"{LOCK_KEY_PREFIX}{lock_name}")
+                if not self.redis_client.eval(
+                    _SAVE_EXECUTION_FOR_RUNTIME,
+                    len(keys),
+                    *keys,
+                    SANDBOX_FIELD_NAME,
+                    str(expected_runtime.created_at),
+                    expected_runtime.container_name,
+                    field,
+                    data,
+                    ttl,
+                    owner,
+                    expected_status.value if expected_status is not None else "",
+                ):
+                    return False
 
             # Only update ZSet timestamp for new executions (not status updates)
             # This ensures GC only considers "last new task time" for expiration
@@ -511,6 +692,8 @@ class SandboxRepository(metaclass=SingletonMeta):
             return True
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to save execution: {e}")
+            if raise_on_storage_error:
+                raise ExecutionStorageUnavailable("Could not save execution") from e
             return False
 
     def load_execution(self, task_id: int, subtask_id: int) -> Optional[Execution]:

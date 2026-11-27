@@ -17,6 +17,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from executor_manager.common.config import ROUTE_PREFIX
+from executor_manager.executors.docker.constants import DOCKER_CLEANUP_TIMEOUT_SECONDS
 from shared.logger import setup_logger
 from shared.models.openai_converter import get_metadata_field
 from shared.utils.ip_util import get_host_ip, is_ip_address
@@ -109,9 +110,13 @@ def delete_container(container_name: str) -> dict:
         dict: Result with status and optional error message
     """
     try:
-        # Stop and remove container in one command
-        cmd = f"docker stop {container_name} && docker rm {container_name}"
-        subprocess.run(cmd, shell=True, check=True, capture_output=True)
+        for action in ("stop", "rm"):
+            subprocess.run(
+                ["docker", action, "--", container_name],
+                check=True,
+                capture_output=True,
+                timeout=DOCKER_CLEANUP_TIMEOUT_SECONDS,
+            )
         logger.info(f"Deleted Docker container '{container_name}'")
         return {"status": "success"}
     except subprocess.CalledProcessError as e:
@@ -235,7 +240,9 @@ def count_running_containers(label_selector: str = None) -> dict:
         return {"status": "failed", "error_msg": f"Error: {error_msg}", "count": 0}
 
 
-def get_running_task_details(label_selector: str = None) -> dict:
+def get_running_task_details(
+    label_selector: str | None = None, *, include_stopped: bool = False
+) -> dict:
     """
     Get detailed information about running tasks from Docker containers.
 
@@ -251,6 +258,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
     try:
         # Base command with owner filter
         cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
+        if include_stopped:
+            cmd.extend(["--all", "--no-trunc"])
 
         # Add additional label selector if provided
         if label_selector:
@@ -264,8 +273,16 @@ def get_running_task_details(label_selector: str = None) -> dict:
                 '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}',
             ]
         )
+        if include_stopped:
+            cmd[-1] += "|{{.ID}}"
 
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_CLEANUP_TIMEOUT_SECONDS,
+        )
 
         # Process container information
         containers = []
@@ -291,6 +308,8 @@ def get_running_task_details(label_selector: str = None) -> dict:
                     "subtask_next_id": subtask_next_id,
                     "task_type": task_type,
                 }
+                if include_stopped:
+                    container_info["container_id"] = parts[5] if len(parts) > 5 else ""
 
                 containers.append(container_info)
 

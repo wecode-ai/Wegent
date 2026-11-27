@@ -14,6 +14,7 @@ Constants definition file for Docker executor
 import os
 
 CONTAINER_OWNER = "executor_manager"
+DOCKER_CLEANUP_TIMEOUT_SECONDS = 30
 
 # Docker host configuration
 DEFAULT_DOCKER_HOST = os.getenv("DOCKER_HOST_ADDR", "host.docker.internal")

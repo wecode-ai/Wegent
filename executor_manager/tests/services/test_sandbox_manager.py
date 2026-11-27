@@ -8,14 +8,34 @@ import asyncio
 import copy
 import json
 import time
+from threading import Event, Lock
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
 
+from executor_manager.services.sandbox.manager import _SandboxArchiveOutcome
+
 
 class TestSandboxManager:
     """Test cases for SandboxManager class."""
+
+    @pytest.mark.asyncio
+    async def test_get_sandbox_does_not_health_check_a_replacement(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        replacement = copy.copy(sample_sandbox)
+        replacement.created_at += 1
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=replacement
+        )
+        check = mocker.patch.object(manager._health_checker, "check_health_sync")
+
+        result = await manager.get_sandbox("12345", expected_runtime=sample_sandbox)
+
+        assert result is None
+        check.assert_not_called()
 
     @pytest.fixture(autouse=True)
     def reset_singletons(self):
@@ -152,7 +172,7 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._repository, "load_sandbox", return_value=sample_sandbox
         )
-        terminate = mocker.patch.object(manager, "terminate_sandbox")
+        terminate = mocker.patch.object(manager, "_terminate_sandbox_locked")
 
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
 
@@ -161,8 +181,12 @@ class TestSandboxManager:
         terminate.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "archive_outcome",
+        [_SandboxArchiveOutcome.ARCHIVED, _SandboxArchiveOutcome.EMPTY],
+    )
     async def test_cleanup_stale_sandboxes_deletes_old_sandbox(
-        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, archive_outcome
     ):
         """Test manual cleanup deletes sandboxes beyond the age threshold."""
         manager = sandbox_manager_with_mock_redis
@@ -175,19 +199,23 @@ class TestSandboxManager:
         )
         terminate = mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "terminated"),
         )
 
         mocker.patch.object(
-            manager, "_archive_sandbox_before_cleanup", new=AsyncMock(return_value=True)
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=archive_outcome,
         )
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
 
         assert result["skipped"] == []
         assert result["deleted"][0]["sandbox_id"] == "12345"
-        terminate.assert_awaited_once_with("12345")
+        terminate.assert_awaited_once_with(
+            "12345", mocker.ANY, sample_sandbox, archive_outcome
+        )
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_sandboxes_archives_before_delete(
@@ -206,11 +234,11 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
         )
         mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "terminated"),
         )
@@ -219,6 +247,54 @@ class TestSandboxManager:
 
         assert result["deleted"][0]["sandbox_id"] == "12345"
         archive.assert_awaited_once_with(sample_sandbox)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("change", "reason"),
+        [
+            ("renewed", "not_stale"),
+            ("replaced", "sandbox_replaced"),
+            ("removed", "sandbox_not_found"),
+        ],
+    )
+    async def test_cleanup_rechecks_stale_sandbox_after_empty_archive(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, change, reason
+    ):
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - 25 * 3600
+        current = sample_sandbox
+
+        async def archive(_sandbox):
+            nonlocal current
+            if change == "removed":
+                current = None
+            else:
+                current = copy.copy(sample_sandbox)
+                if change == "renewed":
+                    current.extend_timeout(3600)
+                else:
+                    current.created_at += 1
+            return _SandboxArchiveOutcome.EMPTY
+
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", side_effect=lambda _: current
+        )
+        mocker.patch.object(
+            manager, "_archive_sandbox_before_cleanup", side_effect=archive
+        )
+        terminate = mocker.patch.object(
+            manager, "_terminate_sandbox_locked", return_value=(True, "terminated")
+        )
+
+        result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
+
+        assert result["deleted"] == []
+        assert result["failed"] == []
+        assert result["skipped"][0]["reason"] == reason
+        terminate.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_sandboxes_keeps_runtime_when_archive_fails(
@@ -237,11 +313,11 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=_SandboxArchiveOutcome.FAILED,
         )
         terminate = mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "terminated"),
         )
@@ -251,6 +327,103 @@ class TestSandboxManager:
         assert result["deleted"] == []
         assert result["failed"][0]["reason"] == "archive_failed"
         terminate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancel_twice", [False, True])
+    async def test_keep_alive_cannot_renew_a_sandbox_during_stale_deletion(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, cancel_twice
+    ):
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - 25 * 3600
+        current = sample_sandbox
+        mutex = Lock()
+        loop = asyncio.get_running_loop()
+        deleting = asyncio.Event()
+        renewal_waiting = asyncio.Event()
+        release_delete = Event()
+
+        def acquire(name, _ttl):
+            assert name == "task-lifecycle:12345"
+            if mutex.acquire(blocking=False):
+                return "owner"
+            loop.call_soon_threadsafe(renewal_waiting.set)
+            return None
+
+        def save(sandbox, **kwargs):
+            nonlocal current
+            current = copy.copy(sandbox)
+            return True
+
+        def delete_record(_sandbox_id, _expected_runtime):
+            nonlocal current
+            current = None
+            return True
+
+        def delete_container(_sandbox, _lease):
+            loop.call_soon_threadsafe(deleting.set)
+            assert release_delete.wait(3)
+            return True
+
+        mocker.patch.object(
+            manager._lifecycle_lock, "acquire_owned", side_effect=acquire
+        )
+        mocker.patch.object(
+            manager._lifecycle_lock,
+            "release_owned",
+            side_effect=lambda *_: mutex.release(),
+        )
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=lambda _: copy.copy(current),
+        )
+        save_sandbox = mocker.patch.object(
+            manager._repository, "save_sandbox", side_effect=save
+        )
+        mocker.patch.object(
+            manager._repository, "delete_sandbox_if_current", side_effect=delete_record
+        )
+        mocker.patch.object(
+            manager, "_delete_sandbox_container", side_effect=delete_container
+        )
+        mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=_SandboxArchiveOutcome.EMPTY,
+        )
+
+        cleanup = asyncio.create_task(
+            manager.terminate_sandbox("12345")
+            if cancel_twice
+            else manager.cleanup_stale_sandboxes()
+        )
+        try:
+            await asyncio.wait_for(deleting.wait(), timeout=2)
+            keep_alive = asyncio.create_task(manager.keep_alive("012345"))
+            await asyncio.wait_for(renewal_waiting.wait(), timeout=2)
+            assert not keep_alive.done()
+            if cancel_twice:
+                for _ in range(2):
+                    cleanup.cancel()
+                    await asyncio.sleep(0)
+                    assert not cleanup.done()
+                    assert not keep_alive.done()
+        finally:
+            release_delete.set()
+
+        if cancel_twice:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(cleanup, timeout=2)
+        else:
+            result = await asyncio.wait_for(cleanup, timeout=2)
+            assert result["deleted"][0]["sandbox_id"] == "12345"
+        renewed, error = await asyncio.wait_for(keep_alive, timeout=2)
+        assert renewed is None
+        assert error == "Sandbox 012345 not found"
+        assert save_sandbox.call_count == 2
 
     # ----- create_sandbox Tests -----
 
@@ -532,7 +705,9 @@ class TestSandboxManager:
         def load_sandbox(sandbox_id):
             return saved_sandboxes.get(str(sandbox_id))
 
-        def save_sandbox(sandbox):
+        def save_sandbox(sandbox, *, lease_owner=None):
+            if lease_owner is not None:
+                assert lease_owner[0] == "task-lifecycle:12345"
             saved_sandboxes[sandbox.sandbox_id] = sandbox
             return True
 
@@ -1035,7 +1210,9 @@ class TestSandboxManager:
         assert sandbox.status == SandboxStatus.RUNNING
         assert sandbox.metadata["skill_sync_status"] == "failed"
         assert sandbox.metadata["last_skill_sync_error"] == "connection reset"
-        save.assert_called_with(sample_sandbox)
+        save.assert_called_with(
+            sample_sandbox, lease_owner=("task-lifecycle:12345", mocker.ANY)
+        )
         start.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1080,6 +1257,36 @@ class TestSandboxManager:
         assert sandbox is sample_sandbox
         assert sandbox.expires_at > time.time()
         start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reuse_rejects_a_write_after_sandbox_lifecycle_changes(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        from executor_manager.services.sandbox.manager import (
+            SandboxLifecycleUnavailable,
+        )
+
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        mocker.patch.object(manager, "_ensure_sandbox_workspace", return_value=None)
+        mocker.patch.object(manager, "_prepare_sandbox_skills", return_value=None)
+        save = mocker.patch.object(
+            manager._repository, "save_sandbox", return_value=False
+        )
+
+        _, error = await manager.create_sandbox(
+            "ClaudeCode", 1, "test", metadata={"task_id": 12345}
+        )
+
+        assert isinstance(error, SandboxLifecycleUnavailable)
+        save.assert_called_once_with(
+            sample_sandbox, lease_owner=("task-lifecycle:12345", mocker.ANY)
+        )
 
     @pytest.mark.asyncio
     async def test_cold_sync_failure_keeps_healthy_container_for_retry(
@@ -1190,14 +1397,81 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=False
         )
-        delete_sandbox = mocker.patch.object(
-            manager._repository, "delete_sandbox", return_value=True
+        terminate = mocker.patch.object(
+            manager, "_terminate_sandbox_locked", return_value=(True, "Terminated")
         )
 
         sandbox = await manager.get_sandbox("12345", check_health=True)
 
         assert sandbox is None
-        delete_sandbox.assert_called_once_with("12345")
+        terminate.assert_awaited_once()
+        assert terminate.await_args.args[0] == "12345"
+        assert terminate.await_args.args[2].sandbox_id == "12345"
+
+    @pytest.mark.asyncio
+    async def test_get_sandbox_discards_probe_result_if_runtime_was_replaced(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        replacement = copy.copy(sample_sandbox)
+        replacement.created_at += 1
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=[sample_sandbox, replacement],
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+
+        assert await manager.get_sandbox("12345") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lifecycle_busy", [False, True])
+    async def test_failed_health_check_preserves_busy_or_recovered_runtime(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, lifecycle_busy
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", side_effect=[False, True]
+        )
+        if lifecycle_busy:
+            mocker.patch.object(
+                manager, "_try_acquire_task_lifecycle_lease", return_value=None
+            )
+        terminate = mocker.patch.object(manager, "_terminate_sandbox_locked")
+
+        result = await manager.get_sandbox("12345")
+
+        assert result is (None if lifecycle_busy else sample_sandbox)
+        terminate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_preserves_terminating_runtime_when_cleanup_cannot_finish(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.set_terminating()
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager,
+            "_terminate_sandbox_locked",
+            return_value=(False, "Cleanup unavailable"),
+        )
+        provision = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            "ClaudeCode", 1, "test", metadata={"task_id": 12345}
+        )
+
+        assert sandbox is sample_sandbox
+        assert error == "Cleanup unavailable"
+        provision.assert_not_awaited()
 
     # ----- terminate_sandbox Tests -----
 
@@ -1212,6 +1486,9 @@ class TestSandboxManager:
         """Test successful sandbox termination."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        mocker.patch.object(
+            manager._repository, "delete_sandbox_if_current", return_value=True
+        )
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
@@ -1228,6 +1505,43 @@ class TestSandboxManager:
         assert "terminated successfully" in message
 
     @pytest.mark.asyncio
+    async def test_terminate_sandbox_resumes_after_partial_redis_write(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        stored = copy.deepcopy(sample_sandbox)
+
+        def save_sandbox(sandbox, **kwargs):
+            nonlocal stored
+            stored = copy.deepcopy(sandbox)
+            return stored.cleanup_container_removed
+
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=lambda _: copy.deepcopy(stored),
+        )
+        save = mocker.patch.object(
+            manager._repository, "save_sandbox", side_effect=save_sandbox
+        )
+        delete = mocker.patch.object(
+            manager, "_delete_sandbox_container", return_value=True
+        )
+        mocker.patch.object(
+            manager._repository, "delete_sandbox_if_current", return_value=True
+        )
+
+        success, _ = await manager.terminate_sandbox("12345")
+        assert success is False
+        delete.assert_not_called()
+
+        success, _ = await manager.terminate_sandbox("12345")
+        assert success is True
+        assert save.call_count == 2
+        assert stored.cleanup_container_removed
+        delete.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_terminate_sandbox_not_found(
         self, sandbox_manager_with_mock_redis, mock_redis_client
     ):
@@ -1241,6 +1555,86 @@ class TestSandboxManager:
         assert "not found" in message
 
     @pytest.mark.asyncio
+    async def test_cleanup_resumes_metadata_removal_after_container_is_gone(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        stored = copy.deepcopy(sample_sandbox)
+
+        def persist(sandbox, **kwargs):
+            nonlocal stored
+            stored = copy.deepcopy(sandbox)
+            return True
+
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=lambda _: copy.deepcopy(stored),
+        )
+        mocker.patch.object(manager._repository, "save_sandbox", side_effect=persist)
+        mocker.patch.object(
+            manager._repository, "delete_sandbox_if_current", side_effect=[False, True]
+        )
+        callback = mocker.patch.object(
+            manager,
+            "_post_workspace_archive_callback",
+            return_value={"success": True, "archive": None},
+        )
+        executor = MagicMock()
+        executor.delete_executor.return_value = {"status": "success"}
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=executor,
+        )
+
+        first = await manager.cleanup_sandbox_by_task_id(
+            task_id=12345, archive_before_delete=True
+        )
+        second = await manager.cleanup_sandbox_by_task_id(
+            task_id=12345, archive_before_delete=True
+        )
+
+        assert first["skipped"] and not first["redis_cleared"]
+        assert second["reason"] == "sandbox_metadata_cleared"
+        assert stored.cleanup_container_removed and stored.cleanup_archive == "EMPTY"
+        callback.assert_awaited_once()
+        executor.delete_executor.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wait_for_owner", [False, True])
+    async def test_cancelled_acquisition_releases_late_owner(
+        self, sandbox_manager_with_mock_redis, mocker, wait_for_owner
+    ):
+        manager = sandbox_manager_with_mock_redis
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release_worker = Event()
+
+        def acquire(*_):
+            loop.call_soon_threadsafe(started.set)
+            assert release_worker.wait(2)
+            return "owner"
+
+        mocker.patch.object(
+            manager._lifecycle_lock, "acquire_owned", side_effect=acquire
+        )
+        release = mocker.patch.object(manager._lifecycle_lock, "release_owned")
+        acquire_lease = (
+            manager._acquire_task_lifecycle_lease
+            if wait_for_owner
+            else manager._try_acquire_task_lifecycle_lease
+        )
+        waiter = asyncio.create_task(acquire_lease("12345"))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            waiter.cancel()
+        finally:
+            release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(waiter, timeout=2)
+        release.assert_called_once_with("task-lifecycle:12345", "owner")
+
+    @pytest.mark.asyncio
     async def test_terminate_sandbox_cleans_redis(
         self,
         sandbox_manager_with_mock_redis,
@@ -1251,6 +1645,10 @@ class TestSandboxManager:
         """Test Redis cleanup after termination."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        pipe = mock_redis_client.pipeline.return_value.__enter__.return_value
+        pipe.hget.return_value = json.dumps(
+            {**json.loads(sample_sandbox_redis_data), "status": "terminating"}
+        )
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
@@ -1263,8 +1661,9 @@ class TestSandboxManager:
 
         await manager.terminate_sandbox("12345")
 
-        mock_redis_client.zrem.assert_called()
-        mock_redis_client.delete.assert_called()
+        pipe.zrem.assert_called()
+        pipe.delete.assert_called()
+        pipe.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_sandbox_by_task_id_deletes_by_label_when_saved_name_is_stale(
@@ -1277,6 +1676,10 @@ class TestSandboxManager:
         """Test task cleanup removes labeled containers when Redis has a stale name."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        pipe = mock_redis_client.pipeline.return_value.__enter__.return_value
+        pipe.hget.return_value = json.dumps(
+            {**json.loads(sample_sandbox_redis_data), "status": "terminating"}
+        )
         mock_executor = MagicMock()
         mock_executor.delete_executor.return_value = {
             "status": "unauthorized",
@@ -1303,11 +1706,13 @@ class TestSandboxManager:
             "wegent-task-testuser-orphan"
         ]
         mock_executor.delete_executor.assert_called_once_with(
-            "wegent-task-testuser-12345"
+            "wegent-task-testuser-12345", can_delete=mocker.ANY
         )
-        mock_executor.delete_executor_by_task_id.assert_called_once_with("12345")
-        mock_redis_client.zrem.assert_called()
-        mock_redis_client.delete.assert_called()
+        mock_executor.delete_executor_by_task_id.assert_called_once_with(
+            "12345", can_delete=mocker.ANY
+        )
+        pipe.zrem.assert_called()
+        pipe.delete.assert_called()
 
     # ----- keep_alive Tests -----
 
@@ -1394,6 +1799,32 @@ class TestSandboxManager:
         """Test successful execution creation."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        lease_held = False
+
+        def acquire(name, _ttl):
+            nonlocal lease_held
+            assert name == "task-lifecycle:12345"
+            lease_held = True
+            return "owner"
+
+        def release(_name, _owner):
+            nonlocal lease_held
+            lease_held = False
+
+        def save_execution(_execution, *, expected_runtime, lease_owner):
+            assert expected_runtime.sandbox_id == "12345"
+            assert lease_owner == ("task-lifecycle:12345", "owner")
+            return lease_held
+
+        mocker.patch.object(
+            manager._lifecycle_lock, "acquire_owned", side_effect=acquire
+        )
+        mocker.patch.object(
+            manager._lifecycle_lock, "release_owned", side_effect=release
+        )
+        mocker.patch.object(
+            manager._repository, "save_execution", side_effect=save_execution
+        )
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
@@ -2125,17 +2556,19 @@ class TestSandboxManager:
             return_value=True,
         )
 
-        # Mock terminate_sandbox
+        # Mock termination after the final lifecycle check.
         mock_terminate = mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "Terminated"),
         )
 
         await manager._collect_expired_sandboxes()
 
-        mock_terminate.assert_called_once_with("12345")
+        mock_terminate.assert_awaited_once_with(
+            "12345", mocker.ANY, sample_sandbox, None
+        )
 
     @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_cleans_orphaned(
@@ -2143,8 +2576,10 @@ class TestSandboxManager:
     ):
         """An entry without a session hash still deletes its Pod by task id."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
-        mock_redis_client.hget.return_value = None  # No sandbox data
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
+        mock_redis_client.hget.return_value = None
+        pipe = mock_redis_client.pipeline.return_value.__enter__.return_value
+        pipe.hget.return_value = None
         mock_executor = MagicMock()
         mock_executor.delete_executor_by_task_id.return_value = {"status": "success"}
         mocker.patch(
@@ -2154,10 +2589,11 @@ class TestSandboxManager:
 
         await manager._collect_expired_sandboxes()
 
-        mock_executor.delete_executor_by_task_id.assert_called_once_with("orphaned-id")
-        mock_redis_client.zrem.assert_called_with(
-            "wegent-sandbox:active", "orphaned-id"
+        mock_executor.delete_executor_by_task_id.assert_called_once_with(
+            "12345", can_delete=mocker.ANY
         )
+        pipe.zrem.assert_called_with("wegent-sandbox:active", "12345")
+        pipe.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_keeps_orphan_when_delete_fails(
@@ -2165,7 +2601,7 @@ class TestSandboxManager:
     ):
         """A failed orphan delete keeps the entry so the next GC retries."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
         mock_redis_client.hget.return_value = None
         mock_executor = MagicMock()
         mock_executor.delete_executor_by_task_id.return_value = {
@@ -2179,8 +2615,28 @@ class TestSandboxManager:
 
         await manager._collect_expired_sandboxes()
 
-        mock_executor.delete_executor_by_task_id.assert_called_once_with("orphaned-id")
+        mock_executor.delete_executor_by_task_id.assert_called_once_with(
+            "12345", can_delete=mocker.ANY
+        )
         mock_redis_client.zrem.assert_not_called()
+        mock_redis_client.pipeline.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gc_preserves_index_when_sandbox_disappears_during_archiving(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(
+            manager._repository, "load_sandbox", side_effect=[sample_sandbox, None]
+        )
+        mocker.patch.object(manager, "_archive_before_terminate", return_value=True)
+        remove = mocker.patch.object(manager._repository, "remove_from_active_set")
+        terminate = mocker.patch.object(manager, "_terminate_sandbox_locked")
+
+        await manager._terminate_expired_sandbox("12345")
+
+        remove.assert_not_called()
+        terminate.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_defers_when_archive_fails(
@@ -2201,11 +2657,11 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=_SandboxArchiveOutcome.FAILED,
         )
         mock_terminate = mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "Terminated"),
         )
@@ -2233,18 +2689,20 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=_SandboxArchiveOutcome.FAILED,
         )
         mock_terminate = mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "Terminated"),
         )
 
         await manager._collect_expired_sandboxes()
 
-        mock_terminate.assert_called_once_with("12345")
+        mock_terminate.assert_awaited_once_with(
+            "12345", mocker.ANY, sample_sandbox, None
+        )
 
     @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_skips_sandbox_renewed_while_archiving(
@@ -2269,11 +2727,11 @@ class TestSandboxManager:
             manager,
             "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
         )
         mock_terminate = mocker.patch.object(
             manager,
-            "terminate_sandbox",
+            "_terminate_sandbox_locked",
             new_callable=AsyncMock,
             return_value=(True, "Terminated"),
         )
@@ -2283,18 +2741,42 @@ class TestSandboxManager:
         mock_terminate.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_archive_before_cleanup_posts_internal_endpoint(
+    @pytest.mark.parametrize(
+        ("body", "deleted", "archived"),
+        [
+            (
+                {"success": True, "archive": {"storageKey": "archive.tar.gz"}},
+                True,
+                True,
+            ),
+            ({"success": True, "archive": None}, True, False),
+            ({"success": True, "archive": {"storageKey": True}}, False, False),
+            ({"success": True, "archive": {"storageKey": "  "}}, False, False),
+            ({"success": True}, False, False),
+            ({"archive": None}, False, False),
+        ],
+    )
+    async def test_cleanup_distinguishes_empty_sandbox_from_written_backup(
         self,
         sandbox_manager_with_mock_redis,
         sample_sandbox,
         mocker,
+        body,
+        deleted,
+        archived,
     ):
-        """GC asks the backend to archive the workspace before deletion."""
         manager = sandbox_manager_with_mock_redis
         sample_sandbox.executor_namespace = "wb-plat-ide"
-        response = MagicMock()
-        response.status_code = 200
-        response.text = "ok"
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+        ).return_value
+        executor.delete_executor.return_value = {"status": "success"}
+        response = httpx.Response(
+            200, json=body, request=httpx.Request("POST", "http://backend")
+        )
         client = MagicMock()
         client.post = AsyncMock(return_value=response)
         client.__aenter__ = AsyncMock(return_value=client)
@@ -2304,7 +2786,13 @@ class TestSandboxManager:
             return_value=client,
         )
 
-        assert await manager._archive_sandbox_before_cleanup(sample_sandbox) is True
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+
+        assert result["deleted"] is deleted
+        assert result["archived"] is archived
+        if not deleted:
+            assert result["reason"] == "archive_failed"
+            executor.delete_executor.assert_not_called()
 
         url = client.post.await_args.args[0]
         assert url.endswith("/api/internal/workspace-archives/12345/archive-sandbox")
@@ -2312,6 +2800,103 @@ class TestSandboxManager:
             "executor_name": "wegent-task-testuser-12345",
             "executor_namespace": "wb-plat-ide",
         }
+
+    @pytest.mark.asyncio
+    async def test_task_cleanup_skips_sandbox_renewed_during_empty_archive(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        renewed = copy.copy(sample_sandbox)
+        renewed.last_activity_at += 1
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=[sample_sandbox, sample_sandbox, renewed],
+        )
+        mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=_SandboxArchiveOutcome.EMPTY,
+        )
+        delete = mocker.patch.object(manager, "_delete_task_sandbox")
+
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+
+        assert result["reason"] == "sandbox_became_active"
+        assert result["skipped"] is True
+        assert result["archived"] is False
+        delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_task_cleanup_defers_archive_until_workspace_upload_finishes(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mutex = Lock()
+        mocker.patch.object(
+            manager._lifecycle_lock,
+            "acquire_owned",
+            side_effect=lambda *_: "owner" if mutex.acquire(blocking=False) else None,
+        )
+        mocker.patch.object(
+            manager._lifecycle_lock,
+            "release_owned",
+            side_effect=lambda *_: mutex.release(),
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        archive = mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
+        )
+        delete = mocker.patch.object(
+            manager, "_delete_task_sandbox", return_value={"deleted": True}
+        )
+
+        async with manager.sandbox_workspace_write(sample_sandbox):
+            result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+            assert result["reason"] == "lifecycle_busy"
+            archive.assert_not_awaited()
+            delete.assert_not_called()
+
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+        assert result["deleted"]
+        archive.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_poll_reconciles_expired_admission_for_the_same_runtime(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, sample_execution, mocker
+    ):
+        from executor_manager.models.sandbox import ExecutionStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_execution.metadata.update(
+            admission_deadline=time.time() - 1,
+            admitted_runtime_created_at=sample_sandbox.created_at,
+            admitted_runtime_container=sample_sandbox.container_name,
+        )
+        mocker.patch.object(
+            manager._repository, "load_execution", return_value=sample_execution
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        save = mocker.patch.object(
+            manager._repository, "save_execution", return_value=True
+        )
+
+        recovered = await manager.get_execution("12345", 1)
+
+        assert recovered.status is ExecutionStatus.FAILED
+        assert recovered.execution_id == sample_execution.execution_id
+        assert sample_execution.status is ExecutionStatus.PENDING
+        save.assert_called_once_with(
+            recovered,
+            expected_runtime=sample_sandbox,
+            expected_status=ExecutionStatus.PENDING,
+        )
 
     # ----- Scheduler Integration Tests -----
 

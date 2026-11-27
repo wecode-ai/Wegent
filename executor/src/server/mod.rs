@@ -33,7 +33,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::{process::Command, sync::Semaphore, time::timeout};
+use tokio::{
+    process::Command,
+    sync::{RwLock, Semaphore},
+    time::timeout,
+};
 
 use crate::{
     agents::runtime_capabilities,
@@ -41,7 +45,7 @@ use crate::{
     callback::CallbackSink,
     envd::archive::{
         create_runtime_archive_with_roots, restore_runtime_archive_with_roots, ArchiveError,
-        ArchiveMode, ArchiveOptions,
+        ArchiveMode, ArchiveOptions, RuntimeArchive,
     },
     envd::archive_sessions::SessionArchiveRoots,
     heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
@@ -55,6 +59,9 @@ use crate::{
 pub use config::{ServerConfig, ServerConfigError};
 
 pub use wegent_execution_contracts::{RunnerResult, TaskRunner};
+
+// Permit concurrent workspace writes, but keep a snapshot out of partial publications.
+static WORKSPACE_SNAPSHOT_LOCK: RwLock<()> = RwLock::const_new(());
 
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
@@ -416,6 +423,7 @@ async fn connect_stat_path(
 async fn connect_make_dir(
     Json(payload): Json<ConnectMakeDirRequest>,
 ) -> Result<Json<ConnectMakeDirResponse>, HttpError> {
+    let _workspace_write = WORKSPACE_SNAPSHOT_LOCK.read().await;
     let path = resolve_envd_filesystem_path(&payload.path)?;
     log_executor_event(
         "envd filesystem make_dir request",
@@ -730,9 +738,7 @@ fn zip_download_semaphore() -> &'static Semaphore {
     SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
 }
 
-async fn archive_workspace(
-    Json(request): Json<ArchiveRequest>,
-) -> Result<Json<ArchiveResponse>, HttpError> {
+async fn archive_workspace(Json(request): Json<ArchiveRequest>) -> Result<Response, HttpError> {
     let started = std::time::Instant::now();
     let mode = parse_archive_mode(&request.runtime_type)?;
     let roots =
@@ -749,7 +755,9 @@ async fn archive_workspace(
         ),
         None => None,
     };
+    let snapshot = WORKSPACE_SNAPSHOT_LOCK.write().await;
     let archive = tokio::task::spawn_blocking(move || {
+        let _snapshot = snapshot;
         log_executor_event(
             "archive worker started",
             &[
@@ -780,6 +788,23 @@ async fn archive_workspace(
     .await
     .map_err(|error| archive_error_to_http(std::io::Error::other(error).into()))?
     .map_err(archive_error_to_http)?;
+
+    upload_workspace_archive(request, mode, archive, started).await
+}
+
+async fn upload_workspace_archive(
+    request: ArchiveRequest,
+    mode: ArchiveMode,
+    archive: RuntimeArchive,
+    started: std::time::Instant,
+) -> Result<Response, HttpError> {
+    if mode == ArchiveMode::Sandbox && archive.is_empty {
+        log_executor_event(
+            "sandbox archive empty",
+            &[("task_id", request.task_id.to_string())],
+        );
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
 
     let size_bytes = archive.bytes.len() as u64;
     let session_file_included = archive.session_file_included;
@@ -831,7 +856,8 @@ async fn archive_workspace(
         size_bytes,
         session_file_included,
         git_included,
-    }))
+    })
+    .into_response())
 }
 
 #[derive(Deserialize)]
@@ -1872,6 +1898,43 @@ mod tests {
         fs::write(&marker, "preserved").unwrap();
         prepare_runtime_directories(&workspace, &home, &roots).unwrap();
         assert_eq!(fs::read_to_string(marker).unwrap(), "preserved");
+    }
+
+    #[tokio::test]
+    async fn empty_prepared_sandbox_returns_no_content_without_uploading() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("sandbox-home");
+        let workspace = temp.path().join("workspace/42");
+        let roots = SessionArchiveRoots::for_home(&temp.path().join("runtime-home"));
+        prepare_runtime_directories(&workspace, &home, &roots).unwrap();
+        let archive = create_runtime_archive_with_roots(
+            ArchiveOptions {
+                mode: ArchiveMode::Sandbox,
+                task_id: "42".to_owned(),
+                workspace_path: workspace,
+                home_path: home,
+                max_size_bytes: 1024 * 1024,
+            },
+            None,
+            &roots,
+        )
+        .unwrap();
+
+        let response = upload_workspace_archive(
+            ArchiveRequest {
+                task_id: 42,
+                upload_url: "invalid-upload-url".to_owned(),
+                max_size_mb: 1,
+                runtime_type: "sandbox".to_owned(),
+            },
+            ArchiveMode::Sandbox,
+            archive,
+            std::time::Instant::now(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 
     #[test]

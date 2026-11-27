@@ -33,6 +33,7 @@ pub struct ArchiveOptions {
 #[derive(Debug, Clone)]
 pub struct RuntimeArchive {
     pub bytes: Vec<u8>,
+    pub is_empty: bool,
     pub session_file_included: bool,
     pub git_included: bool,
 }
@@ -84,21 +85,9 @@ pub fn create_runtime_archive_with_roots(
             )));
         }
     }
-    if options.mode == ArchiveMode::Executor
-        && !options.workspace_path.is_dir()
-        && repository.is_none()
-    {
+    let has_workspace = options.workspace_path.is_dir();
+    if options.mode == ArchiveMode::Executor && !has_workspace && repository.is_none() {
         return Err(ArchiveError::MissingWorkspace(options.workspace_path));
-    }
-    if options.mode == ArchiveMode::Sandbox
-        && !options.workspace_path.is_dir()
-        && !options.home_path.is_dir()
-        && repository.is_none()
-    {
-        return Err(ArchiveError::EmptyArchiveRoots {
-            workspace_path: options.workspace_path,
-            home_path: options.home_path,
-        });
     }
 
     let _session_leases = archive_stage(&options.task_id, "lock_sessions", || {
@@ -122,7 +111,7 @@ pub fn create_runtime_archive_with_roots(
         builder.append_data(&mut header, archive_repository::MEMBER, bytes.as_slice())?;
     }
     let mut contents = ArchiveContents::default();
-    let mut member_count = 0usize;
+    let mut member_count = usize::from(repository.is_some());
     let managed_roots = [
         roots.executor.clone(),
         roots.workbench.clone(),
@@ -156,7 +145,7 @@ pub fn create_runtime_archive_with_roots(
         )?;
     }
 
-    if options.workspace_path.is_dir() {
+    if has_workspace {
         member_count += append_tree(
             &mut builder,
             ArchiveTreeContext {
@@ -184,7 +173,13 @@ pub fn create_runtime_archive_with_roots(
             &mut contents,
         )?;
     }
-    if options.mode == ArchiveMode::Sandbox && member_count == 0 {
+    let is_empty = member_count == 0;
+    // Sandbox preparation creates a task directory even before the first write.
+    if options.mode == ArchiveMode::Sandbox && is_empty && !has_workspace {
+        log_executor_event(
+            "sandbox archive source missing",
+            &[("task_id", options.task_id)],
+        );
         return Err(ArchiveError::EmptyArchiveRoots {
             workspace_path: options.workspace_path,
             home_path: options.home_path,
@@ -203,7 +198,9 @@ pub fn create_runtime_archive_with_roots(
             ("compressed_bytes", bytes.len().to_string()),
         ],
     );
-    if bytes.len() as u64 > options.max_size_bytes {
+    if !(options.mode == ArchiveMode::Sandbox && is_empty)
+        && bytes.len() as u64 > options.max_size_bytes
+    {
         return Err(ArchiveError::TooLarge {
             actual: bytes.len() as u64,
             max: options.max_size_bytes,
@@ -212,6 +209,7 @@ pub fn create_runtime_archive_with_roots(
 
     Ok(RuntimeArchive {
         bytes,
+        is_empty,
         session_file_included: contents.session_file_included,
         git_included: contents.git_included,
     })

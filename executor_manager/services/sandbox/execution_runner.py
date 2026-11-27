@@ -12,17 +12,21 @@ This module handles execution lifecycle including:
 """
 
 import asyncio
-from typing import Any, Dict, Optional, Tuple
+from inspect import isawaitable
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 import httpx
 
 from executor_manager.common.config import get_config
 from executor_manager.common.singleton import SingletonMeta
-from executor_manager.models.sandbox import Execution, Sandbox
+from executor_manager.models.sandbox import Execution, ExecutionStatus, Sandbox
 from shared.logger import setup_logger
 from shared.utils.http_client import traced_async_client
 
 logger = setup_logger(__name__)
+
+StartCallback = Callable[[Execution], bool | None | Awaitable[bool | None]]
+ErrorCallback = Callable[[Execution], None | Awaitable[None]]
 
 
 class ExecutionRunner(metaclass=SingletonMeta):
@@ -199,9 +203,8 @@ class ExecutionRunner(metaclass=SingletonMeta):
         sandbox: Sandbox,
         execution: Execution,
         timeout: int,
-        on_running: Optional[callable] = None,
-        on_complete: Optional[callable] = None,
-        on_error: Optional[callable] = None,
+        on_running: StartCallback | None = None,
+        on_error: ErrorCallback | None = None,
     ) -> bool:
         """Run execution with timeout control.
 
@@ -212,8 +215,7 @@ class ExecutionRunner(metaclass=SingletonMeta):
             sandbox: Parent sandbox
             execution: Execution to run
             timeout: Timeout in seconds
-            on_running: Callback when execution starts running
-            on_complete: Callback when execution is accepted
+            on_running: Callback when execution starts, returning False to cancel dispatch
             on_error: Callback when execution fails
 
         Returns:
@@ -222,7 +224,15 @@ class ExecutionRunner(metaclass=SingletonMeta):
         # Set running status
         execution.set_running()
         if on_running:
-            on_running(execution)
+            started = on_running(execution)
+            if isawaitable(started):
+                started = await started
+            if started is False:
+                if execution.status is ExecutionStatus.RUNNING:
+                    execution.set_failed(
+                        "Sandbox is no longer available for this execution"
+                    )
+                return False
 
         # Send request with timeout
         success, error_message = await self.send_execution_request(
@@ -230,13 +240,13 @@ class ExecutionRunner(metaclass=SingletonMeta):
         )
 
         if success:
-            if on_complete:
-                on_complete(execution)
             return True
         else:
             execution.set_failed(error_message or "Unknown error")
             if on_error:
-                on_error(execution)
+                failed = on_error(execution)
+                if isawaitable(failed):
+                    await failed
             return False
 
 

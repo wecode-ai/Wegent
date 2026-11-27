@@ -16,9 +16,12 @@ For sandbox tasks (metadata.task_type == "sandbox"), requests are forwarded
 to the existing executor task dispatch endpoint (/api/tasks/execute).
 """
 
+import asyncio
 import json
 import os
 import time
+from contextlib import nullcontext
+from typing import Awaitable
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -26,6 +29,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox.manager import (
+    SandboxLifecycleUnavailable,
+    SandboxWorkspaceWriteUnavailable,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -37,6 +44,7 @@ SANDBOX_PROXY_CONNECT_TIMEOUT_SECONDS = 10.0
 SANDBOX_PROCESS_START_DEFAULT_READ_SECONDS = 1800.0
 SANDBOX_PROCESS_START_RESPONSE_GRACE_SECONDS = 5.0
 PROCESS_START_PATH = "process.Process/Start"
+WORKSPACE_WRITE_PATHS = {"files", "filesystem.Filesystem/MakeDir"}
 
 
 def _sandbox_proxy_timeout(path: str, deadline_ms: str = "") -> httpx.Timeout:
@@ -110,7 +118,9 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
     # Find sandbox by e2b_sandbox_id
     sandbox = await _find_sandbox_by_e2b_id(manager, sandbox_id)
     if sandbox is not None:
-        sandbox = await manager.get_sandbox(sandbox.sandbox_id, check_health=True)
+        sandbox = await manager.get_sandbox(
+            sandbox.sandbox_id, check_health=True, expected_runtime=sandbox
+        )
     else:
         # Fallback: try direct lookup
         sandbox = await manager.get_sandbox(sandbox_id, check_health=True)
@@ -135,17 +145,34 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
     return base_url, sandbox
 
 
-def _touch_sandbox_activity(sandbox) -> None:
+async def _touch_sandbox_activity(sandbox) -> None:
     """Refresh sandbox activity for proxied SDK calls."""
-    try:
-        sandbox.touch()
-        get_sandbox_manager()._repository.save_sandbox(sandbox)
-    except Exception as exc:
-        logger.warning(
-            "[SandboxProxy] Failed to refresh sandbox activity sandbox_id=%s error=%s",
-            getattr(sandbox, "sandbox_id", "unknown"),
-            exc,
+    refreshed, error = await get_sandbox_manager().refresh_sandbox_activity(
+        sandbox.sandbox_id, expected_runtime=sandbox
+    )
+    if refreshed is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "unavailable", "message": error},
         )
+
+
+async def _await_workspace_write(request: Awaitable[httpx.Response]) -> httpx.Response:
+    """Keep lease renewal running until a forwarded write settles."""
+    worker = asyncio.ensure_future(request)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
 
 
 @router.api_route(
@@ -186,7 +213,9 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
     try:
         # Get sandbox info including metadata
         base_url, sandbox = await _get_sandbox_info(sandbox_id)
-        _touch_sandbox_activity(sandbox)
+        workspace_write = request.method == "POST" and path in WORKSPACE_WRITE_PATHS
+        if not workspace_write:
+            await _touch_sandbox_activity(sandbox)
 
         # Check if this is a sandbox task
         task_type = sandbox.metadata.get("task_type")
@@ -232,13 +261,22 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         }
 
         # Make request to container
-        async with httpx.AsyncClient(timeout=proxy_timeout) as client:
-            response = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                content=body,
+        async def forward() -> httpx.Response:
+            write_scope = (
+                get_sandbox_manager().sandbox_workspace_write(sandbox)
+                if workspace_write
+                else nullcontext()
             )
+            async with write_scope, httpx.AsyncClient(timeout=proxy_timeout) as client:
+                return await client.request(
+                    method=request.method, url=target_url, headers=headers, content=body
+                )
+
+        response = (
+            await _await_workspace_write(forward())
+            if workspace_write
+            else await forward()
+        )
 
         # Check if response is streaming
         content_type = response.headers.get("content-type", "")
@@ -271,6 +309,11 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
 
     except HTTPException:
         raise
+    except SandboxWorkspaceWriteUnavailable as e:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "unavailable", "message": str(e)},
+        ) from e
     except httpx.ConnectError as e:
         logger.error(f"[SandboxProxy] Connection failed to sandbox {sandbox_id}: {e}")
         raise HTTPException(
@@ -422,6 +465,7 @@ async def _proxy_sandbox_execute(
             sandbox_id=sandbox_id,
             prompt=task_prompt,
             timeout=timeout,
+            expected_runtime=sandbox,
             metadata={
                 "subtask_id": subtask_id,
                 "workspace_ref": workspace_ref,
@@ -435,7 +479,13 @@ async def _proxy_sandbox_execute(
 
         if error:
             logger.error(f"[SandboxProxy] Failed to create execution: {error}")
-            return _error_response("execution_create_failed", error)
+            return _error_response(
+                "execution_create_failed",
+                error,
+                status_code=(
+                    503 if isinstance(error, SandboxLifecycleUnavailable) else 200
+                ),
+            )
 
         # Build task_url for client to query results
         # Get base URL from environment variable for flexibility
@@ -482,7 +532,7 @@ async def _proxy_sandbox_execute(
         return _error_response("proxy_error", str(e))
 
 
-def _error_response(code: str, message: str):
+def _error_response(code: str, message: str, *, status_code: int = 200):
     """Generate E2B standard error response in NDJSON format."""
 
     async def generate():
@@ -491,4 +541,6 @@ def _error_response(code: str, message: str):
         ) + "\n"
         yield json.dumps({"type": "end_of_execution"}) + "\n"
 
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        generate(), status_code=status_code, media_type="application/x-ndjson"
+    )

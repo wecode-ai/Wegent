@@ -4,9 +4,11 @@
 
 """Unit tests for deployment-scoped sandbox persistence."""
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
+import redis
 
 from executor_manager.common.config import reset_config
 from executor_manager.common.singleton import SingletonMeta
@@ -87,6 +89,31 @@ def test_save_sandbox_migrates_legacy_active_membership(
     mock_redis_client.zrem.assert_called_with(LEGACY_ACTIVE_SANDBOXES_ZSET, "12345")
     mock_redis_client.zadd.assert_called_once()
     assert mock_redis_client.zadd.call_args.args[0] == repository.active_sandboxes_zset
+
+
+@pytest.mark.parametrize("replace_after_read", [False, True])
+def test_conditional_delete_preserves_a_replacement(
+    mocker, mock_redis_client, sample_sandbox, replace_after_read
+):
+    repository = _create_repository(mocker, mock_redis_client)
+    pipe = mock_redis_client.pipeline.return_value.__enter__.return_value
+    pipe.hget.return_value = json.dumps(
+        {
+            "created_at": sample_sandbox.created_at + (0 if replace_after_read else 1),
+            "container_name": sample_sandbox.container_name,
+            "status": "terminating",
+        }
+    )
+    if replace_after_read:
+        pipe.execute.side_effect = redis.WatchError
+
+    assert repository.delete_sandbox_if_current("12345", sample_sandbox) is False
+    pipe.watch.assert_called_once_with("wegent-sandbox-session:12345")
+    if replace_after_read:
+        pipe.execute.assert_called_once()
+    else:
+        pipe.delete.assert_not_called()
+        pipe.zrem.assert_not_called()
 
 
 def test_get_active_sandbox_ids_reads_only_owned_index(

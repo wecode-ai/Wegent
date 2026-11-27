@@ -35,7 +35,8 @@ async def test_archive_executor_workspace_returns_404_when_runtime_unavailable(m
 
 
 @pytest.mark.asyncio
-async def test_archive_executor_workspace_forwards_payload(mocker):
+@pytest.mark.parametrize("status_code", [httpx.codes.OK, httpx.codes.NO_CONTENT])
+async def test_archive_executor_workspace_forwards_payload(mocker, status_code):
     request = routers.ArchiveExecutorRequest(
         task_id=1385,
         upload_url="https://minio.local/upload/archive",
@@ -54,9 +55,11 @@ async def test_archive_executor_workspace_forwards_payload(mocker):
         routers.ExecutorDispatcher, "get_executor", return_value=mock_executor
     )
 
-    response = mocker.MagicMock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = {"size_bytes": 1024}
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "http://executor.local:8000/api/archive"),
+        json={"size_bytes": 1024} if status_code == httpx.codes.OK else None,
+    )
     client = mocker.MagicMock()
     client.__aenter__ = mocker.AsyncMock(return_value=client)
     client.__aexit__ = mocker.AsyncMock(return_value=None)
@@ -65,7 +68,11 @@ async def test_archive_executor_workspace_forwards_payload(mocker):
 
     result = await routers.archive_executor_workspace(request, http_request)
 
-    assert result == {"size_bytes": 1024}
+    if status_code == httpx.codes.NO_CONTENT:
+        assert result.status_code == httpx.codes.NO_CONTENT
+        assert result.body == b""
+    else:
+        assert result == {"size_bytes": 1024}
     client.post.assert_awaited_once_with(
         "http://executor.local:8000/api/archive",
         json={

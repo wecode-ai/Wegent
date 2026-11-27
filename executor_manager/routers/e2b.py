@@ -28,6 +28,10 @@ from pydantic import BaseModel, Field
 
 from executor_manager.models.sandbox import SandboxStatus
 from executor_manager.services.sandbox import get_sandbox_manager
+from executor_manager.services.sandbox.manager import (
+    SandboxLifecycleUnavailable,
+    SandboxRuntimeNotFound,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -480,10 +484,19 @@ async def delete_sandbox(sandbox_id: str, http_request: Request):
             },
         )
 
-    success, message = await manager.terminate_sandbox(sandbox.sandbox_id)
+    success, message = await manager.terminate_sandbox(
+        sandbox.sandbox_id, expected_runtime=sandbox
+    )
     if not success:
+        if isinstance(message, SandboxRuntimeNotFound):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": message},
+            )
         raise HTTPException(
-            status_code=500,
+            status_code=(
+                503 if isinstance(message, SandboxLifecycleUnavailable) else 500
+            ),
             detail={"code": "termination_failed", "message": message},
         )
 
@@ -533,11 +546,16 @@ async def set_sandbox_timeout(
 
     # Extend timeout
     updated_sandbox, error = await manager.keep_alive(
-        sandbox.sandbox_id, request.timeout
+        sandbox.sandbox_id, request.timeout, expected_runtime=sandbox
     )
     if error:
+        if isinstance(error, SandboxRuntimeNotFound):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": error},
+            )
         raise HTTPException(
-            status_code=400,
+            status_code=503 if isinstance(error, SandboxLifecycleUnavailable) else 400,
             detail={"code": "timeout_failed", "message": error},
         )
 
