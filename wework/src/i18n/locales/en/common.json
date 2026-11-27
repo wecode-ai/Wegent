@@ -6351,7 +6351,7 @@
       "execution_settings_help": "Choose the default working directory and model for new work. New stand-in chat turns also use this model.",
       "task_permissions": "Default task permissions",
       "task_permissions_help": "Applies to new Codex tasks this assistant creates for work you initiate.",
-      "execution_device_help": "The device determines available connections, directories and models. Save or discard changes before switching devices.",
+      "execution_device_help": "New conversations run on the new device. Existing conversations and connection scopes stay on the original device. Set up connection scopes on the new device to receive messages there.",
       "back_to_connections": "Back to connections",
       "connection_projects_empty_all": "No projects are available yet. Projects you join later will be included automatically.",
       "connection_projects_empty_selected": "No projects are available yet. Create or join a project to select it here.",
@@ -6616,7 +6616,7 @@
       "invalid_assignment": "The assignment is invalid or has changed. Confirm the task is still assigned to you, then refresh and try again.",
       "stand_in_unavailable": "Stand-in is unavailable. Check that it is enabled and connected to this project.",
       "stand_in_start_failed": "The stand-in task could not start. Open its task for details and try again.",
-      "stand_in_stopped": "The entire stand-in is stopped. Bind it again before running tasks.",
+      "stand_in_stopped": "The assistant is stopped on this device. Resume it before running tasks.",
       "stand_in_stop_incomplete": "Task cancellation is incomplete. Retry stopping the current stand-in before rebinding.",
       "role_removed": "This assistant was deleted. Select another assistant.",
       "cloud_unavailable": "Cannot connect to the cloud. Check your network and the execution device’s cloud connection.",
@@ -6925,7 +6925,10 @@
       "local_profile": "An existing assistant profile was found. Migrate it to the cloud to use it.",
       "device_only": "Device profile",
       "delete_role_help": "Delete the cloud definition and this device’s settings for “{{name}}”? Stop automatic intake separately on other devices. Existing work records and memories are kept.",
-      "migrate_description": "Import the assistant names and instructions saved on the original execution device into your connected cloud account. Device settings, connection grants, conversations, and learning records stay on the original device."
+      "migrate_description": "Import the assistant names and instructions into your connected cloud account. The default assistant continues to run on its original device, where device settings, connection grants, conversations, and learning records remain.",
+      "legacy_device_unavailable": "The old executor is unreachable. Retry reading its profile or create the cloud assistant on an available device.",
+      "initialize_replacement": "Set up on an available device",
+      "choose_execution_device": "Choose an execution device for the cloud default assistant."
     },
     "instance": {
       "stop": "Stop stand-in",
@@ -6936,6 +6939,7 @@
       "stopping": "Stopping the entire stand-in and cancelling tasks. Rebinding is unavailable until this completes.",
       "stop_pending": "The source device has not confirmed that all stand-in tasks have stopped. Reconnect the device and try again.",
       "bind_help": "Choose the default assistant for this Wework instance. Each instance can bind only one default assistant.",
+      "resume_device": "Resume assistant on this device",
       "stop_before_rebind": "This instance already has a bound stand-in. Stop it before binding another.",
       "owner_unavailable": "The current account has a different user ID from the bound stand-in. Sign in to the original account to continue using or stop it."
     },
@@ -6946,10 +6950,10 @@
       "not_stopped": "The source device has not confirmed that the stand-in and its work have stopped. Check the device and try migrating again.",
       "local_available": "Your local stand-ins, settings and history are retained. Keep working locally or migrate to a cloud device.",
       "view_local": "View local stand-ins",
-      "action": "Migrate and bind",
+      "action": "Migrate to this device",
       "keep_local": "Not now",
       "title": "Migrate to “{{device}}”?",
-      "description": "Wework will stop the stand-in on the source device and cancel its work, then copy the selected profile’s responsibilities, model settings, tags and visible memories. On success, Wework binds the destination device. The imported profile stays paused, and the source profile and conversation history are retained. If the source device is unreachable or cannot confirm the stop, Wework will use the cloud assistant on the destination device.",
+      "description": "Wework will stop the stand-in on the source device and cancel its work, then copy the selected profile’s responsibilities, model settings, tags and visible memories. Migrating the default assistant updates its execution device after the copy succeeds. The imported profile stays paused, and the source profile and conversation history are retained. If the source device is unreachable or cannot confirm the stop, Wework will use the cloud assistant on the destination device.",
       "changed": "The old profile changed. Review both profiles before retrying; the source is never resumed automatically.",
       "conflict": "A migrated cloud copy has different settings. Review or remove that copy before retrying. Local settings were not overwritten.",
       "same_device": "Choose a different cloud device."

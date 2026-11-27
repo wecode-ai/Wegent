@@ -1,6 +1,5 @@
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
 import {
-  isStandInBindingOwner,
   type StandInBindingTarget,
   type StandInExecutorApi,
   type StandInProposal,
@@ -33,7 +32,7 @@ export function createAssistantSourcesModel(
   api: StandInExecutorApi | undefined,
   userId: number,
   scope: string,
-  expectedBinding?: Pick<StandInBindingTarget, 'userId' | 'deviceId'>
+  configuredTarget?: Pick<StandInBindingTarget, 'userId' | 'deviceId'>
 ) {
   let snapshot: SourceSnapshot = {}
   const listeners = new Set<() => void>()
@@ -103,21 +102,18 @@ export function createAssistantSourcesModel(
         throw Object.assign(new Error(), { code: 'executor_unavailable' })
       }
       if (snapshot.source && snapshot.source.localDeviceId !== identity.deviceId) clearSource()
-      const binding = await api.binding(identity.deviceId)
+      const account = configuredTarget
+        ? undefined
+        : await services.personalAssistantAccountApi?.get()
       if (!current()) return
-      const target = binding.target
-      if (
-        expectedBinding &&
-        (binding.status !== 'active' ||
-          target?.userId !== expectedBinding.userId ||
-          target.deviceId !== expectedBinding.deviceId)
-      )
+      if (configuredTarget && configuredTarget.userId !== userId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
-      if (target && !isStandInBindingOwner(target.userId, userId)) {
-        throw Object.assign(new Error(), { code: 'permission_denied' })
-      }
-      const ownerId = target?.userId ?? userId
-      const deviceId = target?.deviceId ?? identity.deviceId
+      const ownerId = userId
+      const deviceId =
+        configuredTarget?.deviceId ??
+        account?.definitions.find(definition => definition.roleId === '@primary')?.bot.spec
+          ?.execution_policy?.environment_id
+      if (!deviceId) throw Object.assign(new Error(), { code: 'executor_unavailable' })
       if (
         snapshot.source &&
         (snapshot.source.ownerId !== ownerId || snapshot.source.deviceId !== deviceId)

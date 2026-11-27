@@ -24,16 +24,6 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 
-<a id="stand-in-message-center"></a>
-
-## Message center
-
-After initial setup, open **Left sidebar → My assistants → Message center** to review DingTalk results. On desktop clients that support DingTalk delegation, the workspace opens this view on first entry. Select **Default assistant** in the header to return to its conversation.
-
-The message center shows **DingTalk receive scope configured** after you save the scope in connection settings. When delegation records are available, review **Replied**, **Needs your attention**, **Not handled automatically**, and **Exceptions**. Only confirmed deliveries count as replies. The header shows **Pause delegation** or **Resume delegation** when the action is available. Select **Delegation settings** to open the default assistant's connection settings. Closing settings returns to the message center. If desktop notifications are turned off, select **Open notification settings** in the center to turn them on again.
-
-Open a record to see the original message, reply evidence, handling details, and delivery receipt. When delivery is unknown and a channel task is available, select **Check delivery status**. To take over work that needs your attention, select **I'll handle this** when available. Select **Edit this source** to open settings for the corresponding conversation.
-
 <a id="stand-in-chat-and-desktop-notifications"></a>
 
 ## Stand-in chat and desktop notifications
@@ -110,31 +100,17 @@ The **default assistant** can coordinate and delegate work. To add an assistant,
 
 <a id="instance-binding-and-stopping"></a>
 
-Saving a new role enables it. Explicitly adding or enabling a source starts intake for the primary identity or role on Save, without a second intake switch. Renaming or editing duties alone does not resume a paused identity. Stopping the entire stand-in still requires native confirmation; source grants and operation approvals are unchanged.
+## Execution devices and legacy recovery
 
-## Instance binding and stopping
+Other devices signed in to the same cloud account can see synced assistants. To message an assistant running on another Wework desktop, enable remote personal task access on its execution device. New messages run on the assistant’s configured device.
 
-When connected to a cloud account, **My assistant** first checks whether that account has a default assistant. If it does, clients read the same Bot and Ghost. If the cloud account has no assistant and this computer has a saved profile, Wework asks you to migrate the names and instructions of the default assistant and its roles. With no saved profile, Wework proceeds through normal setup. If the cloud check fails, retry from the current page.
+After connecting your cloud account, open **My assistants** in the left sidebar to use the account’s default assistant. Clients read the same solo Team and its Bot and Ghost. If the account has no default assistant, Wework checks this device for a saved profile first. After you confirm the import, the assistant opens and keeps its original execution device. If there is no profile to import, Wework starts first-time setup.
 
-Choose the execution device in **Assistant details → Manage assistant → Execution environment**. The cloud account saves the selection for this assistant and reuses it for subsequent conversations. Before first initialization, the app checks the executor bound to the current account, including a remote Docker device. You can confirm the import on this computer. Connecting to the cloud and completing any required migration are prerequisites for using the assistant.
+Select an execution device in **Assistant details → Manage assistant → Execution environment**. The cloud account saves your choice for each assistant. New conversations use the selected device. Existing conversations reopen on their original devices. Review the model, working directory and source grants after changing devices.
 
-If **My assistants** encounters incompatible versions, it first shows an error with compatibility guidance without automatically navigating away. Select **View device status** beside the error to open **Cloud work**, inspect device status and versions, and restart the cloud device if applicable. Check the reported version after reconnection. For local issues, the desktop device section offers **View local version**, which opens About to check for updates even when there are no cloud devices. This action does not install or restart anything automatically. After resolving the issue, return to the stand-in page and select **Reload**. Other loading errors retain reload without this device guidance action.
+**My assistants** offers migration or recovery when it detects an older profile or executor that needs attention. If the executor has stopped, select **Resume assistant on this device**. Wework stops assistant work on the source device before migration. If the source cannot confirm the stop, you can use the existing cloud definition. Migration keeps conversation history on the source and appends portable profile settings and memories on the destination. Imported profiles remain paused until you configure their working directory and grants.
 
-The default assistant retains one local or cloud instance binding. Scenario roles choose their execution device independently. Select **Execution device** in a role profile and save: new tasks use the selected device, while existing tasks, queued work and existing conversations for the same Issue remain on their original device. Changing a role does not rebind the primary identity. The role list follows saved device locations, and historical work opens at its original task address.
-
-Stand-in binding ownership uses the user ID. Changing the backend address or username preserves the binding without rewriting older bindings or advancing their versions. Matching user IDs from different deployments are treated as the same binding owner; cross-deployment account isolation is not provided. The current connection still checks ownership and availability of the bound cloud device. If the device is unreachable, the stand-in page shows the device error and retains the binding.
-
-Reselect the model and working directory after changing a role's device, and check source accounts and projects on the target. Credentials, existing tasks and conversations are not moved. Offline devices cannot be newly selected. A failed target save preserves the draft. When target activation cannot be confirmed, refresh the target role; the original device is not simultaneously restored as a receiver for new tasks. Role device changes do not require the primary instance's stop-and-rebind flow below.
-
-To rebind the primary identity, select it and open **Assistant details → Manage assistant**, then select **Stop stand-in** at the bottom left of settings and confirm. This stops intake and cancels primary and role conversations, running work and queued delegated tasks on the currently bound device. Roles on other devices, other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories and history remain; rebinding the original profile restores its previous intake switches.
-
-An offline device, failed cancellation, or missing process-stop acknowledgement keeps the instance **Stopping**, with rebinding unavailable. Reconnect and use **Retry stopping**. Reopening the page does not unlock the binding. Settings on the currently bound device retain **Stop stand-in** at the bottom left; role settings on other devices do not show this entry. There is no duplicate intake switch.
-
-When **My assistants** detects a legacy binding that needs attention, it opens the migration flow. Choose a profile and a destination, then select **Migrate and bind** and confirm. Wework opens the conversation and dismisses the migration flow once the destination assistant is ready. Wework stops the stand-in and cancels its work on the source device automatically. Copying begins after the source device confirms the stop. If the source device is unreachable or cannot confirm the stop, the destination uses the current account’s cloud assistant. Wework creates a default definition only when the account has none. When a returning device’s settings are loaded, Wework uses the cloud definitions and saves conflicting local definitions. Open **Default assistant → Assistant details → Manage assistant** and select **Download assistant definition backups** to recover the original names, instructions and device assignments. Retain old profiles, memories and conversation history while appending portable responsibilities, model settings, tags and visible memories without overwriting target settings. The imported role stays paused until its device directory, project/source grants and arrangements are configured. Only successful copying changes this instance's binding; copying failures support retry while the source stays stopped. If target startup acknowledgement fails after rebinding, retain the target binding for stopping and recovery without automatically restarting the source. A stopped target permits only these disabled, grant-free imports; migration cannot edit existing settings or restore enablement. Learning examples linked to evidence on the original device stay there after migration.
-
-For an unbound instance, a project entry pointing to a specific device establishes that first binding. Such links never replace an existing binding.
-
-If concurrent initialization causes a first-binding version conflict, the page reads the saved authoritative binding without rebinding, restarting the stand-in, or replacing another account's binding.
+To export previously detected conflicting definitions, select **Default assistant → Assistant details → Manage assistant → Download assistant definition backups**.
 
 Click **Board** in the Tasks sidebar, or select **Board** from its task view menu, while viewing **My assistants** to open your personal task board.
 

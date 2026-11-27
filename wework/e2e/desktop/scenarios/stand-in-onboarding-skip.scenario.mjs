@@ -87,19 +87,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         false
       )
       await control.command('waitFor', CHAT, { visible: false })
-      await control.command('waitFor', selector('stand-in-message-center'), { visible: false })
+      await control.command('waitFor', selector('stand-in-message-center-open'), { visible: false })
       await captureScreenshot(control, 'stand-in-onboarding-deferred.png')
-      await control.command('clickWhenEnabled', selector('stand-in-message-center-open'))
-      await control.command('waitFor', selector('message-center-start-setup'), {
-        text: '去连接钉钉',
-        visible: true,
-      })
-      await control.command('waitFor', selector('message-center-execution-hint'), {
-        visible: false,
-      })
-      await control.command('waitFor', resume, { visible: false })
-      await captureScreenshot(control, 'stand-in-onboarding-dingtalk-disconnected.png')
-      await control.command('clickWhenEnabled', selector('stand-in-primary-open'))
       await control.command('clickWhenEnabled', resume)
       await control.command('waitFor', selector('stand-in-onboarding-model'))
       const catalog = (await rpc('runtime.runner.catalog', {})).models

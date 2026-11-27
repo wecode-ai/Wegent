@@ -1,21 +1,19 @@
 import assert from 'node:assert/strict'
-import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
+import { openStandInActivity } from './stand-in-profile-navigation.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 import { DINGTALK_DELEGATION_IDS } from './stand-in-dingtalk-delegation-fixture.mjs'
 
 const byId = id => `[data-testid="${id}"]`
-const center = byId('stand-in-message-center')
-const filter = `${center} ${byId('message-center-filter')}`
-const detail = `${center} ${byId('message-center-detail')}`
-const delivery = byId('message-center-detail-delivery')
-const receipt = `${detail} section:has(> ${delivery})`
-const verify = `${detail} ${byId('message-center-verify-delivery')}`
-const takeover = `${detail} ${byId('message-center-take-over')}`
-const close = `${detail} :is(${byId('message-center-detail-close')}, ${byId('message-center-detail-back')})`
+const detail = byId('stand-in-work-preview')
+const reason = byId('stand-in-delegation-result-reason')
+const receipt = byId('stand-in-delegation-receipt')
+const verify = `${detail} ${byId('stand-in-delegation-verify-delivery')}`
+const takeover = `${detail} ${byId('stand-in-delegation-takeover')}`
+const close = `${detail} ${byId('stand-in-preview-close')}`
 
 export async function verifyDingTalkDelivery(
   control,
-  { mailbox, automaticallyConfirmed, changed, pending, rejected, timeout }
+  { mailbox, work, automaticallyConfirmed, changed, pending, rejected, timeout }
 ) {
   const pendingId = pending.id
   const rejectedId = rejected.id
@@ -42,49 +40,37 @@ export async function verifyDingTalkDelivery(
     await control.command('scrollIntoView', selector, { visible: true })
     await control.command('clickWhenEnabled', selector, { visible: true })
   }
-  const openResult = async (record, category) => {
-    if ((await control.command('getElementCount', detail)) !== '0') {
-      await clickInView(close)
-    }
-    const selected = `${filter} [data-value="${category}"]`
-    if ((await control.command('getElementCount', selected)) === '0') {
-      await clickInView(filter)
-      await control.command('clickWhenEnabled', `[role="option"][data-value="${category}"]`, {
-        visible: true,
-      })
-      await control.command('waitFor', selected)
-    }
-    const row = byId(`message-center-record-${record.recordId}`)
-    await clickInView(`${center} ${row}`)
-    await control.command('waitFor', detail, { text: record.text })
-  }
-  const assertNoReceipt = async record => {
-    assert.doesNotMatch(
-      await control.command('getText', receipt),
-      labels.receiptKind,
-      `${record.id} must not show a delivery receipt before confirmation`
+  const openResult = async record => {
+    const items = await storyUntil(
+      work,
+      result => result.items.some(item => item.id === record.workId),
+      timeout,
+      `Delegated work ${record.workId} must be visible to the owner`
     )
+    const item = items.items.find(row => row.id === record.workId)
+    if ((await control.command('getElementCount', detail)) !== '0') await clickInView(close)
+    await clickInView(byId(`stand-in-activity-task-${item.taskId}`))
+    await control.command('waitFor', detail)
   }
+  const assertNoReceipt = () => control.command('waitFor', receipt, { visible: false })
 
-  await ensureExperimentalFeaturesEnabled(control)
   await control.command('clickWhenEnabled', byId('personal-stand-in-button'))
-  await control.command('clickWhenEnabled', byId('stand-in-message-center-open'))
-  await control.command('waitFor', filter)
+  await control.command('clickWhenEnabled', byId('stand-in-primary-open'))
+  await openStandInActivity(control)
+  await control.command('waitFor', byId('stand-in-work-dialog'))
   const language = await control.command('getAttribute', 'html', { value: 'lang' })
   const labels = language?.startsWith('en')
     ? {
-        failed: 'Delivery failed',
-        receiptKind: /Channel receipt|Recipient verification/,
-        unknown: 'Delivery unknown',
+        failed: 'Reply failed to send',
+        unknown: 'Reply delivery unconfirmed',
         takeover: 'Taken over by you',
-        sent: 'Delivery confirmed',
+        sent: 'Automatic reply sent',
       }
     : {
-        failed: '投递失败',
-        receiptKind: /渠道回执|收件端核验/,
-        unknown: '结果未知',
+        failed: '答复发送失败',
+        unknown: '答复送达待确认',
         takeover: '本人已接管',
-        sent: '已确认送达',
+        sent: '已自动答复',
       }
   for (const record of automaticallyConfirmed) {
     const recordId = record.id
@@ -94,22 +80,21 @@ export async function verifyDingTalkDelivery(
       [DINGTALK_DELEGATION_IDS.profile, false],
       [DINGTALK_DELEGATION_IDS.profile, true],
     ])
-    await openResult(record, 'replied')
-    await control.command('waitFor', `${detail} ${delivery}`, { text: labels.sent })
+    await openResult(record)
+    await control.command('waitFor', detail, { text: labels.sent })
     await control.command('waitFor', receipt, { text: `accepted-${recordId}` })
     await control.command('waitFor', verify, { visible: false })
     await assertSingleSubmission(record)
   }
 
-  await openResult(changed, 'exceptions')
-  await control.command('waitFor', `${detail} ${delivery}`, { text: labels.failed })
-  await clickInView(`${detail} ${byId('message-center-detail-process')}`)
-  await control.command('waitFor', detail, { text: changed.delegationResult.reason, visible: true })
-  await assertNoReceipt(changed)
+  await openResult(changed)
+  await control.command('waitFor', detail, { text: labels.failed })
+  await control.command('waitFor', reason, { text: changed.delegationResult.reason, visible: true })
+  await assertNoReceipt()
 
-  await openResult(rejected, 'exceptions')
-  await control.command('waitFor', `${detail} ${delivery}`, { text: labels.failed })
-  await assertNoReceipt(rejected)
+  await openResult(rejected)
+  await control.command('waitFor', detail, { text: labels.failed })
+  await assertNoReceipt()
   await control.command('waitFor', verify, { visible: false })
   await assertSingleSubmission(rejected)
 
@@ -122,12 +107,12 @@ export async function verifyDingTalkDelivery(
   assert.ok(
     automaticChecks.every(row => row.profile === DINGTALK_DELEGATION_IDS.profile && !row.matching)
   )
-  await openResult(pending, 'exceptions')
-  await control.command('waitFor', `${detail} ${delivery}`, { text: labels.unknown })
-  await assertNoReceipt(pending)
+  await openResult(pending)
+  await control.command('waitFor', detail, { text: labels.unknown })
+  await assertNoReceipt()
   await clickInView(takeover)
   await control.command('waitFor', detail, { text: labels.takeover })
-  await control.command('waitFor', `${detail} ${delivery}`, { text: labels.unknown })
+  await control.command('waitFor', detail, { text: labels.unknown })
   await control.command('waitFor', takeover, { visible: false })
 
   await clickInView(verify)
@@ -138,14 +123,14 @@ export async function verifyDingTalkDelivery(
     'The first UI verification must query the recorded channel task'
   )
   await control.command('waitFor', verify, { enabled: true })
-  await control.command('waitFor', `${detail} ${delivery}`, { text: labels.unknown })
-  await assertNoReceipt(pending)
+  await control.command('waitFor', detail, { text: labels.unknown })
+  await assertNoReceipt()
   await assertSingleSubmission(pending)
 
   await mailbox.releaseMatchingReceipt()
   await clickInView(verify)
   await control.command('waitFor', receipt, { text: `accepted-${pendingId}` })
-  await control.command('waitFor', `${detail} ${delivery}`, { text: labels.sent })
+  await control.command('waitFor', detail, { text: labels.sent })
   await control.command('waitFor', detail, { text: labels.takeover })
   await control.command('waitFor', verify, { visible: false })
   await assertSingleSubmission(pending)
@@ -154,6 +139,7 @@ export async function verifyDingTalkDelivery(
     [DINGTALK_DELEGATION_IDS.profile, true],
   ])
   await clickInView(close)
+  await clickInView(byId('stand-in-work-dialog-close'))
   return {
     automaticallyConfirmed: automaticallyConfirmed.map(record => record.id),
     channelTaskId,

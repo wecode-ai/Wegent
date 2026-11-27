@@ -18,8 +18,7 @@ import {
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { hasSavedStandIn, initializeStandInTarget } from './standInInstanceSource'
-import { initializePersonalAssistantOnDevice } from './personalAssistantDeviceSettings'
+import { hasSavedStandIn } from './standInInstanceSource'
 
 async function loadSetup(
   services: WorkbenchServices,
@@ -46,50 +45,34 @@ async function loadSetup(
   }
   const device = await services.getLocalRuntimeSidebarIdentity()
   if (!device) throw new Error('Executor identity is unavailable')
-  const binding = await api.binding(device.deviceId)
-  const { target } = binding
-  signal.throwIfAborted()
-  if (
-    target &&
-    (target.userId === userId ||
-      (target.userId === LOCAL_USER.id && target.deviceId === device.deviceId))
-  ) {
-    let profile
-    try {
-      profile = await api.personalGet(target.userId, target.deviceId)
-    } catch (cause) {
-      signal.throwIfAborted()
-      if (!isStandInDeviceUnreachable(cause) || target.deviceId === device.deviceId) throw cause
-      const targetDevice =
-        preferredDevice && preferredDevice !== target.deviceId ? preferredDevice : device.deviceId
-      const account = await initializeStandInTarget(
-        api,
-        device.deviceId,
-        binding,
-        { userId, deviceId: targetDevice, backendUrl: target.backendUrl },
-        async () => {
-          signal.throwIfAborted()
-          return initializePersonalAssistantOnDevice(cloud, name, targetDevice)
-        }
-      )
-      return { account, local: undefined }
-    }
-    signal.throwIfAborted()
-    if (hasSavedStandIn(profile)) return { account: null, local: profile }
-    return { account: await cloud.initialize(name, undefined, target.deviceId), local: undefined }
-  }
   const [owned, local] = await Promise.all([
     api.personalGet(userId, device.deviceId),
     api.personalGet(LOCAL_USER.id, device.deviceId),
   ])
   signal.throwIfAborted()
-  const legacy = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
-  return legacy
-    ? { account: null, local: legacy }
-    : {
-        account: await cloud.initialize(name, undefined, preferredDevice ?? device.deviceId),
-        local: undefined,
-      }
+  const localProfile = hasSavedStandIn(owned) ? owned : hasSavedStandIn(local) ? local : undefined
+  if (localProfile) return { account: null, local: localProfile }
+
+  const { target } = await api.binding(device.deviceId)
+  signal.throwIfAborted()
+  if (target?.userId === userId && target.deviceId !== device.deviceId) {
+    const profile = await api.personalGet(target.userId, target.deviceId).catch(cause => {
+      signal.throwIfAborted()
+      if (!isStandInDeviceUnreachable(cause)) throw cause
+      return null
+    })
+    signal.throwIfAborted()
+    if (!profile) {
+      const recoveryDevice = preferredDevice !== target.deviceId ? preferredDevice : undefined
+      return { account: null, local: undefined, recoveryDevice: recoveryDevice ?? device.deviceId }
+    }
+    if (hasSavedStandIn(profile)) return { account: null, local: profile }
+  }
+
+  return {
+    account: await cloud.initialize(name, undefined, preferredDevice ?? device.deviceId),
+    local: undefined,
+  }
 }
 
 export function PersonalAssistantAccountSetup({
@@ -119,7 +102,7 @@ export function PersonalAssistantAccountSetup({
       createAsyncResource(JSON.stringify([userId]), load, {
         refreshOnSubscribe: true,
       }),
-    [services, userId, name, load]
+    [userId, load]
   )
   const snapshot = useSyncExternalStore(
     active ? resource.subscribe : subscribeIdleResource,
@@ -165,7 +148,10 @@ export function PersonalAssistantAccountSetup({
       const local = source
         ? await services.standInApi!.personalGet(source.userId, source.executionDeviceId)
         : undefined
-      const account = await services.personalAssistantAccountApi!.initialize(name, local)
+      const cloud = services.personalAssistantAccountApi!
+      const account = data.recoveryDevice
+        ? await cloud.initialize(name, undefined, data.recoveryDevice)
+        : await cloud.initialize(name, local)
       setMigrationNotice(Boolean(local))
       publish(account)
     } catch (cause) {
@@ -198,6 +184,27 @@ export function PersonalAssistantAccountSetup({
                 setError(undefined)
                 void resource.reload()
               }}
+            >
+              {t('standIn.reload')}
+            </Button>
+          </>
+        ) : data?.recoveryDevice ? (
+          <>
+            <p role="status">{t('standIn.account.legacy_device_unavailable')}</p>
+            <Button
+              size="sm"
+              data-testid="personal-assistant-recover-unreachable-device"
+              disabled={pending}
+              onClick={() => void initialize()}
+            >
+              {t('standIn.account.initialize_replacement')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="personal-assistant-retry-legacy-device"
+              disabled={pending}
+              onClick={() => void resource.reload()}
             >
               {t('standIn.reload')}
             </Button>

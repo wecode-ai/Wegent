@@ -94,6 +94,52 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
             {
                 self.verify_runtime_user(&payload).await?;
             }
+            if data["appTaskAccessScope"] == "stand-in-owner" {
+                let owner = data["standInOwnerUserId"].as_i64().filter(|id| *id > 0);
+                let denied = || {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "The requested assistant owner must match the connected account",
+                    )
+                };
+                let owner = owner.ok_or_else(denied)?;
+                let mut connection = self.require_runtime_connection()?;
+                let connected_owner = if connection.authenticated_user_id.is_none() {
+                    let initialization = self.task_send_gate("stand-in-owner:connection");
+                    let _initializing = initialization.lock().await;
+                    connection = self.require_runtime_connection()?;
+                    if connection.authenticated_user_id.is_none() {
+                        self.initialize_connection_service_owner().await?
+                    } else {
+                        Self::connected_runtime_user(&connection).await?
+                    }
+                } else {
+                    Self::connected_runtime_user(&connection).await?
+                };
+                if owner != connected_owner {
+                    return Err(denied());
+                }
+                match method.as_str() {
+                    "runtime.stand_in.device_identity" => {}
+                    "runtime.tasks.get" => {
+                        let task_id = payload["taskId"].as_str().ok_or_else(denied)?;
+                        if !task_id.starts_with(&format!("stand-in-chat-{owner}-")) {
+                            return Err(denied());
+                        }
+                        let Some(task) = self.local_task_link(task_id) else {
+                            return Ok(json!({"success": true, "task": null}));
+                        };
+                        let origin = &task.runtime_handle["origin"];
+                        if origin["type"] != "stand_in_identity"
+                            || origin["userId"].as_i64() != Some(owner)
+                        {
+                            return Err(denied());
+                        }
+                    }
+                    _ if payload["userId"].as_i64() != Some(owner) => return Err(denied()),
+                    _ => {}
+                }
+            }
             self.bind_submitted_interface(&method, &mut payload, data.get("modelBinding"))?;
             if let Some(token) = data["personalRuntimeToken"].as_str() {
                 bind_personal_runtime_token(&mut payload, token);

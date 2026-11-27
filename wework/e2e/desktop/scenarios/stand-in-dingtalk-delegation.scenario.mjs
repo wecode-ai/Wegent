@@ -553,6 +553,7 @@ export function createDesktopScenario(options) {
         ])
         const delivery = await verifyDingTalkDelivery(control, {
           mailbox,
+          work,
           automaticallyConfirmed: automatic.map(question => records().get(question.id)),
           changed: records().get(changed.question.id),
           pending: records().get(pending.question.id),

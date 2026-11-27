@@ -46,7 +46,6 @@ type StandInOnboardingProps = {
   onOpenConversation?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
-  onActivate?(): Promise<boolean>
   configuration: StandInOnboardingConfiguration
   children(resumeSetup?: ReactNode): ReactNode
 }
@@ -73,7 +72,6 @@ function StandInOnboardingContent({
   onOpenConversation,
   onExampleSelect,
   onClose,
-  onActivate,
   children,
   configuration,
 }: StandInOnboardingProps) {
@@ -111,6 +109,26 @@ function StandInOnboardingContent({
         ? getStandInErrorMessage(snapshot.error)
         : null
   const [saving, setSaving] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [recoveryError, setRecoveryError] = useState<string>()
+  const settings = configuration.settings
+  const lifecycle =
+    settings?.executionDeviceId === deviceId && settings.userId === userId
+      ? settings.lifecycle?.status
+      : undefined
+  const recover = async () => {
+    if (!lifecycle || recovering) return
+    setRecovering(true)
+    setRecoveryError(undefined)
+    try {
+      await api.lifecycle(userId, deviceId, lifecycle === 'stopped' ? 'start' : 'stop')
+      configuration.onReload()
+    } catch (cause) {
+      setRecoveryError(getStandInErrorMessage(cause))
+    } finally {
+      setRecovering(false)
+    }
+  }
   const [dismissed, setDismissed] = useState(false)
   const [previousActive, setPreviousActive] = useState(active)
   if (previousActive !== active) {
@@ -162,7 +180,6 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
-      if (onActivate && !(await onActivate())) return false
       if (openConversation) onOpenConversation?.()
       resource.update(() => completed)
       onGuideClose?.()
@@ -196,6 +213,36 @@ function StandInOnboardingContent({
         aria-hidden={open || undefined}
         data-testid="stand-in-onboarding-content"
       >
+        {active && lifecycle && (
+          <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+            <p>
+              {t(
+                lifecycle === 'stopped'
+                  ? 'standIn.instance.stopped'
+                  : 'standIn.instance.stop_pending'
+              )}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="min-h-11 md:min-h-8"
+              data-testid="stand-in-resume-device"
+              disabled={recovering}
+              onClick={() => void recover()}
+            >
+              {t(
+                lifecycle === 'stopped'
+                  ? 'standIn.instance.resume_device'
+                  : 'standIn.instance.retry_stop'
+              )}
+            </Button>
+            {recoveryError && (
+              <p role="alert" className="text-error">
+                {recoveryError}
+              </p>
+            )}
+          </div>
+        )}
         {result || dismissed || bypass || !active ? children(resumeSetup || undefined) : null}
         {checking && !guideOpen ? (
           <p role="status" className="p-5 text-sm text-text-secondary">

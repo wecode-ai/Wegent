@@ -136,6 +136,17 @@ impl RemoteTaskAccess {
                         | "runtime.stand_in.role_task.retry"
                         | "runtime.stand_in.role_task.accept_cancel"
                 ))
+            || (access_scope == Some("stand-in-owner")
+                && matches!(
+                    method,
+                    "runtime.stand_in.personal.get"
+                        | "runtime.stand_in.proposal.get"
+                        | "runtime.stand_in.work.list"
+                        | "runtime.stand_in.conversation"
+                        | "runtime.stand_in.device_identity"
+                        | "runtime.tasks.get"
+                )
+                && self.enabled())
             || (TASK_METHODS.contains(&method) && self.enabled())
         {
             return Ok(());
@@ -155,6 +166,22 @@ fn access_error(message: String) -> AppIpcError {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn owner_assistant_scope_requires_current_consent() {
+        let home = tempfile::tempdir().unwrap();
+        let access = RemoteTaskAccess::new(home.path().join("remote-task-access.json"));
+        let method = "runtime.stand_in.conversation";
+        assert!(access.authorize(method, Some("stand-in-owner")).is_err());
+        access.update(json!({"enabled": true})).unwrap();
+        assert!(access.authorize(method, None).is_err());
+        assert!(access.authorize(method, Some("stand-in-owner")).is_ok());
+        assert!(access
+            .authorize("runtime.stand_in.personal.save", Some("stand-in-owner"))
+            .is_err());
+        access.update(json!({"enabled": false})).unwrap();
+        assert!(access.authorize(method, Some("stand-in-owner")).is_err());
+    }
 
     #[test]
     fn consent_is_local_persistent_and_revoked_for_existing_readers() {

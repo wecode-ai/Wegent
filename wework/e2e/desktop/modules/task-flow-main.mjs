@@ -1325,6 +1325,7 @@ async function main() {
         assistantFixtureToken = await createStandInFixtureSession(cloudEnvironment)
       if (
         assistantCheckpoint &&
+        !desktopScenario?.verifiesStandInAccountMigration &&
         !['stand-in-cloud-device', 'stand-in-role-delegation-cross-device'].includes(
           DESKTOP_SEGMENT
         )
