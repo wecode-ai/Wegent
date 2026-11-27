@@ -5,7 +5,10 @@
 
 import asyncio
 import json
+import logging
 import socket
+import sys
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -28,8 +31,22 @@ class RedisSubscriptionServer:
         self.handlers: set[asyncio.Task] = set()
         self.subscribers: set[asyncio.StreamWriter] = set()
         self.heartbeats: dict[asyncio.StreamWriter, asyncio.Task[None]] = {}
+        self.events: list[dict[str, object]] = []
+        self.connection_ids: dict[asyncio.StreamWriter, int] = {}
         self.connections_closed = asyncio.Event()
         self.connections_closed.set()
+
+    def record_event(
+        self,
+        event: str,
+        writer: asyncio.StreamWriter | None = None,
+        **details: object,
+    ) -> None:
+        if writer is not None:
+            details["connection"] = self.connection_ids.setdefault(
+                writer, len(self.connection_ids) + 1
+            )
+        self.events.append({"at": time.monotonic(), "event": event, **details})
 
     @staticmethod
     async def read_command(reader: asyncio.StreamReader) -> list[bytes]:
@@ -57,6 +74,7 @@ class RedisSubscriptionServer:
     async def subscribe(self, writer: asyncio.StreamWriter) -> None:
         self.subscriptions += 1
         self.subscribers.add(writer)
+        self.record_event("subscribe", writer, count=self.subscriptions)
         writer.write(b"*3\r\n$9\r\nsubscribe\r\n$8\r\nsocketio\r\n:1\r\n")
         if self.subscriptions == 1 and self.partial_response:
             writer.write(
@@ -68,24 +86,35 @@ class RedisSubscriptionServer:
                 writer.write(
                     self.message(b"socketio", json.dumps(self.ready_callback).encode())
                 )
+                self.record_event("ready_sent", writer)
             if writer not in self.heartbeats:
                 self.heartbeats[writer] = asyncio.create_task(self.keep_alive(writer))
         await writer.drain()
 
-    @staticmethod
-    async def keep_alive(writer: asyncio.StreamWriter) -> None:
+    async def keep_alive(self, writer: asyncio.StreamWriter) -> None:
         """Keep recovered connections healthy without generating Socket.IO events."""
-        while True:
-            await asyncio.sleep(0.05)
-            writer.write(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
-            await writer.drain()
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+                writer.write(b"*2\r\n$4\r\npong\r\n$0\r\n\r\n")
+                await writer.drain()
+        except Exception as error:
+            self.record_event(
+                "heartbeat_error",
+                writer,
+                error_type=type(error).__name__,
+                error=str(error),
+            )
+            raise
 
     async def publish_callback(self, channel: bytes, payload: bytes) -> None:
         emit = json.loads(payload)
+        self.record_event("publish", method=emit.get("method"))
         if emit.get("method") == "callback":
             for subscriber in tuple(self.subscribers):
                 subscriber.write(self.message(channel, payload))
                 await subscriber.drain()
+                self.record_event("callback_fanout", subscriber)
             return
         sid, namespace, callback_id = emit["callback"]
         callback = json.dumps(
@@ -102,7 +131,9 @@ class RedisSubscriptionServer:
             try:
                 subscriber.write(self.message(channel, callback))
                 await subscriber.drain()
+                self.record_event("callback_fanout", subscriber)
             except ConnectionError:
+                self.record_event("callback_fanout_disconnected", subscriber)
                 self.subscribers.discard(subscriber)
 
     async def handle(
@@ -137,6 +168,7 @@ class RedisSubscriptionServer:
             # A disconnected client must not abort another subscriber's callback.
             pass
         finally:
+            self.record_event("close", writer)
             self.subscribers.discard(writer)
             heartbeat = self.heartbeats.pop(writer, None)
             if heartbeat is not None:
@@ -278,7 +310,20 @@ async def redis_subscription(
 @pytest.mark.asyncio
 async def test_stalled_subscription_resubscribes_and_receives_rpc_ack(
     redis_subscription: RedisSubscriptionServer,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    def observe_redis_error(record: logging.LogRecord) -> bool:
+        if hasattr(record, "redis_exception"):
+            error_type = sys.exc_info()[0]
+            record.redis_exception_type = error_type.__name__ if error_type else None
+            redis_subscription.record_event(
+                "redis_error",
+                error_type=record.redis_exception_type,
+                error=record.redis_exception,
+            )
+        return True
+
+    caplog.handler.addFilter(observe_redis_error)
     server = socketio_core.create_socketio_server()
     manager = server.manager
     ready = asyncio.Event()
@@ -296,18 +341,44 @@ async def test_stalled_subscription_resubscribes_and_receives_rpc_ack(
             await asyncio.wait_for(ready.wait(), timeout=4)
         except TimeoutError:
             pytest.fail("Socket.IO Redis listener did not recover from a stalled read")
+        redis_subscription.record_event("ready_received")
 
         # Recovery must survive a scheduling delay longer than the read timeout.
         recovered_subscriptions = redis_subscription.subscriptions
         await asyncio.sleep(socketio_core.settings.SOCKETIO_REDIS_SOCKET_TIMEOUT * 1.75)
         assert redis_subscription.subscriptions == recovered_subscriptions
-        result = await server.call(
-            "runtime:rpc",
-            {"method": "runtime.capacity.get", "payload": {}},
-            to="remote-device-sid",
-            namespace="/local-executor",
-            timeout=4,
-        )
+        redis_subscription.record_event("call_start")
+        try:
+            result = await server.call(
+                "runtime:rpc",
+                {"method": "runtime.capacity.get", "payload": {}},
+                to="remote-device-sid",
+                namespace="/local-executor",
+                timeout=4,
+            )
+        except Exception as error:
+            redis_subscription.record_event(
+                "call_error", error_type=type(error).__name__
+            )
+            print(
+                json.dumps(
+                    {
+                        "events": redis_subscription.events,
+                        "redis_errors": [
+                            {
+                                "error_type": getattr(
+                                    record, "redis_exception_type", None
+                                ),
+                                "error": record.redis_exception,
+                            }
+                            for record in caplog.records
+                            if hasattr(record, "redis_exception")
+                        ],
+                    },
+                    default=str,
+                )
+            )
+            raise
 
         assert result == {"active": 0, "limit": 10, "queued": 0}
         assert redis_subscription.subscriptions >= 2
@@ -315,6 +386,7 @@ async def test_stalled_subscription_resubscribes_and_receives_rpc_ack(
         assert transport_socket.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
         assert not manager.thread.done()
     finally:
+        caplog.handler.removeFilter(observe_redis_error)
         manager.thread.cancel()
         await manager.thread
         if manager.pubsub is not None:
