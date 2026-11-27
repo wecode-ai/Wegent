@@ -220,6 +220,8 @@ fn materialize_execution_request(
             extra: serde_json::Map::from_iter([
                 ("origin".into(), payload["origin"].clone()),
                 ("team_ref".into(), payload["teamRef"].clone()),
+                // Local Team members can retain numeric Bot IDs from their source Team.
+                ("team_id".into(), json!(0)),
                 (
                     "collaboration_model".into(),
                     payload["collaboration_model"].clone(),
@@ -482,6 +484,16 @@ mod tests {
         let mut pooled = payload;
         pooled["runnerRouting"]["execution_policy"] = json!({"mode":"project_pool"});
         assert!(resolve_pending(&mut pooled, Some(&catalog), "runner-a").is_err());
+    }
+
+    #[test]
+    fn local_team_with_numeric_bot_uses_managed_native_home() {
+        let mut payload = json!({"teamRef":"local-team","bot":[{"id":42,"shell_type":"Codex"}]});
+        resolve_pending(&mut payload, None, "runner-a").unwrap();
+        let request = &payload["executionRequest"];
+        assert_eq!(request["team_id"], 0);
+        assert_eq!(request["team_ref"], "local-team");
+        assert_eq!(request["bot"][0]["id"], 42);
     }
 
     #[test]
