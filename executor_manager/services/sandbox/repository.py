@@ -311,11 +311,14 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
             return None
 
-    def delete_sandbox(self, sandbox_id: str) -> bool:
+    def delete_sandbox(
+        self, sandbox_id: str, *, expected_container_id: str = ""
+    ) -> bool:
         """Delete sandbox data from Redis after confirming runtime removal.
 
         Args:
             sandbox_id: Sandbox ID (task_id as string)
+            expected_container_id: Immutable ID confirmed by runtime cleanup, if available
 
         Returns:
             True if successful, False otherwise
@@ -334,7 +337,10 @@ class SandboxRepository(metaclass=SingletonMeta):
                 sandbox = json.loads(record)
                 container_name = sandbox.get("container_name")
                 if container_name and not self.delete_executor_binding(
-                    task_id, expected_executor_name=container_name, sandbox=True
+                    task_id,
+                    expected_executor_name=container_name,
+                    expected_container_id=expected_container_id,
+                    sandbox=True,
                 ):
                     return False
                 e2b_sandbox_id = (sandbox.get("metadata") or {}).get("e2b_sandbox_id")

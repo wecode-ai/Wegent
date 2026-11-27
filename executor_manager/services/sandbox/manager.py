@@ -1107,11 +1107,17 @@ class SandboxManager(metaclass=SingletonMeta):
                 "reason": "sandbox_lifecycle_lease_lost",
             }
 
-        runtime_status = (result.get("delete_result") or {}).get("status")
+        delete_result = result.get("delete_result") or {}
+        runtime_status = delete_result.get("status")
         if runtime_status not in {"success", "not_found"}:
             return {**result, "skipped": False, "reason": "delete_failed"}
 
-        result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
+        container_id = delete_result.get("container_id") or delete_result.get(
+            "confirmed_container_ids", {}
+        ).get(container_name, "")
+        result["redis_cleared"] = self._repository.delete_sandbox(
+            sandbox_id, expected_container_id=container_id
+        )
         if not result["redis_cleared"]:
             return {
                 **result,

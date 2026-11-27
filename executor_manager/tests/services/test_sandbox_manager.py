@@ -1226,7 +1226,7 @@ class TestSandboxManager:
         else:
             assert sandbox is None
         if runtime_status == "success":
-            delete_sandbox.assert_called_once_with("12345")
+            delete_sandbox.assert_called_once_with("12345", expected_container_id="")
         else:
             delete_sandbox.assert_not_called()
 
@@ -1425,7 +1425,7 @@ class TestSandboxManager:
         ).return_value
         executor.delete_executor.side_effect = [
             {"status": "failed", "error_msg": "runtime temporarily unavailable"},
-            {"status": "success"},
+            {"status": "success", "container_id": "a" * 64},
         ]
         executor.delete_executor_by_task_id.return_value = {
             "status": lookup_status,
@@ -1459,7 +1459,10 @@ class TestSandboxManager:
             success, _ = await manager.terminate_sandbox("12345")
             assert success is True
         revoke.assert_called_once_with(
-            12345, expected_executor_name="wegent-task-testuser-12345", sandbox=True
+            12345,
+            expected_executor_name="wegent-task-testuser-12345",
+            expected_container_id="a" * 64,
+            sandbox=True,
         )
 
     @pytest.mark.asyncio
@@ -1492,8 +1495,13 @@ class TestSandboxManager:
         outcome_key = (
             "deleted_containers" if label_status == "success" else "absent_containers"
         )
-        label_result = {"status": label_status, outcome_key: [target_name]}
+        label_result = {
+            "status": label_status,
+            outcome_key: [target_name],
+            "confirmed_container_ids": {target_name: "a" * 64},
+        }
         mock_executor.delete_executor_by_task_id.return_value = label_result
+        revoke = mocker.spy(manager._repository, "delete_executor_binding")
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
@@ -1508,6 +1516,12 @@ class TestSandboxManager:
         assert result["deleted"] is (label_status == "success")
         assert result["redis_cleared"] is True
         assert result["delete_result"] == label_result
+        revoke.assert_called_once_with(
+            12345,
+            expected_executor_name="wegent-task-testuser-12345",
+            expected_container_id="a" * 64 if named_status == "failed" else "",
+            sandbox=True,
+        )
         mock_executor.delete_executor.assert_called_once_with(
             "wegent-task-testuser-12345"
         )

@@ -630,6 +630,9 @@ class TestDockerExecutor:
         assert result["absent_containers"] == (
             ["sandbox"] if delete_status == "not_found" else []
         )
+        assert result["confirmed_container_ids"] == (
+            {"sandbox": "b" * 64} if delete_status != "failed" else {}
+        )
         if delete_status in {"success", "not_found"}:
             repository.delete_executor_binding.assert_called_once_with(
                 123,

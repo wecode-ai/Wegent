@@ -1761,6 +1761,7 @@ class DockerExecutor(Executor):
             deleted_containers = []
             absent_containers = []
             failed_containers = []
+            confirmed_container_ids = {}
             for container in containers:
                 container_name = container.get("container_name")
                 if not container_name:
@@ -1775,6 +1776,7 @@ class DockerExecutor(Executor):
                 else:
                     failed_containers.append(container_name)
                     continue
+                confirmed_container_ids[container_name] = container_id
 
                 if container.get("task_type") == "sandbox":
                     get_sandbox_repository().delete_executor_binding(
@@ -1787,6 +1789,7 @@ class DockerExecutor(Executor):
             outcomes = {
                 "deleted_containers": deleted_containers,
                 "absent_containers": absent_containers,
+                "confirmed_container_ids": confirmed_container_ids,
             }
             if failed_containers:
                 return {
