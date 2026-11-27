@@ -69,3 +69,18 @@ def test_owned_lease_release_transport_error_preserves_body_outcome(
         with locks.owned_watchdog_context("document") as acquired:
             assert acquired is lease
     lease.release.assert_called_once()
+
+
+@pytest.mark.parametrize("interval", [0, -1])
+def test_owned_watchdog_rejects_nonpositive_interval_before_redis(
+    monkeypatch, interval
+):
+    locks = DistributedLock()
+    acquire = Mock()
+    monkeypatch.setattr(locks, "owned_lock", acquire)
+
+    with pytest.raises(ValueError, match="interval must be positive"):
+        with locks.owned_watchdog_context("document", extend_interval_seconds=interval):
+            pytest.fail("Invalid interval must not start a watchdog")
+
+    acquire.assert_not_called()

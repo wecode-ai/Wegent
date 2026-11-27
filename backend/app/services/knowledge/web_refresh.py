@@ -85,7 +85,11 @@ async def scrape_with_domain_lease(url: str):
 
         async def admit_locked(target: str) -> None:
             host = (urlsplit(target).hostname or "").lower()
-            if not host or host in leases:
+            if not host:
+                return
+            if host in leases:
+                if not leases[host].owned():
+                    raise WebRefreshDomainBusy("Domain lease was lost")
                 return
             lease = stack.enter_context(
                 distributed_lock.owned_watchdog_context(f"web-fetch:{host}")
@@ -238,6 +242,9 @@ async def _refresh_unindexed_body(
         }
     )
     document.source_config = config
+    if not lease.owned():
+        db.rollback()
+        raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
     db.commit()
     if old_id:
         delete_attachment_best_effort(
@@ -311,7 +318,14 @@ async def refresh_web_document(
         if not decision.should_enqueue:
             return response(code="REFRESH_BUSY", message=decision.reason)
         generation = decision.generation
-        db.refresh(document)
+        document = KnowledgeService._lock_document_row(db, doc_id)
+        if (
+            document is None
+            or document.index_generation != generation
+            or document.index_status != DocumentIndexStatus.QUEUED
+        ):
+            db.rollback()
+            raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
         previous_draft = (document.source_config or {}).get(CANDIDATE_KEY) or {}
         candidate = {
             **(
@@ -341,6 +355,9 @@ async def refresh_web_document(
         state = dict(document.source_config or {})
         state[CANDIDATE_KEY] = candidate
         document.source_config = state
+        if not lease.owned():
+            db.rollback()
+            raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
         db.commit()
         try:
             result = await scrape_with_domain_lease(url)
@@ -458,7 +475,11 @@ async def refresh_web_document(
                     **document.source_config,
                     CANDIDATE_KEY: candidate,
                 }
+            if not lease.owned():
+                raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
             db.commit()
+            db.refresh(document)
+            result = response(document)
             if trigger_indexing:
                 embedding = retrieval["embedding_config"]
                 index_document_task.apply_async(
@@ -484,9 +505,8 @@ async def refresh_web_document(
                     },
                     queue="wegent_online",
                 )
-            db.refresh(document)
-            return response(document)
-        except Exception as exc:
+            return result
+        except (Exception, asyncio.CancelledError) as exc:
             if isinstance(exc, WebRefreshBusy):
                 exc.generation = generation
             db.rollback()

@@ -158,6 +158,12 @@ def test_web_domain_wait_preserves_deadline_and_allows_batch_progress(
         def now(cls, tz=None):
             return start + timedelta(seconds=clock["seconds"])
 
+        @classmethod
+        def fromisoformat(cls, value):
+            if ".000000001" in value:
+                raise ValueError("Python 3.10 cannot parse nanosecond fractions")
+            return super().fromisoformat(value)
+
     lease = SimpleNamespace(owned=lambda: True)
     monkeypatch.setattr(
         web_refresh.distributed_lock,
@@ -266,7 +272,9 @@ def test_web_domain_wait_preserves_deadline_and_allows_batch_progress(
             id=f"web-{document_id}",
             retries=retries,
             called_directly=False,
-            expires=deadline.isoformat(),
+            expires=deadline.isoformat(timespec="seconds").replace(
+                "+00:00", ".000000001+00:00"
+            ),
             args=(),
             kwargs={},
         )
@@ -360,6 +368,36 @@ def test_web_refresh_closes_browser_on_each_task_event_loop(monkeypatch, failure
     assert len(crawlers) == 2
     assert crawlers[1].closed
     assert crawlers[0].loop is not crawlers[1].loop
+
+
+def test_web_refresh_stops_same_host_request_when_cached_lease_expires(monkeypatch):
+    from app.services.knowledge import web_refresh
+    from app.services.web_scraper.security import admit_fetch_domain
+
+    lease = MagicMock()
+    lease.owned.side_effect = [True, False]
+    monkeypatch.setattr(
+        web_refresh.distributed_lock,
+        "owned_watchdog_context",
+        lambda name: nullcontext(lease),
+    )
+    redis = MagicMock()
+    redis.time.return_value = (100, 0)
+    redis.get.return_value = None
+    monkeypatch.setattr(web_refresh.distributed_lock, "_redis_client", redis)
+    send = AsyncMock()
+
+    async def scrape(url, **kwargs):
+        await admit_fetch_domain("https://example.org/next")
+        await send()
+
+    monkeypatch.setattr(
+        "app.services.web_scraper.WebScraperService",
+        lambda: SimpleNamespace(scrape_url=scrape, close=AsyncMock()),
+    )
+    with pytest.raises(web_refresh.WebRefreshDomainBusy, match="lease was lost"):
+        asyncio.run(web_refresh.scrape_with_domain_lease("https://example.org/start"))
+    send.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -810,6 +848,8 @@ def test_web_index_invalidations_never_use_logical_document_compensation(outcome
     cleanup_mock.assert_not_called()
     if outcome != "deleted":
         index_mock.assert_called_once()
+    else:
+        index_mock.assert_not_called()
     assert result["status"] == "skipped"
     assert (
         result["reason"]
@@ -819,6 +859,49 @@ def test_web_index_invalidations_never_use_logical_document_compensation(outcome
             "deleted": "document_not_found",
         }[outcome]
     )
+
+
+@pytest.mark.parametrize("index_fails", [False, True])
+def test_web_index_unavailable_ownership_never_finalizes(index_fails):
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    from app.core.distributed_lock import DistributedLockUnavailableError
+
+    index_error = ValueError("invalid index response")
+    lease_error = RedisTimeoutError("ownership lookup timed out")
+    lease = MagicMock()
+    lease.owned.side_effect = lease_error
+    index_mock = MagicMock(return_value={"status": "success"})
+    if index_fails:
+        index_mock.side_effect = index_error
+    with (
+        patch(
+            "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
+            return_value=nullcontext(lease),
+        ),
+        patch("app.tasks.knowledge_tasks.SessionLocal", side_effect=_session_factory()),
+        patch(
+            "app.services.knowledge.index_state_machine.mark_document_index_started",
+            return_value=MagicMock(should_execute=True),
+        ),
+        patch("app.services.knowledge.indexing.run_document_indexing", index_mock),
+        patch("app.services.knowledge.web_publication.publish_candidate") as publish,
+        patch(
+            "app.services.knowledge.index_state_machine.mark_document_index_failed"
+        ) as fail,
+    ):
+        if index_fails:
+            with pytest.raises(ValueError) as raised:
+                index_document_task.run(**_task_kwargs(), publication_generation=5)
+            assert raised.value is index_error
+            assert raised.value.__cause__.__cause__ is lease_error
+        else:
+            with pytest.raises(DistributedLockUnavailableError) as raised:
+                index_document_task.run(**_task_kwargs(), publication_generation=5)
+            assert raised.value.__cause__ is lease_error
+    lease.owned.assert_called_once()
+    publish.assert_not_called()
+    fail.assert_not_called()
 
 
 def test_index_document_task_compensates_a_late_index_after_a_failed_write():

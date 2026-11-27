@@ -495,11 +495,14 @@ class KnowledgeService:
                     KnowledgeDocument.id.in_(document_ids),
                     KnowledgeDocument.is_active.is_(True),
                     or_(
+                        KnowledgeDocument.source_type != DocumentSourceType.WEB.value,
+                        KnowledgeDocument.status == DocumentStatus.ENABLED,
+                    ),
+                    or_(
                         KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
                         and_(
                             KnowledgeDocument.source_type
                             == DocumentSourceType.WEB.value,
-                            KnowledgeDocument.status == DocumentStatus.ENABLED,
                             or_(
                                 KnowledgeDocument.source_config["published_generation"]
                                 .as_integer()

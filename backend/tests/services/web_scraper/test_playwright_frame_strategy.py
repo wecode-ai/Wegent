@@ -216,13 +216,21 @@ async def test_browser_admission_checks_each_paused_document_before_continuing(
         install_page_domain_admission,
     )
 
+    events = []
+
+    async def send(command, params=None):
+        events.append((command, (params or {}).get("requestId")))
+
+    async def admit(url):
+        events.append(("admitted", url))
+
     session = MagicMock()
-    session.send = AsyncMock()
+    session.send = AsyncMock(side_effect=send)
     session.detach = AsyncMock()
     page = SimpleNamespace(
         context=SimpleNamespace(new_cdp_session=AsyncMock(return_value=session))
     )
-    admission = AsyncMock()
+    admission = AsyncMock(side_effect=admit)
     guard = MagicMock()
     monkeypatch.setattr(
         "app.services.web_scraper.security.WebScraperUrlGuard", lambda: guard
@@ -237,12 +245,14 @@ async def test_browser_admission_checks_each_paused_document_before_continuing(
                 ("initial", "https://a.example/start"),
                 ("redirect", "https://b.example/end"),
             ]:
+                events.clear()
                 await handler({"requestId": request_id, "request": {"url": url}})
-                admission.assert_awaited_with(url)
-                session.send.assert_awaited_with(
-                    "Fetch.continueRequest", {"requestId": request_id}
-                )
+                assert events == [
+                    ("admitted", url),
+                    ("Fetch.continueRequest", request_id),
+                ]
             admission.side_effect = RuntimeError("domain busy")
+            events.clear()
             await handler(
                 {"requestId": "busy", "request": {"url": "https://c.example"}}
             )
@@ -250,8 +260,10 @@ async def test_browser_admission_checks_each_paused_document_before_continuing(
                 "Fetch.failRequest",
                 {"requestId": "busy", "errorReason": "BlockedByClient"},
             )
+            assert events == [("Fetch.failRequest", "busy")]
             admission.reset_mock()
             guard.validate_initial_url.side_effect = ValueError("unsafe URL")
+            events.clear()
             await handler(
                 {"requestId": "unsafe", "request": {"url": "http://127.0.0.1"}}
             )
@@ -260,6 +272,7 @@ async def test_browser_admission_checks_each_paused_document_before_continuing(
                 "Fetch.failRequest",
                 {"requestId": "unsafe", "errorReason": "BlockedByClient"},
             )
+            assert events == [("Fetch.failRequest", "unsafe")]
     finally:
         fetch_domain_admission.reset(token)
     session.remove_listener.assert_called_once_with("Fetch.requestPaused", handler)

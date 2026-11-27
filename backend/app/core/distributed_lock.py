@@ -55,6 +55,16 @@ class DistributedLockUnavailableError(RuntimeError):
     """Redis is unavailable for an operation requiring mutual exclusion."""
 
 
+def check_lease_ownership(lease: Lock) -> bool:
+    """Distinguish a lost lease from an unavailable ownership check."""
+    try:
+        return lease.owned()
+    except redis.exceptions.RedisError as exc:
+        raise DistributedLockUnavailableError(
+            "Unable to confirm lease ownership"
+        ) from exc
+
+
 class DistributedLock:
     """
     Redis-based distributed lock for multi-instance coordination.
@@ -130,6 +140,8 @@ class DistributedLock:
         Callers must also check ``lease.owned()`` before committing a fenced
         write. Release and renewal can never affect a replacement owner's lock.
         """
+        if extend_interval_seconds <= 0:
+            raise ValueError("Lease renewal interval must be positive")
         lease = self.owned_lock(
             f"{LOCK_KEY_PREFIX}{lock_name}", expire_seconds=expire_seconds
         )

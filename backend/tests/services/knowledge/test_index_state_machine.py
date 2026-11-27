@@ -1741,7 +1741,9 @@ def test_crawl_cannot_revive_candidate_terminated_by_stale_scanner(
     dispatch.assert_not_called()
 
 
-@pytest.mark.parametrize("publication", ["versioned", "legacy", "none", "disabled"])
+@pytest.mark.parametrize(
+    "publication", ["versioned", "legacy", "none", "disabled", "disabled_success"]
+)
 def test_web_selection_uses_the_served_publication_while_refreshing(
     test_db, test_user, publication
 ):
@@ -1761,15 +1763,17 @@ def test_web_selection_uses_the_served_publication_while_refreshing(
     )
     if publication == "none":
         document.source_config = {}
-    if publication == "disabled":
+    if publication in {"disabled", "disabled_success"}:
         document.status = "disabled"
+    if publication == "disabled_success":
+        document.index_status = DocumentIndexStatus.SUCCESS
     test_db.commit()
     arguments = {
         "knowledge_base_id": kb.id,
         "user_id": test_user.id,
         "document_ids": [document.id],
     }
-    if publication in {"none", "disabled"}:
+    if publication in {"none", "disabled", "disabled_success"}:
         with pytest.raises(KnowledgeDocumentScopeValidationError):
             KnowledgeService.resolve_usable_document_ids(test_db, **arguments)
     else:

@@ -1528,6 +1528,137 @@ def test_manual_web_refresh_preserves_error_contract_on_dispatch_failure(
     assert document.source_config["_web_refresh"]["attachment_id"] == draft_id
 
 
+@pytest.mark.parametrize("failure", ["reload", "cancelled"])
+def test_web_refresh_failed_before_dispatch_restores_draft(
+    test_db, test_user, staged_web, monkeypatch, failure
+):
+    from app.services.knowledge import web_refresh
+    from app.tasks.knowledge_tasks import index_document_task
+
+    document, _ = staged_web
+    original_draft = dict(document.source_config["_web_refresh"])
+    attachment_id = document.attachment_id
+    if failure == "cancelled":
+        monkeypatch.setattr(
+            web_refresh,
+            "scrape_with_domain_lease",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        )
+        expected = asyncio.CancelledError
+    else:
+        refresh = test_db.refresh
+
+        def fail_candidate_refresh(row, *args, **kwargs):
+            if isinstance(row, KnowledgeDocument):
+                candidate = row.source_config.get("_web_refresh", {})
+                if candidate.get("attachment_id") and not candidate.get("draft"):
+                    raise RuntimeError("reload failed")
+            return refresh(row, *args, **kwargs)
+
+        monkeypatch.setattr(test_db, "refresh", fail_candidate_refresh)
+        expected = RuntimeError
+
+    with pytest.raises(expected):
+        asyncio.run(web_refresh.refresh_web_document(test_db, test_user, document.id))
+    index_document_task.apply_async.assert_not_called()
+    assert document.attachment_id == attachment_id
+    assert document.index_status == "success"
+    assert document.source_config["_web_refresh"] == {
+        **original_draft,
+        "generation": document.index_generation,
+    }
+
+
+@pytest.mark.parametrize("mode", ["publish", "draft", "unindexed"])
+def test_web_refresh_rolls_back_when_upload_loses_lease(
+    test_db, test_user, staged_web, monkeypatch, mode
+):
+    from app.services.knowledge import web_refresh
+    from app.tasks.knowledge_tasks import index_document_task
+
+    document, lease = staged_web
+    if mode == "unindexed":
+        document.index_status = "not_indexed"
+        document.source_config = {"url": document.source_config["url"]}
+        test_db.commit()
+    old_attachment = document.attachment_id
+    old_generation = document.index_generation
+    upload = context_service.upload_attachment
+    uploaded = []
+
+    def upload_then_lose_lease(*args, **kwargs):
+        attachment, info = upload(*args, **kwargs)
+        uploaded.append(attachment.id)
+        lease.owned.return_value = False
+        return attachment, info
+
+    monkeypatch.setattr(context_service, "upload_attachment", upload_then_lose_lease)
+    with pytest.raises(web_refresh.WebRefreshInvalid) as raised:
+        asyncio.run(
+            web_refresh.refresh_web_document(
+                test_db, test_user, document.id, trigger_indexing=mode == "publish"
+            )
+        )
+    assert raised.value.code == "REFRESH_SUPERSEDED"
+    index_document_task.apply_async.assert_not_called()
+    assert document.attachment_id == old_attachment
+    assert len(uploaded) == 1 and test_db.get(SubtaskContext, uploaded[0]) is None
+    if mode == "unindexed":
+        assert document.index_generation == old_generation
+    else:
+        assert "attachment_id" not in document.source_config["_web_refresh"]
+
+
+@pytest.mark.parametrize("superseded", [False, True])
+def test_web_reindex_stages_only_current_queued_generation(
+    test_db, test_user, kb, staged_web, monkeypatch, superseded
+):
+    from app.services.knowledge.index_state_machine import (
+        prepare_document_index_enqueue,
+    )
+    from app.services.knowledge.web_publication import prepare_web_reindex_candidate
+
+    document, _ = staged_web
+    document_id = document.id
+    decision = prepare_document_index_enqueue(
+        test_db, document_id, allow_if_success=True
+    )
+    assert decision.should_enqueue
+    config = {**document.source_config, "web_user_status": "disabled"}
+    generation = decision.generation + int(superseded)
+    with Session(
+        bind=test_db.get_bind(), join_transaction_mode="create_savepoint"
+    ) as concurrent:
+        concurrent.execute(
+            update(KnowledgeDocument)
+            .where(KnowledgeDocument.id == document_id)
+            .values(
+                source_config=config, status="disabled", index_generation=generation
+            )
+        )
+        concurrent.commit()
+
+    arguments = {
+        "generation": decision.generation,
+        "previous_status": decision.previous_status,
+        "requested_by": test_user.id,
+    }
+    if superseded:
+        upload = MagicMock()
+        monkeypatch.setattr(context_service, "upload_attachment", upload)
+        with pytest.raises(ValueError, match="superseded"):
+            prepare_web_reindex_candidate(test_db, document, kb, **arguments)
+        upload.assert_not_called()
+        assert document.source_config == config
+    else:
+        prepare_web_reindex_candidate(test_db, document, kb, **arguments)
+        assert (
+            document.source_config["_web_refresh"]["user_status_override"] == "disabled"
+        )
+    assert document.status == "disabled"
+    assert document.index_generation == generation
+
+
 def test_unindexed_web_refresh_clears_stale_conversion_reference(
     test_db, test_user, staged_web
 ):
@@ -1787,10 +1918,22 @@ def test_expired_draft_cleanup_invalidates_reference_and_requires_refetch(
     assert document.processing_error_payload["code"] == "web_draft_expired"
 
 
+@pytest.mark.parametrize(
+    ("summary", "expected"),
+    [
+        ("Existing summary", "Existing summary"),
+        ({"status": "generating"}, None),
+        (
+            {"status": "generating", "short_summary": "Existing summary"},
+            {"status": "completed", "short_summary": "Existing summary"},
+        ),
+    ],
+)
 def test_same_body_reindex_preserves_summary_and_attachment_reference(
-    test_db, test_user, staged_web
+    test_db, test_user, staged_web, summary, expected
 ):
     from app.services.knowledge.index_state_machine import mark_document_index_started
+    from app.services.knowledge.summary_service import SummaryService
     from app.services.knowledge.web_publication import publish_candidate
 
     document, lease = staged_web
@@ -1799,7 +1942,8 @@ def test_same_body_reindex_preserves_summary_and_attachment_reference(
     config["published_generation"] = 1
     config["summary_attachment_id"] = 900
     document.source_config = config
-    document.summary = "Existing summary"
+    document.summary = summary
+    source_attachment_id = document.attachment_id
     test_db.commit()
     knowledge_orchestrator.reindex_document(test_db, test_user, document.id)
     assert mark_document_index_started(
@@ -1812,5 +1956,10 @@ def test_same_body_reindex_preserves_summary_and_attachment_reference(
         chunks=None,
         lease=lease,
     )
-    assert document.summary == "Existing summary"
+    assert not SummaryService(test_db)._persist_document_summary(
+        document.id,
+        {"status": "completed", "short_summary": "Stale"},
+        source_attachment_id,
+    )
+    assert document.summary == expected
     assert document.source_config["summary_attachment_id"] == 900

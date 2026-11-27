@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from math import ceil
 from random import uniform
 
+from celery.utils.time import maybe_iso8601
+
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -76,7 +78,7 @@ def refresh_web_document_task(
             now = datetime.now(timezone.utc)
             deadline = self.request.expires or now + timedelta(days=1)
             if isinstance(deadline, str):
-                deadline = datetime.fromisoformat(deadline)
+                deadline = maybe_iso8601(deadline)
             if deadline.tzinfo is None:
                 deadline = deadline.replace(tzinfo=timezone.utc)
             base_delay = max(1, delay)

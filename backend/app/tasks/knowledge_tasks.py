@@ -25,7 +25,11 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
-from app.core.distributed_lock import DistributedLockUnavailableError, distributed_lock
+from app.core.distributed_lock import (
+    DistributedLockUnavailableError,
+    check_lease_ownership,
+    distributed_lock,
+)
 from app.db.session import SessionLocal
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
 from app.services.knowledge.processing_errors import (
@@ -549,7 +553,9 @@ def index_document_task(
                     ),
                 )
 
-            if publication_generation is not None and not acquired.owned():
+            if publication_generation is not None and not check_lease_ownership(
+                acquired
+            ):
                 return {
                     "status": "skipped",
                     "reason": "lease_lost",
@@ -678,7 +684,17 @@ def index_document_task(
             # running the removal a second time.
             raise
         except Exception as exc:
-            if publication_generation is not None and not acquired.owned():
+            if publication_generation is not None and isinstance(
+                exc, DistributedLockUnavailableError
+            ):
+                raise
+            try:
+                owned = publication_generation is None or check_lease_ownership(
+                    acquired
+                )
+            except DistributedLockUnavailableError as lease_error:
+                raise exc from lease_error
+            if not owned:
                 logger.warning(
                     "Web index result discarded after losing lease: document_id=%s generation=%s",
                     document_id,

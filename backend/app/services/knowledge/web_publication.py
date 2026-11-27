@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.distributed_lock import check_lease_ownership
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -244,7 +245,17 @@ def prepare_web_reindex_candidate(
 ) -> int:
     """Keep explicit reindexing on the same publication contract after upgrade."""
     from app.services.context import context_service
+    from app.services.knowledge.knowledge_service import KnowledgeService
     from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+    document = KnowledgeService._lock_document_row(db, document.id)
+    if (
+        document is None
+        or document.index_generation != generation
+        or document.index_status != DocumentIndexStatus.QUEUED
+    ):
+        db.rollback()
+        raise ValueError("Web reindex was superseded")
 
     draft = (document.source_config or {}).get(CANDIDATE_KEY) or {}
     draft_attachment = None
@@ -381,7 +392,7 @@ def publish_candidate(
     if config.get("published_generation") == generation:
         db.rollback()
         return True
-    if lease is None or not lease.owned():
+    if lease is None or not check_lease_ownership(lease):
         db.rollback()
         return False
     candidate = candidate_for(document, generation)
@@ -424,7 +435,7 @@ def publish_candidate(
     )
     if valid and config.get("published_generation"):
         valid = retire_published_version(db, document, allow_missing_attachment=True)
-    if not lease.owned():
+    if not check_lease_ownership(lease):
         db.rollback()
         return False
     if not valid:
@@ -444,6 +455,20 @@ def publish_candidate(
     ] != config.get("webAutoUpdate", {}).get("content_hash")
     if not config.get("published_generation"):
         retire_attachment(db, document.attachment_id, document.user_id)
+    summary = document.summary
+    if body_changed:
+        document.summary = None
+    elif (
+        document.attachment_id != candidate["attachment_id"]
+        and isinstance(summary, dict)
+        and summary.get("status") == "generating"
+    ):
+        # The old worker can no longer finish against its source attachment.
+        document.summary = (
+            {**summary, "status": "completed"}
+            if summary.get("short_summary") or summary.get("long_summary")
+            else None
+        )
     document.attachment_id = candidate["attachment_id"]
     document.file_extension = "md"
     document.file_size = candidate["file_size"]
@@ -460,8 +485,6 @@ def publish_candidate(
             else None
         )
     )
-    if body_changed:
-        document.summary = None
     # Derived content belongs to the replaced body. Summary can be regenerated
     # after commit when explicitly requested by the caller.
     for key in (
@@ -485,7 +508,7 @@ def publish_candidate(
     # Replacement publications preserve current controls; only first indexing
     # transitions a system-created, not-yet-ready document into a usable state.
     db.flush()
-    if not lease.owned():
+    if not check_lease_ownership(lease):
         db.rollback()
         return False
     db.commit()
