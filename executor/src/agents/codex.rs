@@ -1651,6 +1651,11 @@ struct PendingCodexResponse {
     native_request: Option<CodexNativeRequest>,
 }
 
+struct PendingMcpElicitation {
+    request: Value,
+    _settled: oneshot::Sender<()>,
+}
+
 type RuntimeNotificationSubscribers = Arc<StdMutex<Vec<mpsc::Sender<CodexNotification>>>>;
 
 #[derive(Clone)]
@@ -1661,7 +1666,7 @@ struct CodexNotificationHub {
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
     mcp_recovery: Arc<mcp_recovery::McpRecovery>,
-    pending_mcp_elicitations: Arc<StdMutex<HashMap<String, oneshot::Sender<()>>>>,
+    pending_mcp_elicitations: Arc<StdMutex<HashMap<String, PendingMcpElicitation>>>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
@@ -1889,7 +1894,12 @@ impl CodexAppServerHandle {
         {
             let mut pending = self.notifications.pending_mcp_elicitations.lock().unwrap();
             match pending.entry(request_id.to_string()) {
-                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(settled),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(PendingMcpElicitation {
+                        request: message.clone(),
+                        _settled: settled,
+                    })
+                }
                 std::collections::hash_map::Entry::Occupied(_) => return,
             };
         }
@@ -4124,7 +4134,7 @@ fn restrict_stand_in_mcp_answer(response: &mut Value, decline_answer: &str) {
     }
 }
 
-fn restrict_stand_in_approval(message: &mut Value) {
+pub(crate) fn restrict_stand_in_approval(message: &mut Value) {
     if is_mcp_tool_call_approval_request(message) {
         message["params"]["standInSingleApproval"] = json!(true);
         if let Some(questions) = message["params"]["questions"].as_array_mut() {
@@ -4725,6 +4735,7 @@ mod json_rpc;
 #[path = "codex/mcp_form.rs"]
 mod mcp_form;
 
+mod child_mcp_approval;
 #[path = "codex/elicitation.rs"]
 mod elicitation;
 #[path = "codex/url_elicitation.rs"]

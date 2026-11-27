@@ -164,6 +164,7 @@ Code-level boundaries:
 
 - Codex thread/turn params use granular approval policy and only enable `mcp_elicitations`.
 - `features.tool_call_mcp_elicitation=true` isolates tool approvals from the native ordinary-question waiter. `_meta.codex_approval_kind` distinguishes tool approvals from business forms without changing the permission policy.
+- MCP tool approvals from a subagent appear in the parent task. Submit and Cancel return the decision to the native request by child turn and request ID while the child belongs to the active parent turn.
 - Request/bot MCP config defaults to `default_tools_approval_mode = "approve"`, with explicit `prompt` taking precedence.
 - Full access recognizes an MCP elicitation with `_meta.codex_approval_kind = "mcp_tool_call"` or a `requestUserInput` containing exactly one `mcp_tool_call_approval_<call-id>` question. It returns the corresponding `accept` or `Allow` response without forwarding that approval event to the chat UI.
 - `mcp_servers.wegent_apps` is the Wework Connector Apps built-in persistent server, so Wework writes it and refreshes it during configure/app sync with the same default `approve` behavior.
