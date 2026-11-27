@@ -97,6 +97,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', selector('message-center-execution-hint'), {
         visible: false,
       })
+      await control.command('waitFor', resume, { visible: false })
       await captureScreenshot(control, 'stand-in-onboarding-dingtalk-disconnected.png')
       await control.command('clickWhenEnabled', selector('stand-in-primary-open'))
       await control.command('clickWhenEnabled', resume)

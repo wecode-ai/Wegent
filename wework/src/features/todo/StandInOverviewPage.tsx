@@ -724,7 +724,7 @@ export function StandInOverviewPage({
             {directoryError}
           </p>
         )}
-        {(showingMessageCenter || (!roleId && !team && !shared)) && resumeSetup}
+        {!showingMessageCenter && !roleId && !team && !shared && resumeSetup}
         {showingMessageCenter ? (
           <StandInMessageCenterHost
             api={messageCenterApi}

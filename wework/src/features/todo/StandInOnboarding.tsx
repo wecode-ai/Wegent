@@ -172,7 +172,7 @@ function StandInOnboardingContent({
     }
   }
   const resumeSetup = active && dismissed && !guideOpen && !bypass && !result?.state.completed && (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
+    <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
       <p className="text-sm text-text-secondary">{t('standIn.onboarding.setup_required')}</p>
       <Button
         type="button"
