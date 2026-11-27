@@ -66,14 +66,24 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
     pub(super) async fn acquire_names_until(
         redis: Option<&'a R>,
         user_id: i64,
-        mut names: Vec<String>,
+        names: Vec<String>,
         wait: Duration,
+        deadline: Instant,
+    ) -> MysqlResult<Self> {
+        let wait_deadline = (!wait.is_zero()).then(|| (Instant::now() + wait).min(deadline));
+        Self::acquire_names_in_window(redis, user_id, names, wait_deadline, deadline).await
+    }
+
+    async fn acquire_names_in_window(
+        redis: Option<&'a R>,
+        user_id: i64,
+        mut names: Vec<String>,
+        wait_deadline: Option<Instant>,
         deadline: Instant,
     ) -> MysqlResult<Self> {
         let redis = redis.ok_or_else(|| coordination_error("plugin_write_unavailable"))?;
         normalize_names(&mut names);
-        let one_attempt = names.len() > 1 || wait.is_zero();
-        let acquire_deadline = (Instant::now() + wait).min(deadline);
+        let wait_deadline = wait_deadline.filter(|_| names.len() == 1);
         let mut acquired: Option<Self> = None;
         for name in names {
             let outcome = async {
@@ -81,18 +91,15 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 getrandom::getrandom(&mut random)
                     .map_err(|_| coordination_error("plugin_write_unavailable"))?;
                 let token = random.iter().map(|byte| format!("{byte:02x}")).collect();
-                let attempt_deadline = if one_attempt {
-                    (Instant::now() + Duration::from_secs(1)).min(deadline)
-                } else {
-                    acquire_deadline
-                };
+                let attempt_deadline = wait_deadline
+                    .unwrap_or_else(|| (Instant::now() + Duration::from_secs(1)).min(deadline));
                 Self::acquire_named_token(
                     redis,
                     user_id,
                     &name,
                     token,
                     attempt_deadline,
-                    one_attempt,
+                    wait_deadline.is_none(),
                 )
                 .await
             }
@@ -179,17 +186,39 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         ids: Option<&[i64]>,
         deadline: Instant,
     ) -> MysqlResult<Self> {
+        let single_installation = matches!(ids, Some([_]));
         let (names, ids) = tokio::time::timeout_at(
             deadline,
             mysql.with_transaction(async |tx| installation_scope(tx, user_id, ids).await),
         )
         .await
         .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))?;
-        Ok(
-            Self::acquire_names_until(redis, user_id, names, ACQUIRE_WAIT, deadline)
-                .await?
-                .for_installations(ids),
-        )
+        let lease = if single_installation {
+            Self::acquire_receipt_names_until(redis, user_id, names, deadline).await?
+        } else {
+            Self::acquire_names_until(redis, user_id, names, ACQUIRE_WAIT, deadline).await?
+        };
+        Ok(lease.for_installations(ids))
+    }
+
+    pub(super) async fn acquire_receipt_names_until(
+        redis: Option<&'a R>,
+        user_id: i64,
+        names: Vec<String>,
+        deadline: Instant,
+    ) -> MysqlResult<Self> {
+        let wait_deadline = (Instant::now() + ACQUIRE_WAIT).min(deadline);
+        let result =
+            Self::acquire_names_in_window(redis, user_id, names, Some(wait_deadline), deadline)
+                .await;
+        if wait_deadline == deadline
+            && result.as_ref().err().and_then(plugin_write_error_code) == Some("plugin_write_busy")
+        {
+            // Redis polling stops before the deadline when another SET would
+            // overshoot it. Do not start another MySQL scope lookup in that gap.
+            tokio::time::sleep_until(deadline).await;
+        }
+        result
     }
 
     pub async fn read_plugin_revisions<T: MysqlTransaction>(

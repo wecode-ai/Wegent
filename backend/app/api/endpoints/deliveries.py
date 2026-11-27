@@ -575,8 +575,14 @@ async def update_loop_item(
         == current_user.id,
     )
     if not existing.cloud_project_id:
-        item, affected = loop_item_service.update_unlinked_issue(
-            db, item_id, current_user.id, values
+        # Attachment requests can hold the same row lock until dependency
+        # cleanup runs on the event loop.
+        item, affected = await run_in_threadpool(
+            loop_item_service.update_unlinked_issue,
+            db,
+            item_id,
+            current_user.id,
+            values,
         )
         if affected:
             from app.services.wework_notifications import emit_issue_assignments_changed

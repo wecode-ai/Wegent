@@ -545,9 +545,10 @@ impl RuntimeWorkRpcHandler {
             store
                 .save_stand_in_action(user, &action)
                 .map_err(settings_error)?;
-            let result = self
-                .execute_coordinator_action(store, user, settings, &action)
-                .await;
+            let result = super::dispatch::boxed_rpc(|| {
+                self.execute_coordinator_action(store, user, settings, &action)
+            })
+            .await;
             match result {
                 Ok(Some(value)) if value["state"] == "abandoned" && action["kind"] == "assess" => {
                     self.retire_abandoned_assessment(store, user, &mut action, value)?;

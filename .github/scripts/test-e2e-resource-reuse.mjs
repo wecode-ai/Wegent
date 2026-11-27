@@ -452,9 +452,34 @@ test("the macOS runner exports complete runtimes after checkpoints on complete b
   assert.equal(rendererGate.run, "node wework/scripts/profile-renderer.mjs --check");
   assert.equal(rendererGate["continue-on-error"], undefined);
   assert(job.steps.indexOf(build) < job.steps.indexOf(rendererGate));
+  const threadTiming = job.steps.find(
+    (step) =>
+      step.name === "Capture renderer thread timing after performance failure",
+  );
+  assert(threadTiming);
+  assert.equal(rendererGate.id, "renderer-profile");
   assert.equal(
-    job.steps.filter((step) => step.run?.includes("profile-renderer.mjs")).length,
-    1,
+    threadTiming.if,
+    "failure() && steps.renderer-profile.outcome == 'failure'",
+  );
+  assert.equal(threadTiming["continue-on-error"], true);
+  assert.equal(
+    threadTiming.env.WEWORK_E2E_RESULT_ROOT,
+    "${{ runner.temp }}/wework-renderer-capture",
+  );
+  assert.equal(
+    threadTiming.run,
+    "node wework/scripts/profile-renderer.mjs --capture --thread-timing",
+  );
+  assert(job.steps.indexOf(rendererGate) < job.steps.indexOf(threadTiming));
+  const uploadThreadTiming = job.steps.find(
+    (step) => step.name === "Upload renderer thread timing",
+  );
+  assert.equal(uploadThreadTiming.if, threadTiming.if);
+  assert(job.steps.indexOf(threadTiming) < job.steps.indexOf(uploadThreadTiming));
+  assert.equal(
+    uploadThreadTiming.with.path,
+    "${{ runner.temp }}/wework-renderer-capture/*/renderer-performance-timing.json",
   );
   const diagnostics = job.steps.find(
     (step) => step.name === "Upload macOS Inspector failure evidence before cleanup",

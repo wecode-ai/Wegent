@@ -164,6 +164,9 @@ export function createDesktopScenario({
     )
 
   return {
+    // The permission probes need an actual filesystem sandbox. Without a
+    // Windows backend, Codex asks for approval before running the probe.
+    codexConfigToml: process.platform === 'win32' ? '[windows]\nsandbox = "unelevated"\n' : '',
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) {
         return false
