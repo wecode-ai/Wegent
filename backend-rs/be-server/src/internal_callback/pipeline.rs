@@ -14,20 +14,74 @@ use crate::task_store::PipelineStageAdvance;
 
 const PIPELINE_HANDOFF_PATH: &str = "/metadata/labels/pipelinePendingHandoff";
 
-pub(super) fn pending_child(task: &Value, parent: i64) -> Option<i64> {
-    if wegent_task_store::pending_pipeline_parent(task)? != parent {
-        return None;
-    }
-    task.pointer(PIPELINE_HANDOFF_PATH)?
-        .as_str()?
-        .rsplit_once(':')?
-        .1
-        .parse()
-        .ok()
-}
+pub(super) use wegent_task_store::task_store_pipeline::pending_pipeline_child as pending_child;
 
 pub(crate) fn execution_lease_key(task_id: i64, subtask_id: i64) -> String {
     format!("wegent:lock:pipeline-execution:{task_id}:{subtask_id}")
+}
+
+/// Resources can change between the receipt and handoff transactions. Settle
+/// only an intent that still owns the most recent turn under the Task lock.
+pub(super) async fn settle_unavailable_advance(
+    state: &AppState,
+    task_id: i64,
+    parent: i64,
+) -> Result<Option<super::completion::CollaborationStatus>, FastApiError> {
+    let tables = state
+        .task_store
+        .message_edit_tables(task_id)
+        .await
+        .map_err(dependency)?;
+    let mysql = state
+        .mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64));
+    let document: Option<(Json<Value>,)> = mysql
+        .with_transaction(async |tx| {
+            tx.fetch_optional(
+                format!("SELECT json FROM {} WHERE id=?", tables.tasks),
+                (task_id,),
+            )
+            .await
+        })
+        .await
+        .map_err(dependency)?;
+    let child = document.and_then(|(Json(task),)| pending_child(&task, parent));
+    let settle = async || {
+        mysql
+            .with_transaction(async |tx| {
+                wegent_execution_completion::persist::settle_unavailable_on(
+                    tx,
+                    &tables.tasks,
+                    &tables.subtasks,
+                    task_id,
+                    parent,
+                    child,
+                )
+                .await
+            })
+            .await
+            .map_err(dependency)
+    };
+    let Some(child) = child else {
+        return settle().await;
+    };
+    // A Chat Shell consumer can own the pair before its first accepted SSE
+    // event. Fence settlement with the same lease as the streaming worker.
+    let redis = state.redis.as_ref().ok_or_else(FastApiError::internal)?;
+    super::completion::with_owned_lease(
+        redis,
+        &execution_lease_key(task_id, child),
+        FastApiError::internal,
+        Some(|| {
+            Some(super::completion::CollaborationStatus {
+                status: "RUNNING".into(),
+                progress: Some(0),
+                auto_advance: true,
+            })
+        }),
+        |_| settle(),
+    )
+    .await
 }
 
 /// Source stage creation/notification failures still propagate, while the
@@ -55,60 +109,38 @@ pub(super) async fn dispatch_next(
             FastApiError::internal()
         })?;
     }
-    let task_id = advance.task_id;
-    let subtask_id = advance.pair.assistant_subtask_id;
-    let user_id = advance.user_id;
-    let error = match prepare_dispatch(state, &advance).await {
-        Ok(job) => return claim_and_dispatch(state, &advance, job).await,
-        Err(error) => error,
-    };
-    if error.status().is_server_error() {
-        return Err(error);
-    }
-    tracing::error!(
-        ?error,
-        task_id,
-        subtask_id,
-        "pipeline next-stage dispatch failed"
-    );
-    if let Some(redis) = state.redis.as_ref() {
-        let ctx = super::completion::Completion {
-            app: Some(state),
-            mysql: &state.mysql,
-            redis,
-            tables: super::tables(state),
-            executor_manager: &state.executor_manager,
-        };
-        let persisted = super::completion::persist_completed_result(
-            &ctx.storage(),
-            task_id,
-            subtask_id,
-            "FAILED",
-            None,
-            Some("Pipeline stage dispatch failed"),
-            None,
-            None,
-            None,
-        )
-        .await;
-        match persisted {
-            Ok(Some(_)) => {}
-            Ok(None) => return Ok(()),
-            Err(error) => {
-                tracing::error!(%error, task_id, subtask_id, "pipeline failure could not be saved");
-                return Err(FastApiError::internal());
-            }
+    match prepare_dispatch(state, &advance).await {
+        Ok(job) => claim_and_dispatch(state, &advance, job).await,
+        Err(error) if error.status().is_server_error() => Err(error),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                task_id = advance.task_id,
+                "pipeline next-stage dispatch failed"
+            );
+            settle_unavailable_pair(state, &advance).await
         }
-        if let Err(error) = super::socketio::publish_emit_in_room(
+    }
+}
+
+async fn settle_unavailable_pair(
+    state: &AppState,
+    advance: &PipelineStageAdvance,
+) -> Result<(), FastApiError> {
+    // A previous attempt may already have admitted this child.
+    if let Some(parent) = wegent_task_store::pending_pipeline_parent(&advance.task_json)
+        && let Some(status) = settle_unavailable_advance(state, advance.task_id, parent).await?
+        && status.status == "FAILED"
+        && let Some(redis) = state.redis.as_ref()
+    {
+        super::socketio::publish_emit_in_room(
             redis,
             "task:status",
-            &format!("user:{user_id}"),
-            json!({"task_id":task_id,"status":"FAILED","progress":null}),
+            &format!("user:{}", advance.user_id),
+            json!({"task_id": advance.task_id, "status":status.status, "progress":status.progress}),
         )
         .await
-        {
-            tracing::error!(%error, task_id, "pipeline dispatch-failure status emit failed");
-        }
+        .map_err(|_| FastApiError::internal())?;
     }
     Ok(())
 }
@@ -258,14 +290,19 @@ async fn claim_and_dispatch(
     let mysql = state
         .mysql
         .route(crate::task_routing::ByTaskId(advance.task_id as u64));
-    let running = mysql.with_transaction(async |transaction| {
+    enum Claim {
+        Stale,
+        Revoked,
+        Eligible,
+    }
+    let claim = mysql.with_transaction(async |transaction| {
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
-        let Some(Json(mut current)) = task.as_ref().filter(|row| super::completion::is_active_task(row)).and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
+        let Some(Json(mut current)) = task.as_ref().filter(|row| super::completion::is_active_task(row)).and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(Claim::Stale); };
         if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
             || current.pointer(PIPELINE_HANDOFF_PATH) != advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
         {
-            return Ok(false);
+            return Ok(Claim::Stale);
         }
         if super::completion::dispatchable_task_status(&current).is_none() {
             if let Some(parent) = wegent_task_store::pending_pipeline_parent(&current) {
@@ -273,18 +310,52 @@ async fn claim_and_dispatch(
                     transaction, &tables.tasks, advance.task_id, &mut current, parent,
                 ).await?;
             }
-            return Ok(false);
+            return Ok(Claim::Stale);
         }
-        let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
-        let changed = transaction.execute(
-            format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status IN ('PENDING','RUNNING')", tables.subtasks),
-            (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
-        if changed.rows_affected == 0 { return Ok(false); }
-        current["status"]["status"] = json!("RUNNING");
-        transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
-            (crate::json_compat::python_json_value(&current), now, advance.task_id)).await?;
-        Ok(true)
+        if current.pointer("/spec/teamRef") != advance.task_json.pointer("/spec/teamRef") {
+            return Ok(Claim::Revoked);
+        }
+        // Lock the live execution resources through claim commit so archival
+        // and this dispatch have a definite order. The snapshot only selects the stage.
+        let eligible: Option<i64> = transaction.fetch_optional(
+            "SELECT t.id FROM kinds t JOIN kinds b ON b.user_id=t.user_id WHERE t.id=? AND t.user_id=? AND t.namespace=? AND t.name=? AND t.kind='Team' AND t.is_active=1 AND b.id=? AND b.namespace=? AND b.name=? AND b.kind='Bot' AND b.is_active=1 FOR SHARE",
+            (advance.team.id, advance.team.user_id, advance.team.namespace.as_str(), advance.team.name.as_str(),
+             advance.bot.id, advance.bot.namespace.as_str(), advance.bot.name.as_str()),
+        ).await?;
+        if eligible.is_none() { return Ok(Claim::Revoked); }
+        let child: Option<i64> = transaction.fetch_optional(
+            format!("SELECT id FROM {} WHERE id=? AND task_id=? AND status IN ('PENDING','RUNNING') FOR SHARE", tables.subtasks),
+            (advance.pair.assistant_subtask_id, advance.task_id),
+        ).await?;
+        Ok(if child.is_some() { Claim::Eligible } else { Claim::Stale })
     }).await.map_err(dependency)?;
+    match claim {
+        Claim::Stale => return Ok(()),
+        Claim::Revoked => return settle_unavailable_pair(state, advance).await,
+        Claim::Eligible => {}
+    }
+    let (accepted, acknowledgement) = tokio::sync::oneshot::channel();
+    permit.send(DefaultDispatchJob::Pipeline(Box::new(job), accepted));
+    acknowledgement
+        .await
+        .map_err(|_| FastApiError::internal())?
+        .map_err(|error| {
+            tracing::warn!(%error, task_id = advance.task_id, "pipeline dispatch was not accepted");
+            FastApiError::internal()
+        })?;
+    let running = mysql
+        .with_transaction(async |tx| {
+            wegent_task_store::task_store_pipeline::record_accepted_pair(
+                tx,
+                &tables.tasks,
+                &tables.subtasks,
+                advance,
+                executor_owns_execution,
+            )
+            .await
+        })
+        .await
+        .map_err(dependency)?;
     if !running {
         return Ok(());
     }
@@ -313,65 +384,7 @@ async fn claim_and_dispatch(
             })?;
         }
     }
-    let (accepted, acknowledgement) = tokio::sync::oneshot::channel();
-    permit.send(DefaultDispatchJob::Pipeline(Box::new(job), accepted));
-    acknowledgement
-        .await
-        .map_err(|_| FastApiError::internal())?
-        .map_err(|error| {
-            tracing::warn!(%error, task_id = advance.task_id, "pipeline dispatch was not accepted");
-            FastApiError::internal()
-        })?;
-    if executor_owns_execution {
-        clear_dispatched_pair(state, advance).await?;
-    }
     Ok(())
-}
-
-async fn clear_dispatched_pair(
-    state: &AppState,
-    advance: &PipelineStageAdvance,
-) -> Result<(), FastApiError> {
-    let tables = state
-        .task_store
-        .message_edit_tables(advance.task_id)
-        .await
-        .map_err(dependency)?;
-    let mysql = state
-        .mysql
-        .route(crate::task_routing::ByTaskId(advance.task_id as u64));
-    mysql
-        .with_transaction(async |transaction| {
-            let row: Option<MysqlRow> = transaction
-                .fetch_optional(
-                    crate::task_store::task_for_update_first_statement(&tables.tasks),
-                    (advance.task_id,),
-                )
-                .await?;
-            let Some(Json(mut task)) = row
-                .as_ref()
-                .and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"))
-            else {
-                return Ok(());
-            };
-            if task.pointer(PIPELINE_HANDOFF_PATH)
-                == advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
-            {
-                wegent_task_store::clear_pending_pipeline_handoff(&mut task);
-                transaction
-                    .execute(
-                        format!("UPDATE {} SET json=? WHERE id=?", tables.tasks),
-                        (
-                            crate::json_compat::python_json_value(&task),
-                            advance.task_id,
-                        ),
-                    )
-                    .await?;
-            }
-            Ok(())
-        })
-        .await
-        .map_err(dependency)
 }
 
 fn user_message(advance: &PipelineStageAdvance) -> Value {

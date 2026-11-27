@@ -267,7 +267,7 @@ async fn deliver_terminal_callback(
     let Some(completion::TerminalCompletion {
         result: final_result,
         user_id,
-        task,
+        mut task,
         replay_error,
         replay_source,
     }) = completion
@@ -292,6 +292,17 @@ async fn deliver_terminal_callback(
     } else {
         None
     };
+    if task.auto_advance
+        && advance.is_none()
+        && let Some(current) =
+            pipeline::settle_unavailable_advance(state, event.task_id, event.subtask_id).await?
+    {
+        if current.auto_advance {
+            // An existing RUNNING child can still deliver its terminal receipt.
+            return Ok(false);
+        }
+        task = current;
+    }
     if let Some(error) = replay_error {
         event.error = error;
     }

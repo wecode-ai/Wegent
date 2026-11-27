@@ -109,6 +109,9 @@ pub async fn saved_task_strategy(
     Ok(row.map(|(snapshot,)| snapshot.0))
 }
 
+pub const PIPELINE_UNAVAILABLE: &str =
+    "Pipeline cannot continue: the Team, stage, or next Bot is unavailable";
+
 /// Committed next turn; executor dispatch happens after the transaction closes.
 pub struct PipelineStageAdvance {
     pub task_id: i64,
@@ -252,18 +255,25 @@ async fn advance_on<T: MysqlTransaction>(
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok())
     } else {
-        let previous_bot: Option<KindRow> = transaction.fetch_optional(
-            format!("SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.id = ? AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1"),
-            (previous_bot_id,)).await?;
-        let Some(previous_bot) = previous_bot else {
+        if team
+            .json
+            .0
+            .pointer("/spec/collaborationModel")
+            .and_then(Value::as_str)
+            != Some("pipeline")
+        {
             return Ok(None);
-        };
-        automatic_next_stage(
-            &task_json,
-            &team.json.0,
-            &previous_bot.name,
-            &previous_bot.namespace,
-        )
+        }
+        let bot = completed_bot_identity(transaction, previous_bot_id).await?;
+        match pipeline_stage(
+            task_json.get("spec"),
+            &team.json.0["spec"],
+            bot.as_ref(),
+            strategy.is_some(),
+        ) {
+            PipelineStage::Advance(stage) => Some(stage),
+            _ => None,
+        }
     };
     let Some(stage) = stage else { return Ok(None) };
     let Some(members) = team
@@ -366,6 +376,20 @@ pub fn pending_pipeline_parent(task: &Value) -> Option<i64> {
         .ok()
 }
 
+/// Return the recorded child only when the receipt owns its handoff.
+pub fn pending_pipeline_child(task: &Value, parent: i64) -> Option<i64> {
+    if pending_pipeline_parent(task)? != parent {
+        return None;
+    }
+    task["metadata"]["labels"]
+        .get(PIPELINE_HANDOFF)?
+        .as_str()?
+        .rsplit_once(':')?
+        .1
+        .parse()
+        .ok()
+}
+
 /// Retire an SSE handoff in the transaction that settles its assistant.
 pub fn settle_pipeline_handoff(task: &mut Value, subtask_id: i64) {
     if let Some(labels) = task["metadata"]["labels"].as_object_mut() {
@@ -385,6 +409,75 @@ pub fn settle_pipeline_handoff(task: &mut Value, subtask_id: i64) {
             true
         });
     }
+}
+
+/// Persist a receiver's acknowledgement only for its still-current child.
+/// The pending handoff remains authoritative until this receipt or a terminal event.
+pub async fn record_accepted_pair(
+    transaction: &mut impl MysqlTransaction,
+    tasks: &str,
+    subtasks: &str,
+    advance: &PipelineStageAdvance,
+    executor_owns_execution: bool,
+) -> MysqlResult<bool> {
+    let row: Option<MysqlRow> = transaction
+        .fetch_optional(task_for_update_first_statement(tasks), (advance.task_id,))
+        .await?;
+    let Some(Json(mut task)) = row
+        .as_ref()
+        .and_then(|row| task_column::<Json<Value>>(row, "json"))
+    else {
+        return Ok(false);
+    };
+    if task["metadata"]["labels"][PIPELINE_HANDOFF]
+        != advance.task_json["metadata"]["labels"][PIPELINE_HANDOFF]
+        || dispatchable_task_status(&task).is_none()
+    {
+        return Ok(false);
+    }
+    let now = chrono::Local::now()
+        .naive_local()
+        .format("%Y-%m-%d %H:%M:%S%.6f")
+        .to_string();
+    let child: Option<String> = transaction
+        .fetch_optional(
+            format!(
+                "SELECT status FROM {} WHERE id=? AND task_id=? FOR UPDATE",
+                subtasks
+            ),
+            (advance.pair.assistant_subtask_id, advance.task_id),
+        )
+        .await?;
+    match child.as_deref() {
+        Some("PENDING") => {
+            transaction
+                .execute(
+                    format!(
+                        "UPDATE {} SET status='RUNNING', updated_at=? WHERE id=? AND task_id=?",
+                        subtasks
+                    ),
+                    (
+                        now.as_str(),
+                        advance.pair.assistant_subtask_id,
+                        advance.task_id,
+                    ),
+                )
+                .await?;
+        }
+        Some("RUNNING") => {}
+        _ => return Ok(false),
+    }
+    task["status"]["status"] = json!("RUNNING");
+    if executor_owns_execution {
+        clear_pending_pipeline_handoff(&mut task);
+    }
+    transaction
+        .execute(
+            update_task_json_statement(tasks),
+            (python_json_value(&task), now, advance.task_id),
+        )
+        .await?;
+    Ok(true)
 }
 
 fn pending_handoff(task: &Value, completed: i64, latest: Option<i64>) -> Option<(i64, i64)> {
@@ -559,7 +652,7 @@ async fn load_team<T: MysqlTransaction>(
         .await
 }
 
-async fn load_member_bot<T: MysqlTransaction>(
+pub async fn load_member_bot<T: MysqlTransaction>(
     transaction: &mut T,
     owner: i64,
     member: &Value,
@@ -575,40 +668,75 @@ async fn load_member_bot<T: MysqlTransaction>(
     transaction.fetch_optional(format!("SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.namespace = ? AND kinds.name = ? AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1"), (owner, namespace, name)).await
 }
 
-fn automatic_next_stage(
-    task: &Value,
-    team: &Value,
-    bot_name: &str,
-    namespace: &str,
-) -> Option<usize> {
-    if team
-        .pointer("/spec/collaborationModel")
-        .and_then(Value::as_str)
-        != Some("pipeline")
-    {
-        return None;
-    }
-    let stage = match task.pointer("/spec/currentStage") {
-        None | Some(Value::Null) => 0,
-        Some(value) => usize::try_from(value.as_u64()?).ok()?,
+/// Resolve the identity that produced an existing receipt, even after deactivation.
+pub async fn completed_bot_identity<T: MysqlTransaction>(
+    transaction: &mut T,
+    id: i64,
+) -> MysqlResult<Option<(String, String)>> {
+    transaction.fetch_optional(
+        "SELECT kinds.name, kinds.namespace FROM kinds WHERE kinds.id = ? AND kinds.kind = 'Bot' LIMIT 1",
+        (id,),
+    ).await
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PipelineStage {
+    Complete,
+    Advance(usize),
+    Confirm,
+    Invalid,
+}
+
+pub fn pipeline_stage(
+    task_spec: Option<&Value>,
+    team_spec: &Value,
+    bot: Option<&(String, String)>,
+    frozen: bool,
+) -> PipelineStage {
+    // A legacy Team has no accepted stage definition to validate. Its original
+    // default for a receipt with no applicable next stage is completion.
+    let unmatched = if frozen {
+        PipelineStage::Invalid
+    } else {
+        PipelineStage::Complete
     };
-    let members = team.pointer("/spec/members")?.as_array()?;
-    let current = members.get(stage)?;
-    if current.pointer("/botRef/name").and_then(Value::as_str) != Some(bot_name)
-        || current
-            .pointer("/botRef/namespace")
-            .and_then(Value::as_str)
-            .unwrap_or("default")
-            != namespace
-        || current
-            .get("requireConfirmation")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || stage + 1 >= members.len()
-    {
-        return None;
+    let current = match task_spec.and_then(|spec| spec.get("currentStage")) {
+        None | Some(Value::Null) => Some(0),
+        Some(value) => value.as_u64().and_then(|v| usize::try_from(v).ok()),
+    };
+    let (Some(stage), Some(members), Some((name, namespace))) =
+        (current, team_spec["members"].as_array(), bot)
+    else {
+        return unmatched;
+    };
+    let Some(member) = members.get(stage) else {
+        return unmatched;
+    };
+    let matches = |member: &Value| {
+        member.pointer("/botRef/name").and_then(Value::as_str) == Some(name.as_str())
+            && member
+                .pointer("/botRef/namespace")
+                .and_then(Value::as_str)
+                .unwrap_or("default")
+                == namespace
+    };
+    // Legacy tasks track the live roster. A removed Bot's latest receipt still
+    // closes its recorded stage. A Bot belonging to another stage cannot.
+    if !matches(member) {
+        if frozen || members.iter().any(matches) {
+            return unmatched;
+        }
+        if member["requireConfirmation"].as_bool() == Some(true) {
+            return PipelineStage::Complete;
+        }
     }
-    Some(stage + 1)
+    if stage + 1 == members.len() {
+        PipelineStage::Complete
+    } else if member["requireConfirmation"].as_bool() == Some(true) {
+        PipelineStage::Confirm
+    } else {
+        PipelineStage::Advance(stage + 1)
+    }
 }
 
 /// Compose the selected pipeline handoff from the original request and stage output.
@@ -701,52 +829,69 @@ mod tests {
     }
 
     #[test]
-    fn automatic_stage_requires_current_nonfinal_bot_without_confirmation() {
-        let task = json!({"spec":{"currentStage":0}});
+    fn frozen_and_legacy_receipts_use_the_same_stage_in_both_transactions() {
+        let mut team = team();
+        let spec = json!({"currentStage":0});
+        let stage = |team: &Value, bot: &str, frozen| {
+            pipeline_stage(
+                Some(&spec),
+                &team["spec"],
+                Some(&(bot.into(), "default".into())),
+                frozen,
+            )
+        };
+        assert_eq!(stage(&team, "removed", false), PipelineStage::Advance(1));
+        assert_eq!(stage(&team, "removed", true), PipelineStage::Invalid);
+        assert_eq!(stage(&team, "second", false), PipelineStage::Complete);
+        assert_eq!(stage(&team, "first", true), PipelineStage::Advance(1));
+        team["spec"]["members"][0]["requireConfirmation"] = json!(true);
+        assert_eq!(stage(&team, "first", true), PipelineStage::Confirm);
+        assert_eq!(stage(&team, "removed", false), PipelineStage::Complete);
         assert_eq!(
-            automatic_next_stage(&task, &team(), "first", "default"),
-            Some(1)
-        );
-        assert_eq!(
-            automatic_next_stage(&task, &team(), "second", "default"),
-            None
-        );
-        assert_eq!(automatic_next_stage(&task, &team(), "first", "other"), None);
-        assert_eq!(
-            automatic_next_stage(
-                &json!({"spec":{"currentStage":1}}),
-                &team(),
-                "second",
-                "default"
+            pipeline_stage(
+                Some(&json!({"currentStage":1})),
+                &team["spec"],
+                Some(&("second".into(), "default".into())),
+                true
             ),
-            None
-        );
-        let mut manual = team();
-        manual["spec"]["members"][0]["requireConfirmation"] = json!(true);
-        assert_eq!(
-            automatic_next_stage(&task, &manual, "first", "default"),
-            None
+            PipelineStage::Complete
         );
     }
 
     #[test]
     fn duplicate_completion_cannot_advance_adjacent_stages_with_the_same_bot() {
+        assert!(is_current_completion(42, Some(42)));
+        assert!(!is_current_completion(42, Some(44)));
+        assert!(!is_current_completion(42, None));
         let mut repeated = team();
         repeated["spec"]["members"]
             .as_array_mut()
             .unwrap()
-            .insert(1, json!({"botRef":{"name":"first","namespace":"default"}}));
-        assert!(is_current_completion(42, Some(42)));
-        assert!(!is_current_completion(42, Some(44)));
-        assert!(!is_current_completion(42, None));
+            .insert(1, json!({"botRef":{"name":"first"}}));
+        let bot = ("first".to_owned(), "default".to_owned());
+        for (cursor, expected) in [
+            (Value::Null, PipelineStage::Advance(1)),
+            (json!(1), PipelineStage::Advance(2)),
+            (json!(3), PipelineStage::Invalid),
+        ] {
+            assert_eq!(
+                pipeline_stage(
+                    Some(&json!({"currentStage":cursor})),
+                    &repeated["spec"],
+                    Some(&bot),
+                    true
+                ),
+                expected
+            );
+        }
         assert_eq!(
-            automatic_next_stage(
-                &json!({"spec":{"currentStage":1}}),
-                &repeated,
-                "first",
-                "default"
+            pipeline_stage(
+                None,
+                &repeated["spec"],
+                Some(&("first".into(), "other".into())),
+                true
             ),
-            Some(2)
+            PipelineStage::Invalid
         );
     }
 
