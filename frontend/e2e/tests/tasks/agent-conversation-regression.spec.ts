@@ -949,7 +949,7 @@ test.describe('Agent conversation regression', () => {
       ])
       await configureToolScenario(
         request,
-        assignment,
+        workerInstruction,
         [...sharedCodexProbe(), { responseContent: childResult }],
         {
           'x-openai-subagent': 'collab_spawn',

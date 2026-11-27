@@ -164,7 +164,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
           { responseContent: final },
         ])
         await scenario(
-          claude ? workerPrompt : assignment,
+          workerPrompt,
           [...groupBotProbe(shell, lead, worker), { responseContent: workerResult }],
           claude ? undefined : { 'x-openai-subagent': 'collab_spawn' }
         )
@@ -301,18 +301,13 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
         cell.workerResult
       )
     if (cell.mode === 'coordinate' && cell.shell === 'Codex')
-      expect(modelRequestText(await getScenarioModelBodies(request, cell.assignment))).toContain(
-        cell.workerPrompt
+      expect(modelRequestText(await getScenarioModelBodies(request, cell.workerPrompt))).toContain(
+        cell.assignment
       )
     const capabilities = []
     for (const [index, bot] of cell.bots.entries()) {
       const workerStage = index === 1 && cell.mode === 'pipeline'
-      const key =
-        index === 0
-          ? cell.leadPrompt
-          : cell.mode === 'coordinate' && cell.shell === 'Codex'
-            ? cell.assignment
-            : cell.workerPrompt
+      const key = index === 0 ? cell.leadPrompt : cell.workerPrompt
       const captured = await getScenarioModelBodies(request, key)
       capabilities.push({
         botId: bot.bot_id,
@@ -379,12 +374,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       native.map(async cell => ({
         teamId: cell.teamId,
         leader: (await getScenarioModelBodies(request, cell.leadPrompt)).length,
-        worker: (
-          await getScenarioModelBodies(
-            request,
-            cell.shell === 'Codex' ? cell.assignment : cell.workerPrompt
-          )
-        ).length,
+        worker: (await getScenarioModelBodies(request, cell.workerPrompt)).length,
       }))
     )
   const beforeRejection = await nativeCaptures()
