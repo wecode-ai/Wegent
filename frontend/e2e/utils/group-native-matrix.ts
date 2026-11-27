@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import { scopedMockUrl } from './mock-scope'
 import { createCollaborationGroup } from './issue-dispatch-test-support'
 import { selectCollaborationProjectView } from './collaboration-test-support'
 import {
@@ -387,9 +388,29 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       }))
     )
   const beforeRejection = await nativeCaptures()
+  const scope = `group-denied-${suffix}`
+  const deniedCalls = async () => {
+    const response = await request.get(
+      scopedMockUrl(PROVIDER_NATIVE_MOCK_URL, scope) + '/mcp-control/calls'
+    )
+    expect(response.status()).toBe(200)
+    return response.json()
+  }
+  expect(await deniedCalls()).toEqual([])
   for (const cell of native) {
-    const updated = await ctx.client.put(`/api/bots/${cell.bots[1].bot_id}`, worker.config)
-    expect(updated.status).toBe(200)
+    const base =
+      (cell.shell === 'Codex'
+        ? process.env.E2E_CODEX_MODEL_SERVER_URL
+        : process.env.E2E_CLAUDE_MODEL_SERVER_URL) || PROVIDER_NATIVE_MOCK_URL
+    for (const [index, grant] of [lead, worker].entries()) {
+      const updated = await ctx.client.put(`/api/bots/${cell.bots[index].bot_id}`, {
+        ...grant.config,
+        mcp_servers: {
+          [grant.serverId]: { type: 'http', url: scopedMockUrl(base, scope) + '/mcp' },
+        },
+      })
+      expect(updated.status).toBe(200)
+    }
   }
   const deniedTitle = `Verify distinct native role grants ${suffix}`
   const denied = await api<{ id: string }>(`/api/v1/cloud-projects/${projectId}/loop-items`, {
@@ -430,6 +451,8 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     })
     .toBe(native.length)
   const rejected = await failures()
+  const rejectedMcpCalls = await deniedCalls()
+  expect(rejectedMcpCalls).toEqual([])
   expect(await nativeCaptures()).toEqual(beforeRejection)
   for (const cell of native) {
     const rows = rejected.filter(row => row.agentId === cell.agentId)
@@ -444,6 +467,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       groupId,
       issueId: denied.id,
       rejected,
+      rejectedMcpCalls,
       unchangedModelCalls: beforeRejection,
     }),
     contentType: 'application/json',

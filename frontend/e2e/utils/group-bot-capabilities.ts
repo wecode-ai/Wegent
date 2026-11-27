@@ -109,6 +109,10 @@ export function groupBotProbe(shell: string, grant: Grant, other: Grant): ToolSc
             toolCalls: [
               {
                 toolName: 'ToolSearch',
+                arguments: { query: `select:mcp__${other.serverId}__${other.tool}` },
+              },
+              {
+                toolName: 'ToolSearch',
                 arguments: { query: `select:mcp__${grant.serverId}__${grant.tool}` },
               },
             ],
@@ -131,30 +135,65 @@ export function groupBotProbe(shell: string, grant: Grant, other: Grant): ToolSc
 }
 
 export function verifyGroupBotProbe(bodies: Record<string, unknown>[], grant: Grant, other: Grant) {
-  const results = bodies.flatMap(body => {
-    const messages = (body.messages ?? body.input ?? []) as Array<Record<string, unknown>>
-    return messages.flatMap(message => {
-      if (message.type === 'function_call_output' || message.type === 'custom_tool_call_output')
-        return [message.output]
-      if (!Array.isArray(message.content)) return []
-      return message.content.filter(part => part.type === 'tool_result').map(part => part.content)
-    })
-  })
-  const transcript = modelRequestText(results)
+  const records = bodies.flatMap(body =>
+    ((body.messages ?? body.input ?? []) as Array<Record<string, unknown>>).flatMap(message =>
+      Array.isArray(message.content) ? [...message.content, message] : [message]
+    )
+  )
+  const fullName = `mcp__${grant.serverId}__${grant.tool}`
+  const calls = new Set(
+    records
+      .filter(block => {
+        if (!['tool_use', 'function_call', 'custom_tool_call'].includes(block.type)) return false
+        if (block.name === fullName || block.name === grant.tool) return true
+        return (
+          ['functions.exec', 'functions__exec', 'exec'].includes(block.name) &&
+          JSON.stringify(block.input ?? block.arguments).includes(grant.tool)
+        )
+      })
+      .map(block => block.call_id ?? block.id)
+  )
+  const outputs = records.filter(block =>
+    ['function_call_output', 'custom_tool_call_output', 'tool_result'].includes(block.type)
+  )
+  if (bodies.some(body => Array.isArray(body.messages))) {
+    const deniedName = `mcp__${other.serverId}__${other.tool}`
+    const searches = records.filter(
+      block =>
+        block.type === 'tool_use' &&
+        block.name === 'ToolSearch' &&
+        block.input?.query === 'select:' + deniedName
+    )
+    expect(searches.length).toBeGreaterThan(0)
+    const searchIds = new Set(searches.map(block => block.id))
+    const searchResults = outputs.filter(block => searchIds.has(block.tool_use_id))
+    expect(searchResults.length).toBeGreaterThan(0)
+    for (const block of searchResults) {
+      expect(block.is_error).not.toBe(true)
+      expect(block.content).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'tool_reference', tool_name: deniedName }),
+        ])
+      )
+    }
+  }
+  const transcript = modelRequestText(outputs)
   expect(transcript).toContain(grant.marker)
-  const receipts = results
-    .filter(result => modelRequestText([result]).includes(grant.result))
-    .flatMap(result => modelRequestText([result]).match(/MCP_RECEIPT:[0-9a-f-]{36}/gi) ?? [])
-  expect(
-    receipts.length,
-    'MCP must return a fresh receipt with the actual tool result'
-  ).toBeGreaterThan(0)
+  const receipts = new Set(
+    outputs
+      .filter(block => calls.has(block.call_id ?? block.tool_use_id))
+      .flatMap(block => {
+        const text = modelRequestText([block.output ?? block.content])
+        return text.includes(grant.result) ? (text.match(/MCP_RECEIPT:[0-9a-f-]{36}/gi) ?? []) : []
+      })
+  )
+  expect(receipts.size, 'Exactly one direct MCP result per Bot').toBe(1)
   expect(transcript).toContain(grant.result)
   expect(transcript).not.toContain(other.marker)
   const names = modelToolNames(bodies)
   expect(names.some(name => name.includes(other.serverId))).toBe(false)
   return {
-    receipt: receipts.at(-1)!,
+    receipt: [...receipts][0],
     skill: grant.name,
     skillMarker: grant.marker,
     tool: `${grant.serverId}__${grant.tool}`,
@@ -175,11 +214,29 @@ export function verifyLegacyBotProbe(
   const tools = modelToolNames(bodies)
   expect(tools.some(name => name.includes(grant.serverId))).toBe(true)
   expect(tools.some(name => name.includes(other.serverId))).toBe(false)
-  const outputs = bodies.flatMap(body =>
-    (body.messages as Array<{ role: string; content: unknown }>)
-      .filter(message => message.role === 'tool')
-      .map(message => modelRequestText([message.content]))
+  type Message = {
+    role: string
+    content: unknown
+    tool_call_id?: string
+    tool_calls?: { id: string; function: { name: string } }[]
+  }
+  const messages = bodies.flatMap(body => body.messages as Message[])
+  const callIds = new Set(
+    messages.flatMap(message =>
+      (message.tool_calls ?? [])
+        .filter(
+          call =>
+            call.function.name.includes(grant.serverId) && call.function.name.endsWith(grant.tool)
+        )
+        .map(call => call.id)
+    )
   )
+  const outputs = messages
+    .filter(
+      message =>
+        message.role === 'tool' && message.tool_call_id && callIds.has(message.tool_call_id)
+    )
+    .map(message => modelRequestText([message.content]))
   const receipts = new Set(
     outputs
       .filter(text => text.includes(grant.result))
