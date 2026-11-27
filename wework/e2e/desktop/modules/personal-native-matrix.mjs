@@ -109,6 +109,18 @@ export function personalNativeMatrix({
     const cells = []
     const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
     const catalog = await rpc('runtime.runner.catalog', {})
+    const models = await fetch(
+      cloud.backendUrl +
+        '/api/models/unified?scope=all&include_config=false&model_category_type=llm&client_origin=wework',
+      { headers: { Authorization: 'Bearer ' + cloud.authToken } }
+    )
+    assert.ok(models.ok, 'The signed-in user must be able to list cloud models')
+    const candidates = (await models.json()).data.filter(
+      row => row.type === 'public' && row.name === 'desktop-e2e-cloud-responses'
+    )
+    assert.equal(candidates.length, 1, 'Expected one seeded public Responses model')
+    const [model] = candidates
+    assert.ok(model.namespace && model.resourceUserId != null && model.isActive !== false)
     const profile = await rpc('runtime.stand_in.personal.get', { userId })
     const deviceId = profile.executionDeviceId
     const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
@@ -123,10 +135,7 @@ export function personalNativeMatrix({
       ['codex', 'Codex'],
       ['claude_code', 'ClaudeCode'],
     ]) {
-      const model =
-        catalog.models.find(row => row.runtime === runtime && row.is_default) ??
-        catalog.models.find(row => row.runtime === runtime)
-      assert.ok(model, 'Missing personal assistant model for ' + runtime)
+      assert.ok(catalog.runtimes.includes(runtime), 'Missing installed harness: ' + runtime)
       for (const variant of ['solo', 'pipeline', 'coordinate', 'coordinate-denied']) {
         const denied = variant === 'coordinate-denied'
         const mode = denied ? 'coordinate' : variant
@@ -180,7 +189,18 @@ export function personalNativeMatrix({
           collaboration_model: mode,
           model_policy: {
             mode: 'fixed',
-            model: { runtime, provider: model.provider, model_id: model.model_id },
+            model: {
+              runtime,
+              provider: model.provider || 'openai-responses',
+              model_id: model.modelId || model.name,
+              source: 'cloud',
+              cloud_model: {
+                type: model.type,
+                name: model.name,
+                namespace: model.namespace,
+                resource_user_id: model.resourceUserId,
+              },
+            },
           },
         }
         const saved = await rpc('runtime.stand_in.personal.save', {

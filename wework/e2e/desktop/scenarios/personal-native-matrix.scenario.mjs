@@ -21,6 +21,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
   return {
     requiresCloudEnvironment: true,
     claudeBinary: CLAUDE_BINARY,
+    appEnvironment: { CLAUDE_BINARY_PATH: CLAUDE_BINARY },
     setCloudEnvironment(value) {
       cloud = value
     },
