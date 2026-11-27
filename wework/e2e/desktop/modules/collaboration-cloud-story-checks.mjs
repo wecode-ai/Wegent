@@ -202,7 +202,11 @@ export async function verifyRecordedMemberTranscript({
     issueId,
     timeoutMs
   )
-  const memberActivity = activity.find(message => message.messageId === memberMessageId)
+  const start = activity.find(message => message.messageId === memberMessageId)
+  assert.equal(start?.metadata.collaboration_turn_start, true, '成员入口应来自公开的开始处理评论')
+  const memberActivity = activity.find(
+    message => message.messageId === start.metadata.collaboration_execution_activity_id
+  )
   assert.ok(memberActivity, '项目查看者应能从 Issue 动态中获得成员执行入口')
   assert.equal(memberActivity.metadata.dispatch_role, 'member')
   const address = memberActivity.runtimeAddress
