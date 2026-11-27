@@ -9,6 +9,7 @@ import type { createAgentResourceApi } from '@/api/agentResources'
 import type { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
+import { ExternalProjectAgentForm } from './ExternalProjectAgentForm'
 import { WeworkAgentPickerDialog } from './WeworkAgentPickerDialog'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
 import { createProjectAgentEditorApi } from './projectAgentEditorApi'
@@ -100,6 +101,18 @@ export function createWeworkProjectAgentConfigurationHost(
     ...(agentResourceApi
       ? {
           supportsExistingAgentSelection: true,
+          renderExternalAgentCreator({ projectId, onBack, onCreated }) {
+            return (
+              <ExternalProjectAgentForm
+                create={input => agentResourceApi.createExternalAgent(projectId, input)}
+                checkConnection={agentId =>
+                  agentResourceApi.checkExternalAgentConnection(projectId, agentId)
+                }
+                onBack={onBack}
+                onCreated={onCreated}
+              />
+            )
+          },
           async createTemplateAgent(agent, namespace, routing) {
             const created = await agentResourceApi.createAgent({
               ...routing,

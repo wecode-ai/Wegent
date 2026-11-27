@@ -136,11 +136,11 @@ allocate independently of metric recording.
 
 ## Background jobs
 
-Rust 后台任务复用 `SCHEDULED_TASKS_ENABLED`（本进程调度）和 `EMBEDDED_CELERY_ENABLED`（本进程原生 worker），默认均为 `true`。`WEGENT_RS_JOB_ALLOWLIST` 未配置时应用只启用原生设备注册清理 `device_registration_retention`；显式设置为空可禁用全部 Rust 任务，显式列表需包含该名称才启用清理。迁移任务族仍须逐项启用。Python 保留全部 Celery 行为，不转投任务，Rust 不消费 Celery 队列；部署时避免同一执行族并行调度。通用调度框架与 Redis provider 独立发布，业务适配留在 Wegent；配置与验证步骤见[中文指南](docs/zh/background-jobs.md)。
+Rust 后台任务复用 `SCHEDULED_TASKS_ENABLED`（本进程调度）和 `EMBEDDED_CELERY_ENABLED`（本进程原生 worker），默认均为 `true`。`WEGENT_RS_JOB_ALLOWLIST` 未配置时启用设备注册清理、托管 Issue 执行和外部智能体投递等原生作业；显式设置为空可禁用全部 Rust 任务，显式列表需包含该名称才启用清理。迁移任务族仍须逐项启用。Python 保留全部 Celery 行为，不转投任务，Rust 不消费 Celery 队列；部署时避免同一执行族并行调度。通用调度框架与 Redis provider 独立发布，业务适配留在 Wegent；配置与验证步骤见[中文指南](docs/zh/background-jobs.md)。
 
 Rust background jobs reuse `SCHEDULED_TASKS_ENABLED` for this process's scheduler
 and `EMBEDDED_CELERY_ENABLED` for its native worker, both defaulting to `true`.
-`WEGENT_RS_JOB_ALLOWLIST` enables only native device registration retention when unset. An explicit empty value disables all Rust jobs. Explicit lists must include `device_registration_retention` to enable retention. Migrated Python job families remain opt-in. Python retains all Celery behavior without task
+`WEGENT_RS_JOB_ALLOWLIST` enables native device registration retention, managed Issue execution, and external agent delivery when unset. An explicit empty value disables all Rust jobs. Explicit lists must include `device_registration_retention` to enable retention. Migrated Python job families remain opt-in. Python retains all Celery behavior without task
 forwarding, and Rust does not consume Celery queues. Avoid scheduling the same
 family concurrently in both processes. The scheduling core and Redis provider
 are separate packages; Wegent owns its business adapters. See the

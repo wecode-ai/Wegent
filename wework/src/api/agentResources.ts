@@ -187,14 +187,51 @@ function detailCapabilityMode(bot: TeamDetailBot): UnifiedAgentCapabilityMode {
   return hasManualCapabilities ? 'manual' : 'follow_device'
 }
 
+export type ExternalAgentRegistration = { name: string } & (
+  | { type: 'worker' }
+  | {
+      type: 'hook'
+      hook: {
+        url: string
+        method: string
+        contentType: string
+        headers: Record<string, string>
+        template: string
+      }
+    }
+)
+
+export interface ExternalAgentRegistrationResult {
+  id: string
+  workerToken?: string | null
+  workerEndpoint?: string
+}
+
 export function createAgentResourceApi(
   client: HttpClient,
-  readCatalog?: Parameters<typeof createAgentRoutingCatalog>[1]
+  readCatalog?: Parameters<typeof createAgentRoutingCatalog>[1],
+  workerEndpoint?: string
 ) {
   const models = createModelApi(client)
   const cache = getClientRequestCache(client)
   return {
     ...createAgentRoutingCatalog(client, readCatalog),
+    async createExternalAgent(projectId: string, input: ExternalAgentRegistration) {
+      const projectPath = `/v1/cloud-projects/${encodeURIComponent(projectId)}`
+      const result = await client.post<ExternalAgentRegistrationResult>(
+        `${projectPath}/external-agents`,
+        input
+      )
+      cache.invalidate(`${projectPath}/chat-agents`)
+      cache.invalidate(`${projectPath}/board-snapshot`)
+      return { ...result, workerEndpoint }
+    },
+    checkExternalAgentConnection(projectId: string, agentId: string) {
+      return client.get<{ connected: boolean }>(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/external-agents/${encodeURIComponent(agentId)}/connection`,
+        { cache: 'no-store' }
+      )
+    },
     listModels(): Promise<UnifiedModel[]> {
       return models.listModels().then(response => response.data)
     },
