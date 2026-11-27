@@ -16,6 +16,7 @@ import {
 import type { MobileRuntimeState } from './useMobileRuntime'
 import { useMobileRuntime } from './useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
+import { takeMobileTaskOutcome } from '@/telemetry/taskOutcome'
 import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -898,6 +899,44 @@ describe('creating a conversation on the only computer', () => {
       expect(state.messages.map(message => message.content)).toEqual(['你好', '你好'])
     }
   )
+
+  it('records a failed send against its original task after switching conversations', async () => {
+    const listedWork = workFor('app-record-11')
+    const workspace = listedWork.chats[0]!
+    mocks.listWork.mockResolvedValue({
+      ...listedWork,
+      totalTasks: 2,
+      chats: [
+        {
+          ...workspace,
+          tasks: [
+            workspace.tasks[0]!,
+            { ...workspace.tasks[0]!, taskId: 'other-task', title: 'Other task' },
+          ],
+        },
+      ],
+    })
+    await mount()
+    const original = state.conversations.find(item => item.address.taskId === 'task')!
+    const other = state.conversations.find(item => item.address.taskId === 'other-task')!
+    await act(() => state.openConversation(original))
+    const response = deferred<{ accepted: boolean }>()
+    mocks.sendMessage.mockReturnValue(response.promise)
+    let send!: Promise<boolean>
+    await act(() => {
+      send = state.send('原会话消息')
+    })
+
+    await act(() => state.openConversation(other))
+    await act(async () => {
+      response.reject(new Error('send failed'))
+      expect(await send).toBe(false)
+    })
+
+    expect(takeMobileTaskOutcome(original.address)).toBe('failure')
+    expect(takeMobileTaskOutcome(other.address)).toBeNull()
+    expect(state.error).toBeNull()
+  })
 
   it('surfaces locally revoked consent from the existing task creation interface', async () => {
     mocks.create.mockRejectedValue(new Error('Local switch is off'))

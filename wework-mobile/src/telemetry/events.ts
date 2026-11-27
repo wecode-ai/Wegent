@@ -173,6 +173,7 @@ const MOBILE_BOUNDED_STRING_PATTERN = /^[^\s]{1,256}$/
 const MOBILE_ENUM_PROPERTY_VALUES: Readonly<Record<string, readonly string[]>> = {
   execution_target: ['local', 'remote', 'unknown'],
   failure_reason: ['network_error', 'model_error', 'runtime_error', 'unknown'],
+  previous_result: ['success', 'failure', 'cancelled'],
   result: ['success', 'failure', 'cancelled'],
   screen: MOBILE_SCREENS,
   termination: ['background'],

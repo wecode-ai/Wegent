@@ -31,6 +31,7 @@ const TERMINAL_RUNTIME_EVENTS = new Set([
 
 export interface RuntimeSendTransition {
   key: string
+  address: RuntimeTaskAddress
   revision: number
   hadPreviousRunning: boolean
   previousRunning: boolean | undefined
@@ -63,6 +64,7 @@ export class RuntimeTaskLifecycleProjection {
     const key = runtimeTaskKey(address)
     const transition = {
       key,
+      address,
       revision: this.advanceRevision(key),
       hadPreviousRunning: this.runningByTask.has(key),
       previousRunning: this.runningByTask.get(key),
@@ -102,6 +104,7 @@ export class RuntimeTaskLifecycleProjection {
     return {
       ...transition,
       key: nextKey,
+      address,
       revision: canRollback ? nextRevision : -1,
     }
   }

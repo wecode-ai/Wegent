@@ -716,8 +716,7 @@ export function useMobileRuntime(
         return true
       } catch (cause) {
         if (sendTransition && lifecycle.sendRejected(sendTransition)) {
-          const failedAddress = currentAddressRef.current ?? provisionalAddress
-          if (failedAddress) recordMobileTaskOutcome(failedAddress, 'runtime.task.failed')
+          recordMobileTaskOutcome(sendTransition.address, 'runtime.task.failed')
           publishTaskLifecycle()
         }
         if (

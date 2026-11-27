@@ -71,6 +71,14 @@ describe('mobile task telemetry observation', () => {
     expect(trackMock.mock.calls.map(([name]) => name)).toEqual(['mobile_task_started'])
 
     observer.observe({
+      work: work(task('task-1', true)),
+      taskRunningByKey: new Map(),
+      devices: [device],
+      now: 2_500,
+    })
+    expect(trackMock.mock.calls.map(([name]) => name)).toEqual(['mobile_task_started'])
+
+    observer.observe({
       work: work(task('task-1', false, 'failed')),
       taskRunningByKey: new Map(),
       devices: [device],
@@ -104,6 +112,69 @@ describe('mobile task telemetry observation', () => {
       now: 2_000,
     })
     expect(trackMock.mock.calls[1]?.[1]).toMatchObject({ result: 'success' })
+  })
+
+  it('does not complete a task that disappears with the selected device scope', () => {
+    const trackMock = vi.fn()
+    const track = trackMock as unknown as MobileTaskTelemetryTracker
+    const observer = new MobileTaskTelemetryObserver(track)
+    observer.observe({
+      work: work(task('task-1', true)),
+      taskRunningByKey: new Map(),
+      devices: [device],
+      now: 1_000,
+    })
+    observer.observe({
+      work: {
+        projects: [],
+        chats: [
+          {
+            ...work(task('other-task', true)).chats[0],
+            tasks: [task('other-task', false)],
+          },
+        ],
+        totalTasks: 1,
+      },
+      taskRunningByKey: new Map(),
+      devices: [device],
+      now: 2_000,
+    })
+    expect(trackMock.mock.calls.map(([name]) => name)).toEqual(['mobile_task_started'])
+
+    observer.observe({
+      work: work(task('task-1', false, 'failed')),
+      taskRunningByKey: new Map(),
+      devices: [device],
+      now: 3_000,
+    })
+    expect(trackMock.mock.calls.map(([name]) => name)).toEqual([
+      'mobile_task_started',
+      'mobile_task_completed',
+    ])
+    expect(trackMock.mock.calls[1]?.[1]).toMatchObject({ result: 'failure' })
+  })
+
+  it('classifies another App device as a remote execution target', () => {
+    const trackMock = vi.fn()
+    const track = trackMock as unknown as MobileTaskTelemetryTracker
+    const observer = new MobileTaskTelemetryObserver(track)
+    const appDevice = {
+      ...device,
+      device_id: 'remote-app',
+      device_type: 'app' as const,
+      execution_target_id: 'remote-app',
+    }
+    const remoteWork = {
+      ...work(task('task-1', true)),
+      chats: [{ ...work(task('task-1', true)).chats[0], deviceId: 'remote-app' }],
+    }
+    observer.observe({
+      work: remoteWork,
+      taskRunningByKey: new Map(),
+      devices: [appDevice],
+      now: 1_000,
+    })
+    expect(trackMock.mock.calls[0]?.[1]).toMatchObject({ execution_target: 'remote' })
   })
 
   it('moves observation state when a provisional task ID becomes final', () => {

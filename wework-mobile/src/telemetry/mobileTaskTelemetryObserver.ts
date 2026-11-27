@@ -63,8 +63,12 @@ export class MobileTaskTelemetryObserver {
       const address = taskAddress(key)
       if (!address) continue
       const previous = this.observed.get(key)
-      const nextRunning = projectedRuntimeTaskRunning(tasks.get(key), taskRunningByKey.get(key))
-      if (!previous && !nextRunning) continue
+      const task = tasks.get(key)
+      const projected = taskRunningByKey.get(key)
+      const taskInScope = task !== undefined || typeof projected === 'boolean'
+      if (!previous && !taskInScope) continue
+      if (previous && !taskInScope) continue
+      const nextRunning = projectedRuntimeTaskRunning(task, projected)
       const current: ObservedTask = previous ?? {
         running: false,
         startedAt: null,
@@ -75,7 +79,7 @@ export class MobileTaskTelemetryObserver {
       const target = executionTarget(address.deviceId, devices)
       if (!current.running && nextRunning) this.startTask(current, address, target, now)
       if (current.running && !nextRunning) {
-        this.completeTask(current, address, tasks.get(key)?.status, target, now)
+        this.completeTask(current, address, task?.status, target, now)
       }
       current.running = nextRunning
       this.observed.set(key, current)
@@ -179,8 +183,7 @@ function taskAddress(key: string): RuntimeTaskAddress | null {
 function executionTarget(deviceId: string, devices: DeviceInfo[]): MobileExecutionTarget {
   const device = devices.find(candidate => candidate.device_id === deviceId)
   if (!device) return 'unknown'
-  if (device.device_type === 'local' || device.device_type === 'app') return 'local'
-  return 'remote'
+  return device.device_type === 'local' ? 'local' : 'remote'
 }
 
 function resultFromStatus(status: string | null | undefined): MobileTelemetryResult {

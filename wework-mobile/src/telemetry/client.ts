@@ -134,20 +134,23 @@ export class MobileTelemetryClient {
         failure ??= error
       }
     }
-    failure ??= this.tryClearQueues(client)
+    const firstQueueFailure = this.tryClearQueues(client)
+    if (firstQueueFailure !== null) failure ??= firstQueueFailure
     try {
       client.reset()
     } catch (error) {
       failure ??= error
     }
-    failure ??= this.tryClearQueues(client)
+    const secondQueueFailure = this.tryClearQueues(client)
+    if (secondQueueFailure !== null) failure ??= secondQueueFailure
     this.disableClient(client)
     try {
       await client._shutdown()
     } catch (error) {
       failure ??= error
     }
-    failure ??= this.tryClearQueues(client)
+    const finalQueueFailure = this.tryClearQueues(client)
+    if (finalQueueFailure !== null) failure ??= finalQueueFailure
     this.queueKeys = []
     if (failure !== null) throw failure
   }
