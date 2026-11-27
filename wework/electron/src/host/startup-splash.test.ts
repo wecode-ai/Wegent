@@ -70,15 +70,21 @@ class FakeSplashWindow implements StartupSplashWindow {
   private readonly closedListeners: Array<() => void> = []
   private destroyed = false
   private visible = false
+  deferClose = false
 
   readonly close = vi.fn(() => {
     const event = { preventDefault: vi.fn() }
     this.closeListeners.forEach(listener => listener(event))
     if (event.preventDefault.mock.calls.length > 0) return
+    if (this.deferClose) return
+    this.finishNativeClose()
+  })
+
+  finishNativeClose(): void {
     this.destroyed = true
     this.visible = false
     this.closedListeners.forEach(listener => listener())
-  })
+  }
   readonly isDestroyed = vi.fn(() => this.destroyed)
   readonly isVisible = vi.fn(() => this.visible)
   readonly show = vi.fn(() => {
@@ -363,6 +369,76 @@ describe('StartupSplash', () => {
       destroyed: true,
       visible: false,
     })
+  })
+
+  test('waits for the native closed event before completing startup closure', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    target.deferClose = true
+    let completed = false
+    const closing = splash.close().then(snapshot => {
+      completed = true
+      return snapshot
+    })
+    try {
+      await vi.waitFor(() => expect(target.close).toHaveBeenCalledOnce())
+      expect(completed).toBe(false)
+      expect(splash.snapshot().state).toBe('visible')
+      expect(splash.snapshot().window.destroyed).toBe(false)
+    } finally {
+      target.finishNativeClose()
+      await closing
+    }
+    expect(splash.snapshot().state).toBe('closed')
+    expect(completed).toBe(true)
+  })
+
+  test('does not report closure when a native listener vetoes the close request', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    target.on('close', event => event.preventDefault())
+    let completed = false
+    const closing = splash.close().then(() => {
+      completed = true
+    })
+    try {
+      await vi.waitFor(() => expect(target.close).toHaveBeenCalledOnce())
+      expect(completed).toBe(false)
+      expect(splash.snapshot().state).toBe('visible')
+      expect(target.isDestroyed()).toBe(false)
+    } finally {
+      target.finishNativeClose()
+      await closing
+    }
+  })
+
+  test('preserves startup state after a throwing close and permits a later close', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    const failure = new Error('Native close failed')
+    target.close.mockImplementationOnce(() => {
+      throw failure
+    })
+    await expect(splash.close()).rejects.toBe(failure)
+    expect(splash.snapshot().state).toBe('visible')
+    expect(target.requestNativeClose()).toBe(false)
+    expect((await splash.close()).state).toBe('closed')
+    expect(target.close).toHaveBeenCalledTimes(2)
+    expect(splash.snapshot().events.filter(event => event.name === 'closed')).toHaveLength(1)
+  })
+
+  test('observes a synchronous closed event before the splash was shown', async () => {
+    const { splash, target } = createFixture()
+    expect((await splash.close()).state).toBe('closed')
+    expect(target.isDestroyed()).toBe(true)
+  })
+
+  test('completes an already destroyed window without another native close request', async () => {
+    const target = new FakeSplashWindow()
+    target.finishNativeClose()
+    const splash = createStartupSplash({ window: target, theme: 'light' })
+    expect((await splash.close()).state).toBe('closed')
+    expect(target.close).not.toHaveBeenCalled()
   })
 
   test('prevents native close requests until renderer startup readiness closes it', async () => {

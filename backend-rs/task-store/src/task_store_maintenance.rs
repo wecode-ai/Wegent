@@ -18,6 +18,11 @@ pub enum MaintenanceScan {
     },
     CursorLatest,
     RuntimeExecutors,
+    CompletionCleanup {
+        last_id: i64,
+        through_id: i64,
+        limit: usize,
+    },
     CleanupPrimary {
         last_id: i64,
         cutoff: NaiveDateTime,
@@ -70,18 +75,30 @@ pub async fn scan_group_chats_table<M: Mysql>(
 }
 
 pub fn maintenance_statement(table: &str, scan: &MaintenanceScan) -> String {
+    if let MaintenanceScan::CompletionCleanup { limit, .. } = scan {
+        // Physical task/subtask shards share their suffix. A base table uses
+        // the store's base task table; shard scans pass the corresponding
+        // physical subtask table, preserving that same pairing.
+        let tasks = table
+            .strip_prefix("subtasks")
+            .map(|suffix| format!("tasks{suffix}"))
+            .expect("completion cleanup requires a paired physical subtask table");
+        return completion_cleanup_statement(&tasks, table, *limit);
+    }
     let condition = match scan {
         MaintenanceScan::RunningDevices => "status = 'RUNNING' AND executor_name LIKE 'device-%'".to_owned(),
         MaintenanceScan::RunningSince { .. } => "status = 'RUNNING' AND created_at >= ?".to_owned(),
         MaintenanceScan::CursorRecent { .. } => "created_at >= ? ORDER BY created_at, id LIMIT 1".to_owned(),
         MaintenanceScan::CursorLatest => "1 = 1 ORDER BY id DESC LIMIT 1".to_owned(),
         MaintenanceScan::RuntimeExecutors => "executor_name IS NOT NULL AND executor_name != '' AND executor_deleted_at = false ORDER BY updated_at, id".to_owned(),
+        MaintenanceScan::CompletionCleanup { limit, .. } => format!("id > ? AND role='ASSISTANT' AND status IN ('COMPLETED','FAILED','CANCELLED') AND executor_deleted_at=false ORDER BY id LIMIT {limit}"),
         MaintenanceScan::CleanupPrimary { limit, .. } => format!("id > ? AND created_at <= ? ORDER BY id LIMIT {limit}"),
         MaintenanceScan::CleanupLookback { limit, .. } => format!("status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED') AND created_at > ? AND created_at <= ? AND executor_name IS NOT NULL AND executor_name != '' AND executor_deleted_at = false ORDER BY created_at, id LIMIT {limit}"),
     };
     let projection = if matches!(
         scan,
         MaintenanceScan::RuntimeExecutors
+            | MaintenanceScan::CompletionCleanup { .. }
             | MaintenanceScan::CleanupPrimary { .. }
             | MaintenanceScan::CleanupLookback { .. }
             | MaintenanceScan::CursorRecent { .. }
@@ -92,6 +109,20 @@ pub fn maintenance_statement(table: &str, scan: &MaintenanceScan) -> String {
         SUBTASK_COLUMNS
     };
     format!("SELECT {projection} FROM `{table}` WHERE {condition}")
+}
+
+/// Select only cleanup-owned terminal references, including sandbox-only rows.
+/// The owner join is required even when task IDs match across physical shards.
+pub fn completion_cleanup_statement(tasks: &str, subtasks: &str, limit: usize) -> String {
+    format!(
+        "SELECT s.id,s.task_id,s.status,s.executor_name,s.executor_namespace,s.executor_deleted_at,s.updated_at,s.created_at \
+        FROM `{subtasks}` s JOIN `{tasks}` t ON t.id=s.task_id AND t.user_id=s.user_id \
+        WHERE s.id>? AND s.id<=? AND s.role='ASSISTANT' AND s.status IN ('COMPLETED','FAILED','CANCELLED') \
+        AND s.executor_deleted_at=false AND t.kind='Task' AND t.is_active IN (1,2) \
+        AND (JSON_UNQUOTE(JSON_EXTRACT(t.json,'$.metadata.labels.type'))='subscription' \
+            OR JSON_UNQUOTE(JSON_EXTRACT(t.json,'$.metadata.labels.autoDeleteExecutor'))='true') \
+        ORDER BY s.id LIMIT {limit}"
+    )
 }
 
 pub async fn scan_table<M: Mysql>(
@@ -111,6 +142,11 @@ pub async fn scan_table<M: Mysql>(
         MaintenanceScan::CleanupPrimary {
             last_id, cutoff, ..
         } => mysql.fetch_all(statement, (*last_id, *cutoff)).await,
+        MaintenanceScan::CompletionCleanup {
+            last_id,
+            through_id,
+            ..
+        } => mysql.fetch_all(statement, (*last_id, *through_id)).await,
         MaintenanceScan::CleanupLookback { after, cutoff, .. } => {
             mysql.fetch_all(statement, (*after, *cutoff)).await
         }
@@ -120,7 +156,8 @@ pub async fn scan_table<M: Mysql>(
 /// Shard scans select a bounded page per table and merge by the source ordering.
 pub fn order_scan(rows: &mut Vec<MysqlRow>, scan: &MaintenanceScan) -> MysqlResult<()> {
     let (time_column, limit) = match scan {
-        MaintenanceScan::CleanupPrimary { limit, .. } => (None, Some(*limit)),
+        MaintenanceScan::CleanupPrimary { limit, .. }
+        | MaintenanceScan::CompletionCleanup { limit, .. } => (None, Some(*limit)),
         MaintenanceScan::CleanupLookback { limit, .. } => (Some("created_at"), Some(*limit)),
         MaintenanceScan::RuntimeExecutors => (Some("updated_at"), None),
         MaintenanceScan::CursorRecent { .. } => (Some("created_at"), Some(1)),

@@ -107,6 +107,8 @@ export type HostProcessProvider = () =>
 export interface ProcessSnapshotOptions {
   /** Wait for the external process table by default; read-only views may opt out. */
   waitForSystemProcesses?: boolean
+  /** Collect current Electron and host identities without cached or in-flight snapshots. */
+  fresh?: boolean
 }
 
 /** Transport-neutral client the view uses; the host supplies an implementation. */
