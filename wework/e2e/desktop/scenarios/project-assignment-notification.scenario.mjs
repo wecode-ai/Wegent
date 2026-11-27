@@ -48,6 +48,8 @@ const MARKER = `DIRECT_HUMAN_DISPATCH_${process.pid}`
 const COMPLETION = `${MARKER}_DELIVERED`
 const MANUAL_RESULT = `${MARKER}：已人工核对周报。`
 const CALLS = {
+  subscriptionSearch: `${MARKER}-subscription-search`,
+  subscription: `${MARKER}-subscription`,
   createSearch: `${MARKER}-create-search`,
   create: `${MARKER}-create`,
   finalizeSearch: `${MARKER}-finalize-search`,
@@ -595,15 +597,26 @@ export function createDesktopScenario({
         })
         events = selectedToolCall(CALLS.create, tool)
       } else {
-        events = mcpToolRequestEvents(body, {
-          toolName: 'create_delivery',
-          argumentsValue: {
-            markdown: `# ${ISSUE}\n\n${MARKER}：项目周报已经整理完成。`,
-          },
-          directToolName: directMcpToolName(body, 'create_delivery'),
-          searchCallId: CALLS.createSearch,
-          toolCallId: CALLS.create,
-        }).events
+        const subscription = mcpToolRequestEvents(body, {
+          toolName: 'subscribe_connection_events',
+          argumentsValue: {},
+          directToolName: 'mcp__wework_control__subscribe_connection_events',
+          searchCallId: CALLS.subscriptionSearch,
+          toolCallId: CALLS.subscription,
+        })
+        // Verify native discovery without contacting a GitHub account in desktop CI.
+        events =
+          subscription.mode === 'search'
+            ? subscription.events
+            : mcpToolRequestEvents(body, {
+                toolName: 'create_delivery',
+                argumentsValue: {
+                  markdown: `# ${ISSUE}\n\n${MARKER}：项目周报已经整理完成。`,
+                },
+                directToolName: directMcpToolName(body, 'create_delivery'),
+                searchCallId: CALLS.createSearch,
+                toolCallId: CALLS.create,
+              }).events
       }
       writeEvents(response, responseId, events)
       return true
