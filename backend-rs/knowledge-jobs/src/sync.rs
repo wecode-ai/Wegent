@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Cursor-based external synchronization and source-health probes.
-
 use super::{
     cleanup, import,
     index::enabled,
@@ -14,8 +13,8 @@ use crate::{
     background_jobs::{BackgroundJobRegistry, with_lock_watchdog},
 };
 use anyhow::{Context, Result, bail};
-use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
-use brz_redis::{Redis, cmd};
+use brz_mysql::{FromMysqlRow, Json, MysqlService, MysqlTransaction};
+use brz_redis::{Redis, RedisService, RedisServiceOptions, cmd};
 use brz_schedule::{HandlerOptions, JobContext};
 use chrono::Utc;
 use serde_json::{Map, Value, json};
@@ -28,6 +27,53 @@ pub const DAILY: &str = "app.tasks.external_document_sync_tasks.sync_external_do
 pub const DINGTALK_SCAN: &str = "app.tasks.dingtalk_auto_sync_tasks.scan_dingtalk_copies";
 pub const DINGTALK_REFRESH: &str = "app.tasks.dingtalk_auto_sync_tasks.refresh_dingtalk_copy";
 pub const XIAOXIN: &str = "app.tasks.xiaoxin_knowledge_tasks.sync_xiaoxin_hr_knowledge";
+pub const WEB_SCAN: &str = "app.tasks.web_auto_update_tasks.scan_web_documents";
+pub const WEB_REFRESH: &str = "app.tasks.web_auto_update_tasks.refresh_web_document";
+
+pub fn web_auto_update_enabled() -> bool {
+    enabled("WEB_AUTO_UPDATE_SCHEDULE_ENABLED", false)
+}
+
+/// Celery may consume a different Redis endpoint than the application.
+pub struct WebTaskBroker {
+    url: Option<String>,
+    client: tokio::sync::OnceCell<RedisService>,
+    celery: crate::celery_broker::CeleryBroker,
+}
+
+impl WebTaskBroker {
+    pub fn new(url: Option<String>) -> Self {
+        Self {
+            url,
+            client: tokio::sync::OnceCell::new(),
+            celery: crate::celery_broker::CeleryBroker::new(None),
+        }
+    }
+
+    pub(super) async fn publisher<'a>(
+        &'a self,
+        application: Option<&'a RedisService>,
+    ) -> Result<&'a RedisService> {
+        let Some(url) = self.url.as_deref() else {
+            return application.context("Web task broker is unavailable");
+        };
+        // Failed initialization leaves the next job free to reconnect.
+        self.client
+            .get_or_try_init(|| async {
+                let config = crate::config::RedisConfig::from_urls(url, None)?;
+                let endpoint = config.endpoint();
+                let options = RedisServiceOptions::default()
+                    .with_resource_name("knowledge-web-celery")
+                    .with_password(config.password)
+                    .with_timeout(Duration::from_secs(5));
+                Ok(
+                    RedisService::noshard_with_options(endpoint.clone(), [endpoint], options)
+                        .await?,
+                )
+            })
+            .await
+    }
+}
 
 pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<KnowledgeJobState>) -> Result<()> {
     let copy = state.clone();
@@ -108,8 +154,9 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<KnowledgeJobSta
         }
     })?;
     registry.max_failures(DINGTALK_REFRESH, 1)?;
+    let xiaoxin_state = state.clone();
     registry.register(XIAOXIN, move |context, _| {
-        let state = state.clone();
+        let state = xiaoxin_state.clone();
         async move {
             if let Some(reason) = xiaoxin_skip() {
                 return Ok(json!({"status":"skipped","reason":reason}));
@@ -126,7 +173,99 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<KnowledgeJobSta
         }
     })?;
     registry.max_failures(XIAOXIN, 1)?;
-    registry.cron(XIAOXIN, "0 3 * * *", "Asia/Shanghai")
+    registry.cron(XIAOXIN, "0 3 * * *", "Asia/Shanghai")?;
+    let web_scan_state = state.clone();
+    registry.register(WEB_SCAN, move |context, _| {
+        let state = web_scan_state.clone();
+        async move {
+            if !web_auto_update_enabled() {
+                return Ok(json!({"status":"disabled"}));
+            }
+            let lease = Duration::from_secs(super::state::seconds(
+                "EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS",
+                3600,
+            ) as u64);
+            Ok(with_lock_watchdog(
+                &state.background_jobs,
+                &context,
+                "wegent:lock:scan_web_documents",
+                lease,
+                async {
+                    let redis = state
+                        .redis
+                        .as_ref()
+                        .context("Web scan cursor Redis is unavailable")?;
+                    scan_web_documents(&state.mysql, redis, &state.web_task_broker, || {
+                        context.cancellation.is_cancelled()
+                    })
+                    .await
+                },
+            )
+            .await?
+            .unwrap_or(json!({"status":"locked"})))
+        }
+    })?;
+    registry.max_failures(WEB_SCAN, 1)?;
+    if web_auto_update_enabled() {
+        registry.cron(WEB_SCAN, "0 4 * * *", "UTC")?;
+    }
+    Ok(())
+}
+
+/// Cursor-based scan of web documents whose knowledge base has auto-update enabled.
+pub(super) async fn scan_web_documents(
+    mysql: &MysqlService,
+    redis: &RedisService,
+    broker: &WebTaskBroker,
+    cancelled: impl Fn() -> bool,
+) -> Result<Value> {
+    let publisher = broker.publisher(Some(redis)).await?;
+    let key = "web-auto-update:scan-cursor";
+    let raw: Option<String> = redis.get(key).await?;
+    let mut cursor = raw
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default()
+        .max(0);
+    let maximum = super::state::seconds("EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS", 10000) as u64;
+    let started = Instant::now();
+    let budget = Duration::from_secs(super::state::seconds(
+        "EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS",
+        2700,
+    ) as u64);
+    let mut dispatched: u64 = 0;
+    let mut scanned: u64 = 0;
+    while scanned < maximum && started.elapsed() < budget {
+        if cancelled() {
+            bail!("Web auto-update scan cancelled");
+        }
+        let rows: Vec<Candidate> = mysql.fetch_all(
+            "SELECT d.id, d.index_generation FROM knowledge_documents d              JOIN kinds k ON k.id = d.kind_id              WHERE d.id > ?              AND d.source_type = 'web'              AND d.is_active = true AND d.status = 'enabled'              AND d.index_status NOT IN ('queued','pending_conversion','converting','indexing')              AND k.kind = 'KnowledgeBase'              AND k.is_active = true              AND JSON_EXTRACT(k.json, '$.spec.webAutoUpdateEnabled') = true              ORDER BY d.id LIMIT 100",
+            (cursor,),
+        ).await?;
+        if rows.is_empty() {
+            cursor = 0;
+            break;
+        }
+        for row in rows {
+            if scanned >= maximum || started.elapsed() >= budget || cancelled() {
+                break;
+            }
+            cursor = row.id;
+            scanned += 1;
+            let value = json!({"document_id": row.id, "expected_generation": row.index_generation});
+            match broker
+                .submit(publisher, WEB_REFRESH, value, Some(86400))
+                .await
+            {
+                Ok(()) => dispatched += 1,
+                Err(dispatch_error) => {
+                    tracing::warn!(document_id = row.id, %dispatch_error, "Web auto-update refresh dispatch failed");
+                }
+            }
+        }
+    }
+    store_cursor(redis, key, cursor).await?;
+    Ok(json!({"status":"completed","scanned":scanned,"dispatched":dispatched,"next_cursor":cursor}))
 }
 
 #[derive(FromMysqlRow)]
@@ -567,6 +706,32 @@ pub(super) async fn invalidate_refresh(
         tx.execute("UPDATE knowledge_documents SET source_config=?,is_active=IF(?,is_active,false),updated_at=NOW() WHERE id=? AND index_generation=?",(Json(&config),synchronized,id,generation)).await?;
         Ok(())
     }).await
+}
+
+impl WebTaskBroker {
+    pub(super) async fn submit(
+        &self,
+        redis: &RedisService,
+        name: &str,
+        value: Value,
+        expires: Option<i64>,
+    ) -> Result<()> {
+        let id = wegent_job_runtime::client::random_id()?;
+        self.celery
+            .publish(
+                redis,
+                &crate::celery_broker::CeleryTask {
+                    task_name: name,
+                    queue: "wegent_online",
+                    task_id: &id,
+                    kwargs: value.as_object().context("Web job payload is invalid")?,
+                    expires_at: expires
+                        .map(|seconds| Utc::now() + chrono::Duration::seconds(seconds)),
+                },
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 async fn submit(

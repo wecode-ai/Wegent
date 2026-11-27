@@ -46,6 +46,7 @@ class QueryTarget:
     user_id: int | None = None
     document_ids: list[int] | None = None
     query_plan: dict[str, Any] | None = None
+    published_versions: dict[int, int] | None = None
 
 
 async def query_documents(
@@ -72,7 +73,10 @@ async def query_documents(
         if target.document_ids == []:
             continue
         scope = (
-            RetrievalScope(document_ids=target.document_ids)
+            RetrievalScope(
+                document_ids=target.document_ids,
+                published_versions=target.published_versions or {},
+            )
             if target.document_ids is not None
             else None
         )
@@ -157,7 +161,7 @@ def _query_records(
             reference = (record.get("metadata") or {}).get("doc_ref")
             if isinstance(reference, str):
                 try:
-                    document_id = int(reference.removeprefix("doc_"))
+                    document_id = int(_logical_document_ref(reference))
                 except ValueError:
                     pass
         records.append(
@@ -180,7 +184,7 @@ def _normalized_document_id(record: Mapping[str, Any]) -> int | None:
         if type(value) is int and value > 0:
             return value
         if isinstance(value, str):
-            normalized = value.removeprefix("doc_")
+            normalized = _logical_document_ref(value)
             if normalized.isdigit():
                 try:
                     parsed = int(normalized)
@@ -189,6 +193,12 @@ def _normalized_document_id(record: Mapping[str, Any]) -> int | None:
                 if parsed > 0:
                     return parsed
     return None
+
+
+def _logical_document_ref(reference: str) -> str:
+    reference = reference.removeprefix("doc_")
+    document, _, generation = reference.partition("@")
+    return document if generation.isascii() and generation.isdecimal() else reference
 
 
 async def manage_index(

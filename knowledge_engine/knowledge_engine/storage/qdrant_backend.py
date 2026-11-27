@@ -133,6 +133,17 @@ class QdrantBackend(BaseStorageBackend):
             collection_name=collection_name,
         )
 
+    def publication_nodes(
+        self, knowledge_id: str, node_ids: list[str], **kwargs
+    ) -> dict[str, dict]:
+        records = self.client.retrieve(
+            collection_name=self.get_index_name(knowledge_id, **kwargs),
+            ids=node_ids,
+            with_payload=True,
+            consistency="all",
+        )
+        return {str(record.id): record.payload or {} for record in records}
+
     @storage_fact("qdrant", "index")
     def index_with_metadata(
         self,
@@ -293,9 +304,7 @@ class QdrantBackend(BaseStorageBackend):
         base_filter = vector_store._build_query_filter(query)
         doc_scope_condition = qdrant_models.FieldCondition(
             key="doc_ref",
-            match=qdrant_models.MatchAny(
-                any=[str(doc_id) for doc_id in scope.document_ids]
-            ),
+            match=qdrant_models.MatchAny(any=scope.document_refs()),
         )
         must: List[Any] = [doc_scope_condition]
         if base_filter is not None:
@@ -709,7 +718,7 @@ class QdrantBackend(BaseStorageBackend):
                     match=qdrant_models.MatchAny(
                         any=[
                             reference
-                            for document_id in scope.document_ids
+                            for document_id in scope.document_refs()
                             for reference in (str(document_id), f"doc_{document_id}")
                         ]
                     ),
@@ -860,6 +869,7 @@ class QdrantBackend(BaseStorageBackend):
                 limit=1,
                 with_payload=True,
                 with_vectors=False,
+                **({"consistency": "all"} if kwargs.get("versioned_read") else {}),
             )
             if not records:
                 continue

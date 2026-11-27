@@ -92,6 +92,7 @@ class DocumentIndexRequest:
     file_extension: str
     user_id: int
     document_id: int | None = None
+    index_generation: int | None = None
     splitter_config: Mapping[str, Any] | None = None
 
 
@@ -310,6 +311,17 @@ async def index_document(
         source_file=request.source_file,
         document_id=request.document_id,
     )
+    if request.index_generation is not None:
+        if request.document_id is None or request.index_generation < 1:
+            raise KnowledgeDocumentError(
+                "Versioned indexing needs a document and generation"
+            )
+        metadata = DocumentChunkMetadata(
+            knowledge_id=metadata.knowledge_id,
+            doc_ref=f"{request.document_id}@{request.index_generation}",
+            source_file=metadata.source_file,
+            created_at=metadata.created_at,
+        )
     result = await adapter.index_chunks(metadata=metadata, request=request)
     return finalize_index_result(result, metadata)
 

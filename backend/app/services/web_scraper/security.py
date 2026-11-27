@@ -4,7 +4,101 @@
 
 """URL safety guard for web scraping."""
 
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextvars import ContextVar
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
+
+fetch_domain_admission: ContextVar[Callable[[str], Awaitable[None]] | None] = (
+    ContextVar("web_fetch_domain_admission", default=None)
+)
+_browser_admission_stack: ContextVar[AsyncExitStack | None] = ContextVar(
+    "browser_admission_stack", default=None
+)
+
+
+@asynccontextmanager
+async def browser_domain_admission() -> AsyncIterator[None]:
+    """Dispose browser request interception before returning the scrape result."""
+    async with AsyncExitStack() as stack:
+        token = _browser_admission_stack.set(stack)
+        try:
+            yield
+        finally:
+            _browser_admission_stack.reset(token)
+
+
+async def admit_fetch_domain(url: str) -> None:
+    admission = fetch_domain_admission.get()
+    if admission is not None:
+        await admission(url)
+
+
+async def install_page_domain_admission(page, context=None, **kwargs):
+    """Pause actual Chromium document requests, including every redirect hop."""
+    admission = fetch_domain_admission.get()
+    if admission is None:
+        return page
+    stack = _browser_admission_stack.get()
+    if stack is None:
+        raise RuntimeError("Browser domain admission requires a scrape scope")
+    session = await page.context.new_cdp_session(page)
+    active: set[asyncio.Task] = set()
+    closing = False
+
+    async def admit_request(event):
+        if closing:
+            return
+        task = asyncio.current_task()
+        assert task is not None
+        active.add(task)
+        request_id = {"requestId": event["requestId"]}
+        url = event["request"]["url"]
+        try:
+            try:
+                WebScraperUrlGuard().validate_initial_url(url)
+                await admission(url)
+            except Exception:
+                await session.send(
+                    "Fetch.failRequest",
+                    {**request_id, "errorReason": "BlockedByClient"},
+                )
+                return
+            await session.send("Fetch.continueRequest", request_id)
+        finally:
+            active.discard(task)
+
+    async def close() -> None:
+        nonlocal closing
+        closing = True
+        session.remove_listener("Fetch.requestPaused", admit_request)
+        pending = tuple(active)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        # The browser can already have closed the page on a failed navigation.
+        with suppress(Exception):
+            await session.detach()
+
+    session.on("Fetch.requestPaused", admit_request)
+    stack.push_async_callback(close)
+    await session.send("Network.enable")
+    await session.send("Network.setBypassServiceWorker", {"bypass": True})
+    await session.send(
+        "Fetch.enable",
+        {
+            "patterns": [
+                {
+                    "urlPattern": "*",
+                    "resourceType": "Document",
+                    "requestStage": "Request",
+                }
+            ]
+        },
+    )
+    return page
+
 
 from app.services.url_metadata import _validate_url_for_ssrf
 from app.services.web_scraper.models import ERROR_INVALID_URL, ERROR_SSRF_BLOCKED

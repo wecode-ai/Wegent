@@ -18,6 +18,10 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    admit_fetch_domain,
+    browser_domain_admission,
+    fetch_domain_admission,
+    install_page_domain_admission,
     redact_url_for_logging,
 )
 
@@ -156,16 +160,17 @@ class PlaywrightFrameExtractionStrategy:
     ) -> InternalScrapeResult:
         resources = PlaywrightResources()
         try:
-            return await self._perform_playwright_scrape(
-                playwright=playwright,
-                resources=resources,
-                url=url,
-                policy=policy,
-                profile=profile,
-                proxy_plan=proxy_plan,
-                guard=guard,
-                use_proxy=use_proxy,
-            )
+            async with browser_domain_admission():
+                return await self._perform_playwright_scrape(
+                    playwright=playwright,
+                    resources=resources,
+                    url=url,
+                    policy=policy,
+                    profile=profile,
+                    proxy_plan=proxy_plan,
+                    guard=guard,
+                    use_proxy=use_proxy,
+                )
         finally:
             await self._close_quietly(resources.page)
             await self._close_quietly(resources.context)
@@ -188,11 +193,13 @@ class PlaywrightFrameExtractionStrategy:
 
         resources.browser = await playwright.chromium.launch(**launch_kwargs)
         resources.context = await resources.browser.new_context(
-            **self._context_kwargs(profile)
+            **self._context_kwargs(profile),
+            **({"service_workers": "block"} if fetch_domain_admission.get() else {}),
         )
         await self._install_guard_route(resources.context, guard)
 
         resources.page = await resources.context.new_page()
+        await install_page_domain_admission(resources.page)
         response = await resources.page.goto(
             url,
             wait_until=self._normalize_wait_until(policy.wait_until),
@@ -243,6 +250,12 @@ class PlaywrightFrameExtractionStrategy:
     ) -> None:
         async def guard_route(route: Any, request: Any) -> None:
             if guard.is_allowed_fetch_url(request.url):
+                if getattr(request, "resource_type", None) == "document":
+                    try:
+                        await admit_fetch_domain(request.url)
+                    except Exception:
+                        await route.abort()
+                        return
                 await route.continue_()
             else:
                 await route.abort()
@@ -269,7 +282,10 @@ class PlaywrightFrameExtractionStrategy:
                 continue
 
             normalized = " ".join(part.markdown.split())
-            if len(normalized) < MIN_FRAME_TEXT_LENGTH or normalized in seen:
+            if (
+                len(normalized) < MIN_FRAME_TEXT_LENGTH
+                and not policy.allow_short_content
+            ) or normalized in seen:
                 continue
             seen.add(normalized)
             parts.append(part)

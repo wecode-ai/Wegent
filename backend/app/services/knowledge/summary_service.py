@@ -135,21 +135,35 @@ class SummaryService:
         flag_modified(kb, "json")
         self.db.commit()
 
+    def _lock_kb_for_summary(self, kb_id: int) -> Optional[Kind]:
+        """Reload settings before changing the summary in the same JSON row."""
+        return (
+            self.db.query(Kind)
+            .filter(Kind.id == kb_id, Kind.kind == "KnowledgeBase")
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+
     def _persist_document_summary(
         self,
         document_id: int,
         summary_data: dict[str, Any],
+        source_attachment_id: int | None = None,
     ) -> bool:
         """Persist document summary if the document still exists."""
-        updated_rows = (
-            self.db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id == document_id)
-            .update(
-                {
-                    KnowledgeDocument.summary: summary_data,
-                },
-                synchronize_session=False,
+        query = self.db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.id == document_id
+        )
+        if source_attachment_id is not None:
+            query = query.filter(
+                KnowledgeDocument.attachment_id == source_attachment_id
             )
+        updated_rows = query.update(
+            {
+                KnowledgeDocument.summary: summary_data,
+            },
+            synchronize_session=False,
         )
         if updated_rows == 0:
             self.db.rollback()
@@ -416,6 +430,7 @@ class SummaryService:
             model_config.get("model_namespace"),
             model_config.get("model_type"),
         )
+        source_attachment_id = document.attachment_id
         existing_summary = dict(document.summary or {})
 
         try:
@@ -423,7 +438,9 @@ class SummaryService:
             summary_data = existing_summary
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
-            if not self._persist_document_summary(document_id, summary_data):
+            if not self._persist_document_summary(
+                document_id, summary_data, source_attachment_id
+            ):
                 from .summary_reporting import report_summary_state
 
                 report_summary_state(
@@ -499,7 +516,9 @@ class SummaryService:
                     f"document_id={document_id}, error={result.error}"
                 )
 
-            if not self._persist_document_summary(document_id, summary_data):
+            if not self._persist_document_summary(
+                document_id, summary_data, source_attachment_id
+            ):
                 from .summary_reporting import report_summary_state
 
                 report_summary_state(
@@ -543,7 +562,9 @@ class SummaryService:
                     "error": str(e),
                     "updated_at": datetime.now().isoformat(),
                 }
-                if self._persist_document_summary(document_id, summary_data):
+                if self._persist_document_summary(
+                    document_id, summary_data, source_attachment_id
+                ):
                     from .summary_reporting import report_summary_state
 
                     report_summary_state(
@@ -585,15 +606,7 @@ class SummaryService:
         force: bool,
         clear_if_empty: bool,
     ) -> Optional["KbSummaryClaim"]:
-        kb = (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .with_for_update()
-            .first()
-        )
+        kb = self._lock_kb_for_summary(kb_id)
 
         if not kb:
             logger.warning(f"[SummaryService] KnowledgeBase not found: {kb_id}")
@@ -664,14 +677,7 @@ class SummaryService:
         result: BackgroundTaskResult,
         completed_count: int,
     ) -> None:
-        kb = (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .first()
-        )
+        kb = self._lock_kb_for_summary(kb_id)
         if not kb:
             logger.warning(
                 "[SummaryService] KnowledgeBase not found during final write: %s", kb_id
@@ -715,14 +721,7 @@ class SummaryService:
         report_summary_state(summary_data, kb_id=kb_id)
 
     def _write_kb_summary_failure(self, kb_id: int, error: str) -> None:
-        kb = (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .first()
-        )
+        kb = self._lock_kb_for_summary(kb_id)
         if not kb:
             self.db.rollback()
             return
@@ -872,15 +871,7 @@ class SummaryService:
         content: str,
     ) -> Optional[KnowledgeBaseSummary]:
         """Persist manual KB summary override."""
-        kb = (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .with_for_update()
-            .first()
-        )
+        kb = self._lock_kb_for_summary(kb_id)
 
         if not kb:
             return None
@@ -902,15 +893,7 @@ class SummaryService:
         self, kb_id: int
     ) -> Optional[KnowledgeBaseSummary]:
         """Clear manual KB summary override while preserving AI summary."""
-        kb = (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .with_for_update()
-            .first()
-        )
+        kb = self._lock_kb_for_summary(kb_id)
 
         if not kb:
             return None
@@ -955,14 +938,9 @@ class SummaryService:
             logger.info(
                 f"[SummaryService] No active documents, clearing KB summary: kb_id={kb_id}"
             )
-            kb_json = kb.json or {}
-            spec = kb_json.get("spec", {})
+            spec = (kb.json or {}).get("spec", {})
             if spec.get("summary") is not None:
-                spec["summary"] = None
-                kb_json["spec"] = spec
-                kb.json = kb_json
-                flag_modified(kb, "json")
-                self.db.commit()
+                self._persist_kb_summary(kb, None)
                 logger.info(
                     f"[SummaryService] KB summary cleared (no active documents): kb_id={kb_id}"
                 )

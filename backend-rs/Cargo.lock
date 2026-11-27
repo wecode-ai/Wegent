@@ -5488,6 +5488,7 @@ dependencies = [
  "wegent-access",
  "wegent-attachments",
  "wegent-backend-config",
+ "wegent-backend-test-support",
  "wegent-celery",
  "wegent-execution-preparation",
  "wegent-execution-runtime",

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RetrievalScope(BaseModel):
@@ -20,6 +20,19 @@ class RetrievalScope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_ids: list[int] | None = None
+    # Runtime supplies this from persisted publication state, never from a caller.
+    published_versions: dict[int, int] = Field(default_factory=dict, exclude=True)
+
+    def document_refs(self) -> list[str]:
+        """Compile paired document/version identities before native top-k."""
+        return [
+            (
+                f"{doc_id}@{self.published_versions[doc_id]}"
+                if doc_id in self.published_versions
+                else str(doc_id)
+            )
+            for doc_id in (self.document_ids or [])
+        ]
 
     @field_validator("document_ids")
     @classmethod

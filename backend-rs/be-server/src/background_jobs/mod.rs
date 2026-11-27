@@ -51,6 +51,9 @@ pub(crate) fn register_public_jobs(
             attachment_upload: Arc::clone(&state.attachment_upload),
             entity_resolvers: state.entity_resolvers.clone(),
             celery: state.celery.clone(),
+            web_task_broker: wegent_knowledge_jobs::WebTaskBroker::new(
+                wegent_backend_config::optional_env_or_dotenv("CELERY_BROKER_URL"),
+            ),
             jwt_key: state.auth.jwt_key.clone(),
             jwt_algorithm: state.auth.algorithm.clone(),
             attachment_http: state.attachment_http.clone(),

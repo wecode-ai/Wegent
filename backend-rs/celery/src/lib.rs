@@ -127,9 +127,9 @@ impl CeleryBroker {
         self.publish(publisher, task).await
     }
 
-    /// `channel.basic_publish` after `maybe_declare`: the first publish in the
-    /// process declares, every publish pushes the message.
-    async fn publish<R>(&self, publisher: &R, task: &CeleryTask<'_>) -> RedisResult<()>
+    /// Publish without subscribing when the caller does not consume results.
+    /// The first publish declares the queue, every publish pushes the message.
+    pub async fn publish<R>(&self, publisher: &R, task: &CeleryTask<'_>) -> RedisResult<()>
     where
         R: Redis,
     {

@@ -236,6 +236,7 @@ def _prepare_indexing_runtime(
     document_id: Optional[int],
     kb_index_info: Optional[KnowledgeBaseIndexInfo],
     caller_user_id: int | None,
+    publication_generation: int | None = None,
 ) -> _IndexingPreparation:
     file_extension = None
     file_size = None
@@ -330,7 +331,16 @@ def _prepare_indexing_runtime(
     )
 
     delete_spec = None
-    if document_id is not None:
+    if publication_generation is not None:
+        from app.services.knowledge.web_publication import candidate_for
+
+        candidate = (
+            candidate_for(document, publication_generation) if document else None
+        )
+        if not candidate or candidate.get("attachment_id") != attachment_id:
+            raise ValueError("Web index candidate was superseded")
+        runtime_spec.index_generation = publication_generation
+    elif document_id is not None:
         try:
             delete_spec = runtime_resolver.build_delete_runtime_spec(
                 db=db,
@@ -475,6 +485,7 @@ def run_document_indexing(
     trigger_summary: bool = True,
     db: Optional[Session] = None,
     caller_user_id: int | None = None,
+    publication_generation: int | None = None,
 ) -> dict:
     """
     Core function for RAG document indexing.
@@ -537,6 +548,7 @@ def run_document_indexing(
             splitter_config_dict=splitter_config_dict,
             kb_index_info=kb_index_info,
             caller_user_id=caller_user_id,
+            publication_generation=publication_generation,
         )
     except Exception as e:
         logger.error(

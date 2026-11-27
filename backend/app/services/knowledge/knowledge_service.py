@@ -494,7 +494,23 @@ class KnowledgeService:
                     KnowledgeDocument.kind_id == knowledge_base_id,
                     KnowledgeDocument.id.in_(document_ids),
                     KnowledgeDocument.is_active.is_(True),
-                    KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                    or_(
+                        KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                        and_(
+                            KnowledgeDocument.source_type
+                            == DocumentSourceType.WEB.value,
+                            KnowledgeDocument.status == DocumentStatus.ENABLED,
+                            or_(
+                                KnowledgeDocument.source_config["published_generation"]
+                                .as_integer()
+                                .isnot(None),
+                                KnowledgeDocument.source_config["_web_refresh"][
+                                    "previous_index_status"
+                                ].as_string()
+                                == "success",
+                            ),
+                        ),
+                    ),
                 )
                 .all()
             )
@@ -928,7 +944,11 @@ class KnowledgeService:
         ):
             raise ValueError("You do not have permission to manage this knowledge base")
 
-        # Get current spec
+        # Reload under the same row lock as the dedicated web setting writer.
+        # This update replaces the JSON document, including fields it did not edit.
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
+        if kb is None:
+            return None
         kb_json = dict(kb.json)
         spec = dict(kb_json.get("spec", {}))
 
@@ -1367,11 +1387,14 @@ class KnowledgeService:
         if new_type not in ("notebook", "classic"):
             raise ValueError("kb_type must be 'notebook' or 'classic'")
 
-        # Get current default view
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
+        if kb is None:
+            return None
         kb_json = kb.json
         spec = kb_json.get("spec", {})
 
         if not KnowledgeService._set_default_opening_view(spec, new_type):
+            db.rollback()
             return kb
         kb_json["spec"] = spec
         kb.json = kb_json
@@ -1453,6 +1476,8 @@ class KnowledgeService:
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
             )
+            .populate_existing()
+            .with_for_update()
             .first()
         )
 
@@ -2090,6 +2115,28 @@ class KnowledgeService:
             raise ValueError("Knowledge base not found for document")
         KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
+        if data.status is not None and doc.source_type == DocumentSourceType.WEB.value:
+            try:
+                doc = KnowledgeService._lock_document_row(db, document_id)
+                if doc is None:
+                    db.rollback()
+                    return None
+                assert_user_content_is_mutable(
+                    getattr(doc, "origin", ContentOrigin.USER.value)
+                )
+                kb = (
+                    db.query(Kind)
+                    .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
+                    .populate_existing()
+                    .first()
+                )
+                if kb is None:
+                    raise ValueError("Knowledge base not found for document")
+                KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+            except Exception:
+                db.rollback()
+                raise
+
         if data.name is not None:
             from app.services.knowledge.external_sync_providers import (
                 is_synchronized_external_document,
@@ -2123,6 +2170,12 @@ class KnowledgeService:
                 # document whose later re-index failed keeps valid content.
                 raise ValueError("Document content is not ready and cannot be enabled")
             doc.status = DocumentStatus(data.status.value)
+            if doc.source_type == DocumentSourceType.WEB.value:
+                # Distinguish an explicit choice from the initial disabled default.
+                doc.source_config = {
+                    **(doc.source_config or {}),
+                    "web_user_status": data.status.value,
+                }
 
         if data.splitter_config is not None:
             doc.splitter_config = data.splitter_config.model_dump(exclude_none=True)
@@ -2179,6 +2232,8 @@ class KnowledgeService:
             delete_attachment_best_effort,
         )
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
+        from app.services.knowledge.web_publication import retire_published_version
+        from app.services.rag.remote_gateway import RemoteRagGatewayError
 
         rag_gateway = _get_rag_gateway()
 
@@ -2234,7 +2289,23 @@ class KnowledgeService:
 
         cleanup = ContentDeletionOutcome()
         spec = kb.json.get("spec", {})
-        if requires_index_cleanup(spec):
+        published_web_version = getattr(
+            doc, "source_type", None
+        ) == DocumentSourceType.WEB.value and bool(
+            (doc.source_config or {}).get("published_generation")
+        )
+        if published_web_version:
+            # Commit content removal before the existing reaper checks the exact
+            # version and its recorded storage. Preserve the attachment record.
+            if not retire_published_version(db, doc):
+                db.rollback()
+                raise RemoteRagGatewayError(
+                    "Cannot retain the published web index identity",
+                    code="index_cleanup_unconfirmed",
+                    status_code=409,
+                )
+            cleanup.index_cleanup = "unconfirmed"
+        elif requires_index_cleanup(spec):
             try:
                 kb_info = get_kb_index_info_by_record(
                     db=db, knowledge_base=kb, current_user_id=user_id
@@ -2317,7 +2388,7 @@ class KnowledgeService:
         )
 
         # Delete associated attachment (context) if exists
-        if attachment_id:
+        if attachment_id and not published_web_version:
             delete_attachment_best_effort(
                 db=db,
                 owner_user_id=context_owner_user_id,
@@ -2326,7 +2397,7 @@ class KnowledgeService:
             )
 
         # Delete converted attachment if exists
-        if converted_attachment_id:
+        if converted_attachment_id and not published_web_version:
             delete_attachment_best_effort(
                 db=db,
                 owner_user_id=context_owner_user_id,

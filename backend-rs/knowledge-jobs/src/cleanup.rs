@@ -20,6 +20,11 @@ struct Candidate {
 }
 
 pub async fn scan(state: &KnowledgeJobState, context: &brz_schedule::JobContext) -> Result<Value> {
+    if !state.background_jobs.is_enabled(crate::WEB_CLEANUP)
+        && let Err(error) = queue_web_cleanup(state).await
+    {
+        tracing::warn!(%error, "web version cleanup dispatch failed; retry on next scan");
+    }
     let retention = super::state::seconds("KNOWLEDGE_ATTACHMENT_ORPHAN_RETENTION_HOURS", 24);
     let batch = super::state::seconds("KNOWLEDGE_ATTACHMENT_ORPHAN_SCAN_BATCH_SIZE", 200);
     let sql = format!(
@@ -44,6 +49,17 @@ pub async fn scan(state: &KnowledgeJobState, context: &brz_schedule::JobContext)
     Ok(
         json!({"scanned":scanned,"referenced":referenced,"deleted":deleted,"retryable_failures":failures}),
     )
+}
+
+pub(super) async fn queue_web_cleanup(state: &KnowledgeJobState) -> Result<()> {
+    let broker = state
+        .web_task_broker
+        .publisher(state.redis.as_ref())
+        .await?;
+    state
+        .web_task_broker
+        .submit(broker, crate::WEB_CLEANUP, json!({}), Some(3600))
+        .await
 }
 
 pub async fn remove(

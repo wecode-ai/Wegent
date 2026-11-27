@@ -561,12 +561,17 @@ class KnowledgeTransferService:
 
     @staticmethod
     def transfer_documents_mutate(
+        db: Session,
         source_documents: tuple[KnowledgeDocument, ...],
         old_to_new_folder: dict[int, int],
         target_kb_id: int,
     ) -> int:
         """Move locked source documents to the target KB and reset index state."""
         from app.models.knowledge import DocumentIndexStatus
+        from app.services.knowledge.web_publication import (
+            abandon_candidate,
+            retire_published_version,
+        )
 
         for doc in source_documents:
             if doc.folder_id > 0 and doc.folder_id in old_to_new_folder:
@@ -574,6 +579,21 @@ class KnowledgeTransferService:
             else:
                 doc.folder_id = 0
 
+            if doc.source_type == "web" and (doc.source_config or {}).get(
+                "published_generation"
+            ):
+                if not retire_published_version(db, doc):
+                    db.rollback()
+                    raise CustomHTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Cannot retain the published web index identity",
+                        error_code="index_cleanup_unconfirmed",
+                    )
+                abandon_candidate(doc, doc.index_generation)
+                config = dict(doc.source_config or {})
+                config.pop("published_generation", None)
+                config.pop("published_index_fingerprint", None)
+                doc.source_config = config
             doc.kind_id = target_kb_id
             if doc.external_source is not None:
                 doc.external_source.kind_id = target_kb_id
@@ -937,7 +957,17 @@ class KnowledgeTransferService:
                 target_kb_id=target_kb_id,
             )
         )
+        # Versioned source indexes are retired from their attachment records.
+        legacy_cleanup_docs = [
+            doc
+            for doc in docs
+            if not (
+                doc.source_type == "web"
+                and (doc.source_config or {}).get("published_generation")
+            )
+        ]
         transferred_doc_count = KnowledgeTransferService.transfer_documents_mutate(
+            db=db,
             source_documents=docs,
             old_to_new_folder=old_to_new_folder,
             target_kb_id=target_kb_id,
@@ -987,7 +1017,7 @@ class KnowledgeTransferService:
         KnowledgeTransferService.cleanup_rag_indices(
             db=db,
             source_kb=source_kb,
-            docs=docs,
+            docs=legacy_cleanup_docs,
             user_id=user_id,
         )
 

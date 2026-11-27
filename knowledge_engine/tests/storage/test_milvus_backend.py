@@ -18,6 +18,54 @@ from knowledge_engine.storage.milvus_backend import MilvusBackend
 from shared.models import RetrievalScope
 
 
+@pytest.mark.parametrize("missing_chunk", [False, True])
+@patch("knowledge_engine.storage.milvus_backend.MilvusClient")
+def test_version_publication_uses_complete_strong_reads_without_flush(
+    mock_client_class, missing_chunk
+):
+    import json
+
+    client = mock_client_class.return_value
+    client.has_collection.return_value = True
+
+    def query(**kwargs):
+        if "ids" in kwargs:
+            return (
+                []
+                if missing_chunk
+                else [{"id": "node-1", "doc_ref": "11@2", "knowledge_id": "1"}]
+            )
+        return [
+            {
+                "parent_node_id": "parent-1",
+                "content": "body",
+                "metadata_json": json.dumps({"doc_ref": "11@2"}),
+            }
+        ]
+
+    client.query.side_effect = query
+    backend = MilvusBackend({"url": "http://unused"})
+    args = dict(
+        knowledge_id="1",
+        doc_ref="11@2",
+        chunk_count=1,
+        node_ids=["node-1"],
+        parent_node_ids=["parent-1"],
+    )
+    if missing_chunk:
+        with pytest.raises(RuntimeError, match="not fully queryable"):
+            backend.prepare_document_publication(**args)
+    else:
+        backend.prepare_document_publication(**args)
+    assert all(
+        call.kwargs["consistency_level"] == "Strong"
+        for call in client.query.call_args_list
+    )
+    client.flush.assert_not_called()
+    backend.get_parent_nodes("1", ["parent-1"])
+    assert "consistency_level" not in client.query.call_args.kwargs
+
+
 class TestMilvusBackendInit:
     """Tests for MilvusBackend initialization."""
 
@@ -133,8 +181,9 @@ class TestMilvusBackendClassAttributes:
 class TestCreateVectorStore:
     """Tests for create_vector_store method."""
 
+    @pytest.mark.parametrize("versioned_read", [False, True])
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_create_vector_store_basic(self, mock_milvus_vs):
+    def test_create_vector_store_basic(self, mock_milvus_vs, versioned_read):
         """Test creating a vector store with basic parameters.
 
         Verifies that db_name is extracted from URL path and passed as separate parameter.
@@ -147,7 +196,7 @@ class TestCreateVectorStore:
         }
         backend = MilvusBackend(config)
 
-        backend.create_vector_store("test_collection")
+        backend.create_vector_store("test_collection", versioned_read=versioned_read)
 
         # db_name should be extracted from URL path and passed separately
         mock_milvus_vs.assert_called_once_with(
@@ -161,6 +210,7 @@ class TestCreateVectorStore:
             enable_sparse=True,
             hybrid_ranker="WeightedRanker",
             hybrid_ranker_params={},
+            **({"read_consistency": "Strong"} if versioned_read else {}),
         )
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
@@ -309,10 +359,11 @@ class TestRetrieve:
         vs_query = mock_store.query.call_args.args[0]
         assert vs_query.similarity_top_k == 10
 
+    @pytest.mark.parametrize("versioned", [False, True])
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     @patch_collection()
     def test_retrieve_vector_mode_adds_native_document_scope_expr(
-        self, mock_client_cls, mock_milvus_vs
+        self, mock_client_cls, mock_milvus_vs, versioned
     ):
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
@@ -337,11 +388,18 @@ class TestRetrieve:
                 "score_threshold": 0.5,
                 "retrieval_mode": "vector",
             },
-            scope=RetrievalScope(document_ids=[10, 11]),
+            scope=RetrievalScope(
+                document_ids=[10, 11], published_versions={10: 2} if versioned else {}
+            ),
         )
 
         assert mock_store.query.call_args.kwargs["string_expr"] == (
-            'knowledge_id == \'kb_1\' and doc_ref in ["10", "11"]'
+            'knowledge_id == \'kb_1\' and doc_ref in ["10@2", "11"]'
+            if versioned
+            else 'knowledge_id == \'kb_1\' and doc_ref in ["10", "11"]'
+        )
+        assert mock_milvus_vs.call_args.kwargs.get("read_consistency") == (
+            "Strong" if versioned else None
         )
         vs_query = mock_store.query.call_args.args[0]
         assert vs_query.filters is None
