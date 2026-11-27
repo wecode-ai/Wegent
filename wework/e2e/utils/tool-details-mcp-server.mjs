@@ -118,7 +118,10 @@ input.on('line', async line => {
       }
     }
     if (result) {
-      if (receipt) result.content.push({ type: 'text', text: receipt })
+      if (receipt) {
+        result.content.push({ type: 'text', text: receipt })
+        if (result.structuredContent) result.structuredContent.receipt = receipt
+      }
       respond(request.id, result)
     } else {
       respondError(request.id, -32601, `Unknown tool: ${request.params?.name}`)
