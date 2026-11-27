@@ -1567,7 +1567,9 @@ impl RuntimeWorkRpcHandler {
         }
         apply_runtime_payload_metadata(&mut request, &payload);
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
-        self.prepare_resource_event_request(&local_task_id, &mut request)?;
+        if let Some(receipt) = self.prepare_resource_event_request(&local_task_id, &mut request)? {
+            return Ok(receipt);
+        }
         if let Some(link) = existing_link.as_ref() {
             super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
