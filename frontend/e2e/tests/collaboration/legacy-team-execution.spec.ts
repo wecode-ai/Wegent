@@ -439,6 +439,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     await expect(signoff).toHaveCount(1)
     await expect(signoff).toBeVisible()
     await capture(page, testInfo, '06-group-issue-delivery')
+    await capture(signoff, testInfo, '06a-manager-signoff')
     const managerRequests = await getScenarioModelBodies(request, title)
     expect(modelRequestText(managerRequests.slice(2))).toContain(reviewAnswer)
     await expect

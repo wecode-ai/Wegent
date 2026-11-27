@@ -867,6 +867,106 @@ test.describe('Agent conversation regression', () => {
     )
   }
 
+  test('standalone Codex Coordinate delegates to its configured worker Bot', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const name = `e2e-coordinate-${Date.now()}`
+    const prompt = `Delegate the review for ${name}`
+    const workerInstruction = `Review documents using the policy ${name}`
+    const childResult = `Reviewed by worker ${name}`
+    const result = `Review complete ${name}`
+    const cleanup: string[] = []
+    try {
+      const bots = []
+      for (const role of ['leader', 'worker'] as const) {
+        const botName = `${name}-${role}`
+        const response = await request.post(`${API_BASE_URL}/api/bots`, {
+          headers: authHeaders(),
+          data: {
+            name: botName,
+            shell_name: CODEX_SHELL_NAME,
+            agent_config: { bind_model: CODEX_MODEL_NAME, bind_model_type: 'user' },
+            system_prompt: role === 'worker' ? workerInstruction : 'Delegate the document review.',
+            inherit_base_capabilities: false,
+            namespace: 'default',
+            is_active: true,
+          },
+        })
+        expect(response.ok(), await response.text()).toBe(true)
+        cleanup.unshift(`bots/${botName}`)
+        bots.push({ bot_id: Number((await response.json()).id), role, bot_prompt: '' })
+      }
+      const created = await request.post(`${API_BASE_URL}/api/teams`, {
+        headers: authHeaders(),
+        data: {
+          name,
+          bots,
+          workflow: { mode: 'coordinate', leader_bot_id: bots[0].bot_id },
+          bind_mode: ['chat'],
+          namespace: 'default',
+          is_active: true,
+          requires_workspace: false,
+        },
+      })
+      expect(created.ok(), await created.text()).toBe(true)
+      cleanup.unshift(`teams/${name}`)
+      const teamId = Number((await created.json()).id)
+      const role = `${name}-worker-${bots[1].bot_id}`
+      await configureToolScenario(request, prompt, [
+        {
+          toolCalls: [
+            {
+              toolName: 'spawn_agent',
+              arguments: {
+                task_name: 'review',
+                agent_type: role,
+                message: 'Review the document.',
+                fork_turns: 'none',
+              },
+            },
+          ],
+        },
+        { toolCalls: [{ toolName: 'wait_agent', arguments: { timeout_ms: 10000 } }] },
+        { responseContent: result },
+      ])
+      await configureToolScenario(request, workerInstruction, [{ responseContent: childResult }], {
+        'x-openai-subagent': 'collab_spawn',
+      })
+      await openTaskPage(page, '/chat', teamId, 'chat')
+      const input = page.getByTestId('message-input')
+      await expect(input).toHaveAttribute('data-team-id', String(teamId))
+      await expect(input).toHaveAttribute('contenteditable', 'true')
+      await input.fill(prompt)
+      await testInfo.attach('coordinate-codex-entry', {
+        body: await page.screenshot(),
+        contentType: 'image/png',
+      })
+      await page.getByTestId('send-button').click()
+      const taskId = await waitForTaskId(page)
+      createdTaskIds.add(taskId)
+      await expect(page.getByTestId('messages-container')).toContainText(result, {
+        timeout: RESPONSE_TIMEOUT_MS,
+      })
+      await waitForBackendTerminal(request, taskId)
+      const captures = await loadCapturedModelRequests(request)
+      expect(captures.some(capture => JSON.stringify(capture.body).includes(childResult))).toBe(
+        true
+      )
+      await testInfo.attach('coordinate-codex-delivery', {
+        body: await page.screenshot(),
+        contentType: 'image/png',
+      })
+    } finally {
+      for (const path of cleanup) {
+        const removed = await request.delete(`${API_BASE_URL}/api/v1/namespaces/default/${path}`, {
+          headers: authHeaders(),
+        })
+        expect([200, 204, 404]).toContain(removed.status())
+      }
+    }
+  })
+
   test('coding mode Codex uses configured Skill and MCP', async ({ page, request }) => {
     const prompt = `CODEX_SKILL_MCP_E2E_${makeContextToken('capability')}`
     const successMarker = 'CODEX_SKILL_MCP_EFFECTIVE'
@@ -2499,12 +2599,13 @@ test.describe('Agent conversation regression', () => {
   async function configureToolScenario(
     request: APIRequestContext,
     matchText: string,
-    steps: PhaseRegressionStep[]
+    steps: PhaseRegressionStep[],
+    matchHeaders?: Record<string, string>
   ): Promise<void> {
     toolScenarioMatchTexts.add(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/tool-scenarios`, {
       ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
-      data: { matchText, steps },
+      data: { matchText, steps, matchHeaders },
     })
     expect(response.status()).toBe(200)
   }
