@@ -339,6 +339,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       }
       await closeConnections()
       await selectWorkbenchTheme(control, { mode: 'dark', themeId: 'wework' })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await captureScreenshot(control, 'im-stand-in-10-channel-settings-dark.png')

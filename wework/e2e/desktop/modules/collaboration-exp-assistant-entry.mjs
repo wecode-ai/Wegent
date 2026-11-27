@@ -97,9 +97,10 @@ export async function verifyAssistantPreferenceGate(control, preferencesFile) {
       )
     try {
       // Adopt the entry URL without mounting its old renderer during the reload.
-      await evaluate(
-        `history.replaceState(history.state, '', location.pathname.replace(/\/[^/]*$/, '/stand-in'))`
-      )
+      await evaluate(`(() => {
+        const directory = location.pathname.slice(0, location.pathname.lastIndexOf('/') + 1)
+        history.replaceState(history.state, '', directory + 'stand-in')
+      })()`)
       await reloadMainWindow(control, 'Assistant preference load must leave the desktop responsive')
       await waitForNativeRead()
       await assertGateClosed(loading)
