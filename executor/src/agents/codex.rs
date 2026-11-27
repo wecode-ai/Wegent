@@ -2032,10 +2032,16 @@ async fn start_persistent_codex_app_server(
     .await;
     match result {
         Ok((stdin, stdout, next_id)) => {
-            log_executor_event(
-                "codex shared app-server process initialized",
-                &[("process_id", process_id)],
-            );
+            if let Some((task, subtask)) = private_turn {
+                let mut fields = task_fields(task, subtask);
+                fields.push(("process_id", process_id));
+                log_executor_event("codex app-server started", &fields);
+            } else {
+                log_executor_event(
+                    "codex shared app-server process initialized",
+                    &[("process_id", process_id)],
+                );
+            }
             let pending = Arc::new(Mutex::new(HashMap::new()));
             let notifications =
                 CodexNotificationHub::for_runtime(runtime_notifications, thread_activity_changed);
@@ -2492,7 +2498,7 @@ impl CodexTurnConnection<'_> {
         let client = match self {
             Self::Shared(client) => client,
             Self::Private(binary) => {
-                let client = CodexAppServerClient::new(binary).for_request(&request)?;
+                let client = CodexAppServerClient::new(binary);
                 return run_private_codex_turn(&client, request, options, Default::default()).await;
             }
         };
@@ -2508,8 +2514,7 @@ impl CodexTurnConnection<'_> {
                 options.resume_thread_id = Some(thread_id);
             }
             let subscribers = Arc::clone(&client.state.lock().await.runtime_notifications);
-            let owner = client.for_request(&request)?;
-            return run_private_codex_turn(&owner, request, options, subscribers).await;
+            return run_private_codex_turn(client, request, options, subscribers).await;
         }
         drive_codex_turn(client, request, options, None).await
     }
@@ -2523,11 +2528,6 @@ async fn drive_codex_turn(
 ) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
-    let _home_lease = if private_owner.is_some() {
-        super::instance_home::acquire(&request)?
-    } else {
-        None
-    };
     let mut private_admission = match (
         private_owner,
         options
@@ -3050,6 +3050,8 @@ async fn run_private_codex_turn(
     options: CodexAppServerTurnOptions,
     runtime_notifications: RuntimeNotificationSubscribers,
 ) -> Result<CodexAppServerTurn, String> {
+    let _home_lease = super::instance_home::acquire(&request)?;
+    let owner = owner.for_request(&request)?;
     let state = owner.state.lock().await;
     let private = CodexAppServerClient {
         binary: owner.binary.clone(),
@@ -3063,7 +3065,7 @@ async fn run_private_codex_turn(
         })),
     };
     drop(state);
-    drive_codex_turn(&private, request, options, Some(owner)).await
+    drive_codex_turn(&private, request, options, Some(&owner)).await
 }
 
 fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
