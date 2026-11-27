@@ -187,6 +187,7 @@ impl RuntimeWorkRpcHandler {
             stop_acknowledged: false,
             cancel,
             stopped,
+            claude_approvals: HashMap::new(),
             codex_turn: None,
         };
         if let Some(previous) = self

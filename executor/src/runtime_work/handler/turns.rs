@@ -1200,6 +1200,14 @@ impl RuntimeWorkRpcHandler {
             .stand_in_lifecycle_gate
             .lock()
             .expect("turn lifecycle gate poisoned");
+        self.set_interaction_status_under_gate(local_task_id, status);
+    }
+
+    pub(super) fn set_interaction_status_under_gate(
+        &self,
+        local_task_id: &str,
+        status: Option<&str>,
+    ) {
         let mut changed = false;
         self.store.update_task(local_task_id, |link| {
             let next_status = status.map(ToOwned::to_owned);

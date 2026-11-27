@@ -19,6 +19,9 @@ use crate::{
 
 use super::*;
 
+mod approvals;
+pub(super) use approvals::PendingApproval;
+
 const CLOUD_MODEL_TYPES: [&str; 3] = ["public", "user", "group"];
 const CLOUD_MODEL_NAMESPACE_OPTION: &str = "weworkCloudModelNamespace";
 const CLOUD_MODEL_RESOURCE_USER_ID_OPTION: &str = "weworkCloudModelResourceUserId";
@@ -62,6 +65,7 @@ struct ClaudeRuntimeEventSink {
 #[derive(Default)]
 pub(super) struct TurnTranscript {
     blocks: BTreeMap<String, Value>,
+    closed: bool,
 }
 
 impl TurnTranscript {
@@ -303,6 +307,11 @@ impl RuntimeWorkRpcHandler {
                 async move {
                     let completion = guard;
                     handler.recall_stand_in_context(&mut request).await;
+                    let approval_required =
+                        crate::runtime_work::stand_in_requires_confirmation(&request);
+                    request
+                        .extra
+                        .insert("claude_tool_approval".into(), json!(approval_required));
                     let model = string_field(&request.model_config, "model_id").unwrap_or_default();
                     let builder =
                         ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
@@ -402,7 +411,13 @@ impl RuntimeWorkRpcHandler {
                                 sink: sink.clone(),
                                 builder: builder.clone(),
                             };
-                            crate::runner::run_bound_shell(&shell, cancel_rx, "cancelled").await
+                            let run =
+                                crate::runner::run_bound_shell(&shell, cancel_rx, "cancelled");
+                            wegent_claude_harness::permission::with_tool_approval(
+                                Arc::new(sink.clone()),
+                                run,
+                            )
+                            .await
                         }
                     };
                     if matches!(outcome, ExecutionOutcome::Failed { .. }) {
@@ -425,10 +440,7 @@ impl RuntimeWorkRpcHandler {
                             link.runtime_handle["executorSession"] = session;
                         });
                     }
-                    let blocks = transcript
-                        .lock()
-                        .map(|transcript| transcript.blocks())
-                        .unwrap_or_default();
+                    let blocks = sink.finish_transcript();
                     handler
                         .finish_claude_outcome(&sink, &builder, outcome, blocks)
                         .await;

@@ -782,6 +782,9 @@ impl RuntimeWorkRpcHandler {
             } else {
                 cached_runtime_transcript_messages(link)
             };
+            if !direct_thread_override && is_claude_runtime(&link.runtime) {
+                messages.extend(self.pending_claude_approval_message(&local_task_id));
+            }
             let page_messages = messages.clone();
             attach_user_message_presentations_for_page(
                 &mut messages,

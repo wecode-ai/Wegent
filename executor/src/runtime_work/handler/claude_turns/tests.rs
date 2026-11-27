@@ -445,3 +445,146 @@ async fn claude_completed_and_follow_up_turns_survive_store_restart() {
         .iter()
         .any(|message| message["blocks"][0]["tool_output"] == "/tmp/project"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn claude_approval_is_single_use_owner_and_turn_scoped() {
+    use wegent_claude_harness::permission::ToolApproval;
+    let directory = tempfile::tempdir().unwrap();
+    let (events, mut rx) = broadcast::channel(16);
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device", "unused", events);
+    handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+    let (cancel, _cancel_rx) = oneshot::channel();
+    let (_stopped, stop) = oneshot::channel();
+    let execution_id = handler.start_local_task_execution("task".into(), cancel, stop);
+    let sink = ClaudeRuntimeEventSink {
+        handler: handler.clone(),
+        local_task_id: "task".into(),
+        execution_id,
+        request: ExecutionRequest {
+            task_id: "task".into(),
+            subtask_id: "turn".into(),
+            ..Default::default()
+        },
+        transcript: Default::default(),
+    };
+    let decide = sink.decide(
+        "request".into(),
+        "Write".into(),
+        json!({"path":"review.txt"}),
+    );
+    tokio::pin!(decide);
+    let block = loop {
+        tokio::select! {
+            _ = &mut decide => panic!("Approval settled before owner response"),
+            event = rx.recv() => {
+                let data = &event.unwrap()["payload"]["data"];
+                if let Some(block) = data.get("block"){break block.clone()}
+            }
+        }
+    };
+    assert_eq!(
+        block["render_payload"]["toolArguments"]["path"],
+        "review.txt"
+    );
+    let mut response = json!({"requestId":"request","interactionScope":"turn","answers":{"__mcp_approval":{"answers":["Allow"]}}});
+    assert_eq!(
+        handler.respond_to_claude_approval("task", &response, false)["accepted"],
+        false
+    );
+    response["interactionScope"] = json!("other");
+    assert_eq!(
+        handler.respond_to_claude_approval("task", &response, true)["accepted"],
+        false
+    );
+    response["interactionScope"] = json!("turn");
+    assert_eq!(
+        handler.respond_to_claude_approval("task", &response, true)["accepted"],
+        true
+    );
+    assert_eq!(
+        handler.respond_to_claude_approval("task", &response, true)["accepted"],
+        false
+    );
+    assert!(decide.await);
+    assert_eq!(
+        sink.transcript.lock().unwrap().blocks()[0]["render_payload"]["interactionStatus"],
+        "answered"
+    );
+
+    let mut expiring = sink.decide("second".into(), "Write".into(), json!({}));
+    assert!(futures_util::poll!(&mut expiring).is_pending());
+    tokio::time::advance(Duration::from_secs(301)).await;
+    assert!(!expiring.await);
+    response["requestId"] = json!("second");
+    assert_eq!(
+        handler.respond_to_claude_approval("task", &response, true)["accepted"],
+        false
+    );
+    assert!(sink
+        .transcript
+        .lock()
+        .unwrap()
+        .blocks()
+        .iter()
+        .any(|block| block["render_payload"]["interactionStatus"] == "expired"));
+}
+
+#[tokio::test]
+async fn terminal_claude_transcript_closes_approval_before_its_waiter_drops() {
+    use wegent_claude_harness::permission::ToolApproval;
+    let (_dir, handler) = isolated_handler();
+    let task = "approval-task";
+    handler.upsert_local_task(RuntimeTaskLink::new_pending_with_runtime(
+        task.into(),
+        "/tmp".into(),
+        "approval".into(),
+        "claude_code",
+    ));
+    let (cancel, _cancel_rx) = oneshot::channel();
+    let (_stopped, stop) = oneshot::channel();
+    let execution_id = handler.start_local_task_execution(task.into(), cancel, stop);
+    let sink = ClaudeRuntimeEventSink {
+        handler: handler.clone(),
+        local_task_id: task.into(),
+        execution_id,
+        request: ExecutionRequest {
+            task_id: task.into(),
+            subtask_id: "turn".into(),
+            ..Default::default()
+        },
+        transcript: Default::default(),
+    };
+    let mut decision = sink.decide("native".into(), "Edit".into(), json!({"path":"example"}));
+    assert!(futures_util::poll!(&mut decision).is_pending());
+    assert_eq!(
+        handler.pending_claude_approval_message(task).unwrap()["blocks"][0]["render_payload"]
+            ["interactionStatus"],
+        "pending"
+    );
+    assert!(handler.request_active_turn_stop(task));
+    let blocks = sink.finish_transcript();
+    let outcome = ExecutionOutcome::Cancelled {
+        message: "cancelled".into(),
+    };
+    handler
+        .finish_claude_outcome(
+            &sink,
+            &ResponsesEventBuilder::new(task, "turn", ""),
+            outcome,
+            blocks,
+        )
+        .await;
+    assert!(!handler.is_current_local_task_execution(task, execution_id));
+    drop(decision);
+    let link = handler.local_task_link(task).unwrap();
+    let messages = cached_messages(&link);
+    let card = &messages.last().unwrap()["blocks"][0];
+    assert_eq!(card["status"], "done");
+    assert_eq!(card["render_payload"]["interactionStatus"], "cancelled");
+    assert!(handler.pending_claude_approval_message(task).is_none());
+    let response = json!({"requestId":"native","interactionScope":"turn","answers":{"__mcp_approval":{"answers":["Allow"]}}});
+    assert_eq!(
+        handler.respond_to_claude_approval(task, &response, true)["accepted"],
+        false
+    );
+}

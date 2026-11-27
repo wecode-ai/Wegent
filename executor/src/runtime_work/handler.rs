@@ -671,6 +671,7 @@ struct ActiveLocalExecution {
     stop_acknowledged: bool,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+    claude_approvals: HashMap<String, claude_turns::PendingApproval>,
     codex_turn: Option<ActiveCodexTurn>,
 }
 

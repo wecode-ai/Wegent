@@ -1027,13 +1027,7 @@ impl RuntimeWorkRpcHandler {
                 });
             }
         }
-        if config["handlingPolicy"]["askBeforeAct"] == true {
-            if payload["runtime"] == "claude_code" {
-                return Err(AppIpcError::new(
-                    "confirmation_runtime_unsupported",
-                    "Choose Codex for execution-before-confirmation controls",
-                ));
-            }
+        if config["handlingPolicy"]["askBeforeAct"] == true && payload["runtime"] != "claude_code" {
             payload["executionRequest"]["runtime_permission_profile"] = json!(":read-only");
         }
         if config

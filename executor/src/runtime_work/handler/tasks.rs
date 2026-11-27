@@ -1442,6 +1442,16 @@ impl RuntimeWorkRpcHandler {
                 self.refresh_persisted_model_credentials(&mut payload)
                     .await?;
             } else {
+                if existing_link
+                    .as_ref()
+                    .is_some_and(|link| is_claude_runtime(&link.runtime))
+                {
+                    return Ok(self.respond_to_claude_approval(
+                        &local_task_id,
+                        &response,
+                        matches!(owner_message, Some(OwnerMessage::Direct)),
+                    ));
+                }
                 if let Some(result) = self
                     .respond_to_child_mcp_approval(&local_task_id, &response)
                     .await?
