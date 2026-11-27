@@ -567,12 +567,27 @@ test.describe('Connector app OAuth loop', () => {
       await providerControl(request, { tokenTtlSeconds: 1, rejectRefresh: false })
       await openIntegrations(page)
       await authorizeThroughProvider(page)
+      // The installed-apps endpoint can renew expired grants during tool discovery.
+      // Read the same catalog as Integrations to observe expiry without renewing.
       await expect
-        .poll(async () => (await installedApp(request, adminToken))?.connection.status, {
-          message: 'Wait for the short-lived connector grant to expire',
-          timeout: 10_000,
-        })
-        .toBe('expired')
+        .poll(
+          async () => {
+            const catalog = await request.get(`${API_URL}/api/connector-apps`, {
+              headers: authHeaders(adminToken),
+              timeout: 5_000,
+            })
+            expect(catalog.ok(), await catalog.text()).toBeTruthy()
+            const apps = (await catalog.json()) as Array<
+              Pick<InstalledAppView, 'slug' | 'connection'> & { can_refresh: boolean }
+            >
+            return apps.find(app => app.slug === SLUG)
+          },
+          {
+            message: 'Wait for the connector grant to expire with a refresh token',
+            timeout: 10_000,
+          }
+        )
+        .toMatchObject({ connection: { status: 'expired' }, can_refresh: true })
       await openIntegrations(page)
       await expect(refresh).toBeEnabled()
       await expect(authorize).toHaveCount(0)
