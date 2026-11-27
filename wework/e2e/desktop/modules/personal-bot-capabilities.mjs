@@ -82,10 +82,21 @@ export function checkPersonalBotTurn({ cell, reviewer, body, headers, response, 
       file = '"$CLAUDE_CONFIG_DIR/skills/' + capability.name + '/SKILL.md"'
       sibling = '"$CLAUDE_CONFIG_DIR/skills/' + other.name + '/SKILL.md"'
     } else {
-      const path = input.match(
-        new RegExp('(/[^"\\\\<>\\s]*/' + capability.name + '/SKILL\\.md)')
+      const catalog = body.input
+        .flatMap(message => message.content ?? [])
+        .map(item => item.text)
+        .join('\n')
+      const entry = catalog.match(
+        new RegExp('\\(file: ([^\\n)]+/' + capability.name + '/SKILL\\.md)\\)')
       )?.[1]
-      assert.ok(path, 'Codex did not receive the native skill path for ' + capability.name)
+      assert.ok(entry, 'Codex did not receive the native skill path for ' + capability.name)
+      const [rootAlias, ...segments] = entry.split('/')
+      let path = entry
+      if (rootAlias) {
+        const root = catalog.match(new RegExp('^- `' + rootAlias + '` = `([^`]+)`$', 'm'))?.[1]
+        assert.ok(root, 'Codex did not receive the skill root for ' + rootAlias)
+        path = join(root, ...segments)
+      }
       file = quote(path)
       sibling = quote(join(dirname(dirname(path)), other.name, 'SKILL.md'))
     }
