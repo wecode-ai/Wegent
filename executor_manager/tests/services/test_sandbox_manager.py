@@ -635,6 +635,47 @@ class TestSandboxManager:
         assert results[0][0] is results[1][0]
         assert results[0][0].base_url == "http://localhost:10001"
 
+    @pytest.mark.asyncio
+    async def test_cancelled_create_keeps_lifecycle_lease_until_start_finishes(
+        self, sandbox_manager_with_mock_redis, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        lease = MagicMock()
+        mocker.patch.object(
+            manager, "_acquire_task_lifecycle_lease", return_value=(lease, None)
+        )
+        release = mocker.patch.object(manager, "_release_task_lifecycle_lease")
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def start_container(sandbox):
+            started.set()
+            await finish.wait()
+            return "Container unavailable"
+
+        mocker.patch.object(
+            manager, "_start_sandbox_container", side_effect=start_container
+        )
+        creation = asyncio.create_task(
+            manager.create_sandbox(
+                shell_type="ClaudeCode",
+                user_id=100,
+                user_name="testuser",
+                metadata={"task_id": 12345},
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        creation.cancel()
+        await asyncio.sleep(0)
+        creation.cancel()
+        await asyncio.sleep(0)
+        release.assert_not_awaited()
+
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(creation, timeout=1)
+        release.assert_awaited_once_with(lease)
+
     # ----- _build_sandbox_task Tests -----
 
     def test_build_sandbox_task_basic(

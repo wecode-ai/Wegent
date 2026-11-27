@@ -163,16 +163,27 @@ class SandboxManager(metaclass=SingletonMeta):
                 if lease is None:
                     return self._repository.load_sandbox(task_key), lock_error
                 try:
-                    result = await self._create_sandbox_locked(
-                        shell_type=shell_type,
-                        user_id=user_id,
-                        user_name=user_name,
-                        timeout=timeout,
-                        workspace_ref=workspace_ref,
-                        bot_config=bot_config,
-                        metadata=sandbox_metadata,
-                        lease=lease,
+                    creation = asyncio.create_task(
+                        self._create_sandbox_locked(
+                            shell_type=shell_type,
+                            user_id=user_id,
+                            user_name=user_name,
+                            timeout=timeout,
+                            workspace_ref=workspace_ref,
+                            bot_config=bot_config,
+                            metadata=sandbox_metadata,
+                            lease=lease,
+                        )
                     )
+                    try:
+                        result = await asyncio.shield(creation)
+                    except asyncio.CancelledError:
+                        # Docker startup can outlive the request. Keep its lease
+                        # until the sandbox session records the outcome.
+                        while not creation.done():
+                            with suppress(asyncio.CancelledError):
+                                await asyncio.shield(creation)
+                        raise
                     if lease.lost.is_set():
                         return (
                             result[0],
