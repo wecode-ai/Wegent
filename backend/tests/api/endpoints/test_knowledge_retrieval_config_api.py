@@ -107,13 +107,56 @@ def test_create_accepts_resolvable_explicit_references(
         {
             "retriever_name": "chosen-retriever",
             "embedding_config": {"model_name": "chosen-embedding"},
-            "top_k": 4,
+            "top_k": 50,
         },
     )
 
     assert response.status_code == 201, response.text
     assert response.json()["retrieval_config"]["retriever_name"] == "chosen-retriever"
-    assert response.json()["retrieval_config"]["top_k"] == 4
+    assert response.json()["retrieval_config"]["top_k"] == 50
+
+
+@pytest.mark.api
+def test_retrieval_top_k_defaults_and_update_bounds(
+    test_client, test_token: str, test_db, test_user: User
+) -> None:
+    test_db.add_all(
+        [
+            _retriever_kind(test_user.id, "chosen-retriever"),
+            embedding_model_kind(test_user.id, "chosen-embedding"),
+        ]
+    )
+    test_db.commit()
+    config = {
+        "retriever_name": "chosen-retriever",
+        "embedding_config": {"model_name": "chosen-embedding"},
+    }
+
+    invalid = _create_knowledge_base(test_client, test_token, {**config, "top_k": 51})
+    assert invalid.status_code == 422, invalid.text
+    assert invalid.json()["errors"][0]["loc"] == ["body", "retrieval_config", "top_k"]
+
+    response = _create_knowledge_base(test_client, test_token, config)
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert created["retrieval_config"]["top_k"] == 5
+
+    url = f"/api/knowledge-bases/{created['id']}"
+    headers = {"Authorization": f"Bearer {test_token}"}
+    updated = test_client.put(
+        url, json={"retrieval_config": {"top_k": 50}}, headers=headers
+    )
+    assert updated.status_code == 200, updated.text
+
+    invalid = test_client.put(
+        url, json={"retrieval_config": {"top_k": 51}}, headers=headers
+    )
+    assert invalid.status_code == 422, invalid.text
+    assert invalid.json()["errors"][0]["loc"] == ["body", "retrieval_config", "top_k"]
+
+    detail = test_client.get(url, headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["retrieval_config"]["top_k"] == 50
 
 
 @pytest.mark.api

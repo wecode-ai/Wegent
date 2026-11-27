@@ -382,7 +382,7 @@ def test_rejects_a_resolution_that_names_another_resource() -> None:
     [
         ({"retrieval_mode": "unsupported"}, "retrieval_mode"),
         ({"top_k": 0}, "top_k"),
-        ({"top_k": 11}, "top_k"),
+        ({"top_k": 51}, "top_k"),
         ({"score_threshold": 1.5}, "score_threshold"),
         (
             {"hybrid_weights": {"vector_weight": 0.9, "keyword_weight": 0.9}},
@@ -428,8 +428,9 @@ def test_validate_retrieval_config_update_checks_only_provided_fields() -> None:
     }
     with pytest.raises(KnowledgeConfigError, match="retrieval_mode"):
         validate_retrieval_config_update({"retrieval_mode": "unsupported"})
+    assert validate_retrieval_config_update({"top_k": 50}) == {"top_k": 50}
     with pytest.raises(KnowledgeConfigError, match="top_k"):
-        validate_retrieval_config_update({"top_k": 11})
+        validate_retrieval_config_update({"top_k": 51})
 
 
 def test_evaluate_profile_reports_missing_incomplete_and_valid() -> None:

@@ -28,7 +28,7 @@ DEFAULT_RETRIEVAL_MODE = "vector"
 DEFAULT_TOP_K = 5
 DEFAULT_SCORE_THRESHOLD = 0.5
 MIN_TOP_K = 1
-MAX_TOP_K = 10
+MAX_TOP_K = 50
 VALID_RETRIEVAL_MODES = frozenset({"vector", "keyword", "hybrid"})
 
 # The composition priority, highest first, is: explicit retrieval config,
