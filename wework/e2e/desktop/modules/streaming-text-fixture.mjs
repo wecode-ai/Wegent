@@ -14,6 +14,8 @@ import {
 import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 import assert from 'node:assert/strict'
 
+export { sse, writeSseEvents } from './model-sse.mjs'
+
 export const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 export const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -121,10 +123,6 @@ export async function openNewChatWithE2EModel(control, timeoutMs) {
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
 }
 export const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}${SCROLL_BUTTON_APPENDED_TEXT}\n\nCOMPLETE`
-
-export function sse(events) {
-  return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
-}
 
 export function responseCreated(id) {
   return { type: 'response.created', response: { id } }
@@ -360,14 +358,6 @@ export function textDeltaEvents(itemId, text, initialOffset = 0, outputIndex = 0
       offset: initialOffset,
     },
   ]
-}
-
-export async function writeSseEvents(response, events) {
-  for (const event of events) {
-    response.write(sse([event]))
-    response.flush?.()
-    await new Promise(resolve => setTimeout(resolve, 5))
-  }
 }
 
 export function requestContainsPrompt(body) {
