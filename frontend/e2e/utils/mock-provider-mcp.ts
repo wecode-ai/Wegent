@@ -32,6 +32,7 @@ const marketplaceServers = [
 
 const states = new MockScopeStore(() => ({
   toolCalls: [] as McpToolCall[],
+  probeCalls: new Map<string, Array<{ tool: string; receipt?: string }>>(),
   contentGates: new Map<
     string,
     { waiting: boolean; promise: Promise<void>; release: () => void }
@@ -143,6 +144,22 @@ function handleScopedRequest(
   port: number
 ): boolean {
   const url = new URL(req.url || '/', `http://localhost:${port}`)
+  const probe = url.pathname.match(/^\/mcp-control\/probe-calls\/([a-z0-9-]+)$/)?.[1]
+  if (probe) {
+    const probes = states.current().probeCalls
+    if (req.method === 'POST') {
+      const call = JSON.parse(body)
+      if (typeof call.tool !== 'string') {
+        writeControlJson(res, 400, { error: 'Missing tool' })
+        return true
+      }
+      const calls = probes.get(probe) ?? []
+      calls.push({ tool: call.tool, receipt: call.receipt })
+      probes.set(probe, calls)
+    } else if (req.method === 'DELETE') probes.delete(probe)
+    writeControlJson(res, 200, probes.get(probe) ?? [])
+    return true
+  }
   if (url.pathname === '/mock-mcp-catalog/servers' && req.method === 'GET') {
     writeControlJson(res, 200, {
       success: true,

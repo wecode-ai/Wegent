@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { APIRequestContext } from '@playwright/test'
 import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
+import {
+  sharedCapability,
+  sharedBotGrants,
+  botMcpReceipt,
+} from '../../utils/standalone-bot-capabilities'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import {
   clearToolScenario,
@@ -135,6 +140,41 @@ test.describe('Real Claude background subagent lifecycle', () => {
           const childDone = scenario.requests.find(capture => capture.kind === 'child-1')!
           if (workerName) {
             expect(subagentType).toBeTruthy()
+            const blocks = scenario.requests
+              .filter(r => r.kind.startsWith('child-'))
+              .flatMap(r =>
+                r.body.messages.flatMap(
+                  message =>
+                    (message as { content?: { type?: string; content?: unknown }[] }).content ?? []
+                )
+              )
+              .filter(block => block.type === 'tool_result')
+            for (const marker of [sharedCapability.heading, sharedCapability.result])
+              expect(
+                blocks.some(block => JSON.stringify(block.content).includes(marker)),
+                marker
+              ).toBe(true)
+            const primaryReceipt = botMcpReceipt(
+              scenario.requests.filter(r => r.kind === 'primary-capabilities').map(r => r.body),
+              sharedCapability.result
+            )
+            const childReceipt = botMcpReceipt(
+              scenario.requests.filter(r => r.kind.startsWith('child-')).map(r => r.body),
+              sharedCapability.result
+            )
+            expect(childReceipt).not.toBe(primaryReceipt)
+            await testInfo.attach('claude-coordinate-bot-capabilities', {
+              body: JSON.stringify({
+                taskId,
+                teamId,
+                primaryBot: botName,
+                workerBot: workerName,
+                subagentType,
+                primaryReceipt,
+                childReceipt,
+              }),
+              contentType: 'application/json',
+            })
             expect(JSON.stringify(childDone.body.system)).toContain(`TEAM_MEMBER_${workerName}`)
           }
           expect(childDone.timestamp - parentWaiting.timestamp).toBeGreaterThan(
@@ -512,9 +552,26 @@ async function createAgent(
     data: { name: shellName, baseShellRef: 'ClaudeCode', baseImage: EXECUTOR_IMAGE },
   })
   expect(shell.ok(), await shell.text()).toBe(true)
-  const botId = await createBot(request, headers, model, shellName, botName)
+  let grants
+  if (workerName) {
+    const response = await request.get(API_URL + '/api/v1/kinds/skills', {
+      headers,
+      params: { name: 'interactive', namespace: 'default', exact_match: true },
+    })
+    expect(response.ok()).toBe(true)
+    const metadata = (await response.json()).items.find(
+      (s: { metadata: { name: string } }) => s.metadata.name === 'interactive'
+    )?.metadata
+    expect(Number(metadata?.labels.id)).toBeGreaterThan(0)
+    grants = await sharedBotGrants({
+      skill_id: Number(metadata.labels.id),
+      namespace: metadata.namespace,
+      is_public: metadata.labels.user_id === '0',
+    })
+  }
+  const botId = await createBot(request, headers, model, shellName, botName, grants)
   const workerId = workerName
-    ? await createBot(request, headers, model, shellName, workerName)
+    ? await createBot(request, headers, model, shellName, workerName, grants)
     : undefined
   const team = await request.post(`${API_URL}/api/teams`, {
     headers,
@@ -544,7 +601,8 @@ async function createBot(
   headers: Record<string, string>,
   model: string,
   shellName: string,
-  name: string
+  name: string,
+  grants?: Awaited<ReturnType<typeof sharedBotGrants>>
 ): Promise<number> {
   const bot = await request.post(`${API_URL}/api/bots`, {
     headers,
@@ -553,6 +611,7 @@ async function createBot(
       shell_name: shellName,
       agent_config: { bind_model: model, bind_model_type: 'user' },
       inherit_base_capabilities: false,
+      ...grants,
       system_prompt: 'Execute the requested background lifecycle scenario.',
       namespace: 'default',
       is_active: true,
