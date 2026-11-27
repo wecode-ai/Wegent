@@ -5,6 +5,7 @@ use super::*;
 use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
+use crate::task_runtime::stand_in_projection::{project_visible_work, source_bindings_visible};
 
 const MAX_INTAKE_WORKERS: usize = 8;
 const INTAKE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -16,6 +17,28 @@ fn stand_in_work_signature(link: &RuntimeTaskLink) -> Value {
         link.completed_at,
         link.status
     ])
+}
+
+fn stand_in_work_needs_review(
+    state: &Value,
+    task_id: &str,
+    changed_at: i64,
+    signature: &Value,
+) -> bool {
+    let needs_followup = signature[1]
+        .as_str()
+        .is_some_and(|status| !status.is_empty())
+        || matches!(signature[0].as_str(), Some("failed" | "cancelled"))
+        || matches!(signature[3].as_str(), Some("failed" | "cancelled"));
+    needs_followup
+        && state["observed"].get(task_id).map_or_else(
+            || {
+                state["observedSince"]
+                    .as_i64()
+                    .is_some_and(|since| changed_at >= since)
+            },
+            |previous| previous != signature,
+        )
 }
 
 struct IntakeWorker {
@@ -195,12 +218,17 @@ impl RuntimeWorkRpcHandler {
                 }
             } else if origin["projectStore"] == "cloud" {
                 let project = origin["cloudProjectId"].as_str().unwrap_or_default();
-                if !crate::task_runtime::personal_stand_in::role_project_matches(
+                let connected = crate::task_runtime::personal_stand_in::role_project_matches(
                     role, project, "cloud",
-                ) || crate::task_runtime::personal_stand_in::project_policy(
-                    role, project, "cloud",
-                )["automatic"]
-                    == false
+                )
+                    || crate::task_runtime::personal_stand_in::role_receives_participating_issues(
+                        role,
+                    );
+                if !connected
+                    || crate::task_runtime::personal_stand_in::project_policy(
+                        role, project, "cloud",
+                    )["automatic"]
+                        == false
                 {
                     continue;
                 }
@@ -459,9 +487,12 @@ impl RuntimeWorkRpcHandler {
     fn has_stand_in_work_change(&self, user: i64, state: &Value) -> bool {
         self.store.any_unarchived_task(|link| {
             stand_in_owns_work(link, user)
-                && state["observed"]
-                    .get(&link.local_task_id)
-                    .map_or(true, |previous| *previous != stand_in_work_signature(link))
+                && stand_in_work_needs_review(
+                    state,
+                    &link.local_task_id,
+                    link.updated_at.max(link.created_at),
+                    &stand_in_work_signature(link),
+                )
         })
     }
 
@@ -478,29 +509,14 @@ impl RuntimeWorkRpcHandler {
             |link| {
                 (
                     link.local_task_id.clone(),
-                    link.created_at,
+                    link.updated_at.max(link.created_at),
                     stand_in_work_signature(link),
                     link.runtime_handle["origin"]["standInId"].clone(),
                 )
             },
         );
-        for (task_id, created_at, signature, role_id) in work_states {
-            let changed = observed.get(&task_id).map_or_else(
-                || {
-                    state["observedSince"]
-                        .as_i64()
-                        .is_some_and(|since| created_at >= since)
-                        && (!signature[0].is_null()
-                            || !signature[1].is_null()
-                            || !signature[2].is_null()
-                            || matches!(
-                                signature[3].as_str(),
-                                Some("done" | "failed" | "cancelled")
-                            ))
-                },
-                |previous| *previous != signature,
-            );
-            if changed {
+        for (task_id, changed_at, signature, role_id) in work_states {
+            if stand_in_work_needs_review(state, &task_id, changed_at, &signature) {
                 store.enqueue_stand_in_event(user, json!(["work-state",task_id,signature]), json!({"kind":"work_state","taskId":task_id,"state":signature,"roleIds":[role_id]})).map_err(settings_error)?;
             }
             observed.insert(task_id, signature);
@@ -872,11 +888,13 @@ impl RuntimeWorkRpcHandler {
                 )
                 .is_some()
             } else {
-                crate::task_runtime::personal_stand_in::role_project_matches(role, project, storage)
-                    && crate::task_runtime::personal_stand_in::project_policy(
-                        role, project, storage,
-                    )["automatic"]
-                        == true
+                (crate::task_runtime::personal_stand_in::role_project_matches(
+                    role, project, storage,
+                ) || crate::task_runtime::personal_stand_in::role_receives_participating_issues(
+                    role,
+                )) && crate::task_runtime::personal_stand_in::project_policy(role, project, storage)
+                    ["automatic"]
+                    == true
             };
             if !connected {
                 return Err(AppIpcError::new(
@@ -885,17 +903,20 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        if event["kind"] == "connection"
-            && !stand_in_collection_connection(role, &event["source"])
-                .is_some_and(|source| source["policy"]["automatic"] == true)
-        {
-            return Err(AppIpcError::new(
-                "source_removed",
-                "Source is no longer automatic or connected",
-            ));
-        }
         if event["kind"] == "connection" {
-            let source = stand_in_collection_connection(role, &event["source"]).unwrap();
+            let source = stand_in_collection_connection(role, &event["source"])
+                .filter(|source| {
+                    source["policy"]["automatic"] == true
+                        && !crate::task_runtime::personal_stand_in::requires_dingtalk_delegation(
+                            role, source,
+                        )
+                })
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "source_removed",
+                        "Source is no longer automatic or connected",
+                    )
+                })?;
             if !super::stand_in_ingress::source_accepts_message(source, &event["message"]) {
                 return Err(AppIpcError::new(
                     "source_removed",
@@ -921,6 +942,14 @@ impl RuntimeWorkRpcHandler {
                     "Only the owning primary stand-in can follow this work",
                 ));
             }
+            if link.runtime_handle["executionRequest"]["standInDelegation"].is_object() {
+                self.source_task_parent(link).map_err(|_| {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "Source task evidence is no longer visible to the current account",
+                    )
+                })?;
+            }
             return Ok(());
         }
         if origin["type"] == "stand_in_schedule" {
@@ -943,10 +972,32 @@ impl RuntimeWorkRpcHandler {
             origin["type"].as_str(),
             Some("connection_work" | "dingtalk_work")
         ) {
-            let work = store
-                .stand_in_work(user, &link.local_task_id)
+            let work_id = origin["workId"].as_str().unwrap_or(&link.local_task_id);
+            let work = store.stand_in_work(user, work_id).map_err(settings_error)?;
+            let settings = store
+                .personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
-            if !stand_in_connection(role, &work["source"])
+            let messages = store
+                .stand_in_messages(user, work_id)
+                .map_err(settings_error)?;
+            let Some(visible) = project_visible_work(&settings, work, messages) else {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Work has no source events visible to the current account",
+                ));
+            };
+            if !source_bindings_visible(
+                &settings,
+                &visible.work["roleId"],
+                link.runtime_handle["executionRequest"].get("standInSourceBindings"),
+                &visible.messages,
+            ) {
+                return Err(AppIpcError::new(
+                    "permission_denied",
+                    "Work source bindings include a message outside the current account",
+                ));
+            }
+            if !stand_in_connection(role, &visible.work["source"])
                 .is_some_and(|source| source["policy"]["automatic"] == true)
             {
                 return Err(AppIpcError::new(
@@ -954,10 +1005,7 @@ impl RuntimeWorkRpcHandler {
                     "Work source is no longer connected",
                 ));
             }
-            for message in store
-                .stand_in_messages(user, &link.local_task_id)
-                .map_err(settings_error)?
-            {
+            for message in visible.messages {
                 if !stand_in_connection(role, &message["source"])
                     .is_some_and(|source| source["policy"]["automatic"] == true)
                 {
@@ -970,16 +1018,15 @@ impl RuntimeWorkRpcHandler {
         } else {
             let project = origin["cloudProjectId"].as_str().unwrap_or_default();
             let kind = origin["projectStore"].as_str().unwrap_or_default();
+            let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let independent = kind == super::stand_in_personal_issues::INDEPENDENT;
             let config = if independent {
                 super::stand_in_personal_issues::personal_issue_role(role, user)
             } else {
-                crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind)
-                    .then(|| {
-                        crate::task_runtime::personal_stand_in::project_role(
-                            role, user, project, kind,
-                        )
-                    })
+                self.issue_intake_roles(std::slice::from_ref(role), user, project, kind, issue_id)
+                    .await?
+                    .into_iter()
+                    .next()
             }
             .ok_or_else(|| {
                 let message = if independent {
@@ -989,7 +1036,6 @@ impl RuntimeWorkRpcHandler {
                 };
                 AppIpcError::new("permission_denied", message)
             })?;
-            let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let mut issue = self.read_stand_in_issue(store, user, origin).await?;
             if kind == "local" {
                 issue["tags"] = issue["metadata"]["tags"].clone();
@@ -1131,12 +1177,22 @@ impl RuntimeWorkRpcHandler {
                 return Ok(json!({"success":true}));
             }
             let project = required(event, "projectId")?;
-            let mut config =
-                crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
+            let mut config = self
+                .issue_intake_roles(
+                    std::slice::from_ref(role),
+                    user,
+                    project,
+                    kind,
+                    required(event, "issueId")?,
+                )
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    AppIpcError::new("source_removed", "Issue scope is no longer connected")
+                })?;
             config["intakeRouted"] = json!(true);
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind)
-                || config["handlingPolicy"]["automatic"] == false
-            {
+            if config["handlingPolicy"]["automatic"] == false {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Project source is no longer automatic or connected",

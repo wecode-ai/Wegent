@@ -25,14 +25,15 @@ import type {
   RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
-import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
+import {
+  useProjectRuntimeTaskComposer,
+  type UseProjectRuntimeTaskComposerOptions,
+} from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 
-interface AiChatModalProps {
-  project: CloudProject
+type AiChatModalProps = {
   localProjects: ProjectWithTasks[]
-  task?: CloudLoopItem
   /** When false the panel stays mounted (conversation state and stream keep
    * running) but the overlay is hidden, so reopening shows the last messages
    * even while the temporary task is still executing. */
@@ -58,7 +59,11 @@ interface AiChatModalProps {
     localProject: ProjectWithTasks | null
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   embedded?: boolean
-}
+  resolveTaskInput?: UseProjectRuntimeTaskComposerOptions['resolveTaskInput']
+} & (
+  | { project: CloudProject; task?: CloudLoopItem }
+  | { project?: undefined; task: Pick<CloudLoopItem, 'id' | 'title' | 'description' | 'status'> }
+)
 
 interface AutomaticIssueTaskComposerProps {
   project: ProjectWithTasks | null
@@ -73,6 +78,7 @@ interface AutomaticIssueTaskComposerProps {
   runtimeContext: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   prepareTask?: AiChatModalProps['prepareTask']
   onTaskCreated?: AiChatModalProps['onTaskCreated']
+  resolveTaskInput?: AiChatModalProps['resolveTaskInput']
   panelProps: Omit<
     Parameters<typeof TemporaryChatPanel>[0],
     'createTask' | 'projectWork' | 'currentProject'
@@ -98,6 +104,7 @@ function AutomaticIssueTaskComposer({
   runtimeContext,
   prepareTask,
   onTaskCreated,
+  resolveTaskInput,
   panelProps,
 }: AutomaticIssueTaskComposerProps) {
   const taskRequestWorkspace = taskRequest?.execution?.workspace
@@ -138,6 +145,7 @@ function AutomaticIssueTaskComposer({
     runtimeContext,
     prepareTask,
     onTaskCreated,
+    resolveTaskInput,
   })
 
   return (
@@ -196,6 +204,7 @@ export function AiChatModal({
   onTaskCreated,
   prepareTask,
   embedded = false,
+  resolveTaskInput,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
   const { state } = useWorkbenchPaneContext()
@@ -206,7 +215,8 @@ export function AiChatModal({
   const hasPreparedEnvironmentTarget = Boolean(
     initialTaskRequest?.deviceId?.trim() && initialTaskRequest.workspacePath?.trim()
   )
-  const storageKey = lastAddressStorageKey(project.id, task?.id)
+  const projectId = project?.id ?? 'no-project'
+  const storageKey = lastAddressStorageKey(projectId, task?.id)
   const initialAddressKey = initialAddress ? JSON.stringify(initialAddress) : null
   const hasInitialAddress = Boolean(initialAddress)
   const [addressState, setAddressState] = useState<{
@@ -223,7 +233,7 @@ export function AiChatModal({
   const issueId = task?.id
   const conversationAddress = useMemo(
     () =>
-      currentAddress && issueId
+      currentAddress && issueId && project
         ? {
             ...currentAddress,
             issueExecution: { projectId: String(project.id), issueId },
@@ -232,7 +242,7 @@ export function AiChatModal({
               : {}),
           }
         : currentAddress,
-    [currentAddress, project.id, project.project_store, issueId]
+    [currentAddress, project, issueId]
   )
   const openRuntimeTask = useCallback(async () => {
     const address = conversationAddress ?? initialAddress
@@ -294,7 +304,7 @@ export function AiChatModal({
   )
   const runtimeContext = useMemo(
     () => ({
-      ...buildWorkItemRuntimeContext(project, task),
+      ...(project ? buildWorkItemRuntimeContext(project, task) : {}),
       ...(initialTaskRequest?.origin ? { origin: initialTaskRequest.origin } : {}),
     }),
     [initialTaskRequest, project, task]
@@ -362,6 +372,7 @@ export function AiChatModal({
         runtimeContext={runtimeContext}
         prepareTask={prepareTask}
         onTaskCreated={onTaskCreated}
+        resolveTaskInput={resolveTaskInput}
         panelProps={{
           source: null,
           instanceId,
@@ -379,9 +390,9 @@ export function AiChatModal({
           expanded: options.expanded,
           wideComposer: options.expanded,
           showProjectWorkBar: Boolean(projectWork),
-          projectWorkBarMiddleContext: (
+          projectWorkBarMiddleContext: project ? (
             <WorkItemComposerGuide integrated toolbar project={project} />
-          ),
+          ) : undefined,
           projectWorkBarTrailingContext: (
             <WorkbenchHarnessSelector
               runtime="codex"
@@ -434,7 +445,7 @@ export function AiChatModal({
             key={`${initialAddress.deviceId}:${initialAddress.taskId}`}
             currentProject={selectedLocalProject}
             source={initialAddress}
-            instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
+            instanceId={`work-item-task:${projectId}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
             testId="work-item-task-chat-panel"
             initialAddress={conversationAddress}
             onAddressChange={rememberAddress}
@@ -496,8 +507,7 @@ export function AiChatModal({
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               <div className="flex items-center gap-2 text-xs text-text-muted">
-                <span>{project.name}</span>
-                <span>·</span>
+                {project ? <span>{project.name} ·</span> : null}
                 <span>{task?.id}</span>
                 <span>·</span>
                 <span>{statusLabel}</span>
@@ -545,7 +555,7 @@ export function AiChatModal({
               key={`${initialAddress.deviceId}:${initialAddress.taskId}`}
               currentProject={selectedLocalProject}
               source={initialAddress}
-              instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
+              instanceId={`work-item-task:${projectId}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
               testId="work-item-task-chat-panel"
               initialAddress={conversationAddress}
               onAddressChange={rememberAddress}
@@ -573,7 +583,7 @@ export function AiChatModal({
         translate={(key, fallback, options) => t(key, { ...options, defaultValue: fallback })}
       >
         {renderNewTaskComposer(
-          `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,
+          `work-item-new-task:${projectId}:${task?.id ?? 'project'}`,
           'work-item-new-task-chat-panel',
           { expanded: true, startFresh: true }
         )}
@@ -661,7 +671,7 @@ export function AiChatModal({
           </ControlButton>
         </header>
         {renderNewTaskComposer(
-          `ai-chat:${project.id}:${task?.id ?? 'project'}:${sessionKey}`,
+          `ai-chat:${projectId}:${task?.id ?? 'project'}:${sessionKey}`,
           'ai-chat-panel',
           { key: sessionKey, startFresh: composeNew }
         )}

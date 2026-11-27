@@ -37,7 +37,10 @@ function fixture(platform) {
             full_name: state.repository,
             path_with_namespace: state.repository,
           }
-        else if (input.operation === 'object') {
+        else if (
+          input.operation === 'object' ||
+          (platform === 'gitlab' && input.operation === 'change_request_status')
+        ) {
           if (state.inaccessible)
             throw Object.assign(new Error('Permission changed'), { code: 'git_permission_denied' })
           data = {
@@ -45,7 +48,7 @@ function fixture(platform) {
             number: state.mismatch ? 999 : input.number,
             iid: state.mismatch ? 999 : input.number,
             ...(state.issueIsPr && input.entityKind === 'issue' ? { pull_request: {} } : {}),
-            state: state.closed ? 'closed' : 'open',
+            state: state.closed ? 'closed' : platform === 'gitlab' ? 'opened' : 'open',
             updated_at: state.changed ? NEW : OLD,
             head: { sha: HEAD },
             sha: HEAD,
@@ -439,6 +442,34 @@ test('a pending PR refreshes its aggregate after 15 seconds and emits the termin
   assert.equal(done.events[0].external.payload.statusCheckRollup.state, 'SUCCESS')
   assert.equal(done.nextPollAt, undefined)
   assert.equal(done.nextCheckpoint.nextCheckAt, Date.now() + 60_000)
+})
+
+test('GitLab MR waits use only the project-bound aggregate read', async () => {
+  const f = fixture('gitlab')
+  const source = { ...(await f.discover([pr(1)])), observeCurrentStatus: true }
+  f.calls.length = 0
+  f.state.pipelineSha = 'b'.repeat(40)
+  const provider = createProvider('gitlab')
+  const first = await provider.collect(f.ctx, { source, checkpoint: {} })
+  assert.equal(first.events[0].external.eventType, 'tracked.status')
+  assert.equal(first.events[0].external.payload.head_pipeline, undefined)
+  assert.equal(first.nextPollAt, Date.parse(first.resourceStates[0].observedAt) + 15_000)
+  f.state.pipelineSha = HEAD
+  f.state.changed = true
+  const second = await provider.collect(f.ctx, {
+    source,
+    checkpoint: first.nextCheckpoint,
+    force: true,
+  })
+  assert.equal(second.events[0].external.payload.head_pipeline.status, 'failed')
+  assert.equal(second.events[0].external.payload.sha, HEAD)
+  assert.deepEqual(
+    f.calls.map(({ operation, repositoryId, number }) => [operation, repositoryId, number]),
+    [
+      ['change_request_status', source.id, 1],
+      ['change_request_status', source.id, 1],
+    ]
+  )
 })
 
 test('a later check timeout leaves the committed PR status readable', async () => {

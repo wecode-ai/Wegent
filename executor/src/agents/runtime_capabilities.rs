@@ -43,12 +43,14 @@ mod codex_mcp;
 #[path = "runtime_capabilities/execution_snapshot.rs"]
 mod execution_snapshot;
 mod skill_archive;
+mod user_input_attachments;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
 pub(super) use codex_mcp::prepare_templates as configure_codex_mcp_servers;
 use skill_archive::{expected_hash, publish_archive};
+pub(crate) use user_input_attachments::{prepare_user_input_response, PreparedUserInputResponse};
 pub(super) use wegent_filesystem::json_file::write_json_file;
 pub(crate) use wegent_mcp_runtime::mcp_environment;
 use wegent_mcp_runtime::toml_encoding::toml_key_path;

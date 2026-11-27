@@ -452,6 +452,12 @@ export class ConnectionRegistry {
           availability: {
             status: availability.status,
             ...(availability.code ? { code: availability.code } : {}),
+            ...(availability.status === 'ready' &&
+              Object.fromEntries(
+                ['profile', 'accountId', 'accountName', 'organizationName']
+                  .map(key => [key, availability[key]])
+                  .filter(([, value]) => typeof value === 'string' && value.length <= 512)
+              )),
           },
         }
       })

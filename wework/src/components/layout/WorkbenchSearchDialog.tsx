@@ -17,33 +17,25 @@ import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Loader2, Search, X } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { createWorkbenchSearchSession } from './workbenchSearchSession'
 
 interface WorkbenchSearchDialogProps {
   open: boolean
+  suspended?: boolean
   onClose: () => void
   onSearchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   onOpenRuntimeTask: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
-export function WorkbenchSearchDialog({
-  open,
-  onClose,
-  onSearchRuntimeWork,
-  onOpenRuntimeTask,
-}: WorkbenchSearchDialogProps) {
+export function WorkbenchSearchDialog({ open, ...props }: WorkbenchSearchDialogProps) {
   if (!open) return null
 
-  return (
-    <WorkbenchSearchDialogPanel
-      onClose={onClose}
-      onSearchRuntimeWork={onSearchRuntimeWork}
-      onOpenRuntimeTask={onOpenRuntimeTask}
-    />
-  )
+  return createPortal(<WorkbenchSearchDialogPanel {...props} />, document.body)
 }
 
 function WorkbenchSearchDialogPanel({
+  suspended,
   onClose,
   onSearchRuntimeWork,
   onOpenRuntimeTask,
@@ -89,13 +81,17 @@ function WorkbenchSearchDialogPanel({
   return (
     <div
       data-testid="workbench-search-overlay"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/18 px-4 pt-[22vh] backdrop-blur-[1px]"
+      className={cn(
+        'fixed inset-0 z-modal items-start justify-center bg-black/18 px-4 pt-[22vh] backdrop-blur-[1px]',
+        suspended ? 'hidden' : 'flex'
+      )}
       onMouseDown={event => {
         if (event.target === event.currentTarget) onClose()
       }}
     >
       <DialogSurface
         onClose={onClose}
+        suspended={suspended}
         render={
           <div
             ref={dialogRef}

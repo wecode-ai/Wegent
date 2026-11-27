@@ -6,6 +6,7 @@
 
 import json
 import logging
+import time
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Optional
 
@@ -215,6 +216,7 @@ async def _execute_connection_observation_command(
             raise DeviceCommandError("One observation request is required") from exc
         if not isinstance(payload, dict):
             raise DeviceCommandError("One observation request is required")
+    started_at = time.perf_counter()
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -225,7 +227,13 @@ async def _execute_connection_observation_command(
         )
     except RuntimeRpcError as exc:
         raise DeviceCommandError(f"{exc.code}: {exc}") from exc
-    return {"success": True, "exit_code": 0, "stdout": result, "stderr": ""}
+    return {
+        "success": True,
+        "exit_code": 0,
+        "stdout": result,
+        "stderr": "",
+        "duration": time.perf_counter() - started_at,
+    }
 
 
 def _resolve_cloud_runtime_device_id(device_kind: Any) -> str:

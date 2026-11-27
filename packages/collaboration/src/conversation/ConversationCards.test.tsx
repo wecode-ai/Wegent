@@ -3,6 +3,10 @@ import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WindowedMarkdownChunk } from "../markdown/WindowedMarkdownChunk";
+import {
+  createMarkdownWindowingScope,
+  MarkdownWindowingContext,
+} from "../markdown/MarkdownWindowingScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TurnFileChangesSummary } from "@wegent/chat-core/runtime";
 import { createCollaborationTranslator } from "../i18n";
@@ -150,19 +154,35 @@ describe("shared conversation cards without Electron", () => {
   });
 
   it.each([
-    ["server_overloaded", "connection interrupted", "Model service is busy"],
+    [
+      "server_overloaded",
+      "connection interrupted",
+      "Model service is busy",
+      "overloaded",
+    ],
     [
       "timeout_error",
       "codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted",
       "Timed out waiting for a response",
+      "within 180 seconds",
+    ],
+    [
+      "llm_error",
+      "No tool output found for tool call call_1.",
+      "The model could not process the conversation history",
+      "The new conversation will reference this one",
     ],
   ])(
     "shows localized terminal %s separately from diagnostics",
-    (type, error, title) => {
+    (type, error, title, guidance) => {
+      const continueInNewConversation = vi.fn();
       render(
         <AssistantErrorCard
           error={error}
           errorType={type}
+          onContinueInNewConversation={continueInNewConversation}
+          onRetry={vi.fn()}
+          onSwitchModel={vi.fn()}
           message={{
             id: "failed",
             role: "assistant",
@@ -173,13 +193,35 @@ describe("shared conversation cards without Electron", () => {
         />,
       );
       expect(element("assistant-error-title").textContent).toBe(title);
+      const retry = element("assistant-error-retry");
+      const switchModel = element("assistant-error-switch-model-retry");
+      expect(retry.textContent).toBe("Retry");
+      const recovery = container.querySelector<HTMLButtonElement>(
+        '[data-testid="assistant-error-continue-in-new-conversation"]',
+      );
+      if (type === "llm_error") {
+        if (!recovery) throw new Error("Missing new conversation action");
+        expect(recovery.textContent).toBe("Continue in a new conversation");
+        expect(retry.compareDocumentPosition(switchModel)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        expect(switchModel.compareDocumentPosition(recovery)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        act(() => recovery.click());
+        expect(continueInNewConversation).toHaveBeenCalledOnce();
+      } else {
+        expect(recovery).toBeNull();
+        expect(switchModel.compareDocumentPosition(retry)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      }
       expect(
         document.querySelector('[data-testid="assistant-error-details"]'),
       ).toBeNull();
-      if (type === "timeout_error")
-        expect(element("assistant-error-description").textContent).toContain(
-          "within 180 seconds",
-        );
+      expect(element("assistant-error-description").textContent).toContain(
+        guidance,
+      );
       act(() => element("assistant-error-details-toggle").click());
       expect(element("assistant-error-details").textContent).toBe(error);
     },
@@ -435,6 +477,113 @@ describe("shared conversation cards without Electron", () => {
     }
   });
 
+  it("certifies a retained Markdown placeholder only for its measured row width and scope", () => {
+    let width = 640;
+    let top = 0;
+    const intersections: IntersectionObserverCallback[] = [];
+    const resizes: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersections.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizes.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return this === container
+          ? new DOMRect(0, 0, width, 600)
+          : new DOMRect(0, top, width, 200);
+      },
+    );
+    const scrollRef = { current: container };
+    const firstLayout = vi.fn();
+    const secondLayout = vi.fn();
+    const first = createMarkdownWindowingScope(scrollRef, firstLayout);
+    const second = createMarkdownWindowingScope(scrollRef, secondLayout);
+    const mount = (
+      scope: ReturnType<typeof createMarkdownWindowingScope>,
+      content = "Measured prose",
+    ) =>
+      act(() =>
+        root.render(
+          <MarkdownWindowingContext.Provider value={scope}>
+            <div data-message-row>
+              <WindowedMarkdownChunk
+                chunkIndex={0}
+                content={content}
+                eager={false}
+              >
+                <p>{content}</p>
+              </WindowedMarkdownChunk>
+            </div>
+          </MarkdownWindowingContext.Provider>,
+        ),
+      );
+    const placeholder = () =>
+      container.querySelector<HTMLElement>(
+        "[data-markdown-window-placeholder]",
+      );
+    const move = (nextTop: number) => {
+      top = nextTop;
+      act(() =>
+        intersections.at(-1)!(
+          [{} as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        ),
+      );
+    };
+    const resize = (nextWidth: number) => {
+      width = nextWidth;
+      act(() => resizes.at(-1)!([], {} as ResizeObserver));
+    };
+    try {
+      mount(first);
+      expect(placeholder()).toBeNull();
+      const chunk = container.querySelector("[data-markdown-window-chunk]")!;
+      expect(firstLayout.mock.calls.filter(([, materialized]) => materialized)).toEqual([
+        [chunk, true],
+      ]);
+      move(3000);
+      expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
+      resize(320);
+      expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
+      resize(640);
+      mount(second);
+      // The old rendered height still exists, but it belongs to the previous scope.
+      expect(
+        placeholder()?.dataset.markdownPlaceholderRowWidth,
+      ).toBeUndefined();
+      move(0);
+      expect(placeholder()).toBeNull();
+      expect(secondLayout.mock.calls.filter(([, materialized]) => materialized)).toEqual([
+        [chunk, true],
+      ]);
+      secondLayout.mockClear();
+      mount(second, "Updated prose");
+      expect(secondLayout).toHaveBeenCalledExactlyOnceWith(chunk, false);
+      move(3000);
+      expect(placeholder()?.dataset.markdownPlaceholderRowWidth).toBe("640");
+    } finally {
+      act(() => root.render(null));
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows the full selected message, highlights the exact occurrence and retains other messages", () => {
     const source = { id: "source", role: "assistant" as const, content: "repeat then repeat" };
     const other = { id: "other", role: "user" as const, content: "Another message" };
@@ -450,6 +599,7 @@ describe("shared conversation cards without Electron", () => {
         onSelect={setSelected}
         shareWholeMessage={whole}
         onShareWholeMessage={setWhole}
+        renderShareContent={(messages, actions) => <>{actions}{messages}</>}
       />;
     }
     render(<SharePreview />);
@@ -462,8 +612,14 @@ describe("shared conversation cards without Electron", () => {
     expect(rows.map(row => row.textContent)).toEqual([expect.stringContaining(other.content), expect.stringContaining(source.content), expect.stringContaining(last.content)]);
     expect(rows[1].getAttribute("aria-pressed")).toBe("mixed");
     expect(element("task-issue-share-excerpt-partial")).toBeTruthy();
+    const selectAll = element("task-issue-share-select-all");
+    act(() => selectAll.click());
+    expect(selectAll.getAttribute("aria-pressed")).toBe("true");
+    expect(rows[1].getAttribute("aria-pressed")).toBe("mixed");
+    expect(element("task-issue-share-highlight").textContent).toBe("repeat");
+    act(() => selectAll.click());
+    expect(rows[1].getAttribute("aria-pressed")).toBe("false");
     act(() => (rows[1] as HTMLElement).click());
-    expect(rows[1].getAttribute("aria-pressed")).toBe("true");
     act(() => (rows[1] as HTMLElement).click());
     expect(rows[1].getAttribute("aria-pressed")).toBe("false");
     act(() => (rows[1] as HTMLElement).click());

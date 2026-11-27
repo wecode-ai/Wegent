@@ -295,9 +295,11 @@ export function createDesktopScenario({
         // A clipped exit frame is invisible before the modal releases its route and inert scope.
         await control.command('waitFor', `${CONTENT}:not(:has([data-testid="cloud-todo-detail"]))`)
       }
-      // Reload can restore the Issue opened for the follow-up. Its modal makes
-      // the notification popover inert until the Issue drawer releases the board.
-      if (Number(await control.command('getElementCount', detail))) await closeIssueDrawer()
+      // Establish the active board and its Issue before dismissing the modal.
+      // A single DOM sample after reload can precede restoration of the board tab.
+      await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
+      await control.command('waitFor', detail, { text: issue.id, timeoutMs: uiTimeoutMs })
+      await closeIssueDrawer()
       await openCollaborationNotifications(control)
       await prepareNotificationHitTesting(control, CONTENT, issue.id, notificationRow)
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {

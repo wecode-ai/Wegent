@@ -16,6 +16,7 @@ use super::auth::Identity;
 pub(super) async fn handle(
     app: &AppState,
     identity: &Identity,
+    credential_expires_at: Option<i64>,
     ownership: &Ownership,
     data: Value,
 ) -> Result<Value, ClientError> {
@@ -25,6 +26,7 @@ pub(super) async fn handle(
             user_id: identity.user_id,
             user_name: &identity.user_name,
             email: identity.email.as_deref(),
+            credential_expires_at,
         },
         ownership,
         data,

@@ -141,6 +141,23 @@ inside its own surface can stay without a menu entry.
   the affected behavior, including its scenarios, fixtures, assertions, and
   desktop runner or checkpoint integration. Use that understanding to preserve
   existing coverage and determine the verification required by the change.
+- Add renderer unit or component tests only for behavior that is difficult to
+  trigger or verify reliably through desktop E2E. Check the existing runner,
+  fixtures, and observable product state. Identify the input, failure, or event
+  order that the real app cannot reliably produce, or the outcome that E2E
+  cannot reliably observe. An extreme case can qualify when reaching a real
+  limit through normal app interactions would require impractical data volume
+  or runtime. A missing E2E case, a faster unit test, or a prior bug alone does
+  not qualify. Follow the repository-wide limits on unit and component tests.
+  - **Use E2E:** Change a setting, save it, restart the app, and verify the saved
+    value. Hold a model response with the existing runner, type a new draft,
+    release the response, and verify that the draft is still present.
+  - **A unit test can qualify:** Deliver an event from an old runtime connection
+    after the replacement is ready when the runner cannot control that event
+    order. Feed the renderer a malformed host event when the real host has no
+    supported way to produce it. Pass a cursor at JavaScript's safe-integer
+    limit when reaching that limit through the app would require impractical
+    data volume.
 
 Run focused tests before committing:
 

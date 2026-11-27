@@ -12,7 +12,7 @@ Open **Settings → Coding → Git hosting**, confirm the execution device and p
 
 Open **Environment** in a task conversation to inspect the current branch's PR/MR. Its status icon opens check results and connector synchronization status. The Environment panel also shows synchronization in progress, authorization requirements or synchronization errors while retaining the last successfully retrieved PR/MR state. For authorization or synchronization errors, use **Configure code hosting tools** in that panel to check configuration on the execution device, then refresh. Interface status and AI event waits share connector collection; refreshing the interface does not call the model.
 
-For repository events, use **My Stand-in → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
+For repository events, use **My assistants → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
 
 The branch name in Environment is a borderless interactive row. Select the name or its trailing arrow to open the branch picker. Branch and delivery actions share the other rows' left alignment.
 
@@ -124,3 +124,5 @@ GitHub PR waits commit the summary independently. One GraphQL request reads the 
 Subscriptions wait for new changes after their activation boundary; they do not replay earlier history. A run completing between the initial state read and activation can otherwise be missed by an existing shared collector. Immediately read current state once more after arming; if satisfied, cancel the wait and handle the result. This confirmation is not a polling loop.
 
 GitLab uses the same `git_wait: merge | checks | run` entry point. Select an MR by `change_request` and IID, or an exact pipeline by `pipeline` and pipeline ID, and supply the actual head SHA for `checks` and `run`. Merge waits include conflicts and closed/merged states; pipeline outcomes cover success, failed, canceled, skipped and manual action. Pipeline reads reuse the native repository API and validate project ID, run URL, pipeline ID, account and revision without another collector. Matching events use the existing message-send path and durable queue while busy, continuing the same conversation after execution ends. Human questions, approvals and user pauses remain protected.
+
+GitLab MR merge and check waits read the account, project, MR status, and current pipeline in one GraphQL request. If a later stage of general event collection times out, completed stages save their events and checkpoint together. The next attempt resumes from that checkpoint.

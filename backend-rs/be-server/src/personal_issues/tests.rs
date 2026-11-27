@@ -3,6 +3,7 @@ use super::*;
 fn issue() -> Issue {
     Issue {
         id: "i1".into(),
+        parent_id: None,
         title: "Independent".into(),
         description: String::new(),
         status: pending(),
@@ -11,7 +12,6 @@ fn issue() -> Issue {
         assignee_id: None,
         version: 3,
         metadata: Json(Metadata {
-            standalone: true,
             participants: vec![8],
             ..Default::default()
         }),
@@ -24,6 +24,8 @@ fn issue() -> Issue {
 fn input() -> Input {
     Input {
         title: "Independent".into(),
+        parent_id: None,
+        request_id: None,
         description: String::new(),
         status: pending(),
         priority: medium(),
@@ -73,14 +75,6 @@ fn concurrent_edits_require_the_observed_version() {
 }
 
 #[test]
-fn storage_creates_no_project_or_space() {
-    let sql = insert_sql(&Default::default());
-    assert!(!sql.contains("cloud_project_id"));
-    assert!(!sql.contains("workspace_id"));
-    assert!(sql.contains("'task'"));
-}
-
-#[test]
 fn unknown_permission_fields_and_invalid_dates_are_rejected() {
     assert!(serde_json::from_value::<Input>(json!({"title":"Work","creator_id":9})).is_err());
     let mut body = input();
@@ -101,7 +95,12 @@ fn active_route_inventory_selects_all_independent_issue_operations() {
     for (method, path) in [
         (http::Method::GET, "/api/v1/personal-issues"),
         (http::Method::GET, "/api/v1/me/issue-assignment-count"),
+        (
+            http::Method::DELETE,
+            "/api/v1/loop-items/one/collaborators/8",
+        ),
         (http::Method::POST, "/api/v1/personal-issues"),
+        (http::Method::POST, "/api/v1/loop-items"),
         (http::Method::POST, "/api/v1/personal-issues/share"),
         (http::Method::GET, "/api/v1/personal-issues/shared-from"),
         (http::Method::GET, "/api/v1/personal-issues/one/source"),

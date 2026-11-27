@@ -293,6 +293,15 @@ export interface ChatStreamHandlers {
   onRuntimeTransportReplaced?: (
     payload: RuntimeTransportReplacedPayload,
   ) => void;
-  onWeworkNotification?: () => void;
+  onWeworkNotification?: (payload?: {
+    id: string;
+    stored: boolean;
+    standInStartFailure?: {
+      userId: number;
+      itemTitle: string;
+      code: string;
+      url: string;
+    };
+  }) => void;
   onProjectTaskAssigned?: (payload: ProjectTaskAssignedPayload) => void;
 }

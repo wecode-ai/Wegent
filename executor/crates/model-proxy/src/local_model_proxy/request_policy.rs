@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, collections::HashSet};
+use std::collections::HashSet;
 
 use axum::http::StatusCode;
 use serde::Deserialize;
@@ -24,6 +24,8 @@ pub enum CodexRequestMode {
     Auto,
     Standard,
     Passthrough,
+    #[serde(skip)]
+    OfficialSubscription,
 }
 
 impl CodexRequestMode {
@@ -39,6 +41,7 @@ impl CodexRequestMode {
             Self::Auto => "auto",
             Self::Standard => "standard",
             Self::Passthrough => "passthrough",
+            Self::OfficialSubscription => "official_subscription",
         }
     }
 }
@@ -92,31 +95,6 @@ pub(super) fn retain_function_tools(request: &mut Value) -> Result<(), HttpError
 
 const LEGACY_EVENT_PREFIX: &str = "wework_event_";
 
-pub(super) fn strip_incompatible_responses_item_ids(
-    body: &[u8],
-) -> Result<Cow<'_, [u8]>, HttpError> {
-    if !std::str::from_utf8(body).is_ok_and(|body| {
-        [LEGACY_EVENT_PREFIX, "fc_", "ctc_", "tsc_", r"\u"]
-            .iter()
-            .any(|prefix| body.contains(prefix))
-    }) {
-        return Ok(Cow::Borrowed(body));
-    }
-    let mut request: Value = serde_json::from_slice(body).map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("Invalid Codex Responses request: {error}"),
-    })?;
-    if !strip_incompatible_responses_history_ids(&mut request) {
-        return Ok(Cow::Borrowed(body));
-    }
-    serde_json::to_vec(&request)
-        .map(Cow::Owned)
-        .map_err(|error| HttpError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: format!("Failed to encode Codex Responses history: {error}"),
-        })
-}
-
 // Replayed calls and results are paired by call_id. A stale item ID can be
 // omitted when its prefix identifies a different Responses tool item type.
 pub(super) fn strip_incompatible_responses_history_ids(request: &mut Value) -> bool {
@@ -163,26 +141,26 @@ pub(super) async fn prepare(
             status: StatusCode::BAD_REQUEST,
             detail,
         })?;
-    let body = if upstream.codex_request_mode == CodexRequestMode::Passthrough {
-        strip_incompatible_responses_item_ids(body)?
-    } else {
-        Cow::Borrowed(body)
-    };
     let body = match upstream.model_id.as_deref() {
-        Some(model_id) => rewrite_request_model(&body, model_id)?,
-        None => body.into_owned(),
+        Some(model_id) => rewrite_request_model(body, model_id)?,
+        None => body.to_vec(),
     };
-    let (body, normalized_reasoning_items, foreign_history_keys) =
-        if upstream.is_official_chatgpt_codex() {
-            super::openai_reasoning::normalize_official_reasoning_history(
-                body,
-                known_foreign_history_keys,
-                model_switched,
-            )?
-        } else {
-            (body, 0, HashSet::new())
-        };
-    if upstream.codex_request_mode == CodexRequestMode::Passthrough {
+    let (body, normalized_reasoning_items, foreign_history_keys) = if upstream
+        .is_official_chatgpt_codex()
+        && upstream.codex_request_mode != CodexRequestMode::Passthrough
+    {
+        super::openai_reasoning::normalize_official_reasoning_history(
+            body,
+            known_foreign_history_keys,
+            model_switched,
+        )?
+    } else {
+        (body, 0, HashSet::new())
+    };
+    if matches!(
+        upstream.codex_request_mode,
+        CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+    ) {
         return Ok(PreparedRequest {
             body,
             conversion: None,

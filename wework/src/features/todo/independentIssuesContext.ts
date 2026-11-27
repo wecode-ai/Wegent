@@ -7,9 +7,7 @@ export type IndependentIssuesContextValue = {
   collaborationApi?: SharedWorkspaceApi
   userId: number
   revision: number
-  selectedId?: string
   create(): void
-  open(id: string): void
 }
 export const IndependentIssuesContext = createContext<IndependentIssuesContextValue | null>(null)
 export const useIndependentIssues = () => useContext(IndependentIssuesContext)

@@ -1,7 +1,11 @@
+import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import { roleIncludesProject, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import {
+  delegationResultLabel,
+  dingTalkInboxScope,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -18,12 +22,13 @@ import {
   LoaderCircle,
   Settings,
 } from 'lucide-react'
-import { useContext, useState } from 'react'
+import { useState } from 'react'
 import { StandInConversation } from './StandInConversation'
 import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { useStandInInbox } from './useStandInInbox'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 
 type Props = {
   services: WorkbenchServices
@@ -32,6 +37,7 @@ type Props = {
   localDeviceId: string
   active: boolean
   settings: PersonalStandInSettings
+  account?: PersonalAssistantAccount
   projects: CollaborationProject[]
   collaborationWork?: PersonalHomeCollaborationWork
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -40,24 +46,22 @@ type Props = {
 /** Share the personal assistant identity while keeping collaboration history separate. */
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
+  const definition = props.account?.definitions.find(item => item.roleId === '@primary')
+  const conversationDevice = definition?.bot.spec?.execution_policy?.environment_id ?? deviceId
   const { t } = useTranslation('common')
-  const workbench = useContext(WorkbenchContext)
+  const { items: taskReminderItems } = useWorkbenchTaskReminders()
   const [view, setView] = useState('conversation')
   const inbox = useStandInInbox(
     services.standInApi,
     userId,
     deviceId,
-    active && (view === 'list' || view === 'conversation')
+    active && (view === 'list' || view === 'conversation'),
+    dingTalkInboxScope(settings.primary?.delegation)
   )
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
   >([])
-  const items = mergeStandInWorkItems(
-    workbench?.runtimeTaskReminders.items ?? [],
-    inbox.items,
-    deviceId,
-    projects
-  )
+  const items = mergeStandInWorkItems(taskReminderItems, inbox.items, deviceId, projects)
     .filter(item => {
       const origin = standInOrigin(item)
       return (
@@ -168,8 +172,9 @@ export function StandInHomeWorkspace(props: Props) {
               api={services.standInApi}
               services={services}
               userId={userId}
-              deviceId={deviceId}
-              settings={settings.primary}
+              deviceId={conversationDevice}
+              settings={conversationDevice === deviceId ? settings.primary : undefined}
+              definition={definition}
               scope="collaboration"
               active={active && view === 'conversation'}
               onOpenTask={props.onOpenTask}
@@ -272,6 +277,34 @@ export function StandInHomeWorkspace(props: Props) {
                               ? CircleAlert
                               : Circle
                       const work = inbox.items.find(work => work.taskId === item.task.taskId)
+                      const decisionLabel = delegationResultLabel(work?.delegationResult)
+                      if (work?.source.delegated && !work.task) {
+                        const takenOver = work.takenOverAt || work.delegationResult?.takenOver
+                        const ownerLabel = 'standIn.dingtalk_delegation.result_taken_over'
+                        return (
+                          <div
+                            key={item.key}
+                            data-testid={`personal-home-delegated-work-${item.task.taskId}`}
+                            className="px-4 py-3 text-sm"
+                          >
+                            <p className="font-medium">{item.task.title}</p>
+                            <p>
+                              {t(
+                                decisionLabel ??
+                                  (takenOver
+                                    ? ownerLabel
+                                    : `standIn.workspace.inbox_${work.status}`)
+                              )}
+                            </p>
+                            {decisionLabel && takenOver && <p>{t(ownerLabel)}</p>}
+                            {work.delegationResult?.reason && (
+                              <p className="break-words text-xs text-text-secondary">
+                                {work.delegationResult.reason}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      }
                       const status =
                         work && work.status !== 'sent'
                           ? t(`standIn.workspace.inbox_${work.status}`)

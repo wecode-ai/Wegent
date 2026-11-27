@@ -7,7 +7,7 @@ impl RuntimeWorkStore {
         link: RuntimeTaskLink,
     ) -> io::Result<Option<RuntimeTaskLink>> {
         let mut current = None;
-        self.change_issue_index(|index| {
+        self.change_index(|index| {
             if index
                 .deleted_archived_task_ids
                 .contains_key(&link.local_task_id)

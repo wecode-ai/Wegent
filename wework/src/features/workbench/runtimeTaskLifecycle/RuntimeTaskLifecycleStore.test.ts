@@ -61,6 +61,41 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('notifies only the changed task and follows its device alias', () => {
+    const store = new RuntimeTaskLifecycleStore('task-subscriptions')
+    const alias = { ...address, deviceId: 'app-record-70' }
+    const other = { ...address, deviceId: 'other-device' }
+    const onAlias = vi.fn()
+    const onCanonical = vi.fn()
+    const onOther = vi.fn()
+    const unsubscribe = store.subscribeTask(alias, onAlias)
+    store.subscribeTask(address, onCanonical)
+    store.subscribeTask(other, onOther)
+
+    store.turnStarted(other, 'other-turn')
+    expect(onOther).toHaveBeenCalledOnce()
+    expect(onAlias).not.toHaveBeenCalled()
+    expect(onCanonical).not.toHaveBeenCalled()
+    store.turnStarted(alias, 'alias-turn')
+    expect(onAlias).toHaveBeenCalledOnce()
+    expect(onCanonical).not.toHaveBeenCalled()
+
+    const work = runtimeWork(task({ running: true }))
+    work.projects[0].deviceWorkspaces[0].remoteHostId = alias.deviceId
+    store.syncRuntimeWork(work)
+    expect(onAlias).toHaveBeenCalledTimes(2)
+    expect(onCanonical).toHaveBeenCalledOnce()
+    store.remove(address)
+    expect(onAlias).toHaveBeenCalledTimes(3)
+    expect(onCanonical).toHaveBeenCalledTimes(2)
+
+    unsubscribe()
+    store.turnStarted(address, 'new-turn')
+    expect(onAlias).toHaveBeenCalledTimes(3)
+    expect(onCanonical).toHaveBeenCalledTimes(3)
+    expect(onOther).toHaveBeenCalledOnce()
+  })
+
   test.each(['done', 'failed', 'cancelled'])(
     'settles a recovered %s historical turn with the latest transcript outcome',
     historicalStatus => {
@@ -234,9 +269,10 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
 
     const first = store.getTask(address)
-    const equivalent = store.getTask(address)
+    const equivalent = structuredClone(first)
 
     expect(first).not.toBe(equivalent)
+    expect(store.getTask(address)).toBe(first)
     expect(runtimeTaskLifecycleTransitionChanged(first, equivalent)).toBe(false)
     expect(runtimeTaskLifecycleTransitionChanged(null, null)).toBe(false)
     expect(runtimeTaskLifecycleTransitionChanged(null, first)).toBe(true)
@@ -297,6 +333,39 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getSnapshot().runningTaskKeys).toEqual(
       new Set([getRuntimeTaskLifecycleKey(address)])
     )
+  })
+
+  test('publishes the task snapshot and start transition together', () => {
+    const store = new RuntimeTaskLifecycleStore('batched-turn')
+    store.syncRuntimeWork(runtimeWork(task()))
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    store.batch(() => {
+      store.syncRuntimeTask(address, task({ running: true }))
+      store.turnStarted(address, 'turn-1')
+    })
+
+    expect(listener).toHaveBeenCalledOnce()
+    const observed = store.selectTask(store.getSnapshot(), address)
+    expect(observed?.execution.running).toBe(true)
+    expect(observed?.turn.id).toBe('turn-1')
+  })
+
+  test('changes the sidebar snapshot only when a displayed state changes', () => {
+    const store = new RuntimeTaskLifecycleStore('sidebar-states')
+    store.syncRuntimeTask(address, task({ running: true }))
+    const initial = store.getSidebarSnapshot()
+    const key = getRuntimeTaskLifecycleKey(address)
+    expect(initial.runningTaskKeys.has(key)).toBe(true)
+    expect(initial.busyTaskKeys.has(key)).toBe(true)
+
+    store.syncRuntimeTask(address, task({ running: true, title: 'Updated title' }))
+    expect(store.getSidebarSnapshot()).toBe(initial)
+
+    store.userInputRequested(address)
+    expect(store.getSidebarSnapshot().waitingTaskKeys.has(key)).toBe(true)
+    expect(store.getSidebarSnapshot().busyTaskKeys).toBe(initial.busyTaskKeys)
   })
 
   test('keeps execution busy while replacing the running spinner with a waiting signal', () => {
@@ -475,6 +544,34 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getSnapshot()).toBe(snapshot)
     expect(listener).not.toHaveBeenCalled()
     unsubscribe()
+  })
+
+  test('applies a point update without replaying an unrelated list entry', () => {
+    const store = new RuntimeTaskLifecycleStore('point-executor-work-test')
+    const other = { ...address, taskId: 'task-2' }
+    const work = runtimeWork(task())
+    const workspace = work.projects[0].deviceWorkspaces[0]
+    workspace.tasks.push(task({ taskId: other.taskId }))
+    store.syncRuntimeWork(work)
+    store.syncRuntimeTask(other, task({ taskId: other.taskId, title: 'Newer title' }))
+    const otherSnapshot = store.getTask(other)
+    workspace.tasks[0] = task({ title: 'Updated title' })
+    const pointUpdates: string[] = []
+    store.subscribeTaskChanges((keys, before, after) => {
+      for (const key of keys) {
+        const previous = before.get(key)?.task?.title
+        const current = after.get(key)?.task
+        pointUpdates.push(`${current?.taskId}: ${previous} → ${current?.title}`)
+      }
+    })
+    const previousTitle = store.getTask(address)?.task?.title
+
+    store.syncRuntimeWork(work, address)
+
+    expect(store.getTask(address)?.task?.title).toBe('Updated title')
+    expect(pointUpdates).toEqual([`${address.taskId}: ${previousTitle} → Updated title`])
+    expect(store.getTask(other)?.task?.title).toBe('Newer title')
+    expect(store.getTask(other)).toBe(otherSnapshot)
   })
 
   test('uses one lifecycle machine for canonical workspace and remote host addresses', () => {
@@ -1165,7 +1262,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     const expectedSnapshot = store.getTask(address)
 
     store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'active', optimistic: true })))
-    expect(store.getTask(address)).not.toBe(expectedSnapshot)
+    expect(runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))).toBe(
+      false
+    )
 
     const accepted = store.syncRuntimeTask(
       address,

@@ -39,6 +39,7 @@ pub(crate) mod remote_task_access;
 mod response;
 mod restored_workspaces;
 mod runtime_handle_messages;
+mod stand_in_task_permissions;
 pub(crate) mod store;
 mod task_create_contract;
 mod transcript;
@@ -50,8 +51,8 @@ mod transcript_search_text;
 mod transcript_transport;
 pub(crate) mod transcript_work;
 mod util;
-pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;
+pub(crate) use util::{calendar_allows_full_access, external_work_kind};
 pub(crate) use util::{normalize_runtime_goal_timestamps, prompt_text};
 mod worktrees;
 

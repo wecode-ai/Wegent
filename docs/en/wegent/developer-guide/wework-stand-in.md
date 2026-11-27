@@ -4,6 +4,14 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+My Assistant requires a cloud connection. When disconnected, the assistant page offers a Connect cloud action. Connected devices read the same account’s Bot and Ghost definitions. Users can select an execution device for a conversation. Moving a role transfers its source connection settings. The destination needs the corresponding providers and authorization. Git webhook subscriptions transfer receiver ownership using the subscription generation. The destination resumes from the last cloud-confirmed sequence. Delegated tasks retain the destination role’s device address and wait when that device is offline.
+
+## Local project directories and startup failures
+
+The stand-in runtime configuration stores the local project ID, workspace mode, and optional branch. When creating a task, the execution device reads the working directory from the project's current registration. Legacy copies of the directory are removed when the configuration is read. Updating the project directory keeps the stand-in configuration usable.
+
+When a cloud project Issue is assigned directly to you and your stand-in fails before task creation, the failure receipt and a private notification are saved together. The in-app notification appears under Collaboration in the notification center. Desktop alerts follow the Stand-in notification preference. If the working directory is unavailable, update the local project's registered directory and delegate the original Issue again. Consecutive startup failures for the same assignment produce one notification.
+
 ## IM reply callback routing
 
 DingTalk private messages share a persistent stand-in conversation, but each incoming message registers its own reply card. Python registration and Rust Socket.IO forwarding must use the same callback address: `runtime:{device_id}:{task_id}:{sha256(callback_id)}`, with a lowercase hexadecimal digest of the original UTF-8 bytes. Sources without `callback_id` retain the task address without a digest. Progress, final replies and errors must use the same message address. Looking up only the persistent conversation leaves its card at the initial progress state.

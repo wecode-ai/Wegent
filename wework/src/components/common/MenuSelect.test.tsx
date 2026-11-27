@@ -102,7 +102,6 @@ function ScheduledTaskChoices({ empty = false }: { empty?: boolean }) {
         {JSON.stringify({
           address: draft.continuationAddress,
           deviceId: draft.deviceId,
-          workspacePath: draft.workspacePath,
         })}
       </output>
     </>
@@ -144,7 +143,6 @@ it('searches pinned task keys, rejects offline choices, updates the automation t
     expect(JSON.parse(find('contract-task-result')!.textContent!)).toMatchObject({
       address: { deviceId: 'online', taskId: 'ready', workspacePath: '/example/project' },
       deviceId: 'online',
-      workspacePath: '/example/project',
     })
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     expect(document.activeElement).toBe(trigger)

@@ -22,16 +22,31 @@ function isEmptyXdotoolSearch(error) {
   return error?.code === 1 && !(error.stderr ?? '').trim()
 }
 
+function isInterruptedXdotoolSearch(error) {
+  const stderr = error?.stderr ?? ''
+  return (
+    isVanishedX11Window(error) ||
+    (error?.code === 1 &&
+      /BadDrawable \(invalid Pixmap or Window parameter\)/.test(stderr) &&
+      /\(X_GetGeometry\)/.test(stderr))
+  )
+}
+
 async function xdotoolSearch(args, timeoutMs) {
-  try {
-    const { stdout } = await execute('xdotool', ['search', ...args], {
-      encoding: 'utf8',
-      timeout: timeoutMs,
-    })
-    return stdout.trim().split(/\s+/).filter(Boolean)
-  } catch (error) {
-    if (isEmptyXdotoolSearch(error) || isVanishedX11Window(error)) return []
-    throw error
+  const deadline = performance.now() + timeoutMs
+  let timeout = timeoutMs
+  while (true) {
+    try {
+      const { stdout } = await execute('xdotool', ['search', ...args], {
+        encoding: 'utf8',
+        timeout,
+      })
+      return stdout.trim().split(/\s+/).filter(Boolean)
+    } catch (error) {
+      if (isEmptyXdotoolSearch(error)) return []
+      timeout = Math.ceil(deadline - performance.now())
+      if (!isInterruptedXdotoolSearch(error) || timeout <= 0) throw error
+    }
   }
 }
 
@@ -122,6 +137,49 @@ async function findMainWindowForPid(pid, timeoutMs) {
   throw new Error(`Timed out waiting for visible Electron main window for pid ${pid}`)
 }
 
+export async function activateLinuxMainWindow(control, timeoutMs = 5_000) {
+  const pid = control.applicationProcessId
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
+  await control.command('focusMainWindow', 'body')
+  const windowId = await findMainWindowForPid(pid, timeoutMs)
+  await execute('xdotool', ['windowactivate', '--sync', windowId], {
+    encoding: 'utf8',
+    timeout: 3_000,
+  })
+  return windowId
+}
+
+export async function moveLinuxWindowPointer(windowId, { x, y }, clickButton) {
+  const args = ['mousemove', '--window', windowId, String(Math.round(x)), String(Math.round(y))]
+  if (clickButton !== undefined) args.push('click', '--clearmodifiers', String(clickButton))
+  await execute('xdotool', args, { encoding: 'utf8', timeout: 3_000 })
+  if (clickButton !== undefined) {
+    try {
+      const { stdout } = await execute(
+        'xdotool',
+        ['getactivewindow', 'getmouselocation', '--shell'],
+        { encoding: 'utf8', timeout: 1_000 }
+      )
+      console.info('[desktop-e2e-native-click]', {
+        windowId,
+        x,
+        y,
+        clickButton,
+        state: stdout.trim(),
+      })
+    } catch (error) {
+      console.info('[desktop-e2e-native-click]', { windowId, x, y, clickButton, error: String(error) })
+    }
+  }
+}
+
+export async function clickLinuxPointer(button = 1) {
+  await execute('xdotool', ['click', '--clearmodifiers', String(button)], {
+    encoding: 'utf8',
+    timeout: 3_000,
+  })
+}
+
 async function captureNativeDiagnostics(pid, resultDir, stepName, targetWindowId = null) {
   const diagnostics = { pid, stepName, windows: [], screenshot: null }
   try {
@@ -198,14 +256,7 @@ export async function triggerEmbeddedBrowserContextMenuItem({
     'Native context-menu E2E automation currently expects Linux Xvfb'
   )
   const pid = control.applicationProcessId
-  assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
-
-  await control.command('focusMainWindow', 'body')
-  const mainWindowId = await findMainWindowForPid(pid, timeoutMs)
-  await execute('xdotool', ['windowactivate', '--sync', mainWindowId], {
-    encoding: 'utf8',
-    timeout: 3_000,
-  })
+  const mainWindowId = await activateLinuxMainWindow(control, timeoutMs)
 
   const webviewMetrics = JSON.parse(
     await control.command('getElementMetrics', ACTIVE_WEBVIEW_SELECTOR)
@@ -237,14 +288,7 @@ export async function triggerEmbeddedBrowserContextMenuItem({
   const y = Math.round(webviewRect.top + elementRect.top + elementRect.height / 2)
   const existingPopups = new Set(await listVisiblePopupMenus(pid))
 
-  await execute(
-    'xdotool',
-    ['mousemove', '--window', mainWindowId, String(x), String(y), 'click', '--clearmodifiers', '3'],
-    {
-      encoding: 'utf8',
-      timeout: 3_000,
-    }
-  )
+  await moveLinuxWindowPointer(mainWindowId, { x, y }, 3)
 
   const menuDeadline = Date.now() + Math.min(timeoutMs, 5_000)
   let menuWindowId = null

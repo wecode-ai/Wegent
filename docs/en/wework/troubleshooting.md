@@ -155,6 +155,10 @@ localStorage.setItem("wework:debug-runtime", "1");
 - For Git authentication errors, verify the token and repository permissions.
 - Check the repository URL, default branch, device network, and proxy for clone failures.
 
+### PR or MR status may be stale
+
+Find `UI observation lease lost` in the execution device's Executor logs. Search for a known PR or MR using `change_request_number`, then use `observer_id` to match any `UI observation lease stopped` entry for the same lease. The `reason` field distinguishes expiry, an explicit stop, a missing record, and cloud rejection. If the lease record is missing, the log may have no PR or MR number.
+
 ## Reviews and browser
 
 Change review and undo require the original device and per-turn artifact. Resolve later conflicting edits manually.
@@ -180,7 +184,7 @@ Every request has a `requestId`. In the desktop client, this value is sent to th
 
 If Wework displays a page error or startup error screen, select **Copy debug info** to copy the current error and any available stack traces to the clipboard. Save this information before refreshing, then review it before pasting it into a problem report. If copying fails, select the button again to retry.
 
-Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My Stand-in, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
+Select **Report a problem** in the upper-right corner of any Wework desktop page, including tasks, new conversations, Plugins, My assistants, Scheduled and Settings. Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
 Optional information behaves as follows:
 

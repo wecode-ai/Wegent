@@ -169,12 +169,14 @@ assert_merge_summary_case() {
   local name="$1" expected="$2" backend_result="$3" rust_result="$4"
   local changes_result="${5-success}" backend_required="${6-true}"
   local rust_required="${7-true}" mysql_result="${8-success}"
+  local rust_lint_result="${9-success}"
   local rendered="$unit_summary_script" actual="failure"
   rendered="${rendered//'${{ needs.changes.result }}'/$changes_result}"
   rendered="${rendered//'${{ needs.changes.outputs.backend }}'/$backend_required}"
   rendered="${rendered//'${{ needs.changes.outputs.backend_rs }}'/$rust_required}"
   rendered="${rendered//'${{ needs.test-backend.result }}'/$backend_result}"
   rendered="${rendered//'${{ needs.test-backend-rs.result }}'/$rust_result}"
+  rendered="${rendered//'${{ needs.lint-backend-rs.result }}'/$rust_lint_result}"
   rendered="${rendered//'${{ needs.test-plugin-auth-mysql.result }}'/$mysql_result}"
   rendered="$(sed -E \
     -e 's/\$\{\{ needs\.changes\.outputs\.[^ ]+ \}\}/false/g' \
@@ -195,6 +197,7 @@ assert_merge_summary_case "Backend fails" failure failure success
 assert_merge_summary_case "Backend is skipped" failure skipped success
 assert_merge_summary_case "Rust fails" failure success failure
 assert_merge_summary_case "Rust is skipped" failure success skipped
+assert_merge_summary_case "Rust lint fails" failure success success success true true success failure
 assert_merge_summary_case "classification fails" failure success success failure
 assert_merge_summary_case "Backend output is missing" failure success success success ""
 assert_merge_summary_case "Rust output is missing" failure success success success true ""

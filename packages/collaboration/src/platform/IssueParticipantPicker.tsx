@@ -18,7 +18,6 @@ import {
 export function IssueParticipantPicker({
   api,
   collaborationApi,
-  colleaguesOnly = false,
   selected,
   onChange,
   assigneeKey,
@@ -29,7 +28,6 @@ export function IssueParticipantPicker({
 }: {
   api: PersonalIssuesApi
   collaborationApi?: SharedWorkspaceApi
-  colleaguesOnly?: boolean
   selected: IssueParticipant[]
   onChange(people: IssueParticipant[]): void
   assigneeKey: string
@@ -185,12 +183,15 @@ export function IssueParticipantPicker({
             })}
             data-testid={`issue-participant-assignee-${person.key}`}
             onClick={() => onAssign(responsible ? null : person)}
-            className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-md text-text-muted hover:bg-muted aria-pressed:text-text-primary md:min-h-8 md:min-w-8"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-md px-1 text-text-muted hover:bg-muted aria-pressed:text-text-primary md:min-h-8 md:min-w-8"
           >
             <CircleUserRound
               className={`size-4 ${responsible ? 'rounded-full bg-text-primary text-background' : ''}`}
               aria-hidden="true"
             />
+            {responsible && (
+              <span className="whitespace-nowrap text-xs">{t('independentIssues.assignee')}</span>
+            )}
           </ControlButton>
         )}
       </li>
@@ -212,33 +213,31 @@ export function IssueParticipantPicker({
       aria-label={t('independentIssues.participants')}
     >
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
-        {!colleaguesOnly && (
-          <TabsRoot
-            value={tab}
-            onValueChange={kind => {
-              if (kind !== 'human' && kind !== 'agent' && kind !== 'group') return
-              setTab(kind)
-              setQuery('')
-            }}
-          >
-            <TabsList appearance="surface" aria-label={t('issue_creation.participant_type')}>
-              {(['human', 'agent', 'group'] as const).map(kind => (
-                <TabsTab
-                  key={kind}
-                  value={kind}
-                  appearance="surface"
-                  disabled={disabled}
-                  id={`${pickerId}-${kind}-tab`}
-                  data-testid={`issue-participant-tab-${kind}`}
-                  className="min-h-11 rounded-md px-3 text-sm aria-selected:bg-muted md:min-h-8"
-                >
-                  {t(`issue_creation.participant_${kind}`)}
-                </TabsTab>
-              ))}
-            </TabsList>
-          </TabsRoot>
-        )}
-        <label className="issue-participant-search flex min-w-0 items-center gap-2 rounded-md border border-border px-2 focus-within:border-focus focus-within:ring-1 focus-within:ring-focus">
+        <TabsRoot
+          value={tab}
+          onValueChange={kind => {
+            if (kind !== 'human' && kind !== 'agent' && kind !== 'group') return
+            setTab(kind)
+            setQuery('')
+          }}
+        >
+          <TabsList appearance="surface" aria-label={t('issue_creation.participant_type')}>
+            {(['human', 'agent', 'group'] as const).map(kind => (
+              <TabsTab
+                key={kind}
+                value={kind}
+                appearance="surface"
+                disabled={disabled}
+                id={`${pickerId}-${kind}-tab`}
+                data-testid={`issue-participant-tab-${kind}`}
+                className="min-h-11 rounded-md px-3 text-sm aria-selected:bg-muted md:min-h-8"
+              >
+                {t(`issue_creation.participant_${kind}`)}
+              </TabsTab>
+            ))}
+          </TabsList>
+        </TabsRoot>
+        <label className="issue-participant-search flex min-w-0 items-center gap-2 rounded-md border border-border px-2 keyboard:focus-within:border-focus keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <ControlInput
             appearance="plain"
@@ -262,8 +261,8 @@ export function IssueParticipantPicker({
         {selected.length > 0 && <ul>{selected.map(person => personRow(person, true))}</ul>}
         <div
           id={`${pickerId}-panel`}
-          role={colleaguesOnly ? undefined : 'tabpanel'}
-          aria-labelledby={colleaguesOnly ? undefined : `${pickerId}-${tab}-tab`}
+          role="tabpanel"
+          aria-labelledby={`${pickerId}-${tab}-tab`}
           className="max-h-48 overflow-y-auto"
         >
           {error && (

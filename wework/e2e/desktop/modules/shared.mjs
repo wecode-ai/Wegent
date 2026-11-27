@@ -49,6 +49,8 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   10_000,
   'WEWORK_E2E_STEP_TIMEOUT_MS'
 )
+// Confirmation waits for both project registration and the workbench inventory refresh.
+const LOCAL_PROJECT_CONFIRM_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS * 2
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const DESKTOP_MODEL_SERVER_PORT = readOptionalPort(
   process.env.WEWORK_E2E_MODEL_SERVER_PORT,
@@ -1487,7 +1489,8 @@ async function confirmLocalProjectName(control, name) {
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
-    'The local project create dialog did not close after confirmation'
+    'The local project create dialog did not close after registration and inventory refresh',
+    LOCAL_PROJECT_CONFIRM_TIMEOUT_MS
   )
 }
 
@@ -1575,12 +1578,18 @@ async function selectE2EModel(
     console.info(
       '[desktop-e2e-model-selection]',
       JSON.stringify({
-        modelIds,
-        labels,
-        modelSelectorButton,
+        selector: modelSelectorButton,
+        targetModelIds: modelIds,
+        targetLabels: labels,
+        expectedProviderId,
         selectedModelLabel,
         selectedProviderId,
-        expectedProviderId,
+        triggers: await control.command('getElementMetrics', modelSelectorButton, {
+          value: JSON.stringify({
+            includeText: true,
+            attributeNames: ['data-model-provider-id'],
+          }),
+        }),
       })
     )
     if (

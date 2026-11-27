@@ -23,7 +23,9 @@ Local links include `localhost`, `*.localhost`, the `127.0.0.0/8` loopback range
 
 ## Browsing data and privacy
 
-The built-in browser uses data storage isolated from Wework's main interface. Clearing browsing data removes built-in browser cookies, caches, and site storage without clearing the Wework app sign-in.
+Type part of a page title or URL in the address bar to find a previously visited page. Use the arrow keys to select a result and press Enter to open it. Choosing **Search the web** sends your query to Google. Open **More → History** to review or delete visits.
+
+The built-in browser uses data storage isolated from Wework's main interface. Clearing all browsing data in Settings removes browsing and download history, cookies, caches, and site storage. Downloaded files and your Wework app sign-in are preserved.
 
 Wework does not read or import passwords, contact details, or personal profiles saved in Chrome. Set the relevant link target to the system browser when an existing Chrome session is required. This boundary avoids copying or separately storing browser credentials.
 
@@ -31,4 +33,4 @@ Wework does not read or import passwords, contact details, or personal profiles 
 
 Downloads use the system Downloads folder by default. You can select another directory or enable **Ask where to save before downloading** to show the system save dialog for every download.
 
-When a download starts, the built-in browser automatically opens its download bar and shows live progress. You can pause or resume an active download, and delete a paused task together with its partial file. After it finishes, you can see the file name and reveal the file in Finder.
+When a download finishes, use the notification to open the file or reveal it in your file manager. To see previous downloads, select the downloads toolbar button or **More → Downloads**. The list shows each file's name, status, size, and time, including entries for files that have moved or been deleted. You can pause or resume an active download and delete a paused task together with its partial file.

@@ -40,7 +40,14 @@ export function useIssueDetailAttachmentActions({
   // mutations into that source even without observers; another Issue/owner has
   // a different source and cannot receive these results.
   async function addAttachments(files: FileList | null) {
-    if (!editable || !editItemId || !files?.length || attachmentBusy) return
+    if (
+      !editable ||
+      !editItemId ||
+      !files?.length ||
+      attachmentBusy ||
+      editorPort.attachments.canUpload === false
+    )
+      return
     const itemId = editItemId
     collections.invalidateAttachments()
     setAttachmentBusy(true)
@@ -72,6 +79,7 @@ export function useIssueDetailAttachmentActions({
   }
 
   async function pasteAttachments(rawFiles: File[]): Promise<string | null> {
+    if (editorPort.attachments.canUpload === false) return null
     const owner = collections.getOwner()
     const files = await normalizedPastedFiles(rawFiles)
     if (!collections.isActive(owner) || !files.length) return null

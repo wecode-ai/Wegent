@@ -552,6 +552,25 @@ const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
   '[Wework] Local workspace catalog '
 )
 app.on('web-contents-created', (_event, contents) => {
+  if (process.platform === 'linux' && process.env.VITE_WEWORK_E2E === 'true') {
+    contents.on('before-mouse-event', (_event, mouse) => {
+      if (mouse.type !== 'mouseMove' && mouse.type !== 'mouseDown' && mouse.type !== 'mouseUp')
+        return
+      console.info(
+        '[desktop-e2e-native-pointer] ' +
+          JSON.stringify({
+            webContentsId: contents.id,
+            target: contents.getType(),
+            type: mouse.type,
+            x: mouse.x,
+            y: mouse.y,
+            globalX: mouse.globalX,
+            globalY: mouse.globalY,
+            timestamp: Date.now(),
+          })
+      )
+    })
+  }
   const logLoadEvent = (event: string) => () => {
     const address = contents.getURL()
     const route =
@@ -3462,9 +3481,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       ...(process.env.CODEX_BINARY_PATH?.trim() || !components || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
-      ...(process.env.DWS_BINARY_PATH?.trim() || !components || !existsSync(components.dws)
-        ? {}
-        : { DWS_BINARY_PATH: components.dws }),
+      ...(components && existsSync(components.dws)
+        ? {
+            ...(process.env.DWS_BINARY_PATH?.trim() ? {} : { DWS_BINARY_PATH: components.dws }),
+            WEWORK_COMPONENT_DWS_PATH: components.dws,
+            WEWORK_COMPONENT_DWS_SOURCE: components.dwsSource,
+          }
+        : {}),
     },
     metadata: packageMetadata,
     homeDirectory: app.getPath('home'),

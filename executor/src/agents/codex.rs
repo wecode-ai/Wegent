@@ -215,6 +215,8 @@ pub type CodexInputAdmission = Box<dyn Fn() -> Result<(), String> + Send + Sync 
 pub struct CodexAppServerTurnOptions {
     pub input_admission: Option<CodexInputAdmission>,
     #[doc(hidden)]
+    pub gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
+    #[doc(hidden)]
     pub event_goal: Option<EventGoalAdmission>,
     pub recover_usage_limits: bool,
     pub quota_resume: Option<CodexQuotaRecovery>,
@@ -2446,6 +2448,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let CodexAppServerTurnOptions {
         mut event_goal,
         input_admission,
+        gateway_credentials,
         recover_usage_limits,
         quota_resume,
         direct_thread_id,
@@ -2464,7 +2467,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         defer_interactive_forms: _,
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    let launch_config =
+        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -2551,9 +2555,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                         early_request_context.as_mut(),
                     )
                     .await?;
+                let thread_id = thread_id_from_response(
+                    operation,
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
                 if external_work::applies(request) {
                     log_executor_event("codex source sandbox applied", &[
                         ("task_id", request.task_id.clone()),
+                        ("thread_id", thread_id.clone()),
                         ("profile", response["activePermissionProfile"].to_string()),
                         ("sandbox", response["sandbox"].to_string()),
                         ("reviewer", response["approvalsReviewer"].to_string()),
@@ -2565,11 +2575,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                         return Err("Codex did not apply the required source permissions and reviewer".into());
                     }
                 }
-                let thread_id = thread_id_from_response(
-                    operation,
-                    &response,
-                    launch_config.model_provider.as_deref(),
-                )?;
                 resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
@@ -2736,7 +2741,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
-        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let active_turn_id = if awaits_initial_goal_turn || awaits_event_goal_turn || resume_goal_only || restored_quota_goal {
@@ -2963,6 +2968,7 @@ async fn run_codex_app_server_turn_with_runtime(
     let CodexAppServerTurnOptions {
         mut event_goal,
         input_admission,
+        gateway_credentials,
         recover_usage_limits,
         quota_resume,
         direct_thread_id,
@@ -2981,7 +2987,8 @@ async fn run_codex_app_server_turn_with_runtime(
         ..
     } = options;
     let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
-    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
+    let launch_config =
+        build_codex_launch_config_for_prepared_request(&prepared, gateway_credentials)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -3159,7 +3166,7 @@ async fn run_codex_app_server_turn_with_runtime(
         } else {
             None
         };
-        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
         // Cancellation owns the complete admission/read sequence, including
@@ -4817,8 +4824,9 @@ struct CodexLocalImage {
     source_path: String,
 }
 
+#[cfg(test)]
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
-    build_codex_launch_config_with_route_scope(request, &request.task_id)
+    build_codex_launch_config_with_route_scope(request, &request.task_id, None)
 }
 
 fn build_codex_launch_config_for_fork(
@@ -4827,7 +4835,7 @@ fn build_codex_launch_config_for_fork(
 ) -> Result<CodexLaunchConfig, String> {
     // A fork owns its route even when the source is running or was opened after a restart.
     let route_scope = format!("fork:{source_thread_id}:{}", uuid::Uuid::new_v4());
-    build_codex_launch_config_with_route_scope(request, &route_scope)
+    build_codex_launch_config_with_route_scope(request, &route_scope, None)
 }
 
 async fn prepare_codex_fork_launch_config(
@@ -4841,6 +4849,7 @@ async fn prepare_codex_fork_launch_config(
 fn build_codex_launch_config_with_route_scope(
     request: &ExecutionRequest,
     route_scope: &str,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
@@ -4914,7 +4923,12 @@ fn build_codex_launch_config_with_route_scope(
             .push(format!("model={model}"));
     }
 
-    provider_routing::configure_request_provider(&mut launch_config, request, route_scope)?;
+    provider_routing::configure_request_provider(
+        &mut launch_config,
+        request,
+        route_scope,
+        gateway_credentials,
+    )?;
 
     mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
@@ -4943,10 +4957,17 @@ fn build_codex_launch_config_with_route_scope(
 
 fn build_codex_launch_config_for_prepared_request(
     prepared: &PreparedCodexExecutionRequest,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) -> Result<CodexLaunchConfig, String> {
     let config =
         crate::artifact_workspace::bind(&prepared.request, prepared.request.cwd().map(Path::new))
-            .and_then(|()| build_codex_launch_config(&prepared.request));
+            .and_then(|()| {
+                build_codex_launch_config_with_route_scope(
+                    &prepared.request,
+                    &prepared.request.task_id,
+                    gateway_credentials,
+                )
+            });
     cleanup_generated_files_on_error(&prepared.generated_files, config)
 }
 
@@ -4963,13 +4984,12 @@ fn cleanup_generated_files_on_error<T>(
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
     task_id: &str,
-    mut upstream: LocalModelProxyUpstream,
-    routing_model_id: Option<String>,
+    upstream: LocalModelProxyUpstream,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
     official_websocket: bool,
+    gateway_credentials: Option<local_model_proxy::GatewayCredentials>,
 ) {
-    upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
     log_executor_event(
         "codex local model router configuring",
@@ -4987,8 +5007,12 @@ fn configure_codex_router(
             ("auth_present", (!upstream.api_key.is_empty()).to_string()),
         ],
     );
-    let local_token =
-        local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
+    let local_token = local_model_proxy::register_codex_route(
+        task_id,
+        upstream,
+        vision_sidecar,
+        gateway_credentials,
+    );
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
@@ -6955,9 +6979,20 @@ fn codex_has_full_access(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
 }
 
+fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
+    codex_has_full_access(request) && !external_work::applies(request)
+}
+
 fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str> {
     if !codex_has_full_access(request) {
         return None;
+    }
+    if let Some(permissions) = request.stand_in_task_permissions {
+        return Some(
+            permissions
+                .command_approval
+                .map_or("manual", |mode| mode.as_str()),
+        );
     }
     match request
         .extra
@@ -6973,7 +7008,8 @@ fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str
 
 fn codex_auto_approve_commands(request: &ExecutionRequest) -> bool {
     codex_full_access_command_approval(request) == Some("automatic")
-        && stand_in_approval::native_reviewer(request).is_none()
+        && (request.stand_in_task_permissions.is_some()
+            || stand_in_approval::native_reviewer(request).is_none())
 }
 
 fn automatic_command_approval_id(message: &Value, enabled: bool) -> Option<Value> {
@@ -7009,7 +7045,7 @@ pub(crate) fn prepare_codex_runtime_notification(
     automatic_command_approval_id(message, codex_auto_approve_commands(request)).is_none()
         && prepare_runtime_notification(
             message,
-            codex_has_full_access(request),
+            codex_auto_approve_mcp_tool_calls(request),
             crate::runtime_work::stand_in_requires_confirmation(request),
         )
 }
@@ -7743,21 +7779,17 @@ const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
 const MCP_ELICITATION_DECLINE: &str = "Decline";
 const MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval_";
 
+/// Automatic approvals have already been filtered before runtime delivery.
 pub(crate) fn codex_notification_requires_user_input(message: &Value) -> bool {
     match message.get("method").and_then(Value::as_str) {
         Some(
-            "item/commandExecution/requestApproval"
+            "item/tool/requestUserInput"
+            | "item/commandExecution/requestApproval"
             | "item/fileChange/requestApproval"
             | "item/permissions/requestApproval",
         ) => true,
-        Some("item/tool/requestUserInput") => {
-            message_params(message)["standInSingleApproval"] == true
-                || mcp_tool_call_request_user_input_response(message_params(message)).is_none()
-        }
         Some("mcpServer/elicitation/request") => {
             mcp_server_elicitation_request_user_input_params(message_params(message)).is_some()
-                && (message_params(message)["standInSingleApproval"] == true
-                    || !is_mcp_tool_call_approval(message_params(message)))
         }
         _ => false,
     }

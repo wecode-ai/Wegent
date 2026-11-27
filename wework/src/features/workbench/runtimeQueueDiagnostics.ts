@@ -8,17 +8,21 @@ import {
 export function logRuntimeQueueStage(
   address: RuntimeTaskAddress,
   stage: string,
-  details: Record<string, unknown> = {}
+  details: Record<string, unknown> = {},
+  snapshot?: ReturnType<typeof getRuntimeConversationQueueDiagnosticSnapshotByKey>
 ): void {
   const conversationKey = runtimeConversationKey(address)
+  const queueSnapshot =
+    snapshot ??
+    getRuntimeConversationQueueDiagnosticSnapshotByKey(
+      conversationKey,
+      typeof details.messageId === 'string' ? details.messageId : undefined
+    )
   logRuntimeTaskCreateStage(stage, {
     deviceId: address.deviceId,
     taskId: address.taskId,
     conversationKey,
-    ...getRuntimeConversationQueueDiagnosticSnapshotByKey(
-      conversationKey,
-      typeof details.messageId === 'string' ? details.messageId : undefined
-    ),
+    ...queueSnapshot,
     ...details,
   })
 }

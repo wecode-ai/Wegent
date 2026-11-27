@@ -88,11 +88,13 @@ pub async fn insert_issue_on(
         })
         .unwrap_or("inbox");
     if !status.is_empty() {
-        metadata["status_history"] = json!([{
-            "from_status":"","to_status":status,"from_status_name":"",
-            "to_status_name":status_name(project,status),"trigger":"create",
-            "by_user_id":owner,"at":iso(Utc::now().naive_utc())
-        }]);
+        metadata["status_history"] = json!([issue_status_event(
+            ("", ""),
+            (status, &status_name(project, status)),
+            "create",
+            owner,
+            &iso(Utc::now().naive_utc())
+        )]);
     }
     attribute_history(&mut metadata, "status_history", &automation_actor(context));
     store::insert(
@@ -696,8 +698,32 @@ pub fn assignment_status_history(
         .as_array()
         .cloned()
         .unwrap_or_default();
-    history.push(json!({"from_status":previous,"from_status_name":status_name(project,previous),"to_status":current,"to_status_name":status_name(project,current),"trigger":"assignment","by_user_id":user,"at":Utc::now().to_rfc3339()}));
+    history.push(issue_status_event(
+        (previous, &status_name(project, previous)),
+        (current, &status_name(project, current)),
+        "assignment",
+        user,
+        &Utc::now().to_rfc3339(),
+    ));
     metadata["status_history"] = json!(history);
+}
+
+pub fn issue_status_event(
+    from: (&str, &str),
+    to: (&str, &str),
+    trigger: &str,
+    actor: i64,
+    at: &str,
+) -> Value {
+    json!({
+        "from_status": from.0,
+        "from_status_name": from.1,
+        "to_status": to.0,
+        "to_status_name": to.1,
+        "trigger": trigger,
+        "by_user_id": actor,
+        "at": at,
+    })
 }
 
 #[cfg(test)]

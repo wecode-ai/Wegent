@@ -1,6 +1,10 @@
 import { runtimeTasksShareOwner } from '@/lib/workbench-device'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  type CloudLoopItem,
+  type CloudProject,
+} from '@/api/deliveries'
 import type { RuntimeTaskAddress, RuntimeProjectSpaceRef } from '@/types/api'
 import type { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -16,6 +20,7 @@ import {
 import {
   findProjectSpaceContextForTaskInStores,
   isDefaultWorkItemProject,
+  isIncompleteProjectSpaceTaskContextLookup,
   ProjectSpaceTaskContextUnavailableError,
   projectSpaceForRuntimeTask,
   projectSpaceTaskContextApisForTask,
@@ -174,7 +179,11 @@ export function createWorkbenchCloudProjectContextSource(
     project.project_store === 'local' || project.task_provider === 'dingtalk_aitable'
       ? (input.services?.projectSpaceApis?.local ?? input.services?.deliveryApi)
       : (input.services?.projectSpaceApis?.cloud ?? input.services?.deliveryApi)
-  const record = (address: RuntimeTaskAddress, project: CloudProject) => {
+  const record = (
+    address: RuntimeTaskAddress,
+    project: CloudProject,
+    item: CloudLoopItem | null
+  ) => {
     const reference = projectSpaceRef(project)
     const identity = runtimeContextAddress(address)
     if (!rememberProjectSpaceTaskBinding(identity, reference)) return
@@ -182,6 +191,7 @@ export function createWorkbenchCloudProjectContextSource(
       task: identity,
       project: reference,
       type: 'bound',
+      itemId: item?.id ?? null,
     }
     publication = change
     try {
@@ -210,7 +220,7 @@ export function createWorkbenchCloudProjectContextSource(
     item: CloudLoopItem | null,
     execution?: RuntimeTaskAddress | null
   ) => {
-    record(address, project)
+    record(address, project, item)
     publish({
       boundCloudProject: project,
       boundCloudItem: item,
@@ -225,6 +235,7 @@ export function createWorkbenchCloudProjectContextSource(
     const revision = ++lookupRevision
     const valid = () => current(scope) && revision === lookupRevision && input.active
     if (!address || !input.active || input.runtimeTaskCreationPending) return
+    publish({ contextAvailabilityError: null })
     if (!contextApis().length && !address.projectSession && !projectSpaceForRuntimeTask(address)) {
       try {
         const items = await hydrateLocalWorkItems(input.userId)
@@ -255,7 +266,7 @@ export function createWorkbenchCloudProjectContextSource(
             attempt === 50 ||
             error instanceof ProjectSpaceTaskContextUnavailableError ||
             !valid() ||
-            !registry.has(address)
+            (!registry.has(address) && !isIncompleteProjectSpaceTaskContextLookup(error))
           )
             throw error
           await new Promise(done => setTimeout(done, 100))
@@ -280,16 +291,12 @@ export function createWorkbenchCloudProjectContextSource(
       if (registry.has(address)) clearPending(address)
     } catch (error) {
       if (!valid()) return
-      if (error instanceof ProjectSpaceTaskContextUnavailableError)
+      if (
+        error instanceof ProjectSpaceTaskContextUnavailableError ||
+        isIncompleteProjectSpaceTaskContextLookup(error)
+      )
         publish({
-          boundCloudProject: null,
-          boundCloudItem: null,
-          boundRuntimeTaskAddress: null,
-          deliveryItem: null,
-          contextAvailabilityError: input.t(
-            'workbench.cloud_project_bind_failed',
-            '关联项目空间失败'
-          ),
+          contextAvailabilityError: input.t('workbench.cloud_project_context_load_failed'),
         })
       logRuntimeTaskCreateStage(
         'project-space-context-failed',
@@ -425,23 +432,35 @@ export function createWorkbenchCloudProjectContextSource(
     bindPending()
     mentions()
   }
-  const openBound = () => {
+  const openBound = (preferExecution: boolean) => {
     if (!listeners.size) return
     const project = snapshot.boundCloudProject,
       item = snapshot.boundCloudItem,
       address = task()
-    // Durable source IDs navigate immediately; the destination checks current access.
-    const execution = address?.issueExecution
-    const ref: RuntimeProjectSpaceRef | null = execution
-      ? {
-          projectId: execution.projectId,
-          projectStore: address?.projectSession ? 'backend' : 'local',
-        }
-      : project
-        ? projectSpaceRef(project)
+    const boundTarget =
+      snapshot.taskScope === contextIdentity(address) &&
+      project &&
+      item &&
+      item.cloud_project_id === project.id
+        ? { ref: projectSpaceRef(project), itemId: item.id }
         : null
-    const itemId = execution?.issueId ?? item?.id
-    if (!ref || !itemId) return
+    // Explicit execution views can return to their source before context loads.
+    // The destination still checks current access.
+    const execution = address?.issueExecution
+    const executionTarget: { ref: RuntimeProjectSpaceRef; itemId: string } | null = execution
+      ? {
+          ref: {
+            projectId: execution.projectId,
+            projectStore: address?.projectSession ? 'backend' : 'local',
+          },
+          itemId: execution.issueId,
+        }
+      : null
+    const target = preferExecution
+      ? (executionTarget ?? boundTarget)
+      : (boundTarget ?? executionTarget)
+    if (!target?.itemId) return
+    const { ref, itemId } = target
     const route = projectSpaceContentRoute(ref, itemId)
     const options = {
       contentRoute: route,
@@ -562,7 +581,10 @@ export function createWorkbenchCloudProjectContextSource(
       : address
         ? projectSpaceForRuntimeTask(address)
         : undefined
-    const reference = knownReference ?? selectedReference
+    const reference =
+      !session && knownReference?.projectId === DEFAULT_WORK_ITEM_PROJECT_ID
+        ? (selectedReference ?? knownReference)
+        : (knownReference ?? selectedReference)
     const itemId =
       session?.issueId ??
       (sameProjectSpace(reference, selectedReference) ? (item?.id ?? null) : null)
@@ -598,10 +620,11 @@ export function createWorkbenchCloudProjectContextSource(
     getSnapshot: () => snapshot,
     projectSpaceApiFor: projectApi,
     prepareSubmission: prepare,
-    openBoundProjectSpaceTask: openBound,
+    openBoundProjectSpaceTask: () => openBound(false),
+    openIssueExecutionSource: () => openBound(true),
     finishDelivery() {
       publish({ deliveryDialogOpen: false })
-      openBound()
+      openBound(false)
     },
     openDelivery() {
       if (
@@ -620,7 +643,19 @@ export function createWorkbenchCloudProjectContextSource(
       publish({ cloudActionNotice: null })
     },
     clearTodoBindingError() {
-      publish({ todoBindingError: null, contextAvailabilityError: null })
+      publish({ todoBindingError: null })
+    },
+    clearContextAvailabilityError() {
+      publish({ contextAvailabilityError: null })
+    },
+    retryProjectSpaceContext() {
+      if (
+        snapshot.contextAvailabilityError &&
+        current(snapshot.taskScope) &&
+        input.active &&
+        !input.runtimeTaskCreationPending
+      )
+        void resolve()
     },
     clearPendingProjectContext() {
       pendingAutoJoin = null
@@ -779,7 +814,19 @@ export function createWorkbenchCloudProjectContextSource(
             )
               return
 
-            if (change.type === 'unbound' && !projectSpaceForRuntimeTask(change.task))
+            const confirmed = snapshot.boundCloudProject
+            const matchesConfirmed =
+              confirmed && sameProjectSpace(projectSpaceRef(confirmed), change.project)
+            const itemChanged =
+              change.itemId !== undefined && change.itemId !== (snapshot.boundCloudItem?.id ?? null)
+            if (
+              (change.type === 'unbound' && matchesConfirmed && !itemChanged) ||
+              (change.type === 'bound' &&
+                confirmed &&
+                (matchesConfirmed
+                  ? itemChanged
+                  : change.project.projectId !== DEFAULT_WORK_ITEM_PROJECT_ID))
+            )
               publish({
                 boundCloudProject: null,
                 boundCloudItem: null,

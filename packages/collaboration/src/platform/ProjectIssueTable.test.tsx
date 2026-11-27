@@ -164,6 +164,16 @@ describe('ProjectIssueTable', () => {
     })
 
     expect(onOpen).toHaveBeenCalledWith(issue)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    const row = trigger.closest('tr')!
+    const checkbox = row.querySelector<HTMLElement>('[role="checkbox"]')!
+    act(() => checkbox.click())
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(checkbox.getAttribute('aria-checked')).toBe('true')
+    trigger.blur()
+    act(() => row.cells[2].click())
+    expect(onOpen).toHaveBeenCalledTimes(2)
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('uses stable business-column widths instead of compressing filter headers', () => {

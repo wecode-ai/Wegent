@@ -343,7 +343,6 @@ export function createProvider(platform) {
         )
           throw invalid('Monitoring checkpoint contains an unselected object')
         if (
-          platform === 'github' &&
           source.observeCurrentStatus === true &&
           selection.monitoredObjects.length === 1 &&
           selection.monitoredObjects[0].entityKind === 'change_request'

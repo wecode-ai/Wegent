@@ -3,14 +3,9 @@
   color: rgb(var(--color-text-primary));
 }
 
-.milestone-form .milestone-form-field:focus {
-  border-color: rgb(var(--color-focus));
-  outline: 2px solid rgb(var(--color-focus) / 30%);
-  outline-offset: 2px;
-}
-
 :where(html:not([data-input-modality="pointer"]))
-  .milestone-picker-filter:focus-visible {
+  button.milestone-picker-filter:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
+  box-shadow: none;
 }

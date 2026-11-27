@@ -15,7 +15,9 @@ from app.api.dependencies import get_db
 from app.api.endpoints.devices import router as devices_router
 from app.api.endpoints.users import router as users_router
 from app.core import security
+from app.core.exceptions import CustomHTTPException, http_exception_handler
 from app.models.user import User
+from app.services.device import git_credentials
 
 
 @pytest.fixture
@@ -23,6 +25,7 @@ def git_credentials_client(test_db: Session, test_user: User) -> TestClient:
     app = FastAPI()
     app.include_router(users_router, prefix="/api/users")
     app.include_router(devices_router, prefix="/api/devices")
+    app.add_exception_handler(CustomHTTPException, http_exception_handler)
 
     def override_get_db():
         yield test_db
@@ -70,3 +73,57 @@ def test_sync_endpoint_targets_one_device_and_returns_sanitized_result(
         device_id="remote-1",
         allow_empty=False,
     )
+
+
+@pytest.mark.api
+@pytest.mark.parametrize(
+    ("result", "http_status", "error_code"),
+    [
+        (
+            {"success": False, "exit_code": 1, "stdout": {"error": "git_not_found"}},
+            502,
+            "git_not_found",
+        ),
+        (
+            {
+                "success": False,
+                "exit_code": 1,
+                "stdout": {"error": "synthetic-private-detail"},
+            },
+            502,
+            "credential_apply_failed",
+        ),
+        (
+            {"success": False, "exit_code": 1, "stdout": {"error": "sync_in_progress"}},
+            409,
+            "sync_in_progress",
+        ),
+        (
+            {"success": False, "exit_code": 0, "stdout": "incomplete JSON"},
+            504,
+            "git_sync_result_unconfirmed",
+        ),
+        (
+            {"success": False, "timed_out": True},
+            504,
+            "git_sync_result_unconfirmed",
+        ),
+    ],
+)
+def test_sync_endpoint_returns_only_safe_device_errors(
+    git_credentials_client: TestClient, mocker, caplog, result, http_status, error_code
+):
+    async def sync(_, *, user, device_id, allow_empty):
+        return git_credentials._safe_device_result(
+            device_id, result, [], user_id=user.id
+        )
+
+    mocker.patch("app.api.endpoints.devices.sync_git_accounts_to_device", sync)
+
+    response = git_credentials_client.put("/api/devices/remote-1/git-accounts", json={})
+
+    assert response.status_code == http_status
+    assert response.json()["error_code"] == error_code
+    assert isinstance(response.json()["detail"], str)
+    assert "synthetic-private-detail" not in response.text
+    assert "synthetic-private-detail" not in caplog.text

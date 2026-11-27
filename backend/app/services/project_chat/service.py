@@ -975,6 +975,7 @@ class ProjectChatService:
         *,
         user_id: int,
         request: ProjectChatSubscribe,
+        reconcile_ai_state: bool = True,
     ) -> list[ProjectChatMessageView]:
         self._require_scope(
             db,
@@ -1006,8 +1007,11 @@ class ProjectChatService:
             )
             rows.reverse()
         reconciled = False
-        for row in rows:
-            reconciled = self._reconcile_ai_run_projection(db, row=row) or reconciled
+        if reconcile_ai_state:
+            for row in rows:
+                reconciled = (
+                    self._reconcile_ai_run_projection(db, row=row) or reconciled
+                )
         if reconciled:
             self._commit(db)
             for row in rows:

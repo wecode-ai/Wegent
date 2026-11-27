@@ -23,15 +23,23 @@ export function createWorkbenchRouteNavigation(
     if (!enabled)
       return { enabled: false, state: current, resolveTask: () => null, openRuntimeTask }
     const lifecycle = state.lifecycleStore.getSnapshot()
-    const sources = [current.runtimeWork, lifecycle, reminders]
+    const trayLifecycle = state.lifecycleStore.getSidebarSnapshot()
+    const { trayUnreadEnabled, trayRunningEnabled } = reminders.preferences
+    const sources = [
+      current.runtimeWork,
+      trayLifecycle.runningTaskKeys,
+      reminders.unreadTaskKeys,
+      reminders.unreadCount,
+      trayUnreadEnabled,
+      trayRunningEnabled,
+    ]
     if (!traySources || sources.some((value, index) => value !== traySources![index])) {
       traySources = sources
-      const { trayUnreadEnabled, trayRunningEnabled } = reminders.preferences
       const english = (navigator.language || '').toLowerCase().startsWith('en')
       tray = {
         groups: buildTrayMenuTaskGroups(current.runtimeWork, {
           reminders,
-          lifecycle,
+          lifecycle: trayLifecycle,
           showUnread: trayUnreadEnabled,
           showRunning: trayRunningEnabled,
         }),

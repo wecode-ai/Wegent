@@ -339,6 +339,7 @@ async fn remote_task_changes_do_not_trigger_heartbeats_for_non_app_devices() {
         transport.clone(),
         Arc::new(PersonalTaskTestHandler(AtomicUsize::new(0))),
         ExecutorEventHub::new(event_tx),
+        None,
     )
     .with_connection_status(Arc::clone(&connection_status));
     runner.client.remote_task_access = access.clone();
@@ -482,6 +483,7 @@ async fn app_remote_task_consent_is_enforced_at_network_dispatch_and_event_forwa
         SocketIoTransport::default(),
         handler.clone(),
         event_hub,
+        None,
     );
     runner.client.remote_task_access = access.clone();
     let network = runner.runtime_rpc_handler();

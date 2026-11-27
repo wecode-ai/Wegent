@@ -3,6 +3,7 @@
 
 //! Provider-neutral private-session IM delivery for board notifications.
 
+use super::{IssueImRecipient, IssueImRecipientResolver};
 use anyhow::{Context, Result, bail};
 use brz_mysql::{FromMysqlRow, Json, MysqlService};
 use brz_redis::{Redis, RedisBytes};
@@ -22,14 +23,38 @@ pub(super) async fn send_im(
     user: i64,
     notification: &Value,
     links: &[(String, String)],
+    issue_im_recipient: Option<&dyn IssueImRecipientResolver>,
 ) -> Result<()> {
-    let redis = redis.context("Redis is unavailable")?;
-    let kind = notification["kind"].as_str().unwrap_or("");
-    let title = notification["title"].as_str().unwrap_or("");
-    let body = notification["body"].as_str().unwrap_or("");
-    let payload = &notification["payload"];
+    let resolver = issue_im_recipient.filter(|_| {
+        matches!(
+            notification["kind"].as_str(),
+            Some("issue_shared" | "issue_participation")
+        )
+    });
+    let has_session = match redis {
+        Some(redis) => send_private_sessions(mysql, redis, user, notification, links).await?,
+        None if resolver.is_some() => false,
+        None => bail!("Redis is unavailable"),
+    };
+    if !has_session
+        && let Some(resolver) = resolver
+        && let Some(recipient) = resolver.resolve(user).await?
+    {
+        send_to(mysql, Destination::Resolved(recipient), notification, links).await?;
+    }
+    Ok(())
+}
+
+async fn send_private_sessions(
+    mysql: &MysqlService,
+    redis: &brz_redis::RedisService,
+    user: i64,
+    notification: &Value,
+    links: &[(String, String)],
+) -> Result<bool> {
     let key = format!("channel:user_private_sessions:{user}");
     let sessions: Vec<String> = redis.zrevrange(key.as_str(), 0, -1).await?;
+    let mut has_session = false;
     for session_key in sessions {
         let session = redis
             .get::<_, RedisBytes>(format!("channel:private_session:{session_key}"))
@@ -44,11 +69,22 @@ pub(super) async fn send_im(
         if session["user_id"].as_i64() != Some(user) {
             continue;
         }
-        if let Err(error) = send_session(mysql, &session, kind, title, body, payload, links).await {
+        has_session |= matches!(
+            session["channel_type"].as_str(),
+            Some("dingtalk" | "telegram" | "discord")
+        );
+        if let Err(error) =
+            send_to(mysql, Destination::Session(&session), notification, links).await
+        {
             tracing::warn!(user_id=user,channel_id=?session["channel_id"],channel_type=?session["channel_type"],%error,"private IM notification delivery failed");
         }
     }
-    Ok(())
+    Ok(has_session)
+}
+
+enum Destination<'a> {
+    Session(&'a Value),
+    Resolved(IssueImRecipient),
 }
 
 #[derive(FromMysqlRow)]
@@ -176,15 +212,16 @@ async fn dingtalk_access_token_at(
     })
 }
 
-async fn send_session(
+async fn send_to(
     mysql: &MysqlService,
-    session: &Value,
-    kind: &str,
-    title: &str,
-    body: &str,
-    payload: &Value,
+    destination: Destination<'_>,
+    notification: &Value,
     links: &[(String, String)],
 ) -> Result<()> {
+    let kind = notification["kind"].as_str().unwrap_or("");
+    let title = notification["title"].as_str().unwrap_or("");
+    let body = notification["body"].as_str().unwrap_or("");
+    let payload = &notification["payload"];
     let headline = push_headline(kind, title, payload);
     let title = headline.as_str();
     let facts = super::push_facts(payload);
@@ -217,18 +254,50 @@ async fn send_session(
                 .join("\n")
         )
     };
-    match session["channel_type"].as_str().unwrap_or("") {
-        "telegram" | "discord" => send_text(mysql, session, &plain).await.map(|_| ()),
+    let (recipient, expected_channel_type) = match destination {
+        Destination::Resolved(recipient) => (recipient, None),
+        Destination::Session(session) => match session["channel_type"].as_str().unwrap_or("") {
+            "telegram" | "discord" => return send_text(mysql, session, &plain).await.map(|_| ()),
+            "dingtalk" => (
+                IssueImRecipient {
+                    channel_id: session["channel_id"]
+                        .as_i64()
+                        .context("Missing IM channel id")?,
+                    recipient_id: dingtalk_recipient(mysql, session).await?,
+                },
+                Some("dingtalk"),
+            ),
+            other => bail!("Unsupported channel type: {other}"),
+        },
+    };
+    let spec = active_channel_spec(mysql, recipient.channel_id).await?;
+    let channel_type = spec["channelType"].as_str().unwrap_or("dingtalk");
+    if !messager_enabled(&spec) || expected_channel_type.is_some_and(|kind| kind != channel_type) {
+        bail!("IM channel is disabled or does not match the session");
+    }
+    let config = decrypt_channel_config(&spec)?;
+    let client = im_client()?;
+    let id = &recipient.recipient_id;
+    match channel_type {
         "dingtalk" => {
-            let client = im_client()?;
-            let config =
-                active_dingtalk_channel_config(mysql, session["channel_id"].as_i64().unwrap_or(0))
-                    .await?;
             dingtalk(
-                mysql, &client, session, &config, kind, title, body, payload, &facts, &text, links,
+                &client, id, &config, kind, title, body, payload, &facts, &text, links,
             )
             .await
         }
+        "telegram" => {
+            let chat_id = id
+                .parse::<i64>()
+                .ok()
+                .filter(|id| *id > 0)
+                .context("Invalid Telegram private chat id")?;
+            telegram_with_config(&client, &config, chat_id, None, &plain)
+                .await
+                .map(|_| ())
+        }
+        "discord" => discord_message(&client, &config, id, &plain)
+            .await
+            .map(|_| ()),
         other => bail!("Unsupported channel type: {other}"),
     }
 }
@@ -288,6 +357,12 @@ fn card_headline(kind: &str, title: &str, payload: &Value) -> String {
             .as_str()
             .map(|actor| format!("📌 {actor} 把任务分配给了你"))
             .unwrap_or_else(|| format!("📌 {title}")),
+        "issue_dispatch_assignment" => payload["actorName"]
+            .as_str()
+            .map(str::trim)
+            .filter(|actor| !actor.is_empty())
+            .map(|actor| format!("{actor} 将任务分配给你"))
+            .unwrap_or_else(|| "你收到一项任务".into()),
         _ => title.into(),
     }
 }
@@ -324,9 +399,8 @@ async fn http_json(
 
 #[allow(clippy::too_many_arguments)]
 async fn dingtalk(
-    mysql: &MysqlService,
     client: &brz_http::Client,
-    session: &Value,
+    recipient: &str,
     config: &Value,
     kind: &str,
     title: &str,
@@ -338,7 +412,6 @@ async fn dingtalk(
 ) -> Result<()> {
     let (client_id, client_secret) =
         dingtalk_credentials(config).context("Missing DingTalk credentials")?;
-    let recipient = dingtalk_recipient(mysql, session).await?;
     let api = dingtalk_api_base(config);
     let access = dingtalk_access_token_at(client, client_id, client_secret, api).await?;
     if config["notification_card"].is_object() {
@@ -403,11 +476,19 @@ fn card_params(
     facts: &[(String, String)],
     links: &[(String, String)],
 ) -> Value {
+    let is_dispatch_assignment = kind == "issue_dispatch_assignment";
+    let task_title = is_dispatch_assignment
+        .then(|| payload["taskTitle"].as_str().unwrap_or("").trim())
+        .filter(|title| !title.is_empty());
     if builtin {
         let mut lines: Vec<_> = facts
             .iter()
+            .filter(|(label, _)| task_title.is_none() || label != "任务标题")
             .map(|(label, value)| format!("**{label}**：{}", escape(value)))
             .collect();
+        if let Some(task_title) = task_title {
+            lines.insert(0, format!("**任务标题**：{}", escape(task_title)));
+        }
         if !body.is_empty() {
             if !lines.is_empty() {
                 lines.push(String::new());
@@ -461,7 +542,15 @@ fn card_params(
         },
         _ => ("任务通知", "gray"),
     };
-    json!({"kindLabel":label,"tone":tone,"headline":title,"itemTitle":payload["itemTitle"].as_str().unwrap_or(""),"itemKey":payload["itemKey"].as_str().unwrap_or(""),"metaLine":meta,"detailLabel":detail_label(payload),"detail":detail,"showDetail":if body.is_empty(){"false"}else{"true"},"primaryLabel":primary.map(|value|value.0.as_str()).unwrap_or(""),"primaryUrl":primary.map(|value|value.1.as_str()).unwrap_or(""),"secondaryLabel":secondary.map(|value|value.0.as_str()).unwrap_or(""),"secondaryUrl":secondary.map(|value|value.1.as_str()).unwrap_or("")})
+    let headline = if is_dispatch_assignment {
+        headline
+    } else {
+        title
+    };
+    let item_title = task_title
+        .or_else(|| payload["itemTitle"].as_str())
+        .unwrap_or("");
+    json!({"kindLabel":label,"tone":tone,"headline":headline,"itemTitle":item_title,"itemKey":payload["itemKey"].as_str().unwrap_or(""),"metaLine":meta,"detailLabel":detail_label(payload),"detail":detail,"showDetail":if body.is_empty(){"false"}else{"true"},"primaryLabel":primary.map(|value|value.0.as_str()).unwrap_or(""),"primaryUrl":primary.map(|value|value.1.as_str()).unwrap_or(""),"secondaryLabel":secondary.map(|value|value.0.as_str()).unwrap_or(""),"secondaryUrl":secondary.map(|value|value.1.as_str()).unwrap_or("")})
 }
 
 async fn dingtalk_recipient(mysql: &MysqlService, session: &Value) -> Result<String> {
@@ -525,35 +614,10 @@ pub async fn send_text(mysql: &MysqlService, session: &Value, text: &str) -> Res
     let client = im_client()?;
     match kind {
         "discord" => {
-            let token = config_value(&config, &["bot_token", "botToken"])
-                .context("Missing Discord bot token")?;
-            let sender = session["sender_id"]
+            let recipient = session["sender_id"]
                 .as_str()
-                .filter(|value| !value.is_empty())
                 .context("Missing Discord user id")?;
-            let auth = format!("Bot {token}");
-            let dm = http_json(
-                &client,
-                "https://discord.com/api/v10/users/@me/channels",
-                Some((&auth, "authorization")),
-                &json!({"recipient_id":sender}),
-            )
-            .await?;
-            let channel = dm["id"]
-                .as_str()
-                .context("Discord DM channel not returned")?;
-            let content = if text.chars().count() > 2000 {
-                format!("{}...", text.chars().take(1997).collect::<String>())
-            } else {
-                text.to_owned()
-            };
-            http_json(
-                &client,
-                &format!("https://discord.com/api/v10/channels/{channel}/messages"),
-                Some((&auth, "authorization")),
-                &json!({"content":content}),
-            )
-            .await
+            discord_message(&client, &config, recipient, text).await
         }
         "dingtalk" => {
             let (id, secret) =
@@ -568,6 +632,42 @@ pub async fn send_text(mysql: &MysqlService, session: &Value, text: &str) -> Res
         }
         _ => bail!("Unsupported channel type"),
     }
+}
+
+async fn discord_message(
+    client: &brz_http::Client,
+    config: &Value,
+    recipient_id: &str,
+    text: &str,
+) -> Result<Value> {
+    let token =
+        config_value(config, &["bot_token", "botToken"]).context("Missing Discord bot token")?;
+    if recipient_id.is_empty() {
+        bail!("Missing Discord user id");
+    }
+    let auth = format!("Bot {token}");
+    let dm = http_json(
+        client,
+        "https://discord.com/api/v10/users/@me/channels",
+        Some((&auth, "authorization")),
+        &json!({"recipient_id":recipient_id}),
+    )
+    .await?;
+    let channel = dm["id"]
+        .as_str()
+        .context("Discord DM channel not returned")?;
+    let content = if text.chars().count() > 2000 {
+        format!("{}...", text.chars().take(1997).collect::<String>())
+    } else {
+        text.to_owned()
+    };
+    http_json(
+        client,
+        &format!("https://discord.com/api/v10/channels/{channel}/messages"),
+        Some((&auth, "authorization")),
+        &json!({"content":content}),
+    )
+    .await
 }
 
 fn im_client() -> Result<brz_http::Client> {
@@ -589,10 +689,20 @@ pub async fn telegram_message(
         bail!("Telegram channel is unavailable");
     }
     let config = decrypt_channel_config(&spec)?;
+    telegram_with_config(&im_client()?, &config, chat_id, message_id, text).await
+}
+
+async fn telegram_with_config(
+    client: &brz_http::Client,
+    config: &Value,
+    chat_id: i64,
+    message_id: Option<i64>,
+    text: &str,
+) -> Result<Value> {
     let token =
-        config_value(&config, &["bot_token", "botToken"]).context("Missing Telegram bot token")?;
+        config_value(config, &["bot_token", "botToken"]).context("Missing Telegram bot token")?;
     let endpoint = format!("https://api.telegram.org/bot{token}");
-    send_telegram(&im_client()?, &endpoint, chat_id, message_id, text).await
+    send_telegram(client, &endpoint, chat_id, message_id, text).await
 }
 
 async fn send_telegram(
@@ -693,6 +803,28 @@ mod tests {
             None
         );
     }
+    #[test]
+    fn assignment_cards_show_the_assigner_above_the_dispatched_task() {
+        let kind = "issue_dispatch_assignment";
+        let title = "新任务：验收登录";
+        let payload =
+            json!({"actorName": "项目经理", "taskTitle": "验收登录", "itemTitle": "修复登录"});
+        let headline = card_headline(kind, title, &payload);
+        let facts = super::super::push_facts(&payload);
+
+        let custom = card_params(false, kind, title, &headline, "", &payload, &facts, &[]);
+        let builtin = card_params(true, kind, title, &headline, "", &payload, &facts, &[]);
+
+        assert_eq!(custom["headline"], "项目经理 将任务分配给你");
+        assert_eq!(custom["itemTitle"], "验收登录");
+        assert_eq!(builtin["title"], custom["headline"]);
+        assert_eq!(builtin["markdown"], "**任务标题**：验收登录");
+        assert_eq!(
+            card_headline(kind, title, &json!({"actorName": " "})),
+            "你收到一项任务"
+        );
+    }
+
     #[test]
     fn custom_cards_limit_detail_and_expose_each_destination() {
         let value = card_params(
@@ -811,6 +943,7 @@ mod dingtalk_protocol_tests {
                         br#"{"code":"rejected"}"#.as_slice()
                     }
                     "/v1.0/card/instances/createAndDeliver" => {
+                        assert_eq!(body["openSpaceId"], "dtv1.card//IM_ROBOT.ci-staff");
                         let buttons: Value = serde_json::from_str(
                             body["cardData"]["cardParamMap"]["sys_full_json_obj"]
                                 .as_str()
@@ -860,14 +993,6 @@ mod dingtalk_protocol_tests {
             let task = tokio::spawn(server.serve_until(async {
                 let _ = stopped.await;
             }));
-            // Explicit staff identity needs no database lookup. Keep even the
-            // unused SQL dependency bound to an isolated loopback listener.
-            let unused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mysql = brz_mysql::MysqlService::connect_lazy(&format!(
-                "mysql://ci:ci@{}/unused",
-                unused.local_addr().unwrap()
-            ))
-            .unwrap();
             let mut config =
                 json!({"client_id":"ci-app","client_secret":"ci-secret","api_base_url":api});
             if card {
@@ -876,9 +1001,8 @@ mod dingtalk_protocol_tests {
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 dingtalk(
-                    &mysql,
                     &im_client().unwrap(),
-                    &json!({"proactive_recipient_id":"ci-staff"}),
+                    "ci-staff",
                     &config,
                     "issue_shared",
                     "CI title",

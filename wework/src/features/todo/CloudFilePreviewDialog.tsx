@@ -5,6 +5,7 @@ import {
   useAttachmentPreview,
 } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import type { ComponentProps } from 'react'
 import { createBodyFlagRef } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Download, X } from 'lucide-react'
@@ -20,6 +21,7 @@ export function CloudFilePreviewDialog({
   loadFile,
   onDownload,
   onClose,
+  finalFocus,
 }: {
   filename: string
   contentType: string | null
@@ -27,6 +29,7 @@ export function CloudFilePreviewDialog({
   loadFile: () => Promise<Blob>
   onDownload: () => Promise<void>
   onClose: () => void
+  finalFocus?: ComponentProps<typeof DialogSurface>['finalFocus']
 }) {
   const { t, i18n } = useTranslation('common')
   const translate = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
@@ -68,6 +71,7 @@ export function CloudFilePreviewDialog({
     >
       <DialogSurface
         onClose={onClose}
+        finalFocus={finalFocus}
         initialFocus={'[data-testid="cloud-file-preview-close"]'}
         render={
           <section
