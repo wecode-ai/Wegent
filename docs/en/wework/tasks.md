@@ -266,12 +266,15 @@ After a conversation starts, you can still switch between official GPT/Codex mod
 
 In Codex tasks using official OAuth, official GPT and third-party models share the same compatibility layer. On a switch, the executor clears encrypted reasoning or compaction state owned by the previous provider. If third-party history stores readable reasoning in `reasoning.content`, the request sent to official GPT promotes it to `summary_text` and clears the restricted `content` array. These changes apply only to the outgoing copy; the original thread history stays intact. Portable messages, tool results, and other context remain available, so switching models does not require a new conversation or a reference to the old one.
 
+<a id="running-task-controls"></a>
+
 ## Control a running task
 
 The sidebar keeps running tasks visible with their running indicators. Collapsing or expanding a project or its history list does not change execution state. When you continue a conversation, completion from an earlier turn does not end the new running turn; its indicator clears when the current turn ends.
 
-Context compaction is shown as complete only after its turn succeeds. Plugin synchronization and idle-only process restarts wait during compaction, and a failed or interrupted compaction is not shown as successful.
-A response timeout does not mean compaction has stopped. A live compaction retains its activity protection until its native turn ends; use Pause to interrupt it.
+When the current reply can be interrupted, select the square **Pause response** button on the right of the task composer. If you have content ready to send, the Send arrow appears alongside Pause so you can still send a follow-up. Pause remains available during automatic context compaction and while a subagent is running.
+
+If you pause the reply before compaction finishes, the activity shows **Context compaction did not complete**. Compaction is shown as complete only after its turn succeeds. Plugin synchronization and idle-only process restarts wait during compaction. If waiting for a response times out, any compaction still running retains its activity protection until its native turn ends.
 
 While a start request remains unconfirmed, a previous completion snapshot cannot clear its running indicator. Once the executor confirms execution has started, completion of the current turn ends the running state normally.
 
@@ -287,7 +290,6 @@ Interrupting stops the current response but does not roll back completed file ed
 If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.
 
 <a id="question-answers"></a>
-While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
 
 ### Answer AI questions
 

@@ -5,6 +5,7 @@ import { createInterruptedCompactionScenario } from './interrupted-context-compa
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import { createCatalogAutoCompactionVerification } from './catalog-auto-compaction.mjs'
 import { createLoadedCompactionProfileVerification } from './loaded-compaction-profile.mjs'
+import { createSubagentCompactionVerification } from './subagent-context-compaction.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -166,6 +167,7 @@ export function createDesktopScenario(options) {
   const interrupted = createInterruptedCompactionScenario({ uiTimeoutMs, modelResponseTimeoutMs })
   const catalogAuto = createCatalogAutoCompactionVerification(options)
   const loadedProfile = createLoadedCompactionProfileVerification(options)
+  const subagentCompaction = createSubagentCompactionVerification(options)
   let active = false
   let compactionRequests = 0
   let rejectedCompactionRequests = 0
@@ -184,6 +186,7 @@ export function createDesktopScenario(options) {
   })
 
   return {
+    codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
     async prepareApp(context) {
       await catalogAuto.prepareApp(context)
       loadedProfile.prepareApp(context)
@@ -192,6 +195,7 @@ export function createDesktopScenario(options) {
       if (await loadedProfile.handleHttp(request, response, url)) return true
       if (await catalogAuto.handleHttp(request, response, url)) return true
       if (await interrupted.handleHttp(request, response, url)) return true
+      if (await subagentCompaction.handleHttp(request, response, url)) return true
       if (
         !active ||
         request.method !== 'POST' ||
@@ -428,6 +432,7 @@ export function createDesktopScenario(options) {
         rejectCompaction = false
         await catalogAuto.verify(control)
         await loadedProfile.verify(control)
+        await subagentCompaction.verify(control)
       } finally {
         releaseCompaction()
       }
