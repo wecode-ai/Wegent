@@ -1420,6 +1420,49 @@ class TestSandboxManager:
         remove.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("index_state", ["valid", "unowned", "mismatched"])
+    async def test_e2b_delete_uses_index_before_reading_other_sessions(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+        index_state,
+    ):
+        from fastapi import HTTPException, Request
+
+        from executor_manager.routers import e2b
+
+        manager = sandbox_manager_with_mock_redis
+        record = json.loads(sample_sandbox_redis_data)
+        record["metadata"]["e2b_sandbox_id"] = (
+            "other-e2b-id" if index_state == "mismatched" else "test-e2b-id"
+        )
+        mock_redis_client.get.return_value = "12345"
+        if index_state != "unowned":
+            mock_redis_client.zscore.return_value = 1.0
+        mock_redis_client.hget.return_value = json.dumps(record)
+        mocker.patch.object(e2b, "get_sandbox_manager", return_value=manager)
+        remove = mocker.patch.object(
+            manager, "_delete_sandbox_runtime", return_value={"redis_cleared": True}
+        )
+
+        request = Request({"type": "http"})
+        if index_state != "valid":
+            with pytest.raises(HTTPException) as error:
+                await e2b.delete_sandbox("test-e2b-id", request)
+            assert error.value.status_code == 404
+            remove.assert_not_awaited()
+            return
+
+        mock_redis_client.zrange.side_effect = OSError("Index scan unavailable")
+        response = await e2b.delete_sandbox("test-e2b-id", request)
+
+        assert response.status_code == 204
+        assert remove.await_args.args[0] == "12345"
+        mock_redis_client.zrange.assert_not_called()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("entry_point", ["task", "e2b", "e2b_numeric"])
     @pytest.mark.parametrize("storage_failed", [False, True])
     async def test_delete_distinguishes_lookup_failure_from_missing_sandbox(

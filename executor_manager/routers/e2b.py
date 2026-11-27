@@ -711,8 +711,7 @@ async def _find_sandbox_by_e2b_id(
 ):
     """Find sandbox by E2B sandbox ID in metadata.
 
-    Searches through active sandboxes for one with matching e2b_sandbox_id
-    in metadata.
+    For deletion, try the E2B index before scanning active sandboxes.
 
     Args:
         manager: SandboxManager instance
@@ -723,6 +722,18 @@ async def _find_sandbox_by_e2b_id(
         Sandbox if found, None otherwise
     """
     repository = manager._repository
+    if require_definitive_result:
+        indexed_id = repository.lookup_sandbox_id_by_e2b_id(e2b_sandbox_id)
+        if (
+            indexed_id is not None
+            and repository.get_sandbox_activity_score(indexed_id) is not None
+        ):
+            indexed = repository.load_sandbox(
+                indexed_id, require_definitive_result=True
+            )
+            if indexed and indexed.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
+                return indexed
+
     sandbox_ids = repository.get_active_sandbox_ids(
         require_definitive_result=require_definitive_result
     )
