@@ -107,7 +107,10 @@ fn guidance_correction_updates_the_guidance_row_without_adding_a_prompt_row() {
     );
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[1]["suppressedUserMessage"], true);
-    assert_eq!(messages[2]["suppressedUserMessage"], serde_json::Value::Null);
+    assert_eq!(
+        messages[2]["suppressedUserMessage"],
+        serde_json::Value::Null
+    );
 }
 
 #[test]
@@ -119,7 +122,8 @@ fn suppressed_presentation_without_a_matching_prompt_adds_no_synthetic_row() {
     }))
     .expect("correction presentation");
     assert_eq!(presentation["suppressUserMessage"], true);
-    let mut messages = vec![json!({"id":"answer","role":"assistant","turnId":"turn-2","content":"Done"})];
+    let mut messages =
+        vec![json!({"id":"answer","role":"assistant","turnId":"turn-2","content":"Done"})];
     attach_user_message_presentations_for_page(
         &mut messages,
         vec![presentation],
