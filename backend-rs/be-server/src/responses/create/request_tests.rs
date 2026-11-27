@@ -634,29 +634,43 @@ async fn a_new_git_chat_without_a_repository_url_fails_before_dispatch() {
     );
 }
 
-/// `_get_model_config` (`request_builder.py:318`), `_get_bot_skills` (`:393`)
-/// and only then `_build_bot_config` (`:415`), whose `_resolve_shell_info`
-/// (`:2219`) is the Shell read. Both flat-config failures return before the
-/// Shell call, so a failed flat config never issues a Shell query.
-#[test]
-fn the_flat_model_config_precedes_the_shell_read() {
-    let source = include_str!("../../../../execution-request/src/request.rs");
-    let no_model = source
-        .find("None => return Err(flat_model_config_error(None, &input.bot.name)),")
-        .expect("bot-without-model raise");
-    let unresolved = source
-        .find("None => return Err(flat_model_config_error(Some(&model_name), &input.bot.name)),")
-        .expect("model-not-found raise");
-    let skills = source
-        .find("let mut skills = get_bot_skills(")
-        .expect("skill resolution");
-    let shell = source
-        .find("let (shell_type, base_image) = resolve_shell_type(state, input).await?;")
-        .expect("shell resolution");
-    assert!(
-        no_model < unresolved && unresolved < skills && skills < shell,
-        "both flat-model-config failures must return before Skill and Shell reads"
-    );
+#[tokio::test]
+async fn an_invalid_flat_model_fails_before_reading_skills_or_shell() {
+    for (model_ref, message) in [
+        (Value::Null, "Bot analysis-bot has no model configured"),
+        (
+            json!({"name":"missing-model"}),
+            "Model missing-model not found",
+        ),
+    ] {
+        let (team, mut bot) = chat_agent();
+        bot.json.0["spec"]["modelRef"] = model_ref;
+        bot.json.0["spec"]["shellRef"] = json!({"name":"missing-shell"});
+        let fixture = MysqlRows::start_results(|_| (vec![("id", SqlValue::I64(0))], vec![])).await;
+        let state = crate::app_test_support::app(fixture.mysql.clone());
+        let error = build_chat_execution_request(
+            &state,
+            &chat_input(&team, &bot),
+            false,
+            &[],
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect_err("invalid model must abort request construction");
+
+        assert_eq!(error.status(), brz_http_server::StatusCode::BAD_REQUEST);
+        assert_eq!(error.detail_message(), Some(message));
+        for query in fixture.queries() {
+            assert!(
+                !["'Skill'", "'SkillBinding'", "'Shell'"]
+                    .iter()
+                    .any(|kind| query.contains(kind)),
+                "unexpected query: {query}"
+            );
+        }
+    }
 }
 
 /// Source `TaskRequestBuilder.build` resolves `_get_bot_for_subtask` once and
