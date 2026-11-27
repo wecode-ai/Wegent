@@ -1,3 +1,4 @@
+import { PlatformTaskConnection } from '@wegent/collaboration/platform-task-continuation'
 import { useCallback, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT } from '@/e2e/runtime-config'
@@ -14,5 +15,20 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
   useDOMEvent('window', DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT, source.restoreSelectedSession, {
     enabled: import.meta.env.VITE_WEWORK_E2E === 'true',
   })
-  return <CloudConnectionContext.Provider value={value}>{children}</CloudConnectionContext.Provider>
+  return (
+    <CloudConnectionContext.Provider value={value}>
+      <PlatformTaskConnection.Provider
+        value={
+          value.isConnected && value.user && value.apiBaseUrl
+            ? {
+                apiBaseUrl: value.apiBaseUrl,
+                userId: value.user.id,
+              }
+            : null
+        }
+      >
+        {children}
+      </PlatformTaskConnection.Provider>
+    </CloudConnectionContext.Provider>
+  )
 }

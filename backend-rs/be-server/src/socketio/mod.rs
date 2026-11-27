@@ -19,7 +19,7 @@ pub(crate) use wegent_socket_events::callback_sequencer;
 pub mod chat_control;
 pub(crate) mod chat_device_resolution;
 pub mod chat_events;
-mod chat_references;
+pub(crate) mod chat_references;
 pub mod chat_retry;
 pub mod chat_send;
 pub mod chat_session;

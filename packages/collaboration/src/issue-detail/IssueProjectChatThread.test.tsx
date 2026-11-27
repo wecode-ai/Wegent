@@ -10,6 +10,7 @@ import {
 } from "./IssueActivityThread";
 import { IssueProjectChatThread } from "./IssueProjectChatThread";
 import { IssueActivityMarkdown } from "./IssueActivityMarkdown";
+import { PlatformTaskConnection } from "../platform-task-continuation";
 import { IssueChatMessage } from "./IssueChatMessage";
 import {
   backendTaskExecution,
@@ -612,7 +613,9 @@ describe("shared Issue threads", () => {
     expect(disclosure.getAttribute("aria-expanded")).toBe("false");
     act(() => disclosure.click());
     expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-    const metadata = container.querySelector(".task-detail-thread-run-metadata");
+    const metadata = container.querySelector(
+      ".task-detail-thread-run-metadata",
+    );
     expect(metadata?.textContent).toContain("Run run-123");
     expect(metadata?.textContent).toContain("test-model");
   });
@@ -651,6 +654,43 @@ describe("shared Issue threads", () => {
         },
       }),
     ).toEqual({ taskId: "7", executionUrl: "https://example.com/task/7" });
+  });
+
+  it("offers both the scoped desktop conversation and the original web task", () => {
+    const open = vi.fn();
+    const url = "https://web.example/chat?taskId=7";
+    act(() =>
+      root.render(
+        <PlatformTaskConnection.Provider
+          value={{ apiBaseUrl: "https://backend.example/api", userId: 42 }}
+        >
+          <IssueChatMessage
+            message={{
+              ...message,
+              metadata: { backend_task_id: 7, execution_url: url },
+            }}
+            mine={false}
+            translate={translate}
+            onOpenUrl={open}
+          />
+        </PlatformTaskConnection.Provider>,
+      ),
+    );
+    expect(
+      container
+        .querySelector(
+          '[data-testid="cloud-task-activity-continue-in-wework-root"]',
+        )
+        ?.getAttribute("href"),
+    ).toBe("wework://platform-tasks/https%3A%2F%2Fbackend.example%2Fapi/42/7");
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="cloud-task-activity-open-backend-task-root"]',
+        )!
+        .click(),
+    );
+    expect(open).toHaveBeenCalledWith(url);
   });
 
   it("opens stored attachments through the host instead of navigating to a custom URL", () => {

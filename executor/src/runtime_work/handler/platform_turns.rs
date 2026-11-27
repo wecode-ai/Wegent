@@ -97,37 +97,6 @@ impl RuntimeWorkRpcHandler {
         tasks
     }
 
-    /// Only the host's authenticated connection can establish a backend identity for a new local session.
-    pub(super) fn record_execution_backend(
-        &self,
-        link: &mut RuntimeTaskLink,
-        request: &ExecutionRequest,
-    ) {
-        let Some(owner) = request
-            .extra
-            .get("user_id")
-            .and_then(Value::as_i64)
-            .filter(|owner| *owner > 0)
-        else {
-            return;
-        };
-        let Ok(Some(connection)) = self.backend_connection_snapshot() else {
-            return;
-        };
-        let Ok(device) = self.cloud_device_id() else {
-            return;
-        };
-        if connection.authenticated_user_id == Some(owner)
-            && !connection.backend_url.trim().is_empty()
-        {
-            link.execution_backend = Some(super::super::response::ExecutionBackend {
-                url: connection.backend_url.trim_end_matches('/').to_owned(),
-                owner,
-                device,
-            });
-        }
-    }
-
     fn bound_local_session(
         &self,
         request: &ExecutionRequest,
@@ -136,20 +105,31 @@ impl RuntimeWorkRpcHandler {
         let Some(thread) = crate::agent_session::resumed_session_id(request) else {
             return Ok(None);
         };
-        let Some(local) = self.local_task_by_thread_id(&thread) else {
-            return Ok(None);
-        };
         let owner = request
             .extra
             .get("user_id")
             .and_then(Value::as_i64)
             .filter(|owner| *owner > 0);
+        let device = self.cloud_device_id()?;
+        let mapped = owner.zip(backend_origin).and_then(|(owner, origin)| {
+            self.local_task_link(&super::platform_continuation::continuation_id(
+                origin,
+                owner,
+                &device,
+                &request.task_id,
+            ))
+        });
+        let Some(local) = mapped.or_else(|| self.local_task_by_thread_id(&thread)) else {
+            return Ok(None);
+        };
         let Some(provenance) = local.execution_backend.as_ref() else {
             // A historical session with no host-authenticated origin retains independent delivery.
             return Ok(None);
         };
+        let Some(task_id) = provenance.task_id.as_deref() else {
+            return Ok(None);
+        };
         let local_origin = provenance.url.as_str();
-        let device = self.cloud_device_id()?;
         let same_backend = backend_origin.map(|url| url.trim_end_matches('/'))
             == Some(local_origin)
             && request
@@ -159,7 +139,9 @@ impl RuntimeWorkRpcHandler {
         let same_shell = request
             .resolved_shell_type()
             .is_some_and(|shell| shell.eq_ignore_ascii_case(&local.runtime.replace('_', "")));
-        if owner.is_none()
+        if runtime_session_id_from_link(&local).as_deref() != Some(thread.as_str())
+            || task_id != request.task_id
+            || owner.is_none()
             || Some(provenance.owner) != owner
             || provenance.device != device
             || local.runtime_handle["executionRequest"]["user_id"].as_i64() != owner
@@ -388,6 +370,22 @@ impl RuntimeWorkRpcHandler {
                     };
                     let outcome = match launch {
                         Ok(()) => {
+                            if let Some(local) = local_session.as_deref().filter(|_| {
+                                request.resolved_agent_kind()
+                                    == crate::protocol::AgentKind::ClaudeCode
+                            }) {
+                                let payload = json!({"message":prompt_text(&request.prompt)});
+                                if let Some(message) =
+                                    cached_user_message(local, &request, &payload)
+                                {
+                                    handler.store.update_task_without_snapshot(local, |link| {
+                                        append_runtime_handle_message(
+                                            &mut link.runtime_handle,
+                                            message,
+                                        );
+                                    });
+                                }
+                            }
                             crate::runner::run_bound_shell(
                                 binding.shell.as_ref(),
                                 rx,
@@ -838,11 +836,34 @@ mod tests {
             ..Default::default()
         });
         handler.store.update_task("local", |link| {
-            handler.record_execution_backend(link, &request);
+            link.execution_backend = Some(super::super::super::response::ExecutionBackend {
+                url: "https://backend-a.example".into(),
+                owner: 7,
+                device: "device".into(),
+                task_id: None,
+            });
+        });
+        assert_eq!(
+            handler
+                .bound_local_session(&request, Some("https://backend-a.example"))
+                .unwrap(),
+            None
+        );
+        handler.store.update_task("local", |link| {
+            link.execution_backend.as_mut().unwrap().task_id = Some("11".into());
         });
         assert_eq!(
             handler
                 .bound_local_session(&request, Some("https://backend-b.example"))
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        let mut wrong_task = request.clone();
+        wrong_task.task_id = "12".into();
+        assert_eq!(
+            handler
+                .bound_local_session(&wrong_task, Some("https://backend-a.example"))
                 .unwrap_err()
                 .code,
             "permission_denied"

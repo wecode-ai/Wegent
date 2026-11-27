@@ -1,3 +1,4 @@
+import { usePlatformTaskContinuation } from "../platform-task-continuation";
 import {
   CollapsibleRoot,
   CollapsibleTrigger,
@@ -318,6 +319,7 @@ export function IssueChatMessage({
       ? message.status === "completed"
       : displayStatus === "succeeded";
   const backendExecution = isAgent ? backendTaskExecution(message) : null;
+  const continuationUrl = usePlatformTaskContinuation(backendExecution?.taskId);
   const openBackendExecution = backendExecution
     ? () => {
         onOpenUrl(backendExecution.executionUrl);
@@ -539,6 +541,15 @@ export function IssueChatMessage({
               })}
             </span>
           </span>
+          {continuationUrl ? (
+            <a
+              href={continuationUrl}
+              data-testid={`cloud-task-activity-continue-in-wework-${message.messageId}`}
+              className="inline-flex shrink-0 items-center text-blue-600 hover:underline"
+            >
+              {t("activity.task_activity_continue_in_wework")}
+            </a>
+          ) : null}
           <ControlButton
             variant="unstyled"
             type="button"

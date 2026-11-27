@@ -451,6 +451,9 @@ path = "/api/tasks/:task_id/skills"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id"
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id/wework-continuation"
 # The archived listing remains Python-owned; the detail template must not
 # interpret its literal path segment as a numeric task ID.
 [[exclude]]

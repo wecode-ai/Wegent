@@ -151,6 +151,7 @@ export const activityMessages: Record<
     "activity.task_activity_expand_content": "展开全文",
     "activity.task_activity_no_status_details": "没有更多执行信息",
     "activity.task_activity_note_label": "备注",
+    "activity.task_activity_continue_in_wework": "在 Wework 中续谈",
     "activity.task_activity_open_in_task_page": "在任务页打开",
     "activity.task_activity_open_task": "查看任务详情",
     "activity.task_activity_status_details": "执行状态详情",
@@ -322,6 +323,7 @@ export const activityMessages: Record<
     "activity.task_activity_no_status_details":
       "No additional execution details",
     "activity.task_activity_note_label": "Note",
+    "activity.task_activity_continue_in_wework": "Continue in Wework",
     "activity.task_activity_open_in_task_page": "Open in task page",
     "activity.task_activity_open_task": "View task details",
     "activity.task_activity_status_details": "Execution status details",

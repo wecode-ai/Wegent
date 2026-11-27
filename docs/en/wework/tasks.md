@@ -6,6 +6,12 @@ sidebar_position: 4
 
 <a id="task-controls"></a>
 
+<a id="platform-task-continuation"></a>
+
+## Continue a device task in Wework
+
+Open a device task in the Wegent web app and select **Continue in Wework** above the conversation. Wegent task cards in Issue activity also offer this action alongside **Open in task page**. Connect Wework to the same backend and sign in with the same account. The original conversation opens when you have access to the execution device, it is online, and the task has a resumable session.
+
 ## Individual composer controls
 
 When a red error notice appears above the task composer, select **Dismiss notice** on its right. Dismissing it leaves the draft and task run in place. If a plugin login check fails, the notice identifies the plugin to check.

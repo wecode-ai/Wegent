@@ -155,6 +155,18 @@ export function createBackendWorkbenchServices(
     return api
   }
   const listAllRuntimeWork = runtimeWorkApi.listRuntimeWork
+  runtimeWorkApi.openPlatformTask = (
+    deviceId,
+    platformTaskId,
+    expectedApiBaseUrl,
+    expectedUserId
+  ) =>
+    ownerRuntimeApi(deviceId).openPlatformTask(
+      deviceId,
+      platformTaskId,
+      expectedApiBaseUrl,
+      expectedUserId
+    )
   runtimeWorkApi.getRuntimeTask = (address, requestOptions) =>
     ownerRuntimeApi(address.deviceId).getRuntimeTask(address, requestOptions)
   runtimeWorkApi.listRuntimeWork = options =>

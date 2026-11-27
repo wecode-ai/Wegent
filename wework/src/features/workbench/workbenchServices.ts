@@ -245,6 +245,12 @@ export interface WorkbenchServices {
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> &
     Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi> & {
+      openPlatformTask?: (
+        deviceId: string,
+        platformTaskId: number,
+        expectedApiBaseUrl: string,
+        expectedUserId: number
+      ) => Promise<{ taskId: string }>
       getRuntimeTask?: ExecutorClient['runtime']['getRuntimeTask']
     }
   /** Backend-free execution ports for locally owned projects in a connected workbench. */

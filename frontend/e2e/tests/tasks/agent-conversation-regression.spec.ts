@@ -916,6 +916,39 @@ test.describe('Agent conversation regression', () => {
     ).toBe(true)
   })
 
+  test('ordinary device task exposes its own Wework continuation link', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await waitForWeworkDeviceOnline(request)
+    const prompt = makeContextToken('open_in_wework')
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    await page.goto('/devices', { waitUntil: 'domcontentloaded' })
+    await page.getByTestId(`start-device-chat-${DEVICE_ID}`).click()
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+    await selectModel(page, DEVICE_CLAUDE_MODEL_NAME)
+    await sendMessage(page, prompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await waitForBackendTerminal(request, taskId)
+    const open = page.getByTestId('continue-platform-task-in-wework')
+    await expect(open).toBeVisible()
+    const owner = await request.get(`${API_BASE_URL}/api/users/me`, { headers: authHeaders() })
+    expect(owner.ok()).toBe(true)
+    const href = new URL((await open.getAttribute('href'))!)
+    expect(href.protocol).toBe('wework:')
+    expect(href.hostname).toBe('platform-tasks')
+    const [apiBase, ownerId, linkedTaskId] = href.pathname.slice(1).split('/')
+    expect(new URL(decodeURIComponent(apiBase)).pathname).toMatch(/\/api$/)
+    expect(ownerId).toBe(String((await owner.json()).id))
+    expect(linkedTaskId).toBe(String(taskId))
+    await testInfo.attach('ordinary-device-task-continuation', {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    })
+  })
+
   test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
     page,
     request,

@@ -10,8 +10,9 @@ use crate::remote_control_is_enabled;
 
 use super::runtime_rpc::Route;
 
-const PERSONAL_TASK_METHODS: [&str; 24] = [
+const PERSONAL_TASK_METHODS: [&str; 25] = [
     "runtime.tasks.create",
+    "runtime.tasks.open_platform_task",
     "runtime.tasks.list",
     "runtime.tasks.search",
     "runtime.tasks.transcript",

@@ -782,6 +782,8 @@ async function captureVerificationScreenshot(control, name, selector = 'body', o
   const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
   const requiredEvidence =
     name.startsWith('appearance-') ||
+    name === 'platform-task-streaming.png' ||
+    name === 'platform-task-continuation.png' ||
     name === 'assistant-team-options.png' ||
     name === 'assistant-team-saved.png'
   if (

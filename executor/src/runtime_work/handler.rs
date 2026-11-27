@@ -163,6 +163,7 @@ mod mcp_apps;
 mod notifications;
 mod personal_pipeline;
 mod personal_stand_in;
+mod platform_continuation;
 mod platform_turns;
 mod plugin_install;
 mod plugin_marketplace;

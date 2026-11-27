@@ -2311,6 +2311,18 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
+    openPlatformTask(
+      deviceId: string,
+      platformTaskId: number,
+      expectedApiBaseUrl: string,
+      expectedUserId: number
+    ) {
+      const request = { deviceId, platformTaskId, expectedApiBaseUrl, expectedUserId }
+      return requestWithLocalDevice<{ taskId: string }, typeof request>(
+        'runtime.tasks.open_platform_task',
+        request
+      )
+    },
     async getRuntimeTask(
       address: RuntimeTaskAddress,
       options?: { signal?: AbortSignal }

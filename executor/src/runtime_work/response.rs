@@ -55,6 +55,8 @@ fn default_supervisor_interval_seconds() -> u64 {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct ExecutionBackend {
+    #[serde(default)]
+    pub task_id: Option<String>,
     pub url: String,
     pub owner: i64,
     pub device: String,

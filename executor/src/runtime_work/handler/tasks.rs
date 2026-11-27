@@ -872,8 +872,6 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(previous) = failed_start.as_ref() {
             link.execution_backend = previous.execution_backend.clone();
-        } else {
-            self.record_execution_backend(&mut link, &request);
         }
         self.preserve_failed_start_context(&mut link);
         if is_codex_runtime(&runtime) {
@@ -1497,6 +1495,14 @@ impl RuntimeWorkRpcHandler {
                 "error": "runtime task is already running",
                 "code": "bad_request",
             }));
+        }
+        if let Some((link, binding)) = existing_link.as_ref().and_then(|link| {
+            link.execution_backend
+                .as_ref()
+                .filter(|binding| binding.task_id.is_some())
+                .map(|binding| (link, binding))
+        }) {
+            return self.send_platform_message(link, binding, &payload).await;
         }
         let workspace_path = existing_link
             .as_ref()

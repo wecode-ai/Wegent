@@ -1146,6 +1146,11 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    async openPlatformTask(deviceId, platformTaskId, expectedApiBaseUrl, expectedUserId) {
+      const api = await runtimeApiForDevice(deviceId)
+      if (!api.openPlatformTask) throw new Error('Platform task continuation is unavailable')
+      return api.openPlatformTask(deviceId, platformTaskId, expectedApiBaseUrl, expectedUserId)
+    },
     async getRuntimeTask(address, options) {
       if (address.projectSession) return null
       const api = await runtimeApiForDevice(address.deviceId)

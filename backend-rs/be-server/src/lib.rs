@@ -227,6 +227,7 @@ mod subscription_route_ownership_tests;
 mod system_execute_sql_for_single;
 pub use wegent_task_export_docx as task_export_docx;
 pub use wegent_task_store::task_creation;
+mod task_continuation;
 #[cfg(test)]
 mod task_mutation_route_ownership_tests;
 mod task_pipeline_stage_info;

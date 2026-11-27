@@ -11,7 +11,7 @@ import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import { createWeworkSchemeService } from './weworkSchemeService'
 import i18n from '@/i18n'
 import { openWeworkScheme } from './schemeEvents'
-import { weworkInteractionScheme } from './scheme'
+import { parseWeworkScheme, weworkInteractionScheme } from './scheme'
 import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
@@ -27,7 +27,12 @@ const ReadPortContext = createContext<ReturnType<typeof createRef<TabReadPort>> 
 const releaseSchemes = new Set<() => void>()
 
 /** Commit the real tab UI first, then arrange its native navigation owner. */
-function render(ui: Parameters<typeof renderView>[0]) {
+function render(
+  ui: Parameters<typeof renderView>[0],
+  openPlatformTask?: Parameters<
+    ReturnType<typeof createWeworkSchemeService>['observe']
+  >[0]['openPlatformTask']
+) {
   const read = createRef<TabReadPort>()
   const view = renderView(<ReadPortContext.Provider value={read}>{ui}</ReadPortContext.Provider>)
   const service = createWeworkSchemeService()
@@ -35,6 +40,7 @@ function render(ui: Parameters<typeof renderView>[0]) {
     if (!read.current) throw new Error('Workspace tabs did not commit their read port')
     const { tabs, connection } = read.current
     service.observe({
+      openPlatformTask,
       tabs: {
         ...tabs,
         selectTab: (...args) => {
@@ -302,4 +308,77 @@ test('a delayed shared Issue lookup cannot replace a newer conversation link', a
   })
 
   expect(screen.getByTestId('active-route')).toHaveTextContent('taskId=newer-task')
+})
+
+test('a platform task opens the verified device conversation independently of any Issue', async () => {
+  const apiBaseUrl = 'https://backend.example.test/api'
+  const resolve = vi.fn(async () =>
+    Response.json({ id: 42, user: { id: 7 }, device_id: 'executor-a' })
+  )
+  vi.stubGlobal('fetch', resolve)
+  const openTask = vi.fn(async () => ({ taskId: 'verified-task' }))
+  render(
+    <CloudConnectionContext.Provider
+      value={
+        {
+          isConnected: true,
+          token: 'test-token',
+          apiBaseUrl,
+          user: { id: 7 },
+        } as CloudConnectionContextValue
+      }
+    >
+      <Harness
+        tabs={[
+          { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+        ]}
+      />
+    </CloudConnectionContext.Provider>,
+    openTask
+  )
+  act(() => openWeworkScheme(`wework://platform-tasks/${encodeURIComponent(apiBaseUrl)}/7/42`))
+  await waitFor(() =>
+    expect(screen.getByTestId('active-route')).toHaveTextContent(
+      'deviceId=executor-a&taskId=verified-task'
+    )
+  )
+  expect(openTask).toHaveBeenCalledWith('executor-a', 42, apiBaseUrl, 7)
+  expect(parseWeworkScheme('wework://platform-tasks/42')).toBeNull()
+})
+
+test.each([
+  ['https://other.example/api', 7],
+  ['https://backend.example/api', 8],
+])('rejects a platform task from another connection or account (%s, %i)', async (source, owner) => {
+  const apiBaseUrl = 'https://backend.example/api'
+  const openTask = vi.fn()
+  const fetch = vi.fn(async () => Response.json({ ok: true, result: { response: 0 } }))
+  vi.stubGlobal('fetch', fetch)
+  render(
+    <CloudConnectionContext.Provider
+      value={
+        {
+          isConnected: true,
+          token: 'test-token',
+          apiBaseUrl,
+          user: { id: 7 },
+        } as CloudConnectionContextValue
+      }
+    >
+      <Harness
+        tabs={[
+          { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+        ]}
+      />
+    </CloudConnectionContext.Provider>,
+    openTask
+  )
+  act(() => openWeworkScheme(`wework://platform-tasks/${encodeURIComponent(source)}/${owner}/42`))
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+  expect(fetch).toHaveBeenCalledWith(
+    '/wework/electron-host/v1/invoke',
+    expect.objectContaining({ body: expect.stringContaining('"capability":"dialog.message"') })
+  )
+  expect(openTask).not.toHaveBeenCalled()
+  expect(screen.getByTestId('active-route')).toHaveTextContent('/todo')
 })
