@@ -200,7 +200,7 @@ function updateDefinitionInputs(
   change: Parameters<StandInExecutorApi['personalSave']>[4]
 ) {
   const definitions = definitionInputs(account)
-  if (!change) {
+  if (!change || change.roleId === '@primary') {
     const primary = definitions.get('@primary')
     if (primary && settings.primary) primary.prompt = settings.primary.prompt
   } else if (change.kind === 'delete') {
@@ -275,7 +275,7 @@ export function personalAssistantDeviceSettings(
             deviceSettings,
             deviceId,
             transferRoleId,
-            undefined,
+            definitionChange,
             portableTeam
           )
         }
@@ -317,7 +317,7 @@ export function personalAssistantDeviceSettings(
           .filter(role => !projected.has(role.id))
           .filter(role => role.id !== definitionChange?.roleId)
         const primary =
-          definitionChange ||
+          (definitionChange && definitionChange.roleId !== '@primary') ||
           (!device.primary && dequal(settings.primary, projectedSettings.primary))
             ? device.primary
             : deviceSettings.primary
@@ -331,7 +331,7 @@ export function personalAssistantDeviceSettings(
           },
           deviceId,
           transferRoleId,
-          undefined,
+          definitionChange,
           portableTeam
         )
         const definitions = updateDefinitionInputs(account, settings, definitionChange)

@@ -1041,8 +1041,10 @@ export function StandInOverviewPage({
                       setProfile(null)
                       if (initialPrimaryProfile) props.onCancel?.()
                     }}
-                    onSave={async (value, stayOpen) => {
-                      const saved = await state.save(value)
+                    onSave={async (value, stayOpen, copyTeam) => {
+                      const saved = copyTeam
+                        ? await state.save(value, { kind: 'update', roleId: '@primary', copyTeam })
+                        : await state.save(value)
                       if (saved && !stayOpen) {
                         setProfile(null)
                         if (initialPrimaryProfile) props.onCancel?.()

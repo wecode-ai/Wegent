@@ -83,7 +83,22 @@ export async function saveStandInRoleDevice(
     ].filter(device => device !== targetDevice),
   }
   delete transferred.taskPermissions
-  if (current.portableTeam) transferred.teamRef = null
+  const copying = input.definitionChange?.copyTeam
+  if (copying && !current.portableTeam) {
+    throw Object.assign(new Error('The source Executor cannot export the referenced Team'), {
+      code: 'stand_in_team_import_unsupported',
+    })
+  }
+  // Import already creates this assistant's own Team on the destination.
+  const portableTeam =
+    copying && current.portableTeam
+      ? {
+          ...current.portableTeam,
+          name: role.name,
+          ...(previous?.prompt !== role.prompt ? { system_prompt: role.prompt } : {}),
+        }
+      : current.portableTeam
+  if (portableTeam) transferred.teamRef = null
   await checkTargetConnectionProviders(api, targetDevice, role.connections)
   const staged = await api.personalSave(
     userId,
@@ -97,7 +112,7 @@ export async function saveStandInRoleDevice(
     targetDevice,
     role.id,
     undefined,
-    current.portableTeam
+    portableTeam
   )
   // Webhook subscriptions are addressed to one Executor. Transfer ownership only
   // after redirecting the source, using the generation checked by the cloud.
@@ -143,7 +158,7 @@ export async function saveStandInRoleDevice(
       },
       targetDevice,
       role.id,
-      input.definitionChange
+      copying ? { kind: 'update', roleId: role.id } : input.definitionChange
     )
     return result.roles.find(row => row.id === role.id)!
   } catch (cause) {

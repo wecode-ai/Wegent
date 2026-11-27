@@ -14,7 +14,8 @@ import { StandInImConnections } from './StandInImConnections'
 function openPrimaryProfile(
   selfLearningEnabled?: boolean,
   imSessionApi?: WorkbenchServices['imSessionApi'],
-  cloudDefinitionRevision?: string
+  cloudDefinitionRevision?: string,
+  teamRef?: string
 ) {
   const { settings } = personalStandInFixture()
   settings.cloudDefinitionRevision = cloudDefinitionRevision
@@ -34,6 +35,7 @@ function openPrimaryProfile(
   settings.primary = {
     enabled: true,
     selfLearningEnabled,
+    ...(teamRef ? { teamRef } : {}),
     prompt: 'Ask for evidence',
     preferences: 'Private context',
   }
@@ -77,6 +79,7 @@ function openPrimaryProfile(
   )
   return {
     model,
+    onSave,
     save: () => {
       fireEvent.click(screen.getByTestId('stand-in-primary-save'))
       return onSave.mock.calls[0]?.[0].primary
@@ -211,4 +214,23 @@ test('a migrated default assistant keeps its shared instructions when private pr
     prompt: 'Ask for evidence',
     preferences: 'Edited private context',
   })
+})
+
+test('saving edits to a referenced Team requires explicit copy confirmation', () => {
+  const { save, onSave } = openPrimaryProfile(undefined, undefined, undefined, 'LA-original')
+  fireEvent.change(screen.getByTestId('stand-in-primary-ghost-prompt'), {
+    target: { value: 'New instructions' },
+  })
+  save()
+  fireEvent.click(screen.getByTestId('stand-in-copy-team-cancel'))
+  expect(onSave).not.toHaveBeenCalled()
+  save()
+  fireEvent.click(screen.getByTestId('stand-in-copy-team-confirm'))
+  expect(onSave).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({ teamRef: 'LA-original', prompt: 'New instructions' }),
+    }),
+    false,
+    true
+  )
 })

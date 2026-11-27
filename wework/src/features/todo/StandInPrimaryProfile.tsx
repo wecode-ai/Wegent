@@ -1,3 +1,4 @@
+import { editedReferencedTeam } from './standInRoleDraft'
 import type { PersonalStandInSettings, StandInIdentity } from '@/api/personalStandIn'
 import {
   connectionChangeEnablesIdentity,
@@ -6,6 +7,7 @@ import {
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { MessageCenterSource } from '@/api/standInMessageCenter'
+import { StandInTeamCopyDialog } from './StandInTeamCopyDialog'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -77,7 +79,8 @@ export function StandInPrimaryProfile({
   error: string | null
   onSave(
     settings: PersonalStandInSettings,
-    stayOpen?: boolean
+    stayOpen?: boolean,
+    copyTeam?: boolean
   ): Promise<PersonalStandInSettings | void>
   onClose(): void
   ref?: Ref<StandInSettingsHandle>
@@ -105,7 +108,9 @@ export function StandInPrimaryProfile({
   const defaultRole = newStandInPrimaryRole(executionDeviceId)
   const defaultCollaboration = defaultRole.collaboration
   const usesSeparatePrompt = (primary: StandInIdentity) =>
-    settings.cloudDefinitionRevision !== undefined || primary.selfLearningEnabled !== undefined
+    settings.cloudDefinitionRevision !== undefined ||
+    primary.selfLearningEnabled !== undefined ||
+    Boolean(primary.teamRef?.startsWith('LA-'))
   const separatePrompt = usesSeparatePrompt(saved)
   const normalizePrimary = (primary: StandInIdentity): NormalizedPrimary => {
     const separatePrompt = usesSeparatePrompt(primary)
@@ -197,7 +202,8 @@ export function StandInPrimaryProfile({
     !separatePrompt &&
     draft.selfLearningEnabled === true &&
     draft.preferences === original.preferences
-  const savePrimary = async () => {
+  const [confirmTeamCopy, setConfirmTeamCopy] = useState(false)
+  const savePrimary = async (copyTeam = false) => {
     const updated = scopeView
       ? { ...saved, ...connectionConfigurationChanges(saved, draft, scopeView) }
       : {
@@ -216,7 +222,13 @@ export function StandInPrimaryProfile({
           enabled: saved.enabled || connectionChangeEnablesIdentity(saved, updated),
         })
       : updated
-    const result = await onSave({ ...settings, primary }, Boolean(scopeView))
+    if (!copyTeam && editedReferencedTeam(saved, primary)) {
+      setConfirmTeamCopy(true)
+      return
+    }
+    const result = copyTeam
+      ? await onSave({ ...settings, primary }, Boolean(scopeView), true)
+      : await onSave({ ...settings, primary }, Boolean(scopeView))
     if (result?.primary && scopeView) {
       const accepted = normalizePrimary(result.primary)
       const remaining = {
@@ -475,6 +487,14 @@ export function StandInPrimaryProfile({
         </div>
       )}
       {shortcutPage?.content}
+      <StandInTeamCopyDialog
+        open={confirmTeamCopy}
+        onClose={() => setConfirmTeamCopy(false)}
+        onConfirm={() => {
+          setConfirmTeamCopy(false)
+          void savePrimary(true)
+        }}
+      />
       <ConfirmDialog
         open={discard}
         destructive

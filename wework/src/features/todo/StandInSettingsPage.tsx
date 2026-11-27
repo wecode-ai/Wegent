@@ -6,7 +6,7 @@ import {
   roleSelectsProject,
   standInRoleName,
 } from '@/api/personalStandIn'
-import { editedReferencedTeam, StandInTeamCopyDialog } from './StandInTeamCopyDialog'
+import { StandInTeamCopyDialog } from './StandInTeamCopyDialog'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
@@ -52,7 +52,7 @@ import {
   rebaseConnectionDraft,
 } from './standInConnectionSettingsModel'
 import { projectRefKey, updateProjectSource } from './standInProjects'
-import { createStandInRoleDraft } from './standInRoleDraft'
+import { createStandInRoleDraft, editedReferencedTeam } from './standInRoleDraft'
 import {
   StandInSettingsActions,
   StandInSettingsEntry,
@@ -401,7 +401,7 @@ function StandInSettingsEditor({
       return
     }
     const definitionChange = {
-      ...(copyTeam ? {copyTeam: true} : {}),
+      ...(copyTeam ? { copyTeam: true } : {}),
       kind: role.id === createdRoleId ? ('create' as const) : ('update' as const),
       roleId: role.id,
     }
@@ -844,8 +844,15 @@ function StandInSettingsEditor({
                 {t('standIn.saved')}
               </p>
             )}
-            <StandInTeamCopyDialog open={pendingTeamCopy !== null} onClose={() => setPendingTeamCopy(null)}
-              onConfirm={() => { const disconnect = pendingTeamCopy === true; setPendingTeamCopy(null); void save(disconnect, true) }} />
+            <StandInTeamCopyDialog
+              open={pendingTeamCopy !== null}
+              onClose={() => setPendingTeamCopy(null)}
+              onConfirm={() => {
+                const disconnect = pendingTeamCopy === true
+                setPendingTeamCopy(null)
+                void save(disconnect, true)
+              }}
+            />
             <ConfirmDialog
               open={confirmDiscard}
               destructive
