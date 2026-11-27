@@ -7,11 +7,7 @@ import {
   fetchJson,
 } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import {
-  bindStoppedStandIn,
-  finishStandInOnboarding,
-  stopBoundStandIn,
-} from '../modules/stand-in-instance-flows.mjs'
+import { finishStandInOnboarding } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
@@ -110,16 +106,15 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        // Persistence assertions below read this same local Executor. Rebinding
-        // now requires stopping the entire previous profile through its real UI.
+        // Persistence assertions below read the local execution profile.
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
-        await finishStandInOnboarding(control)
-        await stopBoundStandIn(control, uiTimeoutMs)
-        await bindStoppedStandIn(control, userId, initial.executionDeviceId, uiTimeoutMs)
         await finishStandInOnboarding(control)
         for (const model of models) {
           await openStandInSettings(control)
-          await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
+          await control.command(
+            'clickWhenEnabled',
+            '[data-testid="stand-in-primary-execution-toggle"]'
+          )
           await control.command('waitFor', PANEL)
           const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
           const optionId = `model-option-${key}`

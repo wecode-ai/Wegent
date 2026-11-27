@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageCenterRecord } from '@/api/standInMessageCenter'
-import { classifyMessageCenterRecords, isToday, safeDingTalkUrl } from './messageCenterModel'
+import { standInDelegationCategory } from './standInDelegationRecords'
 
 const receivedAt = '2026-11-24T07:00:00Z'
 const verifiedReceipt: NonNullable<MessageCenterRecord['receipt']> = {
@@ -28,7 +28,7 @@ function record(id: string, facts: Partial<MessageCenterRecord> = {}): MessageCe
   }
 }
 
-describe('message center classification', () => {
+describe('stand-in delegation records', () => {
   it('counts only effective answers with verified channel or recipient evidence', () => {
     const delivered = record('delivered', {
       delivery: 'confirmed',
@@ -62,53 +62,38 @@ describe('message center classification', () => {
     const accepted = record('accepted', { delivery: 'submitted', reply: 'Please see the notes.' })
     const draft = record('draft', { progress: 'ready_to_send', reply: 'Please see the notes.' })
 
-    const views = classifyMessageCenterRecords([
-      missingReceipt,
-      delivered,
-      accepted,
-      recipientVerified,
-      draft,
-      invalidReceipt,
-      transportAccepted,
-      noReply,
+    expect([delivered, recipientVerified].map(standInDelegationCategory)).toEqual([
+      'replied',
+      'replied',
     ])
-
-    expect(views.replied).toEqual([delivered, recipientVerified])
-    expect(views.exceptions).toEqual([missingReceipt, invalidReceipt, transportAccepted, noReply])
-    expect(views.in_progress).toEqual([accepted, draft])
+    expect(
+      [missingReceipt, invalidReceipt, transportAccepted, noReply].map(standInDelegationCategory)
+    ).toEqual(['exceptions', 'exceptions', 'exceptions', 'exceptions'])
+    expect([accepted, draft].map(standInDelegationCategory)).toEqual(['in_progress', 'in_progress'])
   })
 
-  it('retains takeover and delivery uncertainty together and deduplicates across views', () => {
+  it('prioritizes delivery uncertainty over takeover', () => {
     const exception = record('item', {
       at: '2026-11-24T07:10:00Z',
       decision: 'needs_user',
       delivery: 'unknown',
       takenOver: true,
     })
-    const oldSnapshot = record('item', { decision: 'needs_user' })
     const handover = record('user-action', { takenOver: true, progress: 'generating' })
     const skipped = record('skip', { decision: 'skip' })
 
-    const views = classifyMessageCenterRecords([oldSnapshot, handover, exception, skipped])
-
-    expect(views).toEqual({
-      replied: [],
-      needs_user: [handover],
-      skipped: [skipped],
-      exceptions: [exception],
-      in_progress: [],
-    })
-    expect(views.exceptions[0].takenOver).toBe(true)
+    expect(standInDelegationCategory(exception)).toBe('exceptions')
+    expect(standInDelegationCategory(handover)).toBe('needs_user')
+    expect(standInDelegationCategory(skipped)).toBe('skipped')
   })
 
-  it('does not infer a delivery day when the valid receipt has no timestamp', () => {
+  it('recognizes a valid receipt without a timestamp', () => {
     const delivered = record('verified-without-date', {
       delivery: 'confirmed',
       reply: 'See the pinned document.',
       receipt: { id: 'reply-id', kind: 'channel_receipt' },
     })
-    expect(classifyMessageCenterRecords([delivered]).replied).toEqual([delivered])
-    expect(isToday(delivered.receipt?.verifiedAt, new Date(receivedAt))).toBe(false)
+    expect(standInDelegationCategory(delivered)).toBe('replied')
   })
 
   it('keeps technical failures and failed work in exceptions instead of business handoffs', () => {
@@ -124,23 +109,9 @@ describe('message center classification', () => {
       reason: 'The executor stopped before producing a decision.',
     })
 
-    const views = classifyMessageCenterRecords([technical, failedWork])
-
-    expect(views.exceptions).toEqual([technical, failedWork])
-    expect(views.needs_user).toEqual([])
-    expect(views.in_progress).toEqual([])
-  })
-})
-
-describe('DingTalk conversation links', () => {
-  it('opens existing provider links and rejects lookalike domains and unsafe schemes', () => {
-    expect(safeDingTalkUrl('https://im.dingtalk.com/thread/123')).toBe(
-      'https://im.dingtalk.com/thread/123'
-    )
-    expect(safeDingTalkUrl(undefined)).toBeNull()
-    expect(safeDingTalkUrl('dingtalk://dingtalkclient/action/open')).toBeNull()
-    expect(safeDingTalkUrl('https://dingtalk.com.example.invalid/thread/123')).toBeNull()
-    expect(safeDingTalkUrl('https://other-user@dingtalk.com/thread/123')).toBeNull()
-    expect(safeDingTalkUrl('javascript:alert(1)')).toBeNull()
+    expect([technical, failedWork].map(standInDelegationCategory)).toEqual([
+      'exceptions',
+      'exceptions',
+    ])
   })
 })

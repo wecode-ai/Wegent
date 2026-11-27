@@ -224,11 +224,7 @@ export function createDesktopScenario(options) {
         'Model-interface settings did not reload after fixture cleanup'
       )
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command(
-        'waitFor',
-        `${selector('stand-in-message-center-open')}[aria-current="page"]`
-      )
-      await control.command('clickWhenEnabled', selector('stand-in-primary-open'))
+      await control.command('waitFor', `${selector('stand-in-primary-open')}[aria-current="page"]`)
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       const initial = await rpc('runtime.stand_in.personal.get', { userId })
       const catalog = await rpc('runtime.runner.catalog', {})

@@ -314,14 +314,6 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   assert.equal(all.find(row => row.kind === 'group').collectionKey, 'all-messages')
   assert.equal(new Set(all.map(row => row.profile)).size, 1)
 
-  await control.command('clickWhenEnabled', id('stand-in-message-center-open'))
-  await control.command('waitFor', id('stand-in-message-center'), {
-    text: '已设置钉钉接收范围',
-  })
-  await control.command('waitFor', id('message-center-start-setup'), { visible: false })
-  await captureScreenshot(control, 'connection-dingtalk-message-center-configured.png')
-  await control.command('clickWhenEnabled', id('stand-in-primary-open'))
-
   await openConnections(control)
   await enterSource(control, 'dingtalk')
   await control.command('waitFor', dingtalk('open-all-scope'))

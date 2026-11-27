@@ -19,7 +19,7 @@ import { TextField as ControlInput } from '@wegent/collaboration/controls/TextFi
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { dequal } from 'dequal'
 import { Search } from 'lucide-react'
-import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   ConnectionChoice,
   ConnectionRulePicker,
@@ -30,7 +30,6 @@ import { useConnectionScopeList, useConnectionScopeTitle } from './connectionSco
 import { createSourceConnectionsModel, hasAllDingTalkMessages } from './sourceConnectionsModel'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
-import { StandInSourceNavigationContext } from './standInOverviewSource'
 
 type SourceConnectionsProps = {
   role: StandInRole
@@ -73,27 +72,6 @@ function StandInSourceConnectionsContent({
   onReady,
 }: SourceConnectionsProps) {
   const { t } = useTranslation('common')
-  const requestedSourceId = useContext(StandInSourceNavigationContext)
-  const focusedRequestedSource = useRef(false)
-  const focusTarget = (target: HTMLElement) => {
-    if (focusedRequestedSource.current) return
-    focusedRequestedSource.current = true
-    target.scrollIntoView?.({ block: 'center' })
-    target.focus({ preventScroll: true })
-  }
-  const focusRequestedSource = (node: HTMLButtonElement | null) => {
-    if (node && requestedSourceId) focusTarget(node)
-  }
-  const focusRequestedSourceFallback = (node: HTMLElement | null) => {
-    if (
-      !node ||
-      !requestedSourceId ||
-      focusedRequestedSource.current ||
-      !rows.some(row => row.id === requestedSourceId)
-    )
-      return
-    focusTarget(node)
-  }
   const input = useMemo(
     () => ({
       role,
@@ -394,8 +372,6 @@ function StandInSourceConnectionsContent({
   if (authorizationRequired)
     return (
       <section
-        ref={focusRequestedSourceFallback}
-        tabIndex={requestedSourceId ? -1 : undefined}
         className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
         data-testid={`${prefix}-authorization`}
       >
@@ -437,8 +413,6 @@ function StandInSourceConnectionsContent({
     )
   return (
     <section
-      ref={focusRequestedSourceFallback}
-      tabIndex={requestedSourceId ? -1 : undefined}
       className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
       data-testid={`${prefix}-connections`}
     >
@@ -467,11 +441,6 @@ function StandInSourceConnectionsContent({
                     <ConnectionScopeRow
                       name={t('standIn.workspace.dingtalk_every_message')}
                       description={t('standIn.workspace.dingtalk_every_message_help')}
-                      ref={
-                        accountRows.some(row => row.id === requestedSourceId)
-                          ? focusRequestedSource
-                          : undefined
-                      }
                       testId={`${prefix}-open-all-scope`}
                       pending={!hasAllDingTalkMessages(savedAccountRows)}
                       disabled={!editable}
@@ -508,7 +477,6 @@ function StandInSourceConnectionsContent({
                         testId={`${prefix}-open-scope-${row.kind}-${row.id}`}
                         pending={!savedKeys.has(identity(row))}
                         disabled={!editable}
-                        ref={row.id === requestedSourceId ? focusRequestedSource : undefined}
                         onRemove={() => updateRows(rows.filter(value => value !== row))}
                         onClick={() => {
                           if (row.scope === 'all') {
