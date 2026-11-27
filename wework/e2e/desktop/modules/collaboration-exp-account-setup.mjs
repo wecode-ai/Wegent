@@ -63,9 +63,20 @@ export async function migrateCollaborationExpAssistant({
   await control.command('waitFor', '[data-testid="personal-assistant-account-setup"]', {
     visible: false,
   })
-  await control.command('waitFor', '[data-testid="stand-in-overview"]', { visible: true })
   const { assistant } = await request('/api/v1/personal-assistant')
   assertCollaborationExpMigratedAccount(assistant, settings)
+  const onboarding = '[data-testid="stand-in-onboarding"]'
+  const overview = '[data-testid="stand-in-overview"]'
+  await control.command('waitFor', `${onboarding}, ${overview}`, { visible: true })
+  if (Number(await control.command('getElementCount', onboarding))) {
+    // The optional setup hides the overview. Its UI exit defers setup without saving a draft.
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-close"]')
+    await control.command('waitFor', onboarding, { visible: false })
+  } else {
+    await control.command('waitFor', overview, { visible: true })
+  }
+  const { assistant: afterExit } = await request('/api/v1/personal-assistant')
+  assert.deepEqual(afterExit, assistant, 'Onboarding exit must preserve the migrated cloud account')
   assert.deepEqual(
     await nativeTaskIdentities(),
     tasks,

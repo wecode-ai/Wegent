@@ -4,8 +4,10 @@ import {
   createPersonalAssistantAccountApi,
   type PersonalAssistantAccount,
 } from '@/api/personalAssistantAccount'
-import { newStandInRole } from '@/api/personalStandIn'
+import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { StandInOnboarding } from '@/features/todo/StandInOnboarding'
+import { navigateTo } from '@/lib/navigation'
 import { PersonalAssistantAccountSetup } from '@/features/todo/PersonalAssistantAccountSetup'
 import {
   createCollaborationExpCloudRequest,
@@ -159,7 +161,15 @@ test.each(['task', 'issue'] as const)(
   }
 )
 
-function AccountManagementFixture({ services }: { services: WorkbenchServices }) {
+function AccountManagementFixture({
+  services,
+  settings,
+  onExit,
+}: {
+  services: WorkbenchServices
+  settings: PersonalStandInSettings
+  onExit(): void
+}) {
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -170,9 +180,35 @@ function AccountManagementFixture({ services }: { services: WorkbenchServices })
       </section>
       <PersonalAssistantAccountSetup services={services} userId={7} active>
         {() => (
-          <div data-testid="stand-in-overview">
-            {open && <SettingsPortal active name="Integration assistant" />}
-          </div>
+          <StandInOnboarding
+            api={services.standInApi!}
+            userId={settings.userId}
+            deviceId={settings.executionDeviceId}
+            active
+            configuration={{
+              settings,
+              loading: false,
+              error: null,
+              projects: [],
+              localDeviceId: settings.executionDeviceId,
+              services,
+              onSave: async () => {
+                throw new Error('Onboarding exit must not save primary configuration')
+              },
+              onReload: () => {},
+            }}
+            onClose={() => {
+              onExit()
+              navigateTo('/')
+            }}
+            onOpenConversation={() => {
+              throw new Error('Onboarding exit must not open a conversation')
+            }}
+          >
+            <div data-testid="stand-in-overview">
+              {open && <SettingsPortal active name="Integration assistant" />}
+            </div>
+          </StandInOnboarding>
         )}
       </PersonalAssistantAccountSetup>
     </>
@@ -188,8 +224,11 @@ type MigrationFault =
   | 'extra-role'
   | 'task'
   | 'issue'
+  | 'exit-task'
+  | 'exit-issue'
+  | 'exit-definition'
 
-async function migrateAndManage(fault?: MigrationFault) {
+async function migrateAndManage(fault?: MigrationFault, completed = false) {
   const deviceId = 'electron-collaboration-exp'
   const role = {
     ...newStandInRole(deviceId, COLLABORATION_EXP_RHYTHM_ROLE),
@@ -202,7 +241,21 @@ async function migrateAndManage(fault?: MigrationFault) {
     name: 'Existing assistant',
     prompt: 'Preserve this role',
   }
-  const settings = { userId: 7, executionDeviceId: deviceId, version: 3, roles: [role, sibling] }
+  const settings = {
+    userId: 7,
+    executionDeviceId: deviceId,
+    version: 3,
+    roles: [role, sibling],
+    primary: {
+      enabled: false,
+      prompt: 'Preserve the primary prompt',
+      preferences: 'Keep primary preferences',
+    },
+  }
+  const originalSettings = structuredClone(settings)
+  const reads: string[] = []
+  let exited = false
+  let migrated: PersonalAssistantAccount | null = null
   const tasks = ['native-task']
   const issues = ['shared-issue']
   let account: PersonalAssistantAccount | null = null
@@ -210,6 +263,7 @@ async function migrateAndManage(fault?: MigrationFault) {
   const applicationFetch: typeof fetch = async (input, init) => {
     expect(String(input)).toBe('http://127.0.0.1:43112/api/v1/personal-assistant')
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer migration-contract-token')
+    if (init?.method !== 'POST' && account) reads.push(exited ? 'after-exit' : 'before-exit')
     if (init?.method === 'POST') {
       const payload = JSON.parse(String(init.body))
       imports.push(payload)
@@ -251,6 +305,7 @@ async function migrateAndManage(fault?: MigrationFault) {
         account.definitions.push({ ...migratedRole, roleId: 'unexpected-role' })
       if (fault === 'task') tasks.push('unexpected-task')
       if (fault === 'issue') issues.push('unexpected-issue')
+      migrated = structuredClone(account)
     }
     return Response.json({ assistant: account })
   }
@@ -266,10 +321,39 @@ async function migrateAndManage(fault?: MigrationFault) {
     standInApi: {
       personalGet: async () => settings,
       binding: async () => ({ target: { userId: settings.userId, deviceId } }),
+      onboarding: async () => ({ state: { completed }, reviewTemplate: {} }),
+      completeOnboarding: async () => {
+        throw new Error('UI exit must not complete onboarding through RPC')
+      },
+      catalog: async () => ({
+        models: [
+          {
+            runtime: 'codex',
+            provider: 'fixture',
+            model_id: 'configured-model',
+            label: 'Configured model',
+            is_default: true,
+          },
+        ],
+      }),
+      connectionProviders: async () => ({ items: [] }),
     },
+    modelApi: { listModels: async () => ({ data: [] }) },
     getLocalRuntimeSidebarIdentity: async () => ({ deviceId }),
   } as unknown as WorkbenchServices
-  render(<AccountManagementFixture services={services} />)
+  render(
+    <AccountManagementFixture
+      services={services}
+      settings={settings}
+      onExit={() => {
+        exited = true
+        if (fault === 'exit-task') tasks.push('unexpected-task')
+        if (fault === 'exit-issue') issues.push('unexpected-issue')
+        if (fault === 'exit-definition')
+          account!.definitions[0].ghost.spec.systemPrompt = 'Changed during exit'
+      }}
+    />
+  )
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
     new DOMRect(0, 0, 100, 30)
   )
@@ -288,6 +372,17 @@ async function migrateAndManage(fault?: MigrationFault) {
     returnRoute: '/collaboration-exp?view=assistant',
     ...identities,
   })
+  expect(settings).toEqual(originalSettings)
+  expect(account).toEqual(migrated)
+  expect(reads).toContain('before-exit')
+  expect(exited).toBe(!completed)
+  if (!completed) expect(reads).toContain('after-exit')
+  expect(window.location.pathname).toBe('/collaboration-exp')
+  expect(
+    control.commands.some(
+      command => command.selector === '[data-testid="stand-in-onboarding-skip"]'
+    )
+  ).toBe(false)
   await verifyCollaborationExpTeamManagement({
     control,
     runningRole: '[data-testid="running-role"]',
@@ -298,7 +393,12 @@ async function migrateAndManage(fault?: MigrationFault) {
   expect(imports).toEqual([
     {
       definitions: [
-        { roleId: '@primary', name: expect.any(String), prompt: '', executionDeviceId: deviceId },
+        {
+          roleId: '@primary',
+          name: expect.any(String),
+          prompt: settings.primary.prompt,
+          executionDeviceId: deviceId,
+        },
         { roleId: role.id, name: role.name, prompt: role.prompt, executionDeviceId: deviceId },
         {
           roleId: sibling.id,
@@ -320,6 +420,7 @@ test('migrates the saved native team through the real account confirmation and H
       .map(command => command.selector)
   ).toEqual([
     '[data-testid="personal-assistant-account-migrate-confirm"]',
+    '[data-testid="stand-in-onboarding-close"]',
     '[data-testid="running-role"]',
   ])
   expect(document.querySelector('[data-testid="personal-assistant-account-setup"]')).toBeNull()
@@ -347,4 +448,15 @@ test.each([
     await expect(migrateAndManage(fault)).rejects.toThrow(message)
   },
   15000
+)
+
+test('retains the original visible overview gate when follow-up onboarding is already completed', async () => {
+  await migrateAndManage(undefined, true)
+})
+
+test.each(['exit-task', 'exit-issue', 'exit-definition'] as const)(
+  'rejects optional onboarding exit that changes the %s contract',
+  async fault => {
+    await expect(migrateAndManage(fault)).rejects.toThrow()
+  }
 )
