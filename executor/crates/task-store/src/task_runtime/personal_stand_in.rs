@@ -870,6 +870,14 @@ impl LocalTaskStore {
         options: StandInSaveOptions<'_>,
     ) -> Result<Value, TaskRuntimeError> {
         migrate_personal_settings(&mut value)?;
+        if let Some(primary) = value.get_mut("primary") {
+            retire_dingtalk_delegation(primary);
+        }
+        if let Some(roles) = value.get_mut("roles").and_then(Value::as_array_mut) {
+            for role in roles {
+                retire_dingtalk_delegation(role);
+            }
+        }
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
             object.remove("autoSelect");
@@ -919,12 +927,10 @@ impl LocalTaskStore {
             fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
-            retire_dingtalk_delegation(&mut value["primary"]);
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
-            retire_dingtalk_delegation(role);
             let before = previous["roles"]
                 .as_array()
                 .unwrap()
