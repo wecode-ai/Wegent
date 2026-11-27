@@ -128,6 +128,7 @@ impl RuntimeWorkRpcHandler {
                 .store
                 .read_task(task_id, |link| {
                     (runtime_has_provider_transcript_reader(&link.runtime)
+                        && !link.has_platform_history()
                         && !link.ephemeral
                         && runtime_session_id_from_link(link).is_some()
                         && !provider_transcript_is_unmaterialized(link))

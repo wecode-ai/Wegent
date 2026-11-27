@@ -748,8 +748,7 @@ impl RuntimeWorkRpcHandler {
         evidence: Value,
     ) -> Result<(), AppIpcError> {
         let (user, version, role_id, device) = Self::training_identity(settings, role)?;
-        let config =
-            json!({"model":role["model"],"modelOptions":role["modelOptions"],"userId":user});
+        let config = json!({"model":role["model"],"modelOptions":role["modelOptions"],"userId":user,"teamRef":role["teamRef"]});
         let payload = self
             .prepare_background_stand_in_execution(
                 json!({"message":"Evaluate role behavior"}),

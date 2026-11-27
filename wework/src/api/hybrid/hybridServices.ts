@@ -2173,15 +2173,24 @@ export function createHybridWorkbenchServices(
         if (registered) return registered
         return api.deviceIdentity(deviceId)
       },
-      async personalGet(userId, deviceId) {
-        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
+      async personalGet(userId, deviceId, options) {
+        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId, options)
       },
-      async personalSave(userId, settings, deviceId, transferRoleId) {
+      async personalSave(
+        userId,
+        settings,
+        deviceId,
+        transferRoleId,
+        definitionChange,
+        portableTeam
+      ) {
         return (await standInApiForDevice(deviceId)).personalSave(
           userId,
           settings,
           deviceId,
-          transferRoleId
+          transferRoleId,
+          definitionChange,
+          portableTeam
         )
       },
       async saveDelegationRoute(userId, deviceId, version, roleId, route) {

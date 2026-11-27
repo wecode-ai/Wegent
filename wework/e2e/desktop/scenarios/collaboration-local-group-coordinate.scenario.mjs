@@ -16,10 +16,12 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
+  inCollaborationSidebar,
   selectProjectRunnerModel,
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { openWorkspaceAgentConfiguration } from '../modules/workspace-agent-setup.mjs'
 import { verifyLocalSettingsProjectVersion } from '../modules/collaboration-settings-ux.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -142,7 +144,15 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     timeoutMs
   )
   const agentId = rowTestId.slice('project-agent-row-'.length)
-  await control.command('click', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
+  const projectNavId = await waitForTestIdByText(
+    control,
+    inCollaborationSidebar('[data-testid="collaboration-project-tree"]', CONTENT),
+    'collaboration-workspace-project-',
+    PROJECT,
+    timeoutMs
+  )
+  await openWorkspaceAgentConfiguration(control, CONTENT, 'wework-local-workspace')
+  await control.command('clickWhenEnabled', scoped(`[data-testid="project-agent-edit-${agentId}"]`))
   await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
   await control.command('waitFor', '[data-testid="cloud-project-chat-agent-models"]', {
     timeoutMs,
@@ -180,6 +190,11 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     visible: false,
     timeoutMs,
   })
+  await control.command(
+    'clickWhenEnabled',
+    inCollaborationSidebar(`[data-testid="${projectNavId}"]`, CONTENT)
+  )
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   return agentId
 }
 

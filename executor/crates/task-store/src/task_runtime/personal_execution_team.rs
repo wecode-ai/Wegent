@@ -82,7 +82,7 @@ pub(super) fn persist(connection: &Connection, settings: &Value) -> Result<(), T
             }
         };
         let bot = json!({"id":format!("{reference}-bot"),"name":role["name"],"shell_type":shell});
-        let metadata = json!({"id":reference,"name":role["name"],"runtime":runtime,"bot":[bot],"collaboration_model":"single","system_prompt":"","additional_skills":[],"plugins":[]});
+        let metadata = json!({"id":reference,"name":role["name"],"runtime":runtime,"bot":[bot],"collaboration_model":"solo","system_prompt":"","additional_skills":[],"plugins":[]});
         write_definition(connection, user, reference, &metadata)?;
     }
     Ok(())

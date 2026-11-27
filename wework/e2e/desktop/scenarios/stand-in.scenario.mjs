@@ -12,6 +12,7 @@ import {
 } from '../modules/stand-in-flows.mjs'
 import { verifyProjectIntakeBoundary } from '../modules/stand-in-project-intake-boundary.mjs'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -448,6 +449,11 @@ export async function createDesktopScenario({
       const expected = structuredClone(legacy)
       delete expected.roles[0].agentId
       delete expected.roles[0].agentProject
+      expected.primary.teamRef =
+        'stand-in-team-' +
+        createHash('sha256')
+          .update(JSON.stringify([USER_ID, '@primary']))
+          .digest('hex')
       delete expected.primary.agentId
       delete expected.primary.agentProject
       expected.roles[0].collaboration.allProjects = false
@@ -484,8 +490,10 @@ export async function createDesktopScenario({
           assert.ok(Number.isFinite(Date.parse(identity.enabledAfter)))
           return identity.enabledAfter
         }
+        const { teamImportVersion, ...persistedSettings } = migrated
+        assert.equal(teamImportVersion, 1)
         assert.deepEqual(saved, {
-          ...migrated,
+          ...persistedSettings,
           version: migrated.version + 1,
           primary: {
             ...migrated.primary,
@@ -527,7 +535,7 @@ export async function createDesktopScenario({
             { userId: USER_ID },
             uiTimeoutMs
           ),
-          saved,
+          { ...saved, teamImportVersion },
           'Repeated reads must not change the migrated settings'
         )
       } finally {

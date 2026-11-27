@@ -230,6 +230,20 @@ impl RuntimeWorkRpcHandler {
             {
                 return Err(denied());
             }
+            if !context.messages.is_empty()
+                && existing.runtime_handle["messages"]
+                    .as_array()
+                    .map_or(true, Vec::is_empty)
+            {
+                self.store.update_task_without_snapshot(&local_id, |link| {
+                    if link.runtime_handle["messages"]
+                        .as_array()
+                        .map_or(true, Vec::is_empty)
+                    {
+                        set_runtime_handle_messages(&mut link.runtime_handle, context.messages);
+                    }
+                });
+            }
             return Ok(json!({"taskId":local_id}));
         }
         let mut link = RuntimeTaskLink::new_pending_with_runtime(

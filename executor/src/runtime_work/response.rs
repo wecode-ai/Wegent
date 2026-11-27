@@ -373,6 +373,12 @@ impl RuntimeTaskLink {
         }
     }
 
+    pub(crate) fn has_platform_history(&self) -> bool {
+        self.execution_backend
+            .as_ref()
+            .is_some_and(|binding| binding.task_id.is_some())
+    }
+
     pub fn list_summary(&self) -> Self {
         Self {
             snapshot_revision: self.snapshot_revision.clone(),

@@ -182,24 +182,11 @@ export async function verifyProjectAgentRoutingRecovery(
   assert.equal(beforeRecovery.execution_id, completed.execution_id)
   assert.equal(beforeRecovery.assignee_agent_id, agent.id)
   assert.equal(await boundEnvironment(completed.id), originalEnvironmentId)
+  await options.captureScreenshot(control, 'project-agent-runner-conflict.png', CONTENT)
   await control.command('click', '[data-testid="runner-selection-cancel"]')
   await control.command('waitFor', '[data-testid="runner-selection-dialog"]', { visible: false })
   await control.command('waitFor', selector('cloud-todo-state-assignee'), { text: agent.name })
   assert.equal(await boundEnvironment(completed.id), originalEnvironmentId)
-  const alert = selector('cloud-todo-save-error')
-  await assign(group.id, 'group')
-  await confirmRecovery()
-  await control.command('waitFor', alert, { text: group.name })
-  const groupError = await control.command('getText', alert)
-  for (const text of [conflict.name, originalEnvironmentId, String(targetDevice.id)])
-    assert.ok(groupError.includes(text), `Group error must identify ${text}: ${groupError}`)
-  await control.command('waitFor', selector('cloud-todo-state-assignee'), { text: agent.name })
-  const deniedGroup = await request(`/api/v1/loop-items/${completed.id}`)
-  assert.equal(deniedGroup.execution_id, completed.execution_id)
-  assert.equal(deniedGroup.assignee_agent_id, agent.id)
-  assert.equal(deniedGroup.assignee_group_id, null)
-  assert.equal(await boundEnvironment(completed.id), originalEnvironmentId)
-  await options.captureScreenshot(control, 'project-agent-runner-conflict.png', CONTENT)
   await assign(conflict.id)
   await confirmRecovery()
   let reassigned
@@ -313,4 +300,19 @@ export async function verifyProjectAgentRoutingRecovery(
   )
   assert.equal(await boundEnvironment(completed.id), originalEnvironmentId)
   await options.captureScreenshot(control, 'project-agent-runner-recovered.png', CONTENT)
+  await request(`${base}/chat-agents/${conflict.id}`, {
+    method: 'PATCH',
+    body: {
+      version: repaired.version,
+      execution_policy: { mode: 'fixed', environment_id: String(targetDevice.id) },
+      model_policy: targetModelPolicy,
+    },
+  })
+  await assign(group.id, 'group')
+  await waitForBoardValue(
+    async () => String((await request(`/api/v1/loop-items/${completed.id}`)).assignee_group_id),
+    String(group.id),
+    'The manager must accept the group assignment independently of other members’ devices',
+    options.uiTimeoutMs
+  )
 }

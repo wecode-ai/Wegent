@@ -53,8 +53,8 @@ async fn task_continuation(
 ) -> Result<Value, FastApiError> {
     let owner = i64::from(owner.0.id);
     let mut context = continuation_for(state, task_id, owner).await?;
-    // Claude has no native transcript reader in the local workbench.
-    if query.include_history && context["shell_type"] == "ClaudeCode" {
+    // Platform turns may use a named Bot Home outside the standalone workbench.
+    if query.include_history {
         let detail = wegent_task_views::task_detail_api::assembly::build_task_detail(
             &crate::task_view_state::build(state),
             task_id,

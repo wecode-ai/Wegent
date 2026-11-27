@@ -68,7 +68,7 @@ export async function verifyLocalIssueAssigneeRecovery(
     'Assignment must bind before requesting runtime selection'
   )
   const binding = createdBindings[0]
-  assert.notEqual(binding.id, resource.id, 'Assignment must use a project binding')
+  assert.equal(binding.id, resource.id, 'The project binding must reference the workspace Team')
   assert.deepEqual(binding.execution_policy, { mode: 'user_select' })
   assert.deepEqual(binding.model_policy, { mode: 'user_select' })
   await control.command('click', '[data-testid="runner-selection-cancel"]')
@@ -96,21 +96,18 @@ export async function verifyLocalIssueAssigneeRecovery(
   )
 
   // Fixed devices can supply their default model without opening a dialog.
-  // Repair the actual source and binding configuration after cancellation,
-  // then retry the same form against the same persisted project Agent.
-  for (const agent of [resource, binding]) {
-    const configured = await rpc('chat_agents.update', {
-      project_id: agent.project_id,
-      agent_id: agent.id,
-      agent: {
-        version: agent.version,
-        execution_policy: source.execution_policy,
-        model_policy: source.model_policy,
-      },
-    })
-    assert.deepEqual(configured.execution_policy, source.execution_policy)
-    assert.deepEqual(configured.model_policy, source.model_policy)
-  }
+  // Repair the workspace Team once. The project binding resolves its current policies.
+  const configured = await rpc('chat_agents.update', {
+    project_id: resource.project_id,
+    agent_id: resource.id,
+    agent: {
+      version: resource.version,
+      execution_policy: source.execution_policy,
+      model_policy: source.model_policy,
+    },
+  })
+  assert.deepEqual(configured.execution_policy, source.execution_policy)
+  assert.deepEqual(configured.model_policy, source.model_policy)
   await control.command('clickWhenEnabled', save)
   await control.command('waitFor', save, { visible: false, timeoutMs })
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {

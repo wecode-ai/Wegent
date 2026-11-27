@@ -271,7 +271,7 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let task = session.to_owned();
         let mut request = request.clone();
-        let runtime = if request.resolved_shell_type().as_deref() == Some("codex") {
+        let runtime = if request.resolved_agent_kind() == crate::protocol::AgentKind::CodeX {
             "codex"
         } else {
             "claude_code"
@@ -370,10 +370,7 @@ impl RuntimeWorkRpcHandler {
                     };
                     let outcome = match launch {
                         Ok(()) => {
-                            if let Some(local) = local_session.as_deref().filter(|_| {
-                                request.resolved_agent_kind()
-                                    == crate::protocol::AgentKind::ClaudeCode
-                            }) {
+                            if let Some(local) = local_session.as_deref() {
                                 let payload = json!({"message":prompt_text(&request.prompt)});
                                 if let Some(message) =
                                     cached_user_message(local, &request, &payload)

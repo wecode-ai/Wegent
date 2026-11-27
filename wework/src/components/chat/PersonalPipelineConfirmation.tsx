@@ -14,9 +14,6 @@ export function PersonalPipelineConfirmation({
   address: RuntimeTaskAddress
   services?: WorkbenchServices | null
 }) {
-  const { t } = useTranslation('common')
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
   const state = handle?.personalPipeline as Record<string, unknown> | undefined
   const api = services?.runtimeWorkApi
   if (
@@ -26,7 +23,31 @@ export function PersonalPipelineConfirmation({
     typeof state.stage !== 'number'
   )
     return null
-  const expected = [state.root, state.stage] as [string, number]
+  return (
+    <ConfirmationButton
+      key={JSON.stringify([address.deviceId, address.taskId, state.root, state.stage])}
+      address={address}
+      api={api}
+      root={state.root}
+      stage={state.stage}
+    />
+  )
+}
+
+function ConfirmationButton({
+  address,
+  api,
+  root,
+  stage,
+}: {
+  address: RuntimeTaskAddress
+  api: NonNullable<WorkbenchServices['runtimeWorkApi']>
+  root: string
+  stage: number
+}) {
+  const { t } = useTranslation('common')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
   const confirm = async () => {
     setSending(true)
     setError('')
@@ -35,7 +56,7 @@ export function PersonalPipelineConfirmation({
         address,
         message: '',
         action: 'pipeline:confirm',
-        expectedStage: expected,
+        expectedStage: [root, stage],
       })
     } catch (cause) {
       setError(getErrorMessage(cause, t('standIn.pipeline_confirmation_failed')))

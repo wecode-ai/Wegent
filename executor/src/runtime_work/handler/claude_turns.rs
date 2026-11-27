@@ -546,7 +546,7 @@ impl RuntimeWorkRpcHandler {
             message["error"] = Value::String(error.to_owned());
         }
         self.store.update_task(local_task_id, |link| {
-            if link.runtime == "codex" {
+            if link.runtime == "codex" && !link.has_platform_history() {
                 if let Some(thread) = &link.thread_id {
                     append_completed_transcript_messages(
                         &mut link.runtime_handle,
