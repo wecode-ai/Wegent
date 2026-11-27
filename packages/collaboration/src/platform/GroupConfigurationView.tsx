@@ -526,11 +526,11 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                             <span>
                               {group.members.length} {messages.membersLabel}
                             </span>
-                            <span>
-                              {group.stages.length
-                                ? `${group.stages.length} ${messages.stages}`
-                                : messages.leaderAssignment}
-                            </span>
+                            {group.stages.length > 0 && (
+                              <span>
+                                {group.stages.length} {messages.stages}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="collaboration-resource-actions">
