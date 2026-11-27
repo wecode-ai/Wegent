@@ -556,11 +556,11 @@ async function createAgent(
   if (workerName) {
     const response = await request.get(API_URL + '/api/v1/kinds/skills', {
       headers,
-      params: { name: 'interactive', namespace: 'default', exact_match: true },
+      params: { name: sharedCapability.skill, namespace: 'default' },
     })
     expect(response.ok()).toBe(true)
     const metadata = (await response.json()).items.find(
-      (s: { metadata: { name: string } }) => s.metadata.name === 'interactive'
+      (s: { metadata: { name: string } }) => s.metadata.name === sharedCapability.skill
     )?.metadata
     expect(Number(metadata?.labels.id)).toBeGreaterThan(0)
     grants = await sharedBotGrants({
