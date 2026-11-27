@@ -20,7 +20,7 @@ import {
 import { Check, ChevronRight, MoreHorizontal } from 'lucide-react'
 import { useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { Tooltip } from './Tooltip'
-import { KeyboardShortcut } from './KeyboardShortcut'
+import { formatShortcut } from '@ui-sdk/core'
 import { useFocusRequest } from '../dom-events'
 import { useCollaborationPortalTheme } from '../theme'
 
@@ -129,11 +129,7 @@ function MenuEntries({
         <MenuSub key={key} delay={submenuCloseDelayMs}>
           <MenuSubTrigger data-testid={item.testId} disabled={item.disabled} className={className}>
             {label}
-            {item.shortcut && (
-              <MenuShortcut className="ml-auto text-text-secondary">
-                <KeyboardShortcut value={item.shortcut} className="bg-transparent px-0 text-xs" />
-              </MenuShortcut>
-            )}
+            {item.shortcut && <MenuShortcut>{formatShortcut(item.shortcut)}</MenuShortcut>}
             <ChevronRight className="h-4 w-4" />
           </MenuSubTrigger>
           <MenuSubContent
