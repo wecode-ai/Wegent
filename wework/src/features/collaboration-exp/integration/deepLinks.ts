@@ -2,6 +2,53 @@ import { COLLABORATION_EXP_PATH } from '../collaborationExpFeature'
 
 export type CollaborationExpQueryUpdate = Readonly<Record<string, string | null | undefined>>
 
+const assistantContextKeys = [
+  'assistantDeviceId',
+  'assistantTaskId',
+  'deviceId',
+  'profileId',
+  'settingsRequest',
+  'userId',
+]
+
+function isLegacyAssistantLink(params: URLSearchParams): boolean {
+  const view = params.get('view')
+  if (view === 'assistant') return true
+  if (view === 'tasks') return false
+  const hasCollaborationContext = [
+    'taskMode',
+    'projectId',
+    'projectScope',
+    'projectView',
+    'issueId',
+    'discussion',
+    'nodeId',
+    'commentId',
+  ].some(key => params.has(key))
+  return !hasCollaborationContext && assistantContextKeys.some(key => params.has(key))
+}
+
+function legacyAssistantParams(contentRoute: string): URLSearchParams | null {
+  if (!contentRoute.startsWith(`${COLLABORATION_EXP_PATH}?`)) return null
+  const params = new URLSearchParams(contentRoute.slice(COLLABORATION_EXP_PATH.length + 1))
+  return isLegacyAssistantLink(params) ? params : null
+}
+
+export function canonicalAssistantRoute(contentRoute: string): string {
+  const params = legacyAssistantParams(contentRoute)
+  if (!params) return contentRoute
+  // Release the collaboration tab identity and retain the assistant address.
+  for (const key of ['view', 'workspaceTab', 'workspaceTabTitle']) params.delete(key)
+  return params.size ? `/stand-in?${params}` : '/stand-in'
+}
+
+export function restoreCollaborationTabRoute(contentRoute: string): string {
+  const params = legacyAssistantParams(contentRoute)
+  if (!params) return contentRoute
+  for (const key of ['view', ...assistantContextKeys]) params.delete(key)
+  return buildCollaborationExpRoute(params)
+}
+
 export function buildCollaborationExpRoute(
   search: string | URLSearchParams = '',
   updates: CollaborationExpQueryUpdate = {}

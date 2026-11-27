@@ -43,9 +43,10 @@ type StandInOnboardingProps = {
   bypass?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
-  onOpenConversation(): void
+  onOpenConversation?(): void
   onExampleSelect?(prompt: string): void
   onClose?(): void
+  onActivate?(): Promise<boolean>
   configuration: StandInOnboardingConfiguration
   children(resumeSetup?: ReactNode): ReactNode
 }
@@ -72,6 +73,7 @@ function StandInOnboardingContent({
   onOpenConversation,
   onExampleSelect,
   onClose,
+  onActivate,
   children,
   configuration,
 }: StandInOnboardingProps) {
@@ -140,7 +142,7 @@ function StandInOnboardingContent({
       setDismissed(true)
       if (guideOpen) onGuideClose?.()
       else if (leaveWorkspace) onClose?.()
-      else onOpenConversation()
+      else onOpenConversation?.()
     }
     if (setupRef.current) setupRef.current.requestLeave(dismiss)
     else dismiss()
@@ -160,7 +162,8 @@ function StandInOnboardingContent({
         i18n.language
       )
       if (!resource.hasSubscribers()) return false
-      if (openConversation) onOpenConversation()
+      if (onActivate && !(await onActivate())) return false
+      if (openConversation) onOpenConversation?.()
       resource.update(() => completed)
       onGuideClose?.()
       return true

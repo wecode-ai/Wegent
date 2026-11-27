@@ -19,6 +19,27 @@ export function StandInNavigationButton({
   )
 }
 
+export function StandInMessageCenterButton({
+  selected,
+  onOpen,
+}: {
+  selected: boolean
+  onOpen(): void
+}) {
+  const { t } = useTranslation('standInMessageCenter')
+  return (
+    <StandInNavigationButton
+      selected={selected}
+      data-testid="stand-in-message-center-open"
+      aria-current={selected ? 'page' : undefined}
+      onClick={onOpen}
+    >
+      <Inbox aria-hidden="true" className="size-4" />
+      {t('center')}
+    </StandInNavigationButton>
+  )
+}
+
 function StandInConversationHeading({ name, onBack }: { name: string; onBack(): void }) {
   const { t } = useTranslation('common')
   return (
@@ -75,7 +96,6 @@ function StandInRoleSelector({
   messageCenter?: { selected: boolean; onOpen(): void }
 }) {
   const { t } = useTranslation('common')
-  const { t: tMessageCenter } = useTranslation('standInMessageCenter')
   return (
     <nav
       className="min-w-0 flex-1 overflow-x-auto"
@@ -83,17 +103,7 @@ function StandInRoleSelector({
       data-testid="stand-in-role-selector"
     >
       <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
-        {messageCenter && (
-          <StandInNavigationButton
-            selected={messageCenter.selected}
-            data-testid="stand-in-message-center-open"
-            aria-current={messageCenter.selected ? 'page' : undefined}
-            onClick={messageCenter.onOpen}
-          >
-            <Inbox aria-hidden="true" className="size-4" />
-            {tMessageCenter('center')}
-          </StandInNavigationButton>
-        )}
+        {messageCenter && <StandInMessageCenterButton {...messageCenter} />}
         <StandInNavigationButton
           selected={!roleId && !messageCenter?.selected}
           data-testid="stand-in-primary-open"

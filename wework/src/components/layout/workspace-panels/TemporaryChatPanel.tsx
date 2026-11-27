@@ -1091,7 +1091,9 @@ export function TemporaryChatPanel({
                   value={input}
                   replaceDraftKey={replaceDraftKey}
                   onChange={value => {
-                    setInput(value)
+                    // The editor can flush after the conversation view has unsubscribed.
+                    if (draft) draft.onChange(value)
+                    else setInput(value)
                     return { appliedSynchronously: true }
                   }}
                   onDraftEdit={() => {

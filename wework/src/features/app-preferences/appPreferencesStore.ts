@@ -3,20 +3,30 @@ import {
   APP_PREFERENCES_CHANGED_EVENT,
   defaultAppPreferences,
   emitAppPreferencesChanged,
-  getAppPreferences,
+  getReadableAppPreferences,
   mergeAppPreferences,
 } from '@/desktop/appPreferences'
 import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { AppPreferencesState } from './appPreferencesContext'
 
 export function createAppPreferencesStore(ownsLanguage = false) {
-  let snapshot: AppPreferencesState = { preferences: defaultAppPreferences, loaded: false }
   let generation = 0
   const listeners = new Set<() => void>()
   let appliedLanguage: AppPreferencesState['preferences']['language'] | undefined
+  let snapshot: AppPreferencesState = {
+    preferences: defaultAppPreferences,
+    loaded: false,
+    loadStatus: 'loading',
+    retry,
+  }
   const publish = (state: AppPreferencesState) => {
-    if (ownsLanguage && state.loaded && state.preferences.language !== appliedLanguage) {
+    if (
+      ownsLanguage &&
+      state.loadStatus === 'ready' &&
+      state.preferences.language !== appliedLanguage
+    ) {
       appliedLanguage = state.preferences.language
       void applyLanguagePreference(appliedLanguage).catch(error => {
         console.error('[Wework] Failed to apply language preference:', error)
@@ -25,15 +35,36 @@ export function createAppPreferencesStore(ownsLanguage = false) {
     snapshot = state
     listeners.forEach(listener => listener())
   }
-  const connect = () => {
+  async function readPreferences() {
     const requestGeneration = ++generation
-    let preferenceChanged = false
+    try {
+      const preferences = await getReadableAppPreferences()
+      if (requestGeneration === generation) {
+        publish({ preferences, loaded: true, loadStatus: 'ready', retry })
+      }
+    } catch (error) {
+      if (requestGeneration === generation) {
+        console.error('[Wework] Failed to load app preferences:', error)
+        publish({ ...snapshot, loaded: true, loadStatus: 'error' })
+      }
+    }
+  }
+  function retry() {
+    if (snapshot.loadStatus !== 'error') return
+    publish({ ...snapshot, loadStatus: 'loading' })
+    void readPreferences()
+  }
+  const connect = () => {
     const handlePreferencesChanged = (event: Event) => {
-      preferenceChanged = true
-      publish({
-        preferences: (event as CustomEvent<AppPreferencesState['preferences']>).detail,
-        loaded: true,
-      })
+      const preferences = (event as CustomEvent<AppPreferencesState['preferences']>).detail
+      const apply = () => {
+        if (!listeners.size) return
+        generation++
+        publish({ preferences, loaded: true, loadStatus: 'ready', retry })
+      }
+      if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
+        deliverRuntimeTransport('event', APP_PREFERENCES_CHANGED_EVENT, {}, apply)
+      else apply()
     }
     window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
     const unsubscribe = isElectronRuntime()
@@ -42,16 +73,7 @@ export function createAppPreferencesStore(ownsLanguage = false) {
             emitAppPreferencesChanged(mergeAppPreferences(event.payload))
         })
       : undefined
-    void getAppPreferences()
-      .then(preferences => {
-        if (requestGeneration === generation && !preferenceChanged)
-          publish({ preferences, loaded: true })
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to load app preferences:', error)
-        if (requestGeneration === generation && !preferenceChanged)
-          publish({ preferences: defaultAppPreferences, loaded: true })
-      })
+    void readPreferences()
     return () => {
       generation++
       window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
