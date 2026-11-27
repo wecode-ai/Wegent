@@ -596,12 +596,23 @@ class DockerExecutor(Executor):
         task_id = int(get_metadata_field(task, "task_id"))
         callback_token = get_metadata_field(task, CALLBACK_TOKEN)
         sandbox = task_type == "sandbox"
-        if get_sandbox_repository().save_executor_binding(
+        repository = get_sandbox_repository()
+        if repository.save_executor_binding(
             task_id,
             executor_name,
             sandbox=sandbox,
             callback_token=callback_token,
             container_id=container_id,
+        ):
+            return
+
+        # Redis may have applied the write before the connection failed.
+        binding = repository.load_executor_binding_full(task_id, sandbox=sandbox)
+        if (
+            binding
+            and binding.get("executor_name") == executor_name
+            and binding.get("container_id") == container_id
+            and binding.get("callback_token") == callback_token
         ):
             return
 

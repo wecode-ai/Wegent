@@ -654,6 +654,7 @@ class TestDockerExecutor:
     ):
         sample_task["type"] = task_type
         callback_repository.save_executor_binding.return_value = False
+        callback_repository.load_executor_binding_full.return_value = None
         mock_subprocess.run.return_value.stdout = "new-container-id"
         mocker.patch.object(
             docker_executor_module,
@@ -686,6 +687,33 @@ class TestDockerExecutor:
             assert validation.call_args.kwargs["valid"] is False
         else:
             validation.assert_not_called()
+
+    @pytest.mark.parametrize("same_container", [True, False])
+    def test_uncertain_callback_publication_verifies_the_runtime(
+        self, executor, sample_task, mocker, callback_repository, same_container
+    ):
+        sample_task["type"] = "sandbox"
+        sample_task["executor_callback_token"] = "issued-token"
+        callback_repository.save_executor_binding.return_value = False
+        callback_repository.load_executor_binding_full.return_value = {
+            "executor_name": "sandbox",
+            "container_id": "new-id" if same_container else "other-id",
+            "callback_token": "issued-token",
+        }
+        cleanup = mocker.patch.object(executor, "_cleanup_failed_start")
+
+        if same_container:
+            executor._publish_callback_binding(sample_task, "sandbox", "new-id")
+            cleanup.assert_not_called()
+        else:
+            with pytest.raises(RuntimeError, match="Could not persist"):
+                executor._publish_callback_binding(sample_task, "sandbox", "new-id")
+            cleanup.assert_called_once_with(
+                "new-id", 123, "sandbox", "issued-token", sandbox=True
+            )
+        callback_repository.load_executor_binding_full.assert_called_once_with(
+            123, sandbox=True
+        )
 
     def test_recreated_container_rotates_callback_token_after_docker_succeeds(
         self, executor, sample_task, mock_subprocess, callback_repository
