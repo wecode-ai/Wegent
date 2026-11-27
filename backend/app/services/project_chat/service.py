@@ -204,7 +204,7 @@ def bot_runtime(row: ProjectChatAgent) -> str:
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     runtime = metadata.get(BOT_RUNTIME_KEY)
-    if runtime not in {"codex", "claude_code", "wegent"}:
+    if runtime not in {"codex", "claude_code", "wegent", "external"}:
         raise ValueError(f"Project chat agent '{row.id}' has no valid runtime")
     return runtime
 
@@ -767,7 +767,17 @@ class ProjectChatService:
             row.name = request.name
             row.title = request.name
         metadata = dict(row.metadata_json or {})
-        runtime = request.runtime or bot_runtime(row)
+        current_runtime = bot_runtime(row)
+        if current_runtime == "external" and request.model_fields_set - {
+            "version",
+            "name",
+            "status",
+        }:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "External agents use their own connection settings",
+            )
+        runtime = request.runtime or current_runtime
         team_id = (
             request.wegent_team_id
             if "wegent_team_id" in request.model_fields_set

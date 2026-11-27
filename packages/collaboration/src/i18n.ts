@@ -301,6 +301,9 @@ const sharedMessages: Record<
     "todo.add_project_agent_description":
       "添加后会共享到父分组并向项目成员开放使用。原定义和私人凭据仍按原权限管理。",
     "todo.agent_picker_search": "搜索智能体",
+    "todo.external_agent": "外部智能体",
+    "todo.connect_external_agent": "接入外部智能体",
+    "todo.connect_external_agent_description": "配置后可在事项中 @ 此智能体，调用外部系统并查看回复。",
     "todo.add_project_agent": "添加智能体",
     "todo.create_agent": "新建智能体",
     "todo.add_to_project": "加入项目",
@@ -947,6 +950,9 @@ const sharedMessages: Record<
     "todo.add_project_agent_description":
       "Adding an Agent shares it with the parent group for project use. Definitions and private credentials retain their own permissions.",
     "todo.agent_picker_search": "Search agents",
+    "todo.external_agent": "External agent",
+    "todo.connect_external_agent": "Connect external agent",
+    "todo.connect_external_agent_description": "After setup, mention this agent in an Issue to call the external system and see its reply.",
     "todo.add_project_agent": "Add agent",
     "todo.create_agent": "Create agent",
     "todo.add_to_project": "Add to project",
@@ -1590,9 +1596,13 @@ const sharedMessages: Record<
 
 import { issueCommentMessages } from "./issue-detail/issueCommentMessages";
 
+const translators = new Map<CollaborationLocale, CollaborationTranslate>();
+
 export function createCollaborationTranslator(
   locale: CollaborationLocale,
 ): CollaborationTranslate {
+  const cached = translators.get(locale);
+  if (cached) return cached;
   const messages = sharedMessages[locale];
   const pluralRules = new Intl.PluralRules(locale);
   const translate: CollaborationTranslate = (key, fallback, options) => {
@@ -1630,7 +1640,9 @@ export function createCollaborationTranslator(
     }
     return value;
   };
-  return Object.assign(translate, { locale });
+  Object.assign(translate, { locale });
+  translators.set(locale, translate);
+  return translate;
 }
 
 const standardStatusIds = [

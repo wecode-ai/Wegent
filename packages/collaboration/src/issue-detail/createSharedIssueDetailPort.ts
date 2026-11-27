@@ -94,6 +94,7 @@ export interface SharedIssueDetailDeliveryDetail extends SharedIssueDetailDelive
 }
 
 export interface SharedIssueDetailAgent {
+  runtime?: string;
   id: string;
   name: string;
   status?: string;
@@ -430,6 +431,7 @@ export function createSharedIssueDetailPort(
         api.agents.list(projectId).then((agents) =>
           agents.map((agent) => ({
             id: agent.id,
+            runtime: agent.runtime,
             name: String(agent.displayName || agent.display_name || agent.name),
             status: typeof agent.status === "string" ? agent.status : undefined,
             ...((agent.team_id ?? agent.wegentTeamId ?? agent.wegent_team_id) ==

@@ -19,6 +19,7 @@ export function ProjectAgentPicker({
   onSelect,
   onRetry,
   onCreate,
+  onCreateExternal,
   onClose,
   onAdd,
 }: {
@@ -34,6 +35,7 @@ export function ProjectAgentPicker({
   onSelect(id: string): void
   onRetry(): void
   onCreate?: () => void
+  onCreateExternal?: () => void
   onClose(): void
   onAdd(): void
 }) {
@@ -85,6 +87,14 @@ export function ProjectAgentPicker({
           </Button>
         ) : null}
       </div>
+      {onCreateExternal ? (
+        <div className="px-5 pb-3">
+          <Button type="button" variant="ghost" size="sm" onClick={onCreateExternal}
+            disabled={busy} data-testid="project-agent-connect-external">
+            {t('todo.connect_external_agent', '接入外部智能体')}
+          </Button>
+        </div>
+      ) : null}
       <div className="flex shrink-0 items-center justify-between px-5 pb-2 text-xs text-text-secondary">
         <span>
           {loading

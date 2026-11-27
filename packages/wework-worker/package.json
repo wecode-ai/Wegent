@@ -1,0 +1,22 @@
+{
+  "name": "@wework/worker",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "types": "./index.d.ts",
+    "default": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "socket.io-client": "4.8.3"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

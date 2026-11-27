@@ -12,10 +12,10 @@ sidebar_position: 20
 | --- | --- | --- |
 | `SCHEDULED_TASKS_ENABLED` | `true` | 在本 Rust 进程中生产 allowlist 允许的周期与启动任务 |
 | `EMBEDDED_CELERY_ENABLED` | `true` | 在本 Rust 进程中启用 worker，消费 allowlist 允许的原生持久化任务 |
-| `WEGENT_RS_JOB_ALLOWLIST` | 未配置时仅 `device_registration_retention` | 限制 Rust 执行范围的完整 kind 列表，以逗号分隔；不支持 `*`，拼写错误在启动时失败 |
+| `WEGENT_RS_JOB_ALLOWLIST` | 未配置时启用原生作业 | 限制 Rust 执行范围的完整 kind 列表，以逗号分隔；不支持 `*`，拼写错误在启动时失败 |
 | `WEGENT_RS_JOBS_SHUTDOWN_GRACE_SECONDS` | `30` | 停止取任务后允许协作退出的时间 |
 
-Rust 复用 Python 已有的两个开关名称与默认值。`EMBEDDED_CELERY_ENABLED` 在 Rust 中只控制本进程的原生 worker，不会启动 Celery。未配置 allowlist 时，应用仅启用原生的 `device_registration_retention`：启动一分钟后检查一次，此后每小时停用超过七天且离线空闲的注册记录。显式设置空 allowlist 可禁用全部 Rust 任务；显式列表须包含此名称才会启用清理。迁移中的 Python 任务族仍需逐项启用。只提供 API 的 Rust 进程可以设置 allowlist，并将两个运行开关设为 `false`。
+Rust 复用 Python 已有的两个开关名称与默认值。`EMBEDDED_CELERY_ENABLED` 在 Rust 中只控制本进程的原生 worker，不会启动 Celery。未配置 allowlist 时，应用启用设备注册清理、托管 Issue 执行和外部智能体投递。设备注册清理 `device_registration_retention` 启动一分钟后检查一次，此后每小时停用超过七天且离线空闲的注册记录。显式设置空 allowlist 可禁用全部 Rust 任务；显式列表须包含此名称才会启用清理。迁移中的 Python 任务族仍需逐项启用。只提供 API 的 Rust 进程可以设置 allowlist，并将两个运行开关设为 `false`。
 
 allowlist 只限制 Rust 允许执行的任务，不表示独占任务类型。Python 保留全部 Celery 发布与消费行为，不读取这个 allowlist，也不会把任务转投 Rust。两个进程可分别配置同名开关；部署时应避免同一执行族由 Python 和 Rust 并行调度。
 
