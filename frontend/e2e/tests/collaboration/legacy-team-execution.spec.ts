@@ -36,6 +36,7 @@ const TEST_PREFIX = `e2e-collaboration-agents-${Date.now()}`
 interface CollaborationExecution {
   id: number
   loopItemId: string
+  displayState: string
   agentId: string | null
   status: string
   teamId: number | null
@@ -350,6 +351,12 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     await assign(issue.id, `agent:${agent.id}`)
     await capture(page, testInfo, '03-issue-team-assigned')
     await waitForHeldStreamResponse(request, reviewPrompt)
+    await expect
+      .poll(async () => (await executions(issue.id))[0]?.displayState, {
+        timeout: 20_000,
+        message: 'The completed first Bot must confirm runtime activity for the Issue',
+      })
+      .toBe('running')
     const [activeIssueRun] = await executions(issue.id)
     expect(activeIssueRun).toMatchObject({ teamId: team.id, status: 'running' })
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -362,6 +369,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
           .filter({ hasText: String(activeIssueRun.backendTaskId) }),
       })
     await expect(activeCard).toContainText(agentName)
+    await expect(activeCard.getByText('Running', { exact: true }).first()).toBeVisible()
     await capture(activeCard, testInfo, '03a-issue-team-running')
     await releaseHeldStreamResponse(request, reviewPrompt)
     await clearGate()

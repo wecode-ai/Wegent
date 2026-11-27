@@ -42,7 +42,7 @@ const CAPACITY_STATUSES: &str = "'claimed', 'running', 'cancel_requested'";
 
 pub(super) const QUEUE_EXECUTION_COLUMNS: &str = "id, loop_item_id, cloud_project_id, \
     executor_owner_user_id, assigner_user_id, agent_id, team_id, automation_run_id, \
-    execution_environment, execution_device_id, runtime_device_id, runtime_task_id, status, \
+    execution_environment, execution_device_id, runtime_device_id, runtime_task_id, status, observed_state, \
     approval_status, execution_payload, error_message, execution_note, version, \
     start_requested_at, completed_at, execution_scope";
 
@@ -62,6 +62,7 @@ pub(super) struct QueueExecutionRow {
     pub runtime_device_id: String,
     pub runtime_task_id: String,
     pub status: String,
+    pub observed_state: Option<String>,
     pub approval_status: String,
     pub execution_payload: String,
     pub error_message: String,
@@ -90,6 +91,7 @@ impl QueueExecutionRow {
             runtime_device_id: self.runtime_device_id.clone(),
             runtime_task_id: self.runtime_task_id.clone(),
             status: self.status.clone(),
+            observed_state: self.observed_state.clone(),
             approval_status: self.approval_status.clone(),
             execution_payload: self.execution_payload.clone(),
             error_message: self.error_message.clone(),
@@ -865,6 +867,7 @@ mod tests {
             error_message: String::new(),
             execution_note: String::new(),
             version: 1,
+            observed_state: None,
             start_requested_at: None,
             completed_at: None,
             execution_scope: scope.into(),

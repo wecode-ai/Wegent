@@ -389,6 +389,7 @@ pub(super) mod tests {
             error_message: String::new(),
             execution_note: String::new(),
             version: 1,
+            observed_state: None,
             start_requested_at: None,
             completed_at: None,
         };

@@ -52,6 +52,7 @@ struct TaskState {
     task_id: i64,
     user_id: i64,
     status: String,
+    progress: i64,
     json: Json<Value>,
 }
 
@@ -77,7 +78,7 @@ async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
     let Some(task): Option<TaskState> = routed.fetch_optional(format!(
-        "SELECT t.id AS task_id,t.user_id,s.status,t.json FROM {} t JOIN {} s ON s.task_id=t.id AND s.user_id=t.user_id AND s.id=? AND s.role='ASSISTANT' WHERE t.id=? AND t.user_id=? AND t.kind='Task'",
+        "SELECT t.id AS task_id,t.user_id,s.status,COALESCE(s.progress,0) AS progress,t.json FROM {} t JOIN {} s ON s.task_id=t.id AND s.user_id=t.user_id AND s.id=? AND s.role='ASSISTANT' WHERE t.id=? AND t.user_id=? AND t.kind='Task'",
         tables.tasks, tables.subtasks
     ), (row.intent()["managed_task"]["assistant_subtask_id"].as_i64().unwrap_or(0),task_id,row.executor_owner_user_id)).await? else { return Ok(()) };
     if !owns(&row, &task) {
@@ -114,6 +115,18 @@ async fn reconcile(app: &AppState, execution_id: i64) -> Result<()> {
                 return Ok(());
             }
             settle(app, &row, &task, team_status).await?;
+        }
+        _ if row.status == "running"
+            && row.observed_state.as_deref() != Some("running")
+            && team_status == "RUNNING"
+            && (task.progress > 0 || task.status == "COMPLETED") =>
+        {
+            // A claimed Task can be RUNNING before dispatch. Only persisted
+            // assistant progress or a finished stage confirms runtime activity.
+            app.mysql.execute(
+                "UPDATE loop_item_executions SET observed_state='running',observed_at=UTC_TIMESTAMP(6),sync_state='in_sync',version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND version=? AND status='running' AND NOT (observed_state <=> 'running')",
+                (row.id, row.version),
+            ).await?;
         }
         _ => {}
     }
@@ -415,6 +428,7 @@ mod tests {
             error_message: String::new(),
             execution_note: String::new(),
             version: 1,
+            observed_state: None,
             start_requested_at: None,
             completed_at: None,
         }
@@ -456,6 +470,7 @@ mod tests {
             task_id: 101,
             user_id: 7,
             status: "COMPLETED".into(),
+            progress: 100,
             json: Json(json!({"metadata":{"labels":{"projectRobotExecutionId":"1"}}})),
         };
         assert!(owns(&row, &task));

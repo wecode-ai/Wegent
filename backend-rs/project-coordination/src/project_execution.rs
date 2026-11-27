@@ -4,7 +4,7 @@ use brz_mysql::FromMysqlRow;
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
-pub const COLUMNS: &str = "id,COALESCE(loop_item_id,'') AS loop_item_id,COALESCE(cloud_project_id,'') AS cloud_project_id,COALESCE(executor_owner_user_id,0) AS executor_owner_user_id,COALESCE(assigner_user_id,0) AS assigner_user_id,COALESCE(agent_id,'') AS agent_id,COALESCE(team_id,0) AS team_id,COALESCE(automation_run_id,'') AS automation_run_id,COALESCE(execution_environment,'') AS execution_environment,COALESCE(execution_device_id,'') AS execution_device_id,COALESCE(runtime_device_id,'') AS runtime_device_id,COALESCE(runtime_task_id,'') AS runtime_task_id,COALESCE(status,'') AS status,COALESCE(approval_status,'') AS approval_status,COALESCE(execution_payload,'') AS execution_payload,COALESCE(error_message,'') AS error_message,COALESCE(execution_note,'') AS execution_note,COALESCE(version,0) AS version,lease_expires_at,start_requested_at,started_at,completed_at";
+pub const COLUMNS: &str = "id,COALESCE(loop_item_id,'') AS loop_item_id,COALESCE(cloud_project_id,'') AS cloud_project_id,COALESCE(executor_owner_user_id,0) AS executor_owner_user_id,COALESCE(assigner_user_id,0) AS assigner_user_id,COALESCE(agent_id,'') AS agent_id,COALESCE(team_id,0) AS team_id,COALESCE(automation_run_id,'') AS automation_run_id,COALESCE(execution_environment,'') AS execution_environment,COALESCE(execution_device_id,'') AS execution_device_id,COALESCE(runtime_device_id,'') AS runtime_device_id,COALESCE(runtime_task_id,'') AS runtime_task_id,COALESCE(status,'') AS status,observed_state,COALESCE(approval_status,'') AS approval_status,COALESCE(execution_payload,'') AS execution_payload,COALESCE(error_message,'') AS error_message,COALESCE(execution_note,'') AS execution_note,COALESCE(version,0) AS version,lease_expires_at,start_requested_at,started_at,completed_at";
 
 #[derive(Clone, Debug, FromMysqlRow)]
 pub struct Execution {
@@ -21,6 +21,7 @@ pub struct Execution {
     pub runtime_device_id: String,
     pub runtime_task_id: String,
     pub status: String,
+    pub observed_state: Option<String>,
     pub approval_status: String,
     pub execution_payload: String,
     pub error_message: String,
