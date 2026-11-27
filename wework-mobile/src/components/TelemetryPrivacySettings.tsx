@@ -9,12 +9,15 @@ export function TelemetryPrivacySettings() {
   const theme = useTheme()
   const telemetry = useMobileTelemetryState()
   const [error, setError] = useState<unknown>(null)
+  const [failedChoice, setFailedChoice] = useState<boolean | null>(null)
   if (!telemetry.available && telemetry.error == null) return null
   const change = async (enabled: boolean) => {
     setError(null)
     try {
       await mobileTelemetry.choose(enabled)
+      setFailedChoice(null)
     } catch (cause) {
+      setFailedChoice(enabled)
       setError(cause)
     }
   }
@@ -41,7 +44,10 @@ export function TelemetryPrivacySettings() {
       {(error != null || telemetry.error != null) && (
         <ErrorNotice
           error={error ?? telemetry.error}
-          onRetry={() => void mobileTelemetry.retry()}
+          onRetry={() => {
+            if (failedChoice !== null) void change(failedChoice)
+            else void mobileTelemetry.retry()
+          }}
           testID="settings-telemetry-error"
         />
       )}

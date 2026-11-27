@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto'
 import { allWorkspaces } from '@/domain/work'
-import { runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
+import { projectedRuntimeTaskRunning, runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/runtime'
 
 export function runtimeTaskRunning(
@@ -9,12 +9,10 @@ export function runtimeTaskRunning(
   runningByTask: ReadonlyMap<string, boolean>
 ): boolean {
   const projected = runningByTask.get(runtimeTaskKey(address))
-  if (typeof projected === 'boolean') return projected
-  return allWorkspaces(work).some(
-    workspace =>
-      workspace.deviceId === address.deviceId &&
-      workspace.tasks.some(task => task.taskId === address.taskId && task.running === true)
-  )
+  const task = allWorkspaces(work)
+    .find(workspace => workspace.deviceId === address.deviceId)
+    ?.tasks.find(candidate => candidate.taskId === address.taskId)
+  return projectedRuntimeTaskRunning(task, projected)
 }
 
 export function sameRuntimeAddress(

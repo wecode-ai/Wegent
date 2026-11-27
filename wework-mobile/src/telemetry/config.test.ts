@@ -45,6 +45,15 @@ describe('mobile telemetry build configuration', () => {
     expect(config.posthogKey).toBe('phc_local')
   })
 
+  it('rejects an invalid PostHog host during build configuration', () => {
+    expect(() =>
+      resolveMobileTelemetryBuildConfig({
+        WEWORK_POSTHOG_HOST: 'htps://posthog.example',
+        WEWORK_POSTHOG_KEY: 'phc_release',
+      })
+    ).toThrow('Invalid PostHog host')
+  })
+
   it('rejects invalid sample rates instead of silently changing collection volume', () => {
     expect(() => parseTelemetrySampleRate('1.5')).toThrow('between 0 and 1')
     expect(() => parseTelemetrySampleRate('abc')).toThrow('between 0 and 1')

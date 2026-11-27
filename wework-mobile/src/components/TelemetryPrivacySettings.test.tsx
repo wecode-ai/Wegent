@@ -41,7 +41,9 @@ describe('telemetry privacy setting', () => {
   let renderer: ReactTestRenderer | undefined
 
   beforeEach(() => {
-    telemetry.choose.mockClear()
+    telemetry.choose.mockReset()
+    telemetry.choose.mockResolvedValue(undefined)
+    telemetry.retry.mockClear()
     telemetry.snapshot.error = null
   })
 
@@ -52,6 +54,19 @@ describe('telemetry privacy setting', () => {
     const toggle = renderer!.root.findByProps({ testID: 'settings-telemetry-toggle' })
     await act(() => toggle.props.onValueChange(true))
     expect(telemetry.choose).toHaveBeenCalledWith(true)
+  })
+
+  it('retries the failed preference choice instead of only clearing the error', async () => {
+    telemetry.choose.mockRejectedValueOnce(new Error('storage unavailable'))
+    await act(() => {
+      renderer = create(<TelemetryPrivacySettings />)
+    })
+    const toggle = renderer!.root.findByProps({ testID: 'settings-telemetry-toggle' })
+    await act(() => toggle.props.onValueChange(true))
+    const notice = renderer!.root.findByType('ErrorNotice' as never)
+    await act(() => notice.props.onRetry())
+    expect(telemetry.choose).toHaveBeenNthCalledWith(1, true)
+    expect(telemetry.choose).toHaveBeenNthCalledWith(2, true)
   })
 
   it('shows a storage error with retry instead of silently hiding telemetry', async () => {

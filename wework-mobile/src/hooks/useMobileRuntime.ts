@@ -38,6 +38,7 @@ import { useRuntimeCloudConnection } from './useRuntimeCloudConnection'
 import { useRuntimeCacheHydration } from './useRuntimeCacheHydration'
 import { useRuntimeFailures } from './useRuntimeFailures'
 import { useMobileUserInput } from './useMobileUserInput'
+import { recordMobileTaskAddressRename } from '@/telemetry/taskIdentity'
 import { recordMobileTaskOutcome } from '@/telemetry/taskOutcome'
 import { useConversationActions } from './useConversationActions'
 import {
@@ -692,6 +693,7 @@ export function useMobileRuntime(
         }
         if (response.taskId !== taskId) {
           renameTranscript(provisionalAddress, resolvedAddress)
+          recordMobileTaskAddressRename(provisionalAddress, resolvedAddress)
           sendTransition = lifecycle.renameSend(sendTransition, resolvedAddress)
           publishTaskLifecycle()
         }

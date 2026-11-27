@@ -49,7 +49,9 @@ export class MobileTelemetryController {
   private starting: Promise<boolean> | null = null
   private stopping: Promise<void> | null = null
   private pendingStartupDurationMs: number | null = null
+  private pendingLaunch: ReturnType<typeof prepareLaunch> | null = null
   private launchPrepared = false
+  private consentGeneration = 0
 
   getSnapshot = (): MobileTelemetrySnapshot => this.snapshot
 
@@ -65,7 +67,8 @@ export class MobileTelemetryController {
 
   async choose(enabled: boolean): Promise<void> {
     if (!this.snapshot.available || this.snapshot.saving) return
-    this.publish({ saving: true, error: null })
+    this.consentGeneration += 1
+    this.publish({ saving: true, enabled, error: null })
     try {
       if (!enabled) await this.stopClient()
       const next = await this.stateStore.update(state => {
@@ -81,8 +84,8 @@ export class MobileTelemetryController {
         this.capture('mobile_telemetry_preference_changed', { enabled: true })
       }
     } catch (error) {
-      if (!enabled) await this.stopClient()
-      this.publish({ enabled: false, active: false, error })
+      await this.stopClient()
+      this.publish({ asked: true, enabled: false, active: false, error })
       throw error
     } finally {
       this.publish({ saving: false })
@@ -115,6 +118,7 @@ export class MobileTelemetryController {
   }
 
   async stop(): Promise<void> {
+    this.consentGeneration += 1
     await this.stopClient()
     if (!this.state) return
     this.state = await this.stateStore.update(state => {
@@ -231,22 +235,35 @@ export class MobileTelemetryController {
   private async startInternal(): Promise<boolean> {
     const config = this.config
     if (!config?.available) return false
+    const generation = this.consentGeneration
     try {
-      const current = this.state ?? (await this.stateStore.load())
-      const launch = prepareLaunch(current, config.appVersion, Date.now(), Crypto.randomUUID)
-      this.state = await this.stateStore.update(() => ({
-        state: launch.state,
-        result: launch.state,
-      }))
+      let prepared: ReturnType<typeof prepareLaunch> | null = null
+      this.state = await this.stateStore.update(state => {
+        if (!state.consentEnabled) return { state, result: state }
+        prepared =
+          this.pendingLaunch ??
+          prepareLaunch(state, config.appVersion, Date.now(), Crypto.randomUUID)
+        this.pendingLaunch = prepared
+        return { state: prepared.state, result: prepared.state }
+      })
+      if (!prepared) return false
+      const launch: ReturnType<typeof prepareLaunch> = prepared
       if (launch.state.sampleBucket === null || launch.state.sampleBucket >= config.sampleRate) {
         this.launchPrepared = true
+        this.pendingLaunch = null
         return false
       }
+      if (generation !== this.consentGeneration || !this.snapshot.enabled) return false
       this.sessionId = sessionId(Crypto.randomUUID())
       await this.client.start(config, launch.state.installationId!, {
         ...this.commonProperties(config, this.sessionId),
       })
+      if (generation !== this.consentGeneration || !this.snapshot.enabled) {
+        await this.client.stop()
+        return false
+      }
       this.launchPrepared = true
+      this.pendingLaunch = null
       this.publish({ active: true, error: null })
       this.captureLaunch(launch, config)
       return true
@@ -331,6 +348,7 @@ export class MobileTelemetryController {
       })
     await this.stopping
     this.sessionId = null
+    this.pendingLaunch = null
     this.launchPrepared = false
     this.publish({ active: false })
     if (this.state) {

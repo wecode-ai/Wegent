@@ -1,6 +1,7 @@
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/runtime'
 
@@ -167,4 +168,11 @@ export function isRunningRuntimeEvent(name: string): boolean {
 
 export function isTerminalRuntimeEvent(name: string): boolean {
   return TERMINAL_RUNTIME_EVENTS.has(name)
+}
+
+export function projectedRuntimeTaskRunning(
+  task: RuntimeTaskSummary | undefined,
+  projected: boolean | undefined
+): boolean {
+  return typeof projected === 'boolean' ? projected : task?.running === true
 }

@@ -21,7 +21,7 @@ function resolveMobileTelemetryBuildConfig(environment) {
     'RELEASE_CHANNEL',
     environment.EAS_BUILD_PROFILE?.trim() || 'development'
   )
-  return {
+  return parseMobileTelemetryBuildConfig({
     posthogHost: read('POSTHOG_HOST', DEFAULT_POSTHOG_HOST),
     posthogKey: read('POSTHOG_KEY'),
     sampleRate: parseTelemetrySampleRate(read('TELEMETRY_SAMPLE_RATE')),
@@ -34,7 +34,7 @@ function resolveMobileTelemetryBuildConfig(environment) {
     ),
     releaseChannel,
     source: read('TELEMETRY_SOURCE', MOBILE_TELEMETRY_SOURCE),
-  }
+  })
 }
 
 function boundedLabel(value, fallback) {
