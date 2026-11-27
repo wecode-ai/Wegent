@@ -48,6 +48,7 @@ export function createDesktopScenario({
   restartDesktopApp,
   resultDir,
 }) {
+  let accountToken
   let assessments = 0
   let expectedModel
   let workRequests = 0
@@ -74,6 +75,9 @@ export function createDesktopScenario({
     assert.fail(`${label}: ${JSON.stringify(value)}`)
   }
   return {
+    prepareApp({ appEnvironment }) {
+      accountToken = appEnvironment.WEWORK_E2E_CLOUD_TOKEN
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -388,6 +392,11 @@ export function createDesktopScenario({
         expectNewDeviceIdentity: true,
       })
       await declineInitialTelemetryConsent(control)
+      await control.command('setCloudSessionToken', 'body', { value: accountToken })
+      await control.command('waitFor', '[data-testid="desktop-sidebar-account"]', {
+        text: 'wework-desktop-e2e-cloud-user',
+        timeoutMs: uiTimeoutMs,
+      })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
