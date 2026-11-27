@@ -55,6 +55,10 @@ async fn count(mysql: &MysqlService) -> i64 {
 }
 
 pub(crate) async fn verify_dispatch_transactions(mysql: &MysqlService) {
+    mysql
+        .execute(crate::app_test_support::PROJECT_CHAT_MESSAGES_DDL, ())
+        .await
+        .unwrap();
     mysql.execute("CREATE TABLE loop_item_executions (id BIGINT AUTO_INCREMENT PRIMARY KEY,loop_item_id VARCHAR(64),cloud_project_id VARCHAR(64),executor_owner_user_id BIGINT,agent_id VARCHAR(64),team_id BIGINT,automation_run_id VARCHAR(64),execution_environment VARCHAR(30),execution_device_id VARCHAR(128),assigner_user_id BIGINT,status VARCHAR(30),priority_weight BIGINT,queued_at DATETIME(6),attempt_no BIGINT,previous_execution_id BIGINT,execution_scope VARCHAR(255),execution_note TEXT,approval_status VARCHAR(30),execution_payload TEXT,error_message TEXT,max_retries BIGINT,observed_state VARCHAR(30),sync_state VARCHAR(30),runtime_task_id VARCHAR(128),updated_at DATETIME(6),INDEX(execution_scope)) ENGINE=InnoDB",()).await.unwrap();
     mysql
         .execute(
