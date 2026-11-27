@@ -1639,6 +1639,35 @@ async function main() {
         throw error
       }
       control.applicationProcessId = application.pid
+      if (process.platform !== 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets) {
+        application.captureShutdownSnapshot = async () => {
+          const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+          try {
+            // Retain only process identities, never command lines or credentials.
+            await writeFile(
+              join(resultDir, 'shutdown-process-tree.json'),
+              JSON.stringify(
+                {
+                  applicationPid: snapshot.applicationPid,
+                  capturedAt: snapshot.capturedAt,
+                  degraded: snapshot.degraded,
+                  platform: snapshot.platform,
+                  processes: snapshot.processes.map(({ pid, parentPid, startedAt }) => ({
+                    pid,
+                    parentPid,
+                    startedAt,
+                  })),
+                },
+                null,
+                2
+              )
+            )
+          } catch (error) {
+            console.error('[desktop-e2e] Shutdown process diagnostics failed:', error)
+          }
+          return snapshot
+        }
+      }
       return application
     }
     app = await startDesktopAppProcess()
@@ -4952,7 +4981,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         })
       }
     }
-    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    let applicationStopped = false
+    await runTeardownStep('desktop application', async () => {
+      await stopDesktopAppProcess(app)
+      applicationStopped = true
+    })
     await runTeardownStep('native cloud authorization', async () => nativeCloudLogin?.restore())
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
@@ -4976,14 +5009,18 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
       await flushProcessOutput()
     })
-    await runTeardownStep('Codex SQLite home', async () =>
-      rm(codexSqliteHome, {
-        recursive: true,
-        force: true,
-        maxRetries: process.platform === 'win32' ? 20 : 0,
-        retryDelay: 100,
-      })
-    )
+    if (applicationStopped) {
+      await runTeardownStep('Codex SQLite home', async () =>
+        rm(codexSqliteHome, {
+          recursive: true,
+          force: true,
+          maxRetries: process.platform === 'win32' ? 20 : 0,
+          retryDelay: 100,
+        })
+      )
+    } else {
+      console.error('[desktop-e2e] Retained Codex SQLite home because application shutdown failed')
+    }
     await runTeardownStep('macOS Launch Services registration', async () => {
       if (appBundlePath && process.platform === 'darwin') {
         spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
@@ -5014,12 +5051,27 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     } else {
       if (teardownFailures.length > 0) {
-        throw new AggregateError(
+        const error = new AggregateError(
           teardownFailures.map(failure => failure.error),
           `Desktop E2E teardown failed: ${teardownFailures
             .map(failure => failure.label)
             .join(', ')}`
         )
+        try {
+          await writeFile(
+            join(resultDir, 'failure.txt'),
+            `${error.stack}\n${teardownFailures
+              .map(failure => `${failure.label}: ${failure.error?.stack ?? failure.error}`)
+              .join('\n')}\n`,
+            'utf8'
+          )
+        } catch (diagnosticError) {
+          console.error(
+            '[desktop-e2e] Teardown failure diagnostics could not be written:',
+            diagnosticError
+          )
+        }
+        throw error
       }
       if (cleanupError) throw cleanupError
     }

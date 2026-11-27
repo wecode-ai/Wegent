@@ -194,6 +194,10 @@ export async function waitForOwnedProcessExit(
   { timeoutMs = PROCESS_STOP_TIMEOUT_MS, isAlive = processIsAlive } = {}
 ) {
   const pids = ownedCrashTargets({ pid: snapshot.applicationPid }, snapshot)
+  await waitForProcessIdsExit(pids, { timeoutMs, isAlive })
+}
+
+async function waitForProcessIdsExit(pids, { timeoutMs, isAlive = processIsAlive }) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const survivors = pids.filter(isAlive)
@@ -201,6 +205,37 @@ export async function waitForOwnedProcessExit(
     if (Date.now() >= deadline)
       throw new Error(`Owned application processes survived shutdown: ${survivors.join(', ')}`)
     await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
+}
+
+export async function stopOwnedProcessTree(child, snapshot) {
+  // Validate once, before shutdown can orphan descendants or age the snapshot.
+  const targets = ownedCrashTargets(child, snapshot)
+  if (process.platform === 'win32') {
+    await stopProcessGroup(child)
+    await waitForProcessIdsExit(targets, { timeoutMs: PROCESS_STOP_TIMEOUT_MS })
+    return
+  }
+  const signalSurvivors = signal => {
+    const survivors = targets.filter(processIsAlive)
+    for (const pid of survivors.toReversed()) {
+      try {
+        process.kill(pid, signal)
+        logDesktopE2eSignal({ action: 'stop-owned-process', pid, signal })
+      } catch (error) {
+        if (error?.code !== 'ESRCH') throw error
+      }
+    }
+  }
+  // Independent process groups, including Codex SQLite writers, do not receive
+  // the application's group signal. Give every owned process graceful shutdown.
+  signalSurvivors('SIGTERM')
+  await stopProcessGroup(child)
+  try {
+    await waitForProcessIdsExit(targets, { timeoutMs: PROCESS_GROUP_GRACE_PERIOD_MS })
+  } catch {
+    signalSurvivors('SIGKILL')
+    await waitForProcessIdsExit(targets, { timeoutMs: PROCESS_STOP_TIMEOUT_MS })
   }
 }
 

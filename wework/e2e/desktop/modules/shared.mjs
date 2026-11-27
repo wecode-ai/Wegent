@@ -30,6 +30,7 @@ import {
   processIsAlive,
   stopProcess,
   stopProcessGroup,
+  stopOwnedProcessTree,
 } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
@@ -1047,7 +1048,7 @@ function redisCliBinary(
   )
 }
 
-async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
+async function stopDesktopAppProcess(app, { forceSnapshot, shutdownSnapshot } = {}) {
   if (!app) return
   if (forceSnapshot) {
     await crashOwnedProcessTree(app, forceSnapshot)
@@ -1055,6 +1056,20 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     return
   }
   if (!app.launcher) {
+    if (app.captureShutdownSnapshot) {
+      try {
+        shutdownSnapshot ??= await app.captureShutdownSnapshot()
+      } catch (error) {
+        // Stop the known group, but retain the capture failure and its runtime
+        // files rather than assuming independent writers have exited.
+        await stopProcessGroup(app)
+        throw error
+      }
+    }
+    if (shutdownSnapshot) {
+      await stopOwnedProcessTree(app, shutdownSnapshot)
+      return
+    }
     await stopProcessGroup(app)
     return
   }

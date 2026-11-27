@@ -1,12 +1,15 @@
 // @vitest-environment node
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { EventEmitter } from 'node:events'
-import { resolve } from 'node:path'
+import { EventEmitter, once } from 'node:events'
+import { access, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
+  processIsAlive: (pid: number) => boolean
   processInstanceMatches: (
     expected: { Id: number; ProcessName: string; StartedAt: string },
     actual: { Id: number; ProcessName: string; StartedAt: string } | null
@@ -18,6 +21,7 @@ interface ProcessLifecycle {
   ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
   crashOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
+  stopOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
   waitForOwnedProcessExit: (
     snapshot: unknown,
@@ -98,6 +102,66 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test.each([false, true])(
+    'normal application shutdown stops independent SQLite writers before removing their home: ignores TERM=%s',
+    async ignoreTerm => {
+      const { processIsAlive, waitForOwnedProcessExit } = await loadProcessLifecycle()
+      const moduleUrl = pathToFileURL(
+        resolve(import.meta.dirname, '../../e2e/desktop/modules/shared.mjs')
+      ).href
+      const { stopDesktopAppProcess } = await import(/* @vite-ignore */ moduleUrl)
+      const home = await mkdtemp(join(tmpdir(), 'wework-owned-sqlite-'))
+      const application = spawn(
+        process.execPath,
+        [
+          resolve(import.meta.dirname, '../../e2e/desktop/fixtures/owned-sqlite-writer.mjs'),
+          'application',
+          home,
+          String(ignoreTerm),
+        ],
+        { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+      ) as ChildProcess & { captureShutdownSnapshot?: () => Promise<unknown> }
+      ownedProcessGroups.add(application.pid!)
+      const [detail] = (await once(application, 'message')) as [
+        { writerPid: number; writerStartedAt: number; applicationStartedAt: number },
+      ]
+      ownedProcesses.add(detail.writerPid)
+      const snapshot = {
+        applicationPid: application.pid,
+        platform: process.platform,
+        capturedAt: Date.now(),
+        degraded: [],
+        processes: [
+          { pid: application.pid, parentPid: process.pid, startedAt: detail.applicationStartedAt },
+          { pid: detail.writerPid, parentPid: application.pid, startedAt: detail.writerStartedAt },
+        ],
+      }
+      application.captureShutdownSnapshot = async () => {
+        expect(processIsAlive(application.pid!)).toBe(true)
+        return snapshot
+      }
+      try {
+        await stopDesktopAppProcess(application)
+
+        expect(
+          processIsAlive(detail.writerPid),
+          'Owned Codex SQLite writer survived teardown'
+        ).toBe(false)
+        await rm(home, { recursive: true, force: true })
+        await expect(access(home)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        for (const pid of [detail.writerPid, application.pid!]) {
+          if (processIsAlive(pid)) process.kill(pid, 'SIGKILL')
+        }
+        await waitForOwnedProcessExit(snapshot, { timeoutMs: 3000, isAlive: processIsAlive })
+        await rm(home, { recursive: true, force: true })
+        ownedProcesses.delete(detail.writerPid)
+        ownedProcessGroups.delete(application.pid!)
+      }
+    },
+    20_000
+  )
+
   test('shutdown waits for owned writers even after the application exited', async () => {
     const { waitForOwnedProcessExit } = await loadProcessLifecycle()
     const snapshot = {
@@ -201,7 +265,7 @@ describe('desktop process lifecycle', () => {
   test.each(['degraded', 'unowned', 'missing identity', 'future identity', 'stale'])(
     'rejects a %s crash snapshot before signaling any process',
     async invalid => {
-      const { crashOwnedProcessTree } = await loadProcessLifecycle()
+      const { crashOwnedProcessTree, stopOwnedProcessTree } = await loadProcessLifecycle()
       const snapshot = {
         applicationPid: 42,
         platform: process.platform,
@@ -220,6 +284,7 @@ describe('desktop process lifecycle', () => {
       const kill = vi.spyOn(process, 'kill')
       try {
         await expect(crashOwnedProcessTree({ pid: 42 } as ChildProcess, snapshot)).rejects.toThrow()
+        await expect(stopOwnedProcessTree({ pid: 42 } as ChildProcess, snapshot)).rejects.toThrow()
         expect(kill).not.toHaveBeenCalled()
       } finally {
         kill.mockRestore()
