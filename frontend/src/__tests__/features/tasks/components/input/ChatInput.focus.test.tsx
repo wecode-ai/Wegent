@@ -310,6 +310,9 @@ test.each([
         expect(menu).toHaveStyle({ top: '154px', left: `${window.innerWidth - 408}px` })
         expect(screen.queryByText('chat:send_shortcut')).not.toBeInTheDocument()
 
+        caretTop = 135
+        await waitFor(() => expect(menu).toHaveStyle({ top: '169px' }))
+
         editorBottom = 100
         fireEvent.scroll(editorViewport)
         expect(menu).not.toBeVisible()

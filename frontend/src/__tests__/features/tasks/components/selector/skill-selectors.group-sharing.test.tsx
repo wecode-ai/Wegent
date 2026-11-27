@@ -133,6 +133,7 @@ it.each(['{Enter}', ' '])('activates the focused skill after ArrowDown with %s',
 it('lets Enter activate a control outside the open skill menu', async () => {
   const user = userEvent.setup()
   const onSelect = jest.fn()
+  const onClose = jest.fn()
   const onOutsideActivate = jest.fn()
   render(
     <>
@@ -144,7 +145,7 @@ it('lets Enter activate a control outside the open skill menu', async () => {
         anchor={anchor}
         isChatShell={false}
         onSelect={onSelect}
-        onClose={jest.fn()}
+        onClose={onClose}
       />
       <button type="button" onClick={onOutsideActivate}>
         Outside action
@@ -154,7 +155,9 @@ it('lets Enter activate a control outside the open skill menu', async () => {
 
   await user.tab()
   expect(screen.getByTestId('slash-skill-option')).toHaveFocus()
+  expect(onClose).not.toHaveBeenCalled()
   await user.tab()
+  expect(onClose).toHaveBeenCalledTimes(1)
   await user.keyboard('{Enter}')
   expect(onOutsideActivate).toHaveBeenCalledTimes(1)
   expect(onSelect).not.toHaveBeenCalled()

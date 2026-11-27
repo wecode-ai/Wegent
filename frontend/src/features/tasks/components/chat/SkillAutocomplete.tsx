@@ -57,12 +57,13 @@ const MENU_MARGIN = 8
 const MENU_MAX_WIDTH = 400
 const MENU_MAX_HEIGHT = 300
 
+type CaretBounds = ReturnType<SkillAutocompleteProps['anchor']['getBoundingClientRect']>
+
 function getMenuPlacement(
-  anchor: SkillAutocompleteProps['anchor'],
+  caret: CaretBounds,
   menu: HTMLElement,
   editorViewport?: HTMLElement | null
 ) {
-  const caret = anchor.getBoundingClientRect()
   const viewport = window.visualViewport
   const viewportTop = viewport?.offsetTop ?? 0
   const viewportLeft = viewport?.offsetLeft ?? 0
@@ -184,11 +185,30 @@ export default function SkillAutocomplete({
     if (!menu) return
 
     const editorViewport = editorViewportRef?.current
-    const updatePlacement = () => setPlacement(getMenuPlacement(anchor, menu, editorViewport))
+    let lastCaret = anchor.getBoundingClientRect()
+    let frame = 0
+    const positionMenu = (caret: CaretBounds) => {
+      lastCaret = caret
+      setPlacement(getMenuPlacement(caret, menu, editorViewport))
+    }
+    const updatePlacement = () => positionMenu(anchor.getBoundingClientRect())
+    const trackCaretPosition = () => {
+      const caret = anchor.getBoundingClientRect()
+      if (
+        caret.top !== lastCaret.top ||
+        caret.bottom !== lastCaret.bottom ||
+        caret.left !== lastCaret.left
+      ) {
+        positionMenu(caret)
+      }
+      frame = window.requestAnimationFrame(trackCaretPosition)
+    }
     const handleScroll = (event: Event) => {
       if (event.target !== menu) updatePlacement()
     }
-    updatePlacement()
+    positionMenu(lastCaret)
+    // A centered composer can move when nearby content changes size without scrolling or resizing.
+    if (editorViewport) frame = window.requestAnimationFrame(trackCaretPosition)
     const observer =
       typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updatePlacement)
     observer?.observe(menu)
@@ -200,6 +220,7 @@ export default function SkillAutocomplete({
     window.addEventListener('resize', updatePlacement)
     window.addEventListener('scroll', handleScroll, true)
     return () => {
+      window.cancelAnimationFrame(frame)
       observer?.disconnect()
       viewport?.removeEventListener('resize', updatePlacement)
       viewport?.removeEventListener('scroll', updatePlacement)
@@ -223,19 +244,27 @@ export default function SkillAutocomplete({
     setSelectedIndex(Number(focusedIndex ?? 0))
   }, [filteredSkills])
 
-  // Close on outside click
+  // Close on outside click or when keyboard focus leaves the autocomplete.
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
+    const closeIfOutsideMenu = (event: Event) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) {
         onClose()
       }
     }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
+    const handleFocusOutside = (event: FocusEvent) => {
+      const target = event.target
+      if (target instanceof Node && !editorRef?.current?.contains(target)) {
+        closeIfOutsideMenu(event)
+      }
     }
-  }, [onClose])
+
+    document.addEventListener('mousedown', closeIfOutsideMenu)
+    document.addEventListener('focusin', handleFocusOutside)
+    return () => {
+      document.removeEventListener('mousedown', closeIfOutsideMenu)
+      document.removeEventListener('focusin', handleFocusOutside)
+    }
+  }, [editorRef, onClose])
 
   const handleSelect = useCallback(
     (skill: UnifiedSkill, option?: HTMLElement | null) => {
