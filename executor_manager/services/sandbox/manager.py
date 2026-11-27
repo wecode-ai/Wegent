@@ -328,14 +328,24 @@ class SandboxManager(metaclass=SingletonMeta):
         bot_config: Optional[Dict[str, Any]],
         metadata: Dict[str, Any],
         lease: Optional[_TaskLifecycleLease] = None,
-    ) -> Tuple[Sandbox, Optional[str]]:
+    ) -> Tuple[Optional[Sandbox], Optional[str]]:
         """Create a sandbox while holding the task-specific create lock."""
         sandbox_metadata = metadata
         task_id = sandbox_metadata.get("task_id")
 
         if task_id is not None:
             # Check by task_id only (not subtask_id) to reuse sandbox across subtasks
-            existing_sandbox = self._repository.load_sandbox(str(task_id))
+            try:
+                existing_sandbox = self._repository.load_sandbox(
+                    str(task_id), require_definitive_result=True
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not verify existing sandbox %s: %s",
+                    task_id,
+                    type(error).__name__,
+                )
+                return None, "Could not verify the existing sandbox; retry the request"
             if existing_sandbox and existing_sandbox.status == SandboxStatus.RUNNING:
                 # Verify container is actually alive via health check
                 if existing_sandbox.base_url:
@@ -400,7 +410,10 @@ class SandboxManager(metaclass=SingletonMeta):
         )
 
         # Save initial state to Redis
-        self._repository.save_sandbox(sandbox)
+        if not self._repository.save_sandbox(sandbox):
+            error = "Could not save the initial sandbox session; retry the request"
+            sandbox.set_failed(error)
+            return sandbox, error
 
         # Start container in background
         try:

@@ -334,6 +334,34 @@ class TestSandboxManager:
         ensure_workspace.assert_awaited_once_with(sandbox)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("storage_failure", ["read", "write"])
+    async def test_create_sandbox_does_not_start_when_session_storage_fails(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        mocker,
+        storage_failure,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        if storage_failure == "read":
+            mock_redis_client.hget.side_effect = OSError("Redis unavailable")
+        else:
+            mock_redis_client.hset.side_effect = OSError("Redis unavailable")
+        start = mocker.patch.object(manager, "_start_sandbox_container")
+
+        _, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={"task_id": 12345},
+        )
+
+        assert error and "retry the request" in error
+        start.assert_not_awaited()
+        if storage_failure == "read":
+            mock_redis_client.hset.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_create_sandbox_container_start_failure(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
@@ -530,7 +558,7 @@ class TestSandboxManager:
         manager = sandbox_manager_with_mock_redis
         saved_sandboxes = {}
 
-        def load_sandbox(sandbox_id):
+        def load_sandbox(sandbox_id, *, require_definitive_result=False):
             return saved_sandboxes.get(str(sandbox_id))
 
         def save_sandbox(sandbox):
