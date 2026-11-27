@@ -98,7 +98,6 @@ export function useMessageRowMeasurements(
   const scheduledFrame = useRef<SafeAnimationFrameHandle | null>(null)
   const measurementRun = useRef({
     startedAt: 0,
-    frameStartedAt: 0,
     lastBatchAt: 0,
     batches: 0,
     lastWarningAt: -Infinity,
@@ -122,9 +121,9 @@ export function useMessageRowMeasurements(
       const now = performance.now()
       if (now - run.lastBatchAt > MEASUREMENT_RUN_GAP_MS || run.startedAt === 0) {
         run.startedAt = now
-        run.frameStartedAt = now
         run.batches = 0
       }
+      let frameStartedAt: number
       // New rows can enter the range after every measurement. Finish the React
       // commit before publishing sizes, then yield between batches when needed.
       const measureBatch = () => {
@@ -198,16 +197,18 @@ export function useMessageRowMeasurements(
         pending.current = null
         batch.completions.forEach(complete => complete())
       }
+      const beginFrame = () => {
+        if (pending.current !== batch) return
+        scheduledFrame.current = null
+        frameStartedAt = performance.now()
+        measureBatch()
+      }
       const scheduleBatch = () => {
-        if (performance.now() - run.frameStartedAt >= MEASUREMENT_FRAME_BUDGET_MS) {
-          scheduledFrame.current = requestSafeAnimationFrame(() => {
-            scheduledFrame.current = null
-            run.frameStartedAt = performance.now()
-            measureBatch()
-          })
+        if (performance.now() - frameStartedAt >= MEASUREMENT_FRAME_BUDGET_MS) {
+          scheduledFrame.current = requestSafeAnimationFrame(beginFrame)
         } else queueMicrotask(measureBatch)
       }
-      scheduleBatch()
+      queueMicrotask(beginFrame)
     },
     [enabled, listRef, virtualizer]
   )

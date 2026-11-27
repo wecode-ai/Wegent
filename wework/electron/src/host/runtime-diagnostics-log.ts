@@ -2,8 +2,11 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 
 const PREFIX = '[Wework] Runtime task create diagnostic '
 
+export const CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME = 'conversation-row-measurement.log'
+
 export class RuntimeDiagnosticsLog {
   private readonly log: RotatingLog
+  private closed = false
 
   constructor(
     path: string,
@@ -13,11 +16,16 @@ export class RuntimeDiagnosticsLog {
   }
 
   async record(contentsId: number, message: string): Promise<void> {
-    if (!message.startsWith(this.prefix)) return
+    if (this.closed || !message.startsWith(this.prefix)) return
     await this.log.write('stdout', `web_contents_id=${contentsId} ${message}`)
   }
 
   flush(): Promise<void> {
     return this.log.flush()
+  }
+
+  close(): Promise<void> {
+    this.closed = true
+    return this.flush()
   }
 }

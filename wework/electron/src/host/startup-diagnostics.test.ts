@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -172,11 +172,15 @@ describe('startup diagnostics', () => {
       'executor.log',
       'dsh-core-runtime.log',
       'app-update.log',
+      'conversation-row-measurement.log',
     ]
     for (const name of currentNames) await writeFile(join(root, name), `${name}-current\n`)
+    const measurementPath = join(root, 'conversation-row-measurement.log')
+    await utimes(measurementPath, 1, 1)
     const bootstrapPath = join(root, 'wework-startup-bootstrap.log')
     await writeFile(bootstrapPath, 'bootstrap-current\n')
     for (let index = 1; index <= 12; index += 1) {
+      await writeFile(join(root, `current-${index}.log`), 'unprioritized-current\n')
       await writeFile(join(root, `wework-main.log.${index}`), 'rotated-main\n')
       await writeFile(join(root, `executor.log.${index}`), 'rotated-executor\n')
     }
@@ -191,11 +195,12 @@ describe('startup diagnostics', () => {
       extraLogPaths: [bootstrapPath],
       progress: { current: null, history: [] },
       failure: null,
-      maxLogFiles: 6,
+      maxLogFiles: 7,
     })
 
     for (const name of currentNames) expect(diagnostics).toContain(`${name}-current`)
     expect(diagnostics).toContain('bootstrap-current')
+    expect(diagnostics).not.toContain('unprioritized-current')
     expect(diagnostics).not.toContain('rotated-main')
     expect(diagnostics).not.toContain('rotated-executor')
   })

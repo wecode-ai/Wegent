@@ -16,7 +16,10 @@ import {
 } from './host/cloud-connection-profile.js'
 import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
 import { SchemeQueue } from './host/scheme-queue.js'
-import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import {
+  CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME,
+  RuntimeDiagnosticsLog,
+} from './host/runtime-diagnostics-log.js'
 import { buildStartupDiagnostics, type StartupFailureSnapshot } from './host/startup-diagnostics.js'
 import { startupFailureSnapshot } from './host/startup-failure.js'
 import {
@@ -411,6 +414,7 @@ let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let pythonRuntimeManagerPromise: Promise<PythonRuntimeManager> | null = null
 let quitting = false
+let shutdownPrepared = false
 let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
@@ -548,7 +552,7 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   '[Wework] Conversation search diagnostic '
 )
 const conversationRowDiagnosticsLog = new RuntimeDiagnosticsLog(
-  join(app.getPath('logs'), 'conversation-row-measurement.log'),
+  join(app.getPath('logs'), CONVERSATION_ROW_DIAGNOSTICS_LOG_NAME),
   '[Wework] Conversation row measurement diagnostic '
 )
 const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
@@ -2394,9 +2398,6 @@ async function shutdown(): Promise<void> {
       console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
     }
   )
-  await conversationRowDiagnosticsLog.flush().catch(() => {
-    console.warn('[Wework] Failed to flush conversation row diagnostics')
-  })
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
     throw new AggregateError(
@@ -2419,6 +2420,16 @@ function prepareApplicationShutdown(): Promise<void> {
   rendererStartupReady.cancel()
   presentStartupWindow.cancel()
   shutdownPromise = traceShutdownStep('application', shutdown)
+    .finally(() =>
+      traceShutdownStep('conversation-row-diagnostics-log', () =>
+        conversationRowDiagnosticsLog.close()
+      ).catch(() => {
+        console.warn('[Wework] Failed to drain conversation row diagnostics')
+      })
+    )
+    .finally(() => {
+      shutdownPrepared = true
+    })
   return shutdownPromise
 }
 
@@ -3711,7 +3722,7 @@ registerApplicationActivation(app, {
 })
 
 app.on('before-quit', event => {
-  if (quitting) return
+  if (shutdownPrepared) return
   event.preventDefault()
   requestApplicationShutdown(() => app.quit())
 })
