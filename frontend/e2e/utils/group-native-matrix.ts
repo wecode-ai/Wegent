@@ -464,7 +464,14 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     contentType: 'application/json',
   })
   for (const row of await ctx.executions(denied.id)) {
-    if (row.agentId === leader.id && !['completed', 'failed', 'cancelled'].includes(row.status))
-      await api(`/api/v1/cloud-projects/${projectId}/executions/${row.id}/stop`, {})
+    const terminal = ['completed', 'failed', 'cancelled']
+    if (row.agentId !== leader.id || terminal.includes(row.status)) continue
+    await api(`/api/v1/cloud-projects/${projectId}/executions/${row.id}/stop`, {})
+    await expect
+      .poll(async () => (await ctx.executions(denied.id)).find(run => run.id === row.id)?.status, {
+        timeout: 30_000,
+        message: `Manager execution ${row.id} must reach a terminal state before project archival`,
+      })
+      .toMatch(/^(completed|failed|cancelled)$/)
   }
 }
