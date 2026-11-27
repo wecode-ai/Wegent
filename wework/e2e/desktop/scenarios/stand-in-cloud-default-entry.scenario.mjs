@@ -100,6 +100,19 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         'Chat must wait for migration'
       )
 
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="personal-assistant-account-migrate-cancel"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', confirmMigration, { visible: false, timeoutMs: uiTimeoutMs })
+      assert.equal(await readCloudAssistant(), null, 'Cancelling must leave cloud data untouched')
+      assert.deepEqual(await readStandInBinding(control, uiTimeoutMs), before)
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="personal-assistant-account-initialize"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('clickWhenEnabled', confirmMigration, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
       const assistant = await readCloudAssistant()
