@@ -6,7 +6,10 @@ import {
   configureFirstProjectExecutionEnvironment,
   reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
-import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import {
+  declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesEnabled,
+} from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -384,8 +387,7 @@ export function createDesktopScenario({
         appEnvironmentOverrides: { WEWORK_USER_DATA_DIR: join(resultDir, 'device-b-user-data') },
         expectNewDeviceIdentity: true,
       })
-      await control.command('waitFor', '[data-testid="telemetry-consent-decline"]')
-      await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]')
+      await declineInitialTelemetryConsent(control)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command(
