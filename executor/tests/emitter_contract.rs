@@ -52,6 +52,22 @@ fn callback_events_include_validation_id() {
 }
 
 #[test]
+fn response_tool_block_update_contains_completion_boundary() {
+    let event = ResponsesEventBuilder::new("1", "2", "model").response_tool_block_updated(
+        "tool-1",
+        &json!({"path": "a"}),
+        Some("ok"),
+        false,
+        None,
+    );
+
+    assert_eq!(event.event_type, "response.block.updated");
+    assert_eq!(event.data["block_id"], json!("tool-1"));
+    assert_eq!(event.data["updates"]["status"], json!("done"));
+    assert!(event.data["updates"]["completedAt"].is_i64());
+}
+
+#[test]
 fn response_completed_event_contains_message_output() {
     let executor_session = json!({
         "agent": "ClaudeCode",

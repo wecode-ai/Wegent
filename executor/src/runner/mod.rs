@@ -7,6 +7,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -81,6 +82,8 @@ where
         let handles = Arc::clone(&self.handles);
         Box::pin(async move {
             let builder = event_builder(&request);
+            let agent_started_at = current_epoch_ms();
+            let builder = builder.with_timing_boundary("agentStartedAt", agent_started_at);
             let fields = task_fields(&request.task_id, &request.subtask_id);
             log_executor_event("sending response.created callback", &fields);
             if let Err(message) = sink
@@ -172,8 +175,12 @@ where
             engine.cancel_pending(&task_id, subtask_id.as_deref());
             log_executor_event("task execution stop confirmed", &fields);
             fields.push(("callback_event", "response.incomplete".to_owned()));
+            let cancelled_at = current_epoch_ms();
+            let builder = state
+                .builder
+                .with_timing_boundary("agentFinishedAt", cancelled_at);
             match sink
-                .send(state.builder.response_cancelled("Task cancelled"))
+                .send(builder.response_cancelled("Task cancelled"))
                 .await
             {
                 Ok(()) => {
@@ -215,6 +222,8 @@ async fn run_in_background<E, S>(
     outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));
     log_executor_event("background task finished", &outcome_fields);
     registration.remove_if_current();
+    let agent_finished_at = current_epoch_ms();
+    let builder = builder.with_timing_boundary("agentFinishedAt", agent_finished_at);
 
     let event = match outcome {
         ExecutionOutcome::Completed { content } => builder.response_completed(&content),
@@ -270,10 +279,19 @@ fn event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .validation_params
         .get("validation_id")
         .and_then(|value| value.as_str());
+    let timing = request.extra.get("timing").cloned();
     ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(executor_name.as_deref(), executor_namespace.as_deref())
         .with_validation_id(validation_id)
+        .with_timing(timing)
+}
+
+fn current_epoch_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 fn outcome_name(outcome: &ExecutionOutcome) -> &'static str {
@@ -347,5 +365,10 @@ mod tests {
         assert_eq!(events[1].event_type, "response.incomplete");
         assert_eq!(events[1].data["response"]["status"], "cancelled");
         assert_eq!(events[1].data["response"]["error"]["code"], "cancelled");
+        let timing = &events[1].data["timing"];
+        assert!(
+            timing["agentFinishedAt"].as_i64().unwrap()
+                >= timing["agentStartedAt"].as_i64().unwrap()
+        );
     }
 }

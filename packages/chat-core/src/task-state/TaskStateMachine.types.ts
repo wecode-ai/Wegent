@@ -86,6 +86,7 @@ export interface UnifiedMessage {
     reasoning_chunk?: string
     blocks?: MessageBlock[]
     context_metrics?: ContextMetricsSnapshot
+    timing?: Record<string, number>
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string

@@ -508,6 +508,56 @@ class TestRedisTransport:
 
 class TestResponsesAPIEmitter:
     @pytest.mark.asyncio
+    async def test_lifecycle_events_carry_agent_timing_boundaries(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        with patch("shared.models.responses_api_emitter.time") as mock_time:
+            mock_time.time.side_effect = [1_000.000, 1_001.000]
+            await emitter.start()
+            await emitter.done(content="done")
+
+        events = dict(transport.get_events())
+        assert events["response.created"]["timing"] == {"agentStartedAt": 1_000_000}
+        assert events["response.completed"]["timing"] == {
+            "agentStartedAt": 1_000_000,
+            "agentFinishedAt": 1_001_000,
+        }
+
+    @pytest.mark.asyncio
+    async def test_all_terminal_events_close_started_agent_timing(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        for emit_terminal, expected_event in [
+            (lambda: emitter.done(content="done"), "response.completed"),
+            (lambda: emitter.incomplete(), "response.incomplete"),
+            (lambda: emitter.error("failed"), "error"),
+        ]:
+            with patch("shared.models.responses_api_emitter.time") as mock_time:
+                mock_time.time.side_effect = [1_000.000, 1_001.000]
+                await emitter.start()
+                await emit_terminal()
+
+            terminal = transport.get_events()[-1]
+            assert terminal[0] == expected_event
+            assert terminal[1]["timing"] == {
+                "agentStartedAt": 1_000_000,
+                "agentFinishedAt": 1_001_000,
+            }
+
+    @pytest.mark.asyncio
+    async def test_terminal_timing_is_omitted_without_start_event(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.error("failed before start")
+
+        error = transport.get_events()[-1]
+        assert error[0] == "error"
+        assert "timing" not in error[1]
+
+    @pytest.mark.asyncio
     async def test_done_merges_completion_provider_fields(self):
         transport = GeneratorTransport()
         emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
@@ -623,12 +673,14 @@ class TestResponsesAPIEmitter:
             name="exec",
             arguments={"command": "ls -la", "timeout_seconds": 5},
             tool_protocol="shell_call",
+            started_at=1_000,
         )
         await emitter.tool_done(
             call_id="shell_123",
             name="exec",
             arguments={"command": "ls -la", "timeout_seconds": 5},
             tool_protocol="shell_call",
+            completed_at=1_250,
         )
 
         events = transport.get_events()
@@ -639,9 +691,38 @@ class TestResponsesAPIEmitter:
             "response.output_item.done",
         ]
         assert events[0][1]["item"]["type"] == "shell_call"
+        assert events[0][1]["startedAt"] == 1_000
         assert events[0][1]["item"]["action"]["commands"] == ["ls -la"]
         assert events[1][1]["item"]["type"] == "shell_call"
         assert events[1][1]["item"]["status"] == "completed"
+        assert events[1][1]["completedAt"] == 1_250
+
+    @pytest.mark.asyncio
+    async def test_streamed_tool_arguments_do_not_duplicate_the_real_start(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="shell_stream",
+            name="exec",
+            arguments={"command": "ls"},
+            started_at=2_000,
+            skip_arguments=True,
+        )
+        await emitter.tool_done(
+            call_id="shell_stream",
+            name="exec",
+            arguments={"command": "ls"},
+            completed_at=2_100,
+        )
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.output_item.added",
+            "response.output_item.done",
+        ]
+        assert events[0][1]["startedAt"] == 2_000
+        assert events[1][1]["completedAt"] == 2_100
 
     @pytest.mark.asyncio
     async def test_exec_tool_infers_shell_call_and_reuses_context(self):

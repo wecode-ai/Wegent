@@ -848,7 +848,11 @@ class ResponsesAPIEventBuilder:
     # ============================================================
 
     def function_call_added(
-        self, call_id: str, name: str, display_name: Optional[str] = None
+        self,
+        call_id: str,
+        name: str,
+        display_name: Optional[str] = None,
+        started_at: Optional[int] = None,
     ) -> dict:
         """Create response.output_item.added event for function call.
 
@@ -876,6 +880,8 @@ class ResponsesAPIEventBuilder:
         # Add display_name as Wegent extension if provided
         if display_name:
             data["display_name"] = display_name
+        if started_at is not None:
+            data["startedAt"] = started_at
         return data
 
     def function_call_arguments_delta(
@@ -946,6 +952,7 @@ class ResponsesAPIEventBuilder:
         arguments: Optional[dict] = None,
         output: Optional[str] = None,
         status: str = "completed",
+        completed_at: Optional[int] = None,
     ) -> dict:
         """Create response.output_item.done event for function call.
 
@@ -975,6 +982,8 @@ class ResponsesAPIEventBuilder:
         }
         if output is not None:
             data["item"]["output"] = output
+        if completed_at is not None:
+            data["completedAt"] = completed_at
         return data
 
     # ============================================================
@@ -986,9 +995,10 @@ class ResponsesAPIEventBuilder:
         item_id: str,
         name: str,
         server_label: str,
+        started_at: Optional[int] = None,
     ) -> dict:
         """Create response.output_item.added event for MCP call."""
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
             "response_id": self.response_id,
             "output_index": self._tool_output_index,
@@ -1000,6 +1010,9 @@ class ResponsesAPIEventBuilder:
                 "arguments": "",
             },
         }
+        if started_at is not None:
+            data["startedAt"] = started_at
+        return data
 
     def mcp_call_arguments_done(
         self,
@@ -1055,11 +1068,12 @@ class ResponsesAPIEventBuilder:
         server_label: str,
         arguments: Optional[dict] = None,
         status: str = "completed",
+        completed_at: Optional[int] = None,
     ) -> dict:
         """Create response.output_item.done event for MCP call."""
         output_index = self._tool_output_index
         self._tool_output_index += 1
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             "response_id": self.response_id,
             "output_index": output_index,
@@ -1072,6 +1086,9 @@ class ResponsesAPIEventBuilder:
                 "status": status,
             },
         }
+        if completed_at is not None:
+            data["completedAt"] = completed_at
+        return data
 
     # ============================================================
     # Shell Call Events
@@ -1083,6 +1100,7 @@ class ResponsesAPIEventBuilder:
         name: str,
         arguments: Optional[dict] = None,
         display_name: Optional[str] = None,
+        started_at: Optional[int] = None,
     ) -> dict:
         """Create response.output_item.added event for shell call."""
         output_index = self._tool_output_index
@@ -1102,6 +1120,8 @@ class ResponsesAPIEventBuilder:
         }
         if display_name:
             data["display_name"] = display_name
+        if started_at is not None:
+            data["startedAt"] = started_at
         return data
 
     def shell_call_done(
@@ -1110,11 +1130,12 @@ class ResponsesAPIEventBuilder:
         name: str,
         arguments: Optional[dict] = None,
         status: str = "completed",
+        completed_at: Optional[int] = None,
     ) -> dict:
         """Create response.output_item.done event for shell call."""
         output_index = self._tool_output_index
         self._tool_output_index += 1
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             "response_id": self.response_id,
             "output_index": output_index,
@@ -1128,6 +1149,9 @@ class ResponsesAPIEventBuilder:
                 "input": arguments or {},
             },
         }
+        if completed_at is not None:
+            data["completedAt"] = completed_at
+        return data
 
     # ============================================================
     # Reasoning Events

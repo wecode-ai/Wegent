@@ -226,6 +226,123 @@
     "tooltip_preserved": "Executor is preserved and will not be cleaned up",
     "tooltip_not_preserved": "Click to preserve executor from cleanup"
   },
+  "timing": {
+    "action": "Timing analysis",
+    "title": "Timing analysis",
+    "close": "Close timing analysis",
+    "refresh": "Refresh timing data",
+    "loading": {
+      "title": "Loading timing data",
+      "description": "Summarizing observed execution intervals."
+    },
+    "empty": {
+      "title": "No timing data",
+      "description": "This task has no execution records to analyze yet."
+    },
+    "error": {
+      "title": "Failed to load timing",
+      "retry": "Retry"
+    },
+    "errors": {
+      "load_failed": "Timing data could not be loaded."
+    },
+    "summary": {
+      "title": "Time breakdown",
+      "wall_time": "Session {{duration}}",
+      "tool": "Command / tool",
+      "subagent": "Subagent",
+      "agent": "Agent / model",
+      "waiting_user": "Waiting for user",
+      "runtime": "Infra",
+      "gap": "Unsampled",
+      "no_samples_compact": "{{count}} categories have no samples",
+      "coverage": "Sample coverage {{observed}} · {{percent}}",
+      "hint": "Waiting for user covers time after control is returned to the user; parallel execution is counted once; unsampled only applies to system execution windows and does not imply idle time."
+    },
+    "categories": {
+      "tool": {
+        "description": "Commands, files, and tool calls",
+        "example": "Bash, pnpm, git, MCP tools"
+      },
+      "subagent": {
+        "description": "Independent subagent execution intervals",
+        "example": "Parallel workers, reviewers, researchers"
+      },
+      "agent": {
+        "description": "Main-agent model calls and orchestration",
+        "example": "Model responses, thinking, orchestration"
+      },
+      "waiting_user": {
+        "description": "Time after the system returns control to the user, while waiting for input, confirmation, or approval",
+        "example": "Waiting for a follow-up, approval, clarification, or a form"
+      },
+      "runtime": {
+        "description": "Queueing, scheduling, and environment preparation",
+        "example": "Queue wait, scheduling, environment setup"
+      },
+      "gap": {
+        "description": "An interval not covered by a sample",
+        "example": "Check task logs; it does not imply idle time"
+      },
+      "other": {
+        "description": "Samples not yet categorized",
+        "example": "Backend types not yet mapped in this client"
+      },
+      "no_samples": "No samples yet"
+    },
+    "timeline": {
+      "title": "Execution timeline",
+      "inclusive_note": "Each bar shows one execution interval. Agent bars may overlap tools or subagents, so their duration can differ from the breakdown above.",
+      "empty": "No execution intervals",
+      "span_meta": "{{kind}} · Subtask {{subtask}} · {{duration}}",
+      "open_span_meta": "{{kind}} · Subtask {{subtask}} · running as of the snapshot",
+      "coverage": "Sample coverage",
+      "gap_meta": "Unsampled {{start}} → {{end}} · {{duration}} · check task logs for this interval",
+      "compress_waiting_user": "Collapse waiting user",
+      "compressed_note": "Non-linear analysis view: waiting-user intervals are fixed-width markers, not real time proportions"
+    },
+    "status": {
+      "completed": "Completed",
+      "running": "Running",
+      "failed": "Failed",
+      "COMPLETED": "Completed",
+      "RUNNING": "Running",
+      "FAILED": "Failed",
+      "CANCELLED": "Cancelled",
+      "PENDING": "Pending",
+      "PENDING_CONFIRMATION": "Pending confirmation",
+      "DELETE": "Deleted"
+    },
+    "spans": {
+      "title": "Execution intervals",
+      "report_order": "#",
+      "subtask_id": "Subtask ID",
+      "subtask": "Subtask",
+      "kind": "Type",
+      "label": "Name",
+      "start": "Start",
+      "end": "End",
+      "duration": "Duration",
+      "first_token": "First token",
+      "output": "Output phase",
+      "running": "Running",
+      "status": "Status",
+      "interval": "Relative interval",
+      "sort_by_duration": "Sort by duration",
+      "sort_by_start": "Sort by start time",
+      "pagination_range": "{{start}}-{{end}} of {{count}}",
+      "page_number": "{{page}} / {{totalPages}}",
+      "previous_page": "Previous page",
+      "next_page": "Next page",
+      "page_size": "Rows per page",
+      "page_size_all": "All"
+    },
+    "report": {
+      "copy": "Copy diagnostic report",
+      "copied": "Copied",
+      "copy_failed": "Copy failed"
+    }
+  },
   "preview": {
     "title": "Subscription Preview",
     "task_name": "Task Name",

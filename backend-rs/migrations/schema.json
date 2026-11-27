@@ -1,5 +1,5 @@
 {
-  "revision": "b1c2d3e4f5a6",
+  "revision": "c2d3e4f5a6b7",
   "tables": [
     {
       "table": "background_executions",
@@ -465,6 +465,15 @@
         "CREATE INDEX ix_wiki_contents_generation_id ON wiki_contents (generation_id)",
         "CREATE INDEX ix_wiki_contents_id ON wiki_contents (id)",
         "CREATE INDEX ix_wiki_contents_type ON wiki_contents (type)"
+      ]
+    },
+    {
+      "table": "task_timing_spans",
+      "statements": [
+        "CREATE TABLE task_timing_spans (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\ttask_id BIGINT NOT NULL, \n\tsubtask_id BIGINT, \n\tparent_span_id VARCHAR(100) NOT NULL DEFAULT '', \n\tspan_id VARCHAR(100) NOT NULL, \n\tkind VARCHAR(32) NOT NULL, \n\tactor_id VARCHAR(200) NOT NULL DEFAULT '', \n\tactor_type VARCHAR(32) NOT NULL DEFAULT '', \n\tactor_label VARCHAR(300) NOT NULL DEFAULT '', \n\tstatus VARCHAR(24) NOT NULL DEFAULT 'running', \n\tstart_at_ms BIGINT, \n\tend_at_ms BIGINT, \n\tduration_ms BIGINT, \n\tclock VARCHAR(64) NOT NULL DEFAULT '', \n\tsource VARCHAR(100) NOT NULL DEFAULT '', \n\tmetadata JSON NOT NULL, \n\tcreated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), \n\tupdated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_task_timing_span_id UNIQUE (span_id)\n)",
+        "CREATE INDEX idx_task_timing_spans_actor ON task_timing_spans (task_id, actor_id, start_at_ms)",
+        "CREATE INDEX idx_task_timing_spans_kind ON task_timing_spans (task_id, kind, start_at_ms)",
+        "CREATE INDEX idx_task_timing_spans_task ON task_timing_spans (task_id, start_at_ms, id)"
       ]
     }
   ]

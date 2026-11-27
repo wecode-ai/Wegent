@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -175,6 +176,7 @@ async def test_mcp_tool_end_error_emits_failed_status():
         server_label="wegent-knowledge",
         status="failed",
         error=error_output,
+        completed_at=pytest.approx(int(time.time() * 1000), abs=60_000),
     )
 
 
@@ -229,6 +231,7 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits():
         server_label="wegent-interactive-form-question",
         status="completed",
         error=None,
+        completed_at=pytest.approx(int(time.time() * 1000), abs=60_000),
     )
 
 

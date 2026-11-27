@@ -74,7 +74,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 50);
+    assert_eq!(tables.len(), 51);
     assert!(
         !tables
             .iter()

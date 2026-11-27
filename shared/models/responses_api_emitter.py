@@ -93,6 +93,7 @@ class ResponsesAPIEmitter:
         self.builder = ResponsesAPIEventBuilder(subtask_id, model)
         self._tool_contexts: dict[str, dict[str, Any]] = {}
         self._completion_fields_provider: Optional[CompletionFieldsProvider] = None
+        self._agent_started_at_ms: Optional[int] = None
 
     def set_completion_fields_provider(
         self,
@@ -105,6 +106,15 @@ class ResponsesAPIEmitter:
             "set" if provider is not None else "cleared",
             self.subtask_id,
         )
+
+    def _add_terminal_timing(self, data: dict[str, Any]) -> None:
+        """Add agent boundaries to a terminal event without inventing a start."""
+        if self._agent_started_at_ms is None:
+            return
+        data["timing"] = {
+            "agentStartedAt": self._agent_started_at_ms,
+            "agentFinishedAt": int(time.time() * 1000),
+        }
 
     # ============================================================
     # Response Lifecycle Events
@@ -119,7 +129,10 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        started_at_ms = int(time.time() * 1000)
+        self._agent_started_at_ms = started_at_ms
         data = self.builder.response_created(shell_type)
+        data["timing"] = {"agentStartedAt": started_at_ms}
         return await self._emit(ResponsesAPIStreamEvents.RESPONSE_CREATED.value, data)
 
     async def in_progress(self) -> Any:
@@ -200,6 +213,7 @@ class ResponsesAPIEmitter:
             silent_exit_reason=silent_exit_reason,
             **extra_fields,
         )
+        self._add_terminal_timing(data)
         return await self._emit(ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value, data)
 
     async def incomplete(self, reason: str = "cancelled", content: str = "") -> Any:
@@ -218,6 +232,7 @@ class ResponsesAPIEmitter:
         await self.flush()
 
         data = self.builder.response_incomplete(reason, content)
+        self._add_terminal_timing(data)
         return await self._emit(
             ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value, data
         )
@@ -238,6 +253,7 @@ class ResponsesAPIEmitter:
         await self.flush()
 
         data = self.builder.error(message, code)
+        self._add_terminal_timing(data)
         return await self._emit(ResponsesAPIStreamEvents.ERROR.value, data)
 
     # ============================================================
@@ -290,6 +306,8 @@ class ResponsesAPIEmitter:
         display_name: Optional[str] = None,
         tool_protocol: str = "function_call",
         server_label: Optional[str] = None,
+        started_at: Optional[int] = None,
+        skip_arguments: bool = False,
     ) -> Any:
         """Emit function call start events.
 
@@ -325,12 +343,13 @@ class ResponsesAPIEmitter:
                 item_id=call_id,
                 name=name,
                 server_label=server_label or "",
+                started_at=started_at,
             )
             await self._emit(
                 ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data
             )
 
-            if arguments is not None:
+            if arguments is not None and not skip_arguments:
                 args_done_data = self.builder.mcp_call_arguments_done(
                     call_id, arguments
                 )
@@ -340,11 +359,13 @@ class ResponsesAPIEmitter:
                 )
                 self._tool_contexts[call_id]["arguments_emitted"] = True
 
-            in_progress_data = self.builder.mcp_call_in_progress(call_id)
-            return await self._emit(
-                ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value,
-                in_progress_data,
-            )
+            if not skip_arguments:
+                in_progress_data = self.builder.mcp_call_in_progress(call_id)
+                return await self._emit(
+                    ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value,
+                    in_progress_data,
+                )
+            return None
 
         if protocol_type == "shell_call":
             added_data = self.builder.shell_call_added(
@@ -352,14 +373,20 @@ class ResponsesAPIEmitter:
                 name=name,
                 arguments=arguments,
                 display_name=display_name,
+                started_at=started_at,
             )
             return await self._emit(
                 ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data
             )
 
         # Send function call added
-        added_data = self.builder.function_call_added(call_id, name, display_name)
+        added_data = self.builder.function_call_added(
+            call_id, name, display_name, started_at
+        )
         await self._emit(ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data)
+
+        if skip_arguments:
+            return None
 
         # Send arguments delta
         delta_data = self.builder.function_call_arguments_delta(call_id, arguments)
@@ -454,6 +481,7 @@ class ResponsesAPIEmitter:
         server_label: Optional[str] = None,
         status: str = "completed",
         error: Optional[str] = None,
+        completed_at: Optional[int] = None,
     ) -> Any:
         """Emit function call done events.
 
@@ -520,6 +548,7 @@ class ResponsesAPIEmitter:
                 server_label=resolved_server_label or "",
                 arguments=resolved_arguments,
                 status=status,
+                completed_at=completed_at,
             )
             return await self._emit(
                 ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
@@ -531,6 +560,7 @@ class ResponsesAPIEmitter:
                 name=resolved_name,
                 arguments=resolved_arguments,
                 status=status,
+                completed_at=completed_at,
             )
             return await self._emit(
                 ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
@@ -552,6 +582,7 @@ class ResponsesAPIEmitter:
             resolved_arguments,
             output=output,
             status=status,
+            completed_at=completed_at,
         )
         return await self._emit(
             ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data

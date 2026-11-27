@@ -212,6 +212,11 @@ path = "/api/users/welcome-config"
 [[routes]]
 methods = ["GET"]
 path = "/api/tasks/:task_id/pipeline-stage-info"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/tasks/:task_id/timing"
+
 [[routes]]
 methods = ["GET"]
 path = "/api/projects"

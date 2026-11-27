@@ -9,6 +9,7 @@ a skill is loaded via the load_skill tool.
 """
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -930,6 +931,7 @@ class TestLazySkillProviderToolArgumentForwarding:
     @pytest.mark.asyncio
     async def test_proxy_forwards_arguments_to_concrete_tool(self):
         """Args provided by the model must reach the concrete tool intact."""
+        from langchain_core.runnables.config import RunnableConfig
         from langchain_core.tools import BaseTool
         from pydantic import BaseModel, Field
 
@@ -981,3 +983,95 @@ class TestLazySkillProviderToolArgumentForwarding:
         content = getattr(result, "content", result)
         assert "ran:echo hello" in content
         assert received["command"] == "echo hello"
+
+    @pytest.mark.asyncio
+    async def test_proxy_propagates_the_outer_tool_call_id(self):
+        """The concrete skill tool reuses the model-visible tool-call identity."""
+        from langchain_core.runnables.config import RunnableConfig
+        from langchain_core.tools import BaseTool
+
+        from chat_shell.tools.builtin.load_skill import LazySkillProviderTool
+
+        received_configs: list[Any] = []
+
+        class ConcreteListFiles(BaseTool):
+            name: str = "list_files"
+            description: str = "list files"
+
+            def _run(self, path: str, **_):
+                raise NotImplementedError
+
+            async def _arun(self, path: str, config: RunnableConfig, **_):
+                received_configs.append(config)
+                return f"listed:{path}"
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["sandbox"],
+            skill_metadata={"sandbox": {"description": "Sandbox", "prompt": "p"}},
+        )
+        load_skill_tool.register_skill_tools("sandbox", [ConcreteListFiles()])
+
+        proxy = LazySkillProviderTool(
+            skill_name="sandbox",
+            tool_name="list_files",
+            description="list files proxy",
+            load_skill_tool=load_skill_tool,
+        )
+
+        await proxy.ainvoke(
+            {
+                "name": "list_files",
+                "args": {"path": "/tmp"},
+                "id": "call_outer",
+                "type": "tool_call",
+            }
+        )
+
+        assert received_configs[-1]["metadata"]["wegent_tool_call_id"] == "call_outer"
+
+    @pytest.mark.asyncio
+    async def test_stream_uses_forwarded_tool_call_id(self):
+        """Tool timing events prefer the forwarded outer tool-call identity."""
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+        builder = LangGraphAgentBuilder(
+            llm=MagicMock(),
+            tool_registry=MagicMock(),
+        )
+
+        class FakeAgent:
+            async def astream_events(self, *_args, **_kwargs):
+                yield {
+                    "event": "on_tool_start",
+                    "name": "list_files",
+                    "run_id": "inner-run",
+                    "data": {"input": {"path": "/tmp"}},
+                    "metadata": {"wegent_tool_call_id": "call_outer"},
+                }
+
+            async def aget_state(self, _config):
+                return SimpleNamespace(values={"messages": []})
+
+        builder._build_agent = lambda: FakeAgent()
+
+        events: list[tuple[str, dict]] = []
+
+        async for _ in builder.stream_tokens(
+            [{"role": "user", "content": "list files"}],
+            on_tool_event=lambda kind, payload: events.append((kind, payload)),
+        ):
+            pass
+
+        assert events == [
+            (
+                "tool_start",
+                {
+                    "name": "list_files",
+                    "run_id": "inner-run",
+                    "data": {"input": {"path": "/tmp"}},
+                    "tool_arguments_streamed": False,
+                    "tool_use_id": "call_outer",
+                },
+            )
+        ]

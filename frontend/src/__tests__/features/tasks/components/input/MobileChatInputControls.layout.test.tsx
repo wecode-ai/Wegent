@@ -500,6 +500,29 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.getByTestId('mobile-skill-drawer')).toHaveAttribute('data-read-only', 'true')
   })
 
+  it('keeps timing analysis available while the task is streaming', () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        hasMessages
+        isStreaming
+        selectedTaskDetail={{ id: 42, title: 'Streaming task', status: 'RUNNING' } as never}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+
+    expect(screen.getByTestId('mobile-task-timing-menu-action')).toBeEnabled()
+  })
+
+  it('disables timing analysis when no real task id exists', () => {
+    render(<MobileChatInputControls {...buildProps()} hasMessages isStreaming />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+
+    expect(screen.getByTestId('mobile-task-timing-menu-action')).toBeDisabled()
+  })
+
   it('closes the content drawer after selecting an attachment', () => {
     const props = buildProps()
     render(<MobileChatInputControls {...props} />)

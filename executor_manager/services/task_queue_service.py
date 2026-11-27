@@ -203,7 +203,9 @@ class TaskQueueService:
                 _, task_json = result
                 task = json.loads(task_json)
                 task_id, subtask_id = self._get_task_ids(task)
-                self.mark_dequeued(task)
+                pending = self.mark_dequeued(task)
+                if pending is not None:
+                    task = self._attach_queue_timing(task, pending)
                 logger.debug(
                     f"[TaskQueue] Dequeued task {task_id}/{subtask_id} from {self.queue_key}"
                 )
@@ -239,13 +241,17 @@ class TaskQueueService:
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to mark task pending: {e}")
 
-    def mark_dequeued(self, task: Dict[str, Any]) -> None:
-        """Record that a consumer picked the task up but has not started it yet."""
+    def mark_dequeued(self, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Record that a consumer picked the task up but has not started it yet.
+
+        Returns the pending payload when it belongs to this turn, so callers can
+        attach its queue timing to the dispatched task.
+        """
         if not self.redis_client:
-            return
+            return None
         task_id, subtask_id = self._get_task_ids(task)
         if task_id in (None, "unknown"):
-            return
+            return None
         key = PENDING_KEY_TEMPLATE.format(task_id=task_id)
         try:
             with self.redis_client.pipeline() as pipe:
@@ -253,7 +259,7 @@ class TaskQueueService:
                 raw = pipe.get(key)
                 payload = json.loads(raw) if raw else {}
                 if raw and str(payload.get("subtask_id")) != str(subtask_id):
-                    return
+                    return None
                 payload.update(
                     {
                         "task_id": str(task_id),
@@ -266,10 +272,40 @@ class TaskQueueService:
                 pipe.setex(key, PENDING_KEY_TTL, json.dumps(payload))
                 pipe.zadd(PENDING_INDEX_KEY, {str(task_id): payload["dequeued_at"]})
                 pipe.execute()
+                return payload
         except WatchError:
             logger.debug("[TaskQueue] Pending record changed for task %s", task_id)
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to mark task dequeued: {e}")
+        return None
+
+    @staticmethod
+    def _attach_queue_timing(
+        task: Dict[str, Any], pending: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Attach queue wall-time boundaries in milliseconds to a task payload."""
+        timing = {
+            "enqueuedAt": pending.get("enqueued_at"),
+            "dequeuedAt": pending.get("dequeued_at"),
+        }
+        boundaries = {
+            key: int(value * 1000)
+            for key, value in timing.items()
+            if isinstance(value, (int, float))
+        }
+        if not boundaries:
+            return task
+
+        metadata = task.setdefault("metadata", {})
+        if not isinstance(metadata, dict):
+            return task
+        existing = metadata.setdefault("timing", {})
+        if not isinstance(existing, dict):
+            existing = {}
+            metadata["timing"] = existing
+        for key, value in boundaries.items():
+            existing[key] = value
+        return task
 
     def clear_pending(self, task_id: Any, subtask_id: Any = None) -> None:
         """Forget a pending record once the task started or reached a terminal state."""

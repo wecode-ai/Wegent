@@ -34,6 +34,8 @@ use crate::responses::test_mysql::{Gate, RecordingMysql, SUBTASK_ID, TASK_ID};
 
 const CREATED: &str = r#"{"type":"response.created","shell_type":"chat"}"#;
 const DELTA: &str = r#"{"type":"response.output_text.delta","delta":"hello","offset":0}"#;
+const TOOL_ADDED: &str = r#"{"type":"response.output_item.added","startedAt":100,"item":{"type":"function_call","call_id":"tool-1","name":"load_skill","arguments":"{}"}}"#;
+const TOOL_DONE: &str = r#"{"type":"response.output_item.done","completedAt":250,"item":{"type":"function_call","call_id":"tool-1","name":"load_skill","status":"completed"}}"#;
 const COMPLETED: &str = r#"{"type":"response.completed","response":{}}"#;
 
 fn tables() -> Tables {
@@ -642,7 +644,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
 /// `WebSocketResultEmitter`.
 #[tokio::test]
 async fn a_forwarded_dispatch_publishes_the_chat_frames() {
-    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let url = spawn_stream_server(vec![CREATED, TOOL_ADDED, TOOL_DONE, DELTA, COMPLETED]).await;
     let redis = RecordingRedis::default();
     let mysql = RecordingMysql::default()
         .with_terminal_rows("COMPLETED")
@@ -697,6 +699,17 @@ async fn a_forwarded_dispatch_publishes_the_chat_frames() {
             .iter()
             .any(|message| message.contains("\"event\": \"chat:chunk\"")),
         "streamed chunks are forwarded: {published:?}"
+    );
+    let timing_statements: Vec<_> = mysql
+        .statements()
+        .into_iter()
+        .filter(|sql| sql.contains("task_timing_spans"))
+        .collect();
+    assert!(
+        timing_statements
+            .iter()
+            .any(|sql| sql.contains("kind = 'tool'")),
+        "the function tool lifecycle is persisted: {timing_statements:?}"
     );
     assert!(
         published

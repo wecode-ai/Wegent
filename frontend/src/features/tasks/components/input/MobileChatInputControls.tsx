@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useMemo, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
-import { ChevronRight, CircleStop, Hand, Plus, SlidersHorizontal, Zap } from 'lucide-react'
+import { ChevronRight, CircleStop, Hand, Plus, SlidersHorizontal, Timer, Zap } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import ImageSizeSelector from '../selector/ImageSizeSelector'
@@ -43,6 +43,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { AspectRatioOption, ResolutionOption, VideoGenerationMode } from '@/apis/models'
 import { getVideoParamVisibility } from '../../utils/teamModeSpec'
+import { openTaskTimingPanel } from '../timing/TaskTimingPanel'
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
@@ -265,6 +266,8 @@ export function MobileChatInputControls({
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
   const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
+  const timingTaskId = selectedTaskDetail?.id ?? null
+  const showTimingAction = hasMessages
   const showVideoSettings = Boolean(
     isVideoMode &&
     videoParamVisibility.showSettings &&
@@ -288,7 +291,8 @@ export function MobileChatInputControls({
     showRepositorySelector ||
     showClarificationAction ||
     showCorrectionAction ||
-    showGuidanceAction
+    showGuidanceAction ||
+    showTimingAction
   const handleAttachmentFileSelect = useCallback(
     (files: File | File[]) => {
       setResourceDrawerOpen(false)
@@ -583,7 +587,7 @@ export function MobileChatInputControls({
               )}
 
               {(showRepositorySelector || showClarificationAction || showCorrectionAction) && (
-                <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
+                <div className="mt-3 overflow-hidden rounded-xl bg-surface">
                   {showRepositorySelector && (
                     <MobileRepositorySelector
                       selectedRepo={selectedRepo}
@@ -614,6 +618,25 @@ export function MobileChatInputControls({
                       onSelectorOpenChange={handleNestedSelectorOpenChange}
                     />
                   )}
+                </div>
+              )}
+              {showTimingAction && (
+                <div className="mt-3 overflow-hidden rounded-xl bg-surface">
+                  <button
+                    type="button"
+                    data-testid="mobile-task-timing-menu-action"
+                    onClick={() => {
+                      if (timingTaskId === null) return
+                      setResourceDrawerOpen(false)
+                      openTaskTimingPanel(timingTaskId)
+                    }}
+                    disabled={timingTaskId === null}
+                    className="flex min-h-14 w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-text-primary transition-colors hover:bg-hover active:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Timer className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{t('tasks:timing.action')}</span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                  </button>
                 </div>
               )}
               {showGuidanceAction && onSendGuidance && (

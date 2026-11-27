@@ -462,11 +462,13 @@ class TestDockerExecutor:
                 return_value=["docker", "run", "dummy"],
             ),
             patch.object(
-                executor, "_dispatch_initial_task_to_new_container"
-            ) as mock_dispatch,
-            patch.object(
                 executor, "_wait_for_container_ready", return_value=8080
             ) as mock_wait_ready,
+            patch.object(
+                executor.requests,
+                "post",
+                return_value=MagicMock(status_code=200),
+            ) as mock_post,
             patch.object(executor, "register_task_for_heartbeat"),
         ):
             mock_subprocess.run.reset_mock()
@@ -477,7 +479,22 @@ class TestDockerExecutor:
             executor._create_new_container(sample_task, task_info, status)
 
             mock_wait_ready.assert_called_once_with("new-executor")
-            mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
+            dispatched_task = mock_post.call_args.kwargs["json"]
+            assert mock_post.call_args.args[0] == (
+                "http://host.docker.internal:8080/v1/responses"
+            )
+            timing = dispatched_task["metadata"]["timing"]
+            for key in (
+                "instanceCreateStartedAt",
+                "instanceCreateFinishedAt",
+                "instanceReadyAt",
+                "taskDispatchedAt",
+                "provisionDurationMs",
+                "createDurationMs",
+                "waitReadyDurationMs",
+                "dispatchDurationMs",
+            ):
+                assert key in timing
 
     def test_create_new_container_does_not_dispatch_for_sandbox(
         self, executor, mock_subprocess
@@ -540,6 +557,37 @@ class TestDockerExecutor:
         mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
         mock_wait_ready.assert_called_once_with("prepare-executor")
         mock_dispatch_task_to_instance.assert_not_called()
+        timing = prepare_task["metadata"]["timing"]
+        assert "taskDispatchedAt" not in timing
+        assert "instanceReadyAt" in timing
+
+    def test_existing_container_timing_omits_instance_creation(self, executor):
+        """Reusing an executor records readiness and dispatch, not creation."""
+        task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "executor_image": "test/executor:latest",
+            "executor_name": "existing-executor",
+        }
+        status = {"executor_name": "existing-executor"}
+
+        with (
+            patch.object(executor, "wait_instance_ready", return_value={"port": 8080}),
+            patch.object(
+                executor.requests,
+                "post",
+                return_value=MagicMock(status_code=200),
+            ) as mock_post,
+            patch.object(executor, "register_task_for_heartbeat"),
+        ):
+            executor._execute_in_existing_container(task, status)
+
+        dispatched_task = mock_post.call_args.kwargs["json"]
+        timing = dispatched_task["metadata"]["timing"]
+        assert "instanceReadyAt" in timing
+        assert "taskDispatchedAt" in timing
+        assert "provisionDurationMs" in timing
+        assert timing["dispatchDurationMs"] >= 0
 
     @patch.dict(
         os.environ,
@@ -575,6 +623,9 @@ class TestDockerExecutor:
             with pytest.raises(RuntimeError, match="container not ready"):
                 executor._create_new_container(validation_task, task_info, status)
 
+        timing = validation_task["metadata"]["timing"]
+        assert "instanceCreateStartedAt" in timing
+        assert "instanceCreateFinishedAt" in timing
         mock_delete_container.assert_not_called()
 
     @patch.dict(
@@ -669,6 +720,58 @@ class TestDockerExecutor:
         ):
             with pytest.raises(RuntimeError, match="failed to become ready"):
                 executor._wait_for_container_ready("not-ready-container")
+
+    @patch.dict(
+        os.environ,
+        {
+            "EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES": "2",
+            "EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL": "0",
+            "EXECUTOR_INITIAL_DISPATCH_TIMEOUT": "1",
+        },
+        clear=False,
+    )
+    def test_dispatch_retry_replaces_dispatch_boundaries_together(
+        self, executor, sample_task
+    ):
+        """A retried dispatch keeps its boundary and duration from one attempt."""
+        sample_task.setdefault("metadata", {})["timing"] = {
+            "instanceReadyAt": 100,
+            "taskDispatchedAt": 200,
+            "dispatchDurationMs": 100,
+        }
+
+        executor._replace_timing(sample_task, taskDispatchedAt=500)
+
+        timing = sample_task["metadata"]["timing"]
+        assert timing["taskDispatchedAt"] == 500
+        assert timing["dispatchDurationMs"] == 400
+
+    def test_container_recreation_replaces_attempt_local_timing(
+        self, executor, sample_task
+    ):
+        """A replacement container must not inherit the previous attempt's timing."""
+        sample_task.setdefault("metadata", {})["timing"] = {
+            "instanceCreateStartedAt": 100,
+            "instanceCreateFinishedAt": 150,
+            "instanceReadyAt": 200,
+            "taskDispatchedAt": 300,
+            "createDurationMs": 50,
+            "waitReadyDurationMs": 50,
+            "provisionDurationMs": 100,
+            "dispatchDurationMs": 100,
+        }
+
+        executor._reset_attempt_timing(sample_task, instanceCreateStartedAt=1000)
+
+        timing = sample_task["metadata"]["timing"]
+        assert timing["instanceCreateStartedAt"] == 1000
+        assert "instanceCreateFinishedAt" not in timing
+        assert "instanceReadyAt" not in timing
+        assert "taskDispatchedAt" not in timing
+        assert "createDurationMs" not in timing
+        assert "waitReadyDurationMs" not in timing
+        assert "provisionDurationMs" not in timing
+        assert "dispatchDurationMs" not in timing
 
     @patch.dict(
         os.environ,

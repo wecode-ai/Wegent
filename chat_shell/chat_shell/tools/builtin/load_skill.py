@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 """Load skill tool for on-demand skill prompt expansion.
 
 This tool implements session-level skill expansion caching with persistence:
@@ -20,6 +22,7 @@ from collections.abc import Iterator
 from typing import Any, Awaitable, Callable, Optional, Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
+from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
@@ -68,19 +71,25 @@ class LazySkillProviderTool(BaseTool):
         self._load_skill_tool = load_skill_tool
 
     def _to_args_and_kwargs(
-        self, tool_input: Any, *args: Any, **kwargs: Any
+        self, tool_input: Any, tool_call_id: str | None, **_kwargs: Any
     ) -> tuple[tuple, dict]:
         """Forward all model-provided arguments to the proxy implementation.
 
         ``LazySkillProviderInput`` declares no fields and accepts arbitrary input
         via ``extra="allow"``. LangChain's default ``_to_args_and_kwargs`` discards
         every argument when the schema has no declared fields, which would strip the
-        real tool's arguments (e.g. ``command``/``file_path``) before delegation.
+        real tool's arguments before delegation.
         Returning the raw input preserves them so the concrete tool can validate.
+
+        The outer tool-call ID is carried as a private keyword so the concrete
+        tool can emit timing events under the model-visible call identity.
         """
         if isinstance(tool_input, dict):
-            return (), dict(tool_input)
-        return super()._to_args_and_kwargs(tool_input, *args, **kwargs)
+            forwarded = dict(tool_input)
+            if tool_call_id:
+                forwarded["_wegent_outer_tool_call_id"] = tool_call_id
+            return (), forwarded
+        return super()._to_args_and_kwargs(tool_input, tool_call_id)
 
     def _run(
         self,
@@ -93,11 +102,7 @@ class LazySkillProviderTool(BaseTool):
             "loaded asynchronously before execution."
         )
 
-    async def _arun(
-        self,
-        run_manager: CallbackManagerForToolRun | None = None,
-        **kwargs: Any,
-    ) -> Any:
+    async def _arun(self, config: RunnableConfig, **kwargs: Any) -> Any:
         """Load the real provider tool on demand and delegate execution."""
         actual_tool = await self._load_skill_tool.get_loaded_tool(
             self.skill_name, self.name
@@ -107,7 +112,18 @@ class LazySkillProviderTool(BaseTool):
                 f"Tool '{self.name}' for skill '{self.skill_name}' is not available "
                 "after loading the skill."
             )
-        return await actual_tool.ainvoke(kwargs)
+        tool_call_id = kwargs.pop("_wegent_outer_tool_call_id", None)
+        forwarded_config = dict(config)
+        if tool_call_id:
+            forwarded_config["metadata"] = {
+                **(forwarded_config.get("metadata") or {}),
+                "wegent_tool_call_id": tool_call_id,
+            }
+
+        return await actual_tool.ainvoke(
+            kwargs,
+            config=forwarded_config,
+        )
 
 
 class LoadSkillTool(BaseTool):

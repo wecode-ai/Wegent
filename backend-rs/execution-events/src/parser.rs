@@ -104,7 +104,7 @@ impl ResponsesApiEventParser {
         match event_type {
             "response.created" => {
                 let mut start_data = Map::new();
-                for key in ["shell_type", "bot_name"] {
+                for key in ["shell_type", "bot_name", "timing"] {
                     if let Some(value) = data.get(key)
                         && !value.is_null()
                     {
@@ -119,6 +119,11 @@ impl ResponsesApiEventParser {
             "response.completed" => {
                 let response = data.get("response").cloned().unwrap_or(Value::Null);
                 let mut result = extract_completed_result(&response);
+                let mut extra = Map::new();
+                if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    extra.insert("timing".to_string(), timing.clone());
+                    result.insert("timing".into(), timing.clone());
+                }
                 {
                     let mut state = self.state.lock().expect("parser state poisoned");
                     if let Some(buffered) = state
@@ -137,6 +142,7 @@ impl ResponsesApiEventParser {
                 }
                 let mut event = ExecutionEvent::new(EventType::Done, task_id, subtask_id);
                 event.result = Some(Value::Object(result));
+                event.data = extra;
                 event.message_id = message_id;
                 Ok(Some(event))
             }
@@ -207,12 +213,35 @@ impl ResponsesApiEventParser {
                 event.message_id = message_id;
                 Ok(Some(event))
             }
+            "response.subagent.activity" => {
+                let mut extra = Map::new();
+                for key in [
+                    "agent_path",
+                    "agent_id",
+                    "agent_thread_id",
+                    "agent_name",
+                    "kind",
+                    "status",
+                    "occurred_at_ms",
+                ] {
+                    if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
+                        extra.insert(key.to_string(), value.clone());
+                    }
+                }
+                let mut event = ExecutionEvent::new(EventType::BlockUpdated, task_id, subtask_id);
+                event.data = extra;
+                event.message_id = message_id;
+                Ok(Some(event))
+            }
             "error" => {
                 {
                     let mut state = self.state.lock().expect("parser state poisoned");
                     Self::clear_task_contexts(&mut state, task_id, subtask_id);
                 }
                 let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
+                if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    event.data.insert("timing".to_string(), timing.clone());
+                }
                 event.error =
                     Some(string_field(data, "message").unwrap_or_else(|| "Unknown error".into()));
                 event.error_code = string_field(data, "code");
@@ -225,6 +254,9 @@ impl ResponsesApiEventParser {
                     Self::clear_task_contexts(&mut state, task_id, subtask_id);
                 }
                 let mut event = ExecutionEvent::new(EventType::Cancelled, task_id, subtask_id);
+                if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    event.data.insert("timing".to_string(), timing.clone());
+                }
                 event.message_id = message_id;
                 Ok(Some(event))
             }
@@ -501,6 +533,9 @@ impl ResponsesApiEventParser {
                 event.tool_name = Some(name);
                 event.tool_input = Some(input);
                 let mut extra = Map::new();
+                if let Some(started_at) = data.get("startedAt").and_then(Value::as_i64) {
+                    extra.insert("startedAt".into(), json!(started_at));
+                }
                 extra.insert(
                     "blocks".into(),
                     data.get("blocks").cloned().unwrap_or_else(|| json!([])),
@@ -548,6 +583,9 @@ impl ResponsesApiEventParser {
                 event.tool_use_id = Some(item_id);
                 event.tool_name = Some(name);
                 let mut extra = Map::new();
+                if let Some(started_at) = data.get("startedAt").and_then(Value::as_i64) {
+                    extra.insert("startedAt".into(), json!(started_at));
+                }
                 extra.insert("tool_protocol".into(), Value::String("mcp_call".into()));
                 extra.insert("server_label".into(), Value::String(server_label));
                 event.data = extra;
@@ -575,6 +613,9 @@ impl ResponsesApiEventParser {
                 event.tool_name = Some(name);
                 event.tool_input = Some(arguments);
                 let mut extra = Map::new();
+                if let Some(started_at) = data.get("startedAt").and_then(Value::as_i64) {
+                    extra.insert("startedAt".into(), json!(started_at));
+                }
                 extra.insert(
                     "blocks".into(),
                     data.get("blocks").cloned().unwrap_or_else(|| json!([])),
@@ -635,6 +676,9 @@ impl ResponsesApiEventParser {
             event.tool_input = tool_input;
             event.tool_output = item.get("output").cloned();
             let mut extra = Map::new();
+            if let Some(completed_at) = data.get("completedAt").and_then(Value::as_i64) {
+                extra.insert("completedAt".into(), json!(completed_at));
+            }
             extra.insert(
                 "tool_protocol".into(),
                 Value::String("function_call".into()),
@@ -683,6 +727,9 @@ impl ResponsesApiEventParser {
         event.tool_use_id = Some(call_id);
         event.tool_input = tool_input;
         let mut extra = Map::new();
+        if let Some(completed_at) = data.get("completedAt").and_then(Value::as_i64) {
+            extra.insert("completedAt".into(), json!(completed_at));
+        }
         extra.insert("tool_protocol".into(), Value::String("shell_call".into()));
         extra.insert(
             "status".into(),
@@ -785,6 +832,7 @@ fn extract_completed_result(response: &Value) -> Map<String, Value> {
         "messages_chain",
         "context_metrics",
         "context_compactions",
+        "model_calls",
         "standalone_chat_workspace_path",
         "file_changes",
         "task_file_changes",

@@ -5,14 +5,15 @@
 'use client'
 
 import { useState } from 'react'
-import { MoreHorizontal } from 'lucide-react'
 import type { ReactNode, RefObject } from 'react'
+import { MoreHorizontal, Timer } from 'lucide-react'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
 import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import { openTaskTimingPanel } from '../timing/TaskTimingPanel'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isChatShell } from '../../service/messageService'
 import type { Team } from '@/types/api'
@@ -64,9 +65,17 @@ export function InputMoreActionsMenu({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const showSkillSelector = availableSkills.length > 0 && Boolean(onToggleSkill)
+  const showTimingAnalysis = hasMessages
+  const timingDisabled = taskId === null
   const selectedSkillCount = selectedSkillNames.length
 
-  if (!additionalItems && !showClarification && !showCorrection && !showSkillSelector) {
+  if (
+    !additionalItems &&
+    !showTimingAnalysis &&
+    !showClarification &&
+    !showCorrection &&
+    !showSkillSelector
+  ) {
     return null
   }
 
@@ -103,6 +112,23 @@ export function InputMoreActionsMenu({
           data-testid="desktop-input-more-actions-menu"
         >
           {additionalItems}
+
+          {showTimingAnalysis ? (
+            <button
+              type="button"
+              disabled={timingDisabled}
+              onClick={() => {
+                if (taskId === null) return
+                openTaskTimingPanel(taskId)
+                setOpen(false)
+              }}
+              className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm text-text-primary transition-colors hover:bg-hover active:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="task-timing-menu-action"
+            >
+              <Timer className="h-4 w-4 text-text-muted" aria-hidden="true" />
+              {t('tasks:timing.action')}
+            </button>
+          ) : null}
 
           {showSkillSelector && onToggleSkill && (
             <SkillSelectorPopover

@@ -7,6 +7,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::Value;
@@ -175,8 +176,11 @@ where
         state.handle.abort();
         let _ = state.handle.await;
         self.engine.cancel_pending(&task_id, subtask_id);
+        let builder = state
+            .builder
+            .with_timing_boundary("agentFinishedAt", current_epoch_ms());
         self.sink
-            .send(state.builder.response_cancelled(message))
+            .send(builder.response_cancelled(message))
             .await
             .is_ok()
     }
@@ -225,6 +229,8 @@ where
         Box::pin(async move {
             let task_id = request.task_id.clone();
             let builder = local_event_builder(&request);
+            let agent_started_at = current_epoch_ms();
+            let builder = builder.with_timing_boundary("agentStartedAt", agent_started_at);
             if let Err(message) = sink
                 .send(builder.response_created(request.resolved_shell_type().as_deref()))
                 .await
@@ -293,6 +299,7 @@ async fn run_managed_task<E, S>(
         .run_with_events(request, sink.clone(), builder.clone())
         .await;
     let executor_session = agent_session::saved_executor_session(&session_request);
+    let builder = builder.with_timing_boundary("agentFinishedAt", current_epoch_ms());
     let builder = builder.with_executor_session(executor_session);
     {
         let mut guard = handles.lock().expect("managed task lock");
@@ -327,6 +334,7 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .validation_params
         .get("validation_id")
         .and_then(Value::as_str);
+    let timing = request.extra.get("timing").cloned();
     ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(
@@ -334,6 +342,14 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
             request.executor_namespace.as_deref(),
         )
         .with_validation_id(validation_id)
+        .with_timing(timing)
+}
+
+fn current_epoch_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -371,6 +387,37 @@ mod tests {
                     .await;
             });
             Box::pin(std::future::pending())
+        }
+    }
+
+    #[derive(Clone)]
+    struct DelayedEngine {
+        release: Arc<Notify>,
+    }
+
+    impl AgentEngine for DelayedEngine {
+        type RunFuture = std::future::Pending<ExecutionOutcome>;
+
+        fn run(&self, _request: ExecutionRequest) -> Self::RunFuture {
+            std::future::pending()
+        }
+
+        fn run_with_events<T>(
+            &self,
+            _request: ExecutionRequest,
+            _sink: T,
+            _builder: ResponsesEventBuilder,
+        ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+        where
+            T: EventSink,
+        {
+            let release = Arc::clone(&self.release);
+            Box::pin(async move {
+                release.notified().await;
+                ExecutionOutcome::Completed {
+                    content: "done".to_owned(),
+                }
+            })
         }
     }
 
@@ -416,6 +463,39 @@ mod tests {
         assert_eq!(events[0].event_type, "response.created");
         assert_eq!(events[1].event_type, "response.incomplete");
         assert_eq!(events[1].data["response"]["status"], "cancelled");
+        let timing = events[1].data.get("timing").expect("cancelled timing");
+        assert!(
+            timing["agentFinishedAt"].as_i64().unwrap()
+                >= timing["agentStartedAt"].as_i64().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_runner_stamps_agent_finish_after_engine_completes() {
+        let release = Arc::new(Notify::new());
+        let sink = RecordingSink::default();
+        let runner = ManagedLocalTaskRunner::new(
+            DelayedEngine {
+                release: Arc::clone(&release),
+            },
+            sink.clone(),
+            LocalRunningTaskTracker::default(),
+        );
+        let request = ExecutionRequest::default();
+
+        let accepted = runner.submit(request).await;
+        assert_eq!(accepted.status, TaskStatus::Running);
+        tokio::task::yield_now().await;
+        release.notify_one();
+        tokio::task::yield_now().await;
+
+        let events = sink.events.lock().expect("event sink lock");
+        assert_eq!(events.len(), 2);
+        let timing = events[1].data.get("timing").expect("terminal timing");
+        assert!(
+            timing["agentFinishedAt"].as_i64().unwrap()
+                >= timing["agentStartedAt"].as_i64().unwrap()
+        );
     }
 
     #[tokio::test]

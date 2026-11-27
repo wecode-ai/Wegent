@@ -11,6 +11,14 @@ use brz_redis::{
     EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisResult, SetOptions,
 };
 
+/// The shared positional block lookup is independent of this consumer suite's
+/// cancellation registration script.
+const FIND_BLOCK_SCRIPT: &str = concat!(
+    include_str!("../../../execution-runtime/src/block_index.lua"),
+    "\nlocal index, raw = find_block(KEYS[1], KEYS[2], ARGV[1], ARGV[2])\n",
+    "if index then return {tostring(index), raw} end\nreturn {}\n"
+);
+
 /// The existing activity protocol is independent of cancellation registration.
 const TOUCH_ACTIVITY_SCRIPT: &str = "\n\
 if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
@@ -104,6 +112,10 @@ impl brz_redis::Redis for RecordingRedis {
             ACCEPT_SCRIPT, OBSERVE_SCRIPT, RELEASE_SCRIPT, RENEW_SCRIPT,
         };
         let script_bytes = script.as_encoded_bytes();
+        if script_bytes == Some(FIND_BLOCK_SCRIPT.as_bytes()) {
+            self.record("EVAL chat:streaming:block-index".to_string());
+            return R::from_redis_value(&brz_redis::Value::Array(Vec::new()));
+        }
         if [ACCEPT_SCRIPT, OBSERVE_SCRIPT, RENEW_SCRIPT, RELEASE_SCRIPT]
             .iter()
             .any(|known| script_bytes == Some(known.as_bytes()))

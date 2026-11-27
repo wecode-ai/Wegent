@@ -825,6 +825,7 @@ class LangGraphAgentBuilder:
         self._last_messages_chain: list[dict[str, Any]] = []
         self._last_live_state_messages: list[dict[str, Any]] = []
         self._last_termination_reason: str | None = None
+        self._last_model_calls: list[dict[str, Any]] = []
 
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
@@ -1452,6 +1453,11 @@ class LangGraphAgentBuilder:
         ]
         self._last_termination_reason = termination_reason
 
+    def _record_model_calls(self, model_calls: list[dict[str, Any]]) -> None:
+        """Merge completed model-call boundaries for terminal timing."""
+        if model_calls:
+            self._last_model_calls.extend(model_calls)
+
     async def stream_tokens(
         self,
         messages: list[dict[str, Any]],
@@ -1540,6 +1546,9 @@ class LangGraphAgentBuilder:
         # TTFT tracking variables
         first_token_received = False
         llm_request_start_time: float | None = None
+        llm_request_started_at_ms: int | None = None
+        llm_first_token_at_ms: int | None = None
+        model_calls: list[dict[str, Any]] = []
         last_model_input_messages: list[dict[str, Any]] | None = None
         ttft_ms: float | None = None  # Time to first token in milliseconds
         tool_argument_tracker = (
@@ -1582,6 +1591,8 @@ class LangGraphAgentBuilder:
                 # Track LLM request start
                 if kind == "on_chat_model_start":
                     llm_request_start_time = time.perf_counter()
+                    llm_request_started_at_ms = time.time_ns() // 1_000_000
+                    llm_first_token_at_ms = None
                     first_token_received = False
                     last_model_input_messages = _extract_model_input_messages(event)
                     add_span_event(
@@ -1603,6 +1614,7 @@ class LangGraphAgentBuilder:
                     if not first_token_received and llm_request_start_time is not None:
                         ttft_ms = (time.perf_counter() - llm_request_start_time) * 1000
                         first_token_received = True
+                        llm_first_token_at_ms = time.time_ns() // 1_000_000
                         add_span_event(
                             "first_token_received",
                             {"ttft_ms": round(ttft_ms, 2)},
@@ -1778,6 +1790,18 @@ class LangGraphAgentBuilder:
                         total_llm_time_ms = (
                             time.perf_counter() - llm_request_start_time
                         ) * 1000
+                        if llm_request_started_at_ms is not None:
+                            model_calls.append(
+                                {
+                                    "startedAt": llm_request_started_at_ms,
+                                    "firstTokenAt": llm_first_token_at_ms,
+                                    "finishedAt": time.time_ns() // 1_000_000,
+                                    "model": self._model_id
+                                    or event.get("name", "unknown"),
+                                    "provider": self._provider,
+                                    "attempt": len(model_calls),
+                                }
+                            )
                         add_span_event(
                             "llm_request_completed",
                             {
@@ -1792,6 +1816,8 @@ class LangGraphAgentBuilder:
                         )
                         # Reset for potential next LLM call (e.g., after tool execution)
                         llm_request_start_time = None
+                        llm_request_started_at_ms = None
+                        llm_first_token_at_ms = None
 
                     # Check if truncation was detected earlier
                     # If yes, check if the final output contains tool calls
@@ -1958,6 +1984,10 @@ class LangGraphAgentBuilder:
                     # Get tool input data from event
                     tool_input_data = event.get("data", {})
                     tool_use_id = event.get("tool_use_id")
+                    if not tool_use_id:
+                        tool_use_id = event.get("metadata", {}).get(
+                            "wegent_tool_call_id"
+                        )
                     tool_arguments_streamed = False
                     if tool_argument_tracker:
                         finalize_result = await tool_argument_tracker.finalize(
@@ -2043,6 +2073,7 @@ class LangGraphAgentBuilder:
                 termination_log = logger.warning
 
             self._finalize_turn_history(authoritative, turn_ctx, termination_reason)
+            self._record_model_calls(model_calls)
 
             logger.debug(
                 "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
@@ -2161,6 +2192,7 @@ class LangGraphAgentBuilder:
                 self._finalize_turn_history(
                     authoritative, turn_ctx, "silent_or_deferred_exit"
                 )
+            self._record_model_calls(model_calls)
             raise
 
         except GraphRecursionError:
