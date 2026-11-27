@@ -18,6 +18,17 @@ sidebar_position: 3
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
+### Connect an external agent
+
+<a id="external-agents"></a>
+
+Cloud project administrators can open **Project settings → AI configuration → Agents → Add agent → Connect external agent**. Enter a name and select a connection type.
+
+- **HTTP hook and callback**. Enter the hook URL, select the HTTP method and body format, and adjust the template for the service. Presets cover JSON, XML, form data, and plain text. Keep the callback URL, callback credential, invocation ID, and delivery ID in the payload. Save, then mention the agent in an Issue to trigger it.
+- **WebSocket worker**. Save and copy the connection URL and the credential shown at creation. Start the Worker in the external system. Invocations queued while the Worker is offline are available for up to one day. A running Worker can continue the same reply after a short disconnect.
+
+Project members can follow progress, incremental output, and the final status in the Issue. See the [external agent protocol](./external-agent-protocol.md) for deployment and integration examples.
+
 ## Open an Issue by reference
 
 <a id="open-issue-by-reference"></a>

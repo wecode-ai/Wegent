@@ -349,6 +349,7 @@ fn personal_controller_can_resume_scoped_targets_without_reclassifying_them() {
                 json!({"type":"board_task","dispatch_role":"executor","cloudProjectId":"project-1","loopItemId":"issue-1"}),
                 json!({"type":"issue_dispatch","dispatchRole":"manager","cloudProjectId":"project-1","loopItemId":"issue-1"}),
                 json!({"type":"issue_dispatch","humanAssignmentId":"human-1","dispatchId":"dispatch-1","cloudProjectId":"project-1","loopItemId":"issue-1"}),
+                json!({"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"assistant","humanAssignmentId":"human-1","dispatchId":"dispatch-1","cloudProjectId":"project-1","loopItemId":"issue-1"}),
                 json!({"type":"connection_work","initiatedBy":"stand_in","askBeforeAct":true}),
             ].into_iter().enumerate() {
                 *probe.origin.lock().unwrap() = origin.clone();
@@ -359,14 +360,17 @@ fn personal_controller_can_resume_scoped_targets_without_reclassifying_them() {
                 validate_continuation_target(&link, "control-test-device").unwrap();
                 let mut request = runtime_event_request_from_link(&link);
                 crate::runtime_work::api_context::inject_current_session(&mut request, "control-test-device", "scoped-target");
-                assert!(workbench_control::ControlContext::from_request(&request).is_none());
-                if index < 3 {
+                assert_eq!(
+                    workbench_control::ControlContext::from_request(&request).is_some(),
+                    index == 2
+                );
+                if index < 4 {
                     assert!(crate::task_runtime::mcp::has_bound_issue_context(&request).unwrap());
                 } else {
                     assert!(crate::runtime_work::stand_in_requires_confirmation(&request));
                 }
             }
-            assert_eq!(probe.sends.lock().unwrap().len(), 4);
+            assert_eq!(probe.sends.lock().unwrap().len(), 5);
             for server in servers {
                 server.abort();
             }

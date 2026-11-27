@@ -427,14 +427,14 @@ export function createProjectAgentConfigurationState(identity: ProjectAgentConfi
       )
         closeComposer(true, expectedVersion)
     },
-    async finishLocalAgentCreation(expectedVersion = state.composerVersion) {
+    async finishProjectAgentCreation(expectedVersion = state.composerVersion, close = true) {
       if (!owned() || !canManage || !state.canBrowseSources) return
       const owner = generation
       publish({ error: null })
       try {
         await reloadAgents()
         if (!owned(owner)) return
-        closeComposer(true, expectedVersion)
+        if (close) closeComposer(true, expectedVersion)
         notify('agents')
       } catch (cause) {
         if (!owned(owner)) return

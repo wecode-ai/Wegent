@@ -9,9 +9,13 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
+  requestAdvertisesProgrammaticExec,
   requestContainsToolOutput,
+  selectToolSearch,
+  toolSearchResponseEvents,
   toolOutputText,
 } from '../modules/response-protocol.mjs'
+import { withCloudRuntimeRequest } from '../modules/cloud-runtime-request.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   openDirectProjectCreation,
@@ -91,10 +95,23 @@ function writeEvents(response, responseId, events) {
 }
 
 function managerToolEvents(body, toolName, toolCallId, argumentsValue) {
+  const searchCallId = `${toolCallId}-search`
+  if (
+    toolCallId === CALLS.firstPlan &&
+    requestAdvertisesProgrammaticExec(body) &&
+    !requestContainsToolOutput(body, searchCallId)
+  ) {
+    const selection = selectToolSearch(body, toolName)
+    selection.codeMode.input = [
+      'if (ALL_TOOLS.some(tool => /(^|__)wework_control__/.test(tool.name))) throw new Error("Project manager exposed personal event subscriptions through wework_control")',
+      selection.codeMode.input,
+    ].join('\n')
+    return { mode: 'search', events: toolSearchResponseEvents(searchCallId, selection) }
+  }
   return mcpToolRequestEvents(body, {
     toolName,
     argumentsValue,
-    searchCallId: `${toolCallId}-search`,
+    searchCallId,
     toolCallId,
   })
 }
@@ -895,6 +912,16 @@ export async function createDesktopScenario({
       assert.equal(transcript.runtime, 'codex')
       assert.ok(Array.isArray(transcript.turns), 'Planning details must contain canonical turns')
       assert.ok(runtimeTask, `Runtime Task ${initialManagerTaskId} 未由真实 Executor 持久化`)
+      await withCloudRuntimeRequest(cloudEnvironment, async (_request, requestAck) => {
+        const denied = await requestAck(
+          'runtime.connections.subscriptions.cancel',
+          { taskId: initialManagerTaskId, subscriptionKey: `${MARKER}_cancel` },
+          REMOTE_DOCKER_DEVICE_ID
+        )
+        assert.equal(denied.ok, false, 'Project manager accepted personal event control')
+        assert.equal(denied.error?.code, 'invalid_event_subscription')
+        assert.equal(denied.error?.message, 'Conversation no longer permits personal control')
+      })
 
       await captureScreenshot(
         control,

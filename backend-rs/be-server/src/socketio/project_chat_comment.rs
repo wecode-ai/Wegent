@@ -99,6 +99,10 @@ pub(super) async fn enqueue_root(
                  trigger.reply_to_message_id.as_str()),
             ).await?;
             if let Some(bound) = bound {
+                if bound.metadata()["externalInvocation"] == true && human_request_id.is_none() {
+                    mark_comment_only(tx, trigger.id).await?;
+                    return Ok(Ok(None));
+                }
                 let Some(mut bound) = published_comment_activity(tx, trigger, bound).await? else {
                     return Ok(Err(execution_failed()));
                 };
@@ -184,14 +188,20 @@ pub(super) async fn enqueue_root(
             if original.is_some() {
                 return Ok(Err(execution_failed()));
             }
-            tx.execute("UPDATE project_chat_messages SET metadata=JSON_SET(
-                        IF(JSON_TYPE(metadata)='OBJECT',metadata,JSON_OBJECT()),
-                        '$.execution_dispatch','comment_only') WHERE id=?", (trigger.id,)).await?;
+            mark_comment_only(tx, trigger.id).await?;
             return Ok(Ok(None));
         }
         let agent = authority::agent_on(&mut &mut *tx, &trigger.project_id, agent_id, assigner, true)
             .await.map_err(database_error)?;
         let config = &agent.metadata.0;
+        if config["runtime"] == "external" {
+            if original.is_some() || mentioned.first().copied() != Some(agent_id) {
+                return Ok(Err(ack_error("INVALID_MESSAGE", "Mention the external agent to start a new invocation")));
+            }
+            let id = crate::external_agents::enqueue(tx, &agent, trigger, user_id).await?;
+            new_response = true;
+            return Ok(Ok(Some(id)));
+        }
         let mut owner = if agent.created_by_user_id != 0 { agent.created_by_user_id } else { user_id };
         let mut environment = config["execution_environment"].as_str()
             .filter(|value| matches!(*value, "cloud" | "local" | "wegent")).unwrap_or("local");
@@ -315,7 +325,26 @@ pub(super) async fn enqueue_root(
     let row = messages::load_message_by_id(state, id)
         .await?
         .ok_or_else(execution_failed)?;
-    if new_response && row.metadata()["collaboration_guidance"] != true {
+    if new_response && row.metadata()["externalInvocation"] == true {
+        use crate::external_agents::socket::{NAMESPACE, WORK_AVAILABLE, room};
+        let room = room(&row.agent_id);
+        crate::socketio::runtime::deliver_local_emit(
+            NAMESPACE,
+            WORK_AVAILABLE,
+            &room,
+            None,
+            &json!({}),
+        )
+        .await;
+        crate::socketio::device_lifecycle::publish_room_event(
+            state,
+            WORK_AVAILABLE,
+            &json!({}),
+            NAMESPACE,
+            &room,
+        )
+        .await;
+    } else if new_response && row.metadata()["collaboration_guidance"] != true {
         if let Err(error) = crate::background_jobs::robot::prepare_and_wake(state).await {
             tracing::warn!(%error, "project comment runner wake failed");
         }
@@ -330,6 +359,17 @@ pub(super) async fn enqueue_root(
         vec![messages::message_view_with_actor(state, user_id, &row).await?],
         new_response,
     ))
+}
+
+async fn mark_comment_only(tx: &mut impl MysqlTransaction, id: i64) -> Result<(), MysqlError> {
+    tx.execute(
+        "UPDATE project_chat_messages SET metadata=JSON_SET(
+         IF(JSON_TYPE(metadata)='OBJECT',metadata,JSON_OBJECT()),
+         '$.execution_dispatch','comment_only') WHERE id=?",
+        (id,),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn guide_active_comment(

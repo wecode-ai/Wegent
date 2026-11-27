@@ -180,7 +180,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     id: str
     project_id: str
     name: str
-    runtime: BotRuntime
+    runtime: BotRuntime | Literal["external"]
     wegent_team_id: int | None
     model: str | None
     model_type: Literal["public", "user", "group", "runtime"] | None

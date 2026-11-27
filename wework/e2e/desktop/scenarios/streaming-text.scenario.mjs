@@ -343,6 +343,8 @@ export function createDesktopScenario({
         subagentStage === 'awaiting-wait-output' &&
         requestContainsToolOutputForCall(body, SUBAGENT_WAIT_CALL_ID)
       ) {
+        // Guidance can interrupt wait_agent before the child finishes.
+        await subagentCompletionRelease
         subagentStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(

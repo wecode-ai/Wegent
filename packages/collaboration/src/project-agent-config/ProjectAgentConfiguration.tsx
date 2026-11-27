@@ -4,7 +4,7 @@ import { Button as ControlButton } from '../markdown/Button'
 // SPDX-License-Identifier: Apache-2.0
 
 import { X } from 'lucide-react'
-import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useDocumentEvent } from '../dom-events'
 import type { CollaborationTranslate } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
@@ -127,10 +127,20 @@ export function ProjectAgentConfiguration({
     },
     { enabled: composerOpen && !host }
   )
-  const dialogTitle = translate('todo.add_project_agent', '添加智能体')
+  const [externalComposerVersion, setExternalComposerVersion] = useState<number>()
+  const externalCreator =
+    projectStore === 'backend' && scope === 'project' && canManage
+      ? host?.renderExternalAgentCreator
+      : undefined
+  const configuringExternal = Boolean(externalCreator && externalComposerVersion === composerVersion)
+  const dialogTitle = configuringExternal
+    ? translate('todo.connect_external_agent', '接入外部智能体')
+    : translate('todo.add_project_agent', '添加智能体')
   const dialogDescription =
-    scope === 'workspace'
-      ? translate('todo.agent_picker_workspace_description', '选择一个智能体，供分组内项目复用。')
+    configuringExternal
+      ? translate('todo.connect_external_agent_description', '配置后可在事项中 @ 此智能体，调用外部系统并查看回复。')
+      : scope === 'workspace'
+        ? translate('todo.agent_picker_workspace_description', '选择一个智能体，供分组内项目复用。')
       : translate('todo.agent_picker_description', '选择一个智能体，加入后即可分配项目任务。')
   const closeLabel = translate('common.close', '关闭')
 
@@ -207,7 +217,7 @@ export function ProjectAgentConfiguration({
     if (usesLocalAgentCreator && host?.renderLocalAgentCreator) {
       return host.renderLocalAgentCreator({
         onClose,
-        onCreated: () => resource.finishLocalAgentCreation(composerVersion),
+        onCreated: () => resource.finishProjectAgentCreation(composerVersion),
         projectId: agentProjectId,
       })
     }
@@ -295,7 +305,9 @@ export function ProjectAgentConfiguration({
                     <span className={styles.agentName}>{agent.displayName}</span>
                     <span className={styles.agentDetails}>
                       <span className={styles.runtimeBadge}>
-                        {agent.executorType === null
+                        {agent.executorType === 'external'
+                          ? translate('todo.external_agent', '外部智能体')
+                          : agent.executorType === null
                           ? translate('todo.agent_executor_from_definition', '执行器由智能体定义')
                           : agent.executorType === 'claude_code'
                             ? 'Claude Code'
@@ -307,7 +319,7 @@ export function ProjectAgentConfiguration({
                           : agent.capabilityDescription ||
                             translate('todo.project_owned_agent', '项目智能体')}
                       </span>
-                      {agent.definitionSource === 'project' ? (
+                      {agent.definitionSource === 'project' && agent.executorType !== 'external' ? (
                         <span
                           className={styles.capabilitySummary}
                           data-testid={`project-agent-capabilities-${agent.id}`}
@@ -354,7 +366,7 @@ export function ProjectAgentConfiguration({
                         </ControlButton>
                       ) : null}
                       {agent.canEdit &&
-                      ((agent.definitionSource === 'project' && usesProjectAgentEditor) ||
+                      ((agent.definitionSource === 'project' && agent.executorType !== 'external' && usesProjectAgentEditor) ||
                         (agent.definitionSource === 'shared_agent' &&
                           host?.renderAgentEditor &&
                           agent.wegentTeamId !== null)) ? (
@@ -434,7 +446,13 @@ export function ProjectAgentConfiguration({
           {composerOpen
             ? (customAgentCreator ??
               renderDialog(
-                <ProjectAgentPicker
+                configuringExternal && externalCreator
+                  ? externalCreator({
+                      projectId: project.id,
+                      onBack: () => setExternalComposerVersion(undefined),
+                      onCreated: keepOpen => resource.finishProjectAgentCreation(composerVersion, !keepOpen),
+                    })
+                  : <ProjectAgentPicker
                   agents={workspaceAgents}
                   addedTeamIds={
                     new Set(
@@ -453,6 +471,7 @@ export function ProjectAgentConfiguration({
                   onSelect={resource.selectTeam}
                   onRetry={resource.retryCandidates}
                   onCreate={supportsAgentCreation ? resource.createAgent : undefined}
+                  onCreateExternal={externalCreator ? () => setExternalComposerVersion(composerVersion) : undefined}
                   onClose={() => resource.closeComposer(composerVersion)}
                   onAdd={() => void resource.addExistingAgent(composerVersion)}
                 />

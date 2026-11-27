@@ -50,7 +50,7 @@ export interface TemporaryChatPanelProps {
   showExecutionTools?: boolean
   showModelSelector?: boolean
   hideProcessing?: boolean
-  showActivityDots?: boolean
+  isAssistantView?: boolean
   markReadWhenActive?: boolean
   nativeConversation?: boolean
   allowMessagesDuringApproval?: boolean

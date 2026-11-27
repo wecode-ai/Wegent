@@ -66,7 +66,13 @@ mod tests {
         namespaces.sort_unstable();
         assert_eq!(
             namespaces,
-            ["/chat", "/local-executor", "/terminal", "/wework-runtime"]
+            [
+                "/chat",
+                "/local-executor",
+                "/terminal",
+                "/wework-runtime",
+                "/wework-worker"
+            ]
         );
     }
 
@@ -90,6 +96,7 @@ mod tests {
                 ("/local-executor", 27),
                 ("/terminal", 5),
                 ("/wework-runtime", 8),
+                ("/wework-worker", 3),
             ])
         );
         assert_eq!(fallbacks, ["/local-executor"]);
