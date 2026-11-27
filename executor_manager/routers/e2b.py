@@ -738,11 +738,20 @@ async def _find_sandbox_by_e2b_id(
         require_definitive_result=require_definitive_result
     )
 
+    invalid_record: Optional[Exception] = None
     for sandbox_id in sandbox_ids:
-        sandbox = repository.load_sandbox(
-            sandbox_id, require_definitive_result=require_definitive_result
-        )
+        try:
+            sandbox = repository.load_sandbox(
+                sandbox_id, require_definitive_result=require_definitive_result
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            # Keep looking for a readable match, but do not report definite
+            # absence when a corrupt session could not be inspected.
+            invalid_record = exc
+            continue
         if sandbox and sandbox.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
             return sandbox
 
+    if invalid_record is not None:
+        raise invalid_record
     return None

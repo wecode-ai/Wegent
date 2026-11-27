@@ -1463,6 +1463,45 @@ class TestSandboxManager:
         mock_redis_client.zrange.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("matching_record", [False, True])
+    async def test_e2b_delete_checks_legacy_sessions_after_invalid_record(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+        matching_record,
+    ):
+        from fastapi import HTTPException, Request
+
+        from executor_manager.routers import e2b
+
+        manager = sandbox_manager_with_mock_redis
+        record = json.loads(sample_sandbox_redis_data)
+        record["metadata"]["e2b_sandbox_id"] = "test-e2b-id"
+        mock_redis_client.zrange.return_value = ["12344", "12345"]
+        mock_redis_client.hget.side_effect = [
+            "{",
+            json.dumps(record) if matching_record else None,
+            json.dumps(record),
+        ]
+        mocker.patch.object(e2b, "get_sandbox_manager", return_value=manager)
+        remove = mocker.patch.object(
+            manager, "_delete_sandbox_runtime", return_value={"redis_cleared": True}
+        )
+
+        request = Request({"type": "http"})
+        if matching_record:
+            response = await e2b.delete_sandbox("test-e2b-id", request)
+            assert response.status_code == 204
+            assert remove.await_args.args[0] == "12345"
+        else:
+            with pytest.raises(HTTPException) as error:
+                await e2b.delete_sandbox("test-e2b-id", request)
+            assert error.value.status_code == 503
+            remove.assert_not_awaited()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("entry_point", ["task", "e2b", "e2b_numeric"])
     @pytest.mark.parametrize("storage_failed", [False, True])
     async def test_delete_distinguishes_lookup_failure_from_missing_sandbox(
