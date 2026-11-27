@@ -154,7 +154,7 @@ export function createDesktopScenario({
         '0'
       )
       await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
+      await control.command('waitFor', '[data-testid="stand-in-project-scope"]')
       await captureScreenshot(control, '02-connection-editor.png', PANEL)
       await control.command('click', '[data-testid="stand-in-connections-back"]')
       await openConnectionTypePicker(control)

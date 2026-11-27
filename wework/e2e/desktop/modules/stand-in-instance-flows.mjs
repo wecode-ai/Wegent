@@ -10,7 +10,6 @@ export function readStandInBinding(control, timeoutMs) {
 
 export async function finishStandInOnboarding(control) {
   if (!Number(await control.command('getElementCount', testId('stand-in-onboarding')))) return
-  await control.command('clickWhenEnabled', testId('stand-in-onboarding-continue'))
   await control.command('clickWhenEnabled', testId('stand-in-onboarding-complete'))
   await control.command('waitFor', testId('stand-in-onboarding'), { visible: false })
 }

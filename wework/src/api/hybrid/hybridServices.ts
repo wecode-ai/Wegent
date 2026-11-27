@@ -816,7 +816,7 @@ export function createHybridWorkbenchServices(
     observeProjectPluginDevices()
     return api
   }
-  const runtimeApiForDevice = async (deviceId?: string | null) => {
+  const runtimeApiForDevice = async (deviceId?: string | null, { refreshOffline = false } = {}) => {
     const normalizedDeviceId = deviceId?.trim()
     if (!normalizedDeviceId) {
       throw new Error('executor-not-found:missing-device-id')
@@ -833,7 +833,7 @@ export function createHybridWorkbenchServices(
       await listLocalDevices()
       device = resolveDevice()
     }
-    if (!device) {
+    if (!device || (refreshOffline && isRemoteTaskDevice(device) && !isUsableDevice(device))) {
       await listCloudDevices()
       device = resolveDevice()
     }
@@ -1136,9 +1136,9 @@ export function createHybridWorkbenchServices(
     },
   }
 
-  const standInApiForDevice = async (deviceId: string) => {
+  const standInApiForDevice = async (deviceId: string, refreshOffline = false) => {
     const api =
-      (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi
+      (await runtimeApiForDevice(deviceId, { refreshOffline })) === localServices.runtimeWorkApi
         ? localServices.standInApi
         : cloudServices.standInApi
     if (!api) throw new Error('Executor settings are unavailable')
@@ -1889,7 +1889,8 @@ export function createHybridWorkbenchServices(
         return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)
       },
       async lifecycle(userId, deviceId, operation) {
-        return (await standInApiForDevice(deviceId)).lifecycle(userId, deviceId, operation)
+        const api = await standInApiForDevice(deviceId, operation === 'stop')
+        return api.lifecycle(userId, deviceId, operation)
       },
       taskCommands: {
         async get(deviceId, target) {

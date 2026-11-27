@@ -1443,6 +1443,12 @@ impl RuntimeWorkRpcHandler {
                 self.refresh_persisted_model_credentials(&mut payload)
                     .await?;
             } else {
+                if let Some(result) = self
+                    .respond_to_child_mcp_approval(&local_task_id, &response)
+                    .await?
+                {
+                    return Ok(result);
+                }
                 return self.send_prepared_question_response(&local_task_id, response, prepared);
             }
         }

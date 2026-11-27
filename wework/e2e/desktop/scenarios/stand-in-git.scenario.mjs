@@ -209,6 +209,9 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           repositoryPath: 'protocol/a-long-repository-name-for-layout-verification',
         },
       })
+      const gitScope = '[data-testid="stand-in-git-add-scope"]'
+      const gitAccountAction =
+        '[data-testid="stand-in-git-login"],[data-testid="stand-in-git-recheck-account"]'
       const openGit = async platform => {
         await openConnectionTypePicker(control)
         await control.command(
@@ -216,6 +219,30 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           `[data-testid="stand-in-add-@wegent/dsh-connection-git/${platform}-connection"]`
         )
         await control.command('waitFor', `[data-testid="stand-in-git-${platform}"]`)
+        await control.command('waitFor', `${gitScope},${gitAccountAction}`, { visible: true })
+      }
+      const verifyGitBeforeSelection = async (platform, captureName) => {
+        const view = JSON.parse(await control.command('snapshot', 'body'))
+        assert.doesNotMatch(view.text, /Webhook|轮询/)
+        assert.equal(
+          await control.command('getElementCount', '[data-testid^="stand-in-git-takeover-"]'),
+          '0'
+        )
+        const available = Number(await control.command('getElementCount', gitScope)) > 0
+        if (!available) {
+          assert.equal(
+            await control.command('getElementCount', '[data-testid="stand-in-git-query"]'),
+            '0'
+          )
+          await control.command('waitFor', gitAccountAction, { visible: true, enabled: true })
+          await captureScreenshot(control, `${captureName}-${platform}-account.png`)
+          return false
+        }
+        await control.command('clickWhenEnabled', gitScope)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-git-kind-repository"]')
+        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
+        await captureScreenshot(control, `${captureName}-${platform}-repository.png`)
+        return true
       }
       try {
         await ensureExperimentalFeaturesEnabled(control)
@@ -237,24 +264,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           '[data-testid="stand-in-primary-connections-open"]'
         )
         await openGit('github')
-        const personalView = JSON.parse(await control.command('snapshot', 'body'))
-        assert.match(personalView.text, /个人全部事件/)
-        assert.doesNotMatch(personalView.text, /Webhook|轮询/)
-        assert.equal(
-          Number(
-            await control.command('getElementCount', '[data-testid^="stand-in-git-takeover-"]')
-          ),
-          0
-        )
-        await captureScreenshot(control, 'git-01-personal-scope-without-cloud-controls.png')
-        const kind = '[data-testid="stand-in-git-kind"]'
-        await control.command('setExpanded', kind, { value: 'true', visible: true })
-        const repository =
-          '[data-testid="stand-in-git-kind-options"] [role="option"][data-value="repository"]'
-        await control.command('waitFor', repository, { visible: true, text: '只关注某个仓库' })
-        await control.command('select', kind, { value: 'repository' })
-        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
-        await captureScreenshot(control, 'git-02-repository-scope-search-layout.png')
+        await verifyGitBeforeSelection('github', 'git-01')
         const remote = await request('/v1/git-connections/subscriptions')
         assert.equal(remote.items.find(row => row.id === receiver.id).deviceId, 'previous-computer')
         assert.equal(
@@ -281,11 +291,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           '[data-testid="stand-in-primary-connections-open"]'
         )
         await openGit('gitlab')
-        await control.command('select', '[data-testid="stand-in-git-kind"]', {
-          value: 'repository',
-        })
-        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
-        await captureScreenshot(control, 'git-03-light-gitlab-repository-search.png')
+        await verifyGitBeforeSelection('gitlab', 'git-02')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-cancel"]')
         await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
           visible: false,
@@ -303,22 +309,20 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           '[data-testid="stand-in-primary-connections-open"]'
         )
         await openGit('gitlab')
-        await captureScreenshot(control, 'git-04-narrow-dark-gitlab-personal-scope.png')
-        await control.command('select', '[data-testid="stand-in-git-kind"]', {
-          value: 'repository',
-        })
-        await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
-        await captureScreenshot(control, 'git-05-narrow-dark-gitlab-repository-search.png')
+        await verifyGitBeforeSelection('gitlab', 'git-03-narrow-dark')
         await control.command('fill', '[data-testid="stand-in-git-instance"]', {
           value: 'http://gitlab.invalid',
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-git-search"]')
-        await control.command('waitFor', '[role="alert"]')
-        await captureScreenshot(control, 'git-06-invalid-instance-actionable-error.png')
+        await control.command('waitFor', '[data-testid="stand-in-git-instance-invalid"]', {
+          visible: true,
+        })
+        await captureScreenshot(control, 'git-04-invalid-instance-actionable-error.png')
         await control.command('fill', '[data-testid="stand-in-git-instance"]', {
           value: 'https://gitlab.com',
         })
-        await control.command('waitFor', '[role="alert"]', { visible: false })
+        await control.command('waitFor', '[data-testid="stand-in-git-instance-invalid"]', {
+          visible: false,
+        })
       } finally {
         await request(`/v1/git-connections/subscriptions/${receiver.id}`, 'DELETE', {
           deviceId: 'previous-computer',

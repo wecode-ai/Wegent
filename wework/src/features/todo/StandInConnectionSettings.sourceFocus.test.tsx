@@ -13,7 +13,7 @@ const provider: ConnectionProviderDescriptor = {
   id: STAND_IN_DINGTALK_PROVIDER,
   displayName: 'DingTalk',
   resourceKinds: ['direct', 'group'],
-  availability: { status: 'ready' },
+  availability: { status: 'ready', profile: 'organization:owner' },
   dependencies: [],
 }
 
@@ -64,7 +64,7 @@ test('opens the requested DingTalk source and focuses its row', async () => {
   expect(await screen.findByTestId('stand-in-dingtalk-connections')).toBeInTheDocument()
   expect(screen.queryByTestId('stand-in-connection-type-picker')).not.toBeInTheDocument()
   await waitFor(() =>
-    expect(screen.getByTestId('stand-in-dingtalk-pause-conversation-one')).toHaveFocus()
+    expect(screen.getByTestId('stand-in-dingtalk-open-scope-direct-conversation-one')).toHaveFocus()
   )
 })
 

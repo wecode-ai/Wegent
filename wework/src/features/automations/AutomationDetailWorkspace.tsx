@@ -581,7 +581,9 @@ export function AutomationDetailWorkspace({
             className="inline-flex h-8 items-center gap-2 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {t('workbench.save', '保存')}
+            {calendarMode
+              ? t('standIn.workspace.connection_schedule_save')
+              : t('workbench.save', '保存')}
           </ControlButton>
         </footer>
       ) : null}
