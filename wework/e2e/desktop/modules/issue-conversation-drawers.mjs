@@ -262,6 +262,7 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
   const description = scope('[data-testid="cloud-todo-detail-description"]')
   const title = scope('[data-testid="cloud-todo-detail-title"]')
   const save = scope('[data-testid="cloud-todo-save"]')
+  const cancel = scope('[data-testid="cloud-todo-cancel-content-edit"]')
   const editDescription = scope('[data-testid="issue-description-edit"]')
   const boardTab = '[data-testid="workspace-tab-select-fixed-board"]'
   const taskTab = '[data-testid="workspace-tab-select-fixed-task"]'
@@ -299,18 +300,7 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
     JSON.stringify({ boardTab, draft, originalTitle, taskTab }, null, 2)
   )
 
-  if (
-    Number(
-      await control.command('getElementCount', `${description}[contenteditable="true"]`, {
-        visible: true,
-      })
-    ) === 0
-  ) {
-    await control.command('click', editDescription)
-    await control.command('waitFor', `${description}[contenteditable="true"]`, { visible: true })
-  }
-  await control.command('selectText', description, { value: draft })
-  await control.command('pasteText', description, { value: originalDescription })
+  await control.command('click', cancel)
   await control.command('waitFor', save, { visible: false, timeoutMs })
 }
 
