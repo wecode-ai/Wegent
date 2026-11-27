@@ -48,7 +48,6 @@ import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
 import { StandInMigration } from './StandInMigration'
 import { StandInOverviewPage } from './StandInOverviewPage'
-import { StandInMessageCenterButton } from './StandInRoleSelector'
 import { StandInRouteFailure, StandInRouteLoading } from './StandInRouteState'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInEntry } from './useStandInEntry'
@@ -144,17 +143,6 @@ function AccountStandInWorkspace({
     { enabled: !embedded && active && contentRoute === '/stand-in' }
   )
   const [workspaceSource] = useState(createPersonalStandInWorkspaceSource)
-  const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
-  const messagesEntry = query.get('view') === 'messages'
-  const [selection, setSelection] = useState<{ route: string; view: 'conversation' | 'messages' }>()
-  const defaultView =
-    messagesEntry ||
-    (services.standInApi && 'connectionReadiness' in services.standInApi && !query.get('profileId'))
-      ? 'messages'
-      : 'conversation'
-  const workspaceView = selection?.route === contentRoute ? selection.view : defaultView
-  const setWorkspaceView = (view: 'conversation' | 'messages') =>
-    setSelection({ route: contentRoute, view })
   const userId = Number(user.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
   const requestedEntry = useMemo(() => parseStandInEntry(contentRoute), [contentRoute])
@@ -298,7 +286,6 @@ function AccountStandInWorkspace({
     experienceEnabled &&
     !embedded &&
     !scheduled &&
-    !messagesEntry &&
     !settingsRequest &&
     (entry.kind === 'home' ||
       entry.kind === 'conversation' ||
@@ -548,7 +535,6 @@ function AccountStandInWorkspace({
                 () => configureCloudDestination(deviceId)
               )
               if (role === 'initialized') {
-                setWorkspaceView('conversation')
                 setDestinationReady(true)
                 navigateTo('/stand-in')
                 return
@@ -604,7 +590,6 @@ function AccountStandInWorkspace({
             error={instance.error}
             busy={busy}
             onActivate={instance.setup}
-            onOpenConversation={() => setWorkspaceView('conversation')}
             onClose={onClose}
           />
         ) : (
@@ -742,20 +727,7 @@ function AccountStandInWorkspace({
               projects={projects}
               localDeviceId={localDeviceId}
               devices={devices}
-              headerActions={
-                <>
-                  {assistantServices.standInApi && (
-                    <StandInMessageCenterButton
-                      selected={false}
-                      onOpen={() => {
-                        setSelection(undefined)
-                        navigateTo('/stand-in?view=messages')
-                      }}
-                    />
-                  )}
-                  {actions}
-                </>
-              }
+              headerActions={actions}
               onClose={onClose}
             />
           </Suspense>
@@ -788,8 +760,6 @@ function AccountStandInWorkspace({
           <StandInOverviewPage
             key={JSON.stringify([ownerId, selectedDevice, contentRoute])}
             ref={overview}
-            workspaceView={workspaceView}
-            onWorkspaceViewChange={setWorkspaceView}
             headerActions={boundDeviceOffline ? undefined : actions}
             directoryError={directory?.error === failure ? undefined : directory?.error}
             primarySettingsActions={definitionBackupAction}

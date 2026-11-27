@@ -521,7 +521,7 @@ async def run() -> None:
             _message("/new", conversation_id, sender_id)
         )
         assert "助理详情" in handler.replies[-1]
-        assert "点击对应的 IM 渠道" in handler.replies[-1]
+        assert "账号默认执行设备" in handler.replies[-1]
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
         assert runtime_requests[-1]["message"] == "1"
         session = await im_session_service.get_session(session_key)

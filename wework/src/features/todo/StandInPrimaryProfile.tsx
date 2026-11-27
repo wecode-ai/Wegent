@@ -5,7 +5,6 @@ import {
   primaryWithConnectionMode,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -64,7 +63,6 @@ export function StandInPrimaryProfile({
   onSelectDevice,
   deviceReadOnly = false,
   initialCalendar = false,
-  initialConnections = false,
   onCalendarViewChange,
   onReload,
   shortcuts,
@@ -89,15 +87,12 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
-  initialConnections?: boolean | MessageCenterSource
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
-  const initialSource =
-    initialConnections && typeof initialConnections === 'object' ? initialConnections : undefined
   const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const settings = incomingSettings
@@ -111,7 +106,6 @@ export function StandInPrimaryProfile({
     const separatePrompt = usesSeparatePrompt(primary)
     return {
       ...primary,
-      delegation: primary.delegation,
       dingTalkConnectionMode: primary.dingTalkConnectionMode,
       collaboration: primary.collaboration ?? defaultCollaboration,
       calendar: primary.calendar,
@@ -131,7 +125,7 @@ export function StandInPrimaryProfile({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar || initialConnections ? 'connections' : 'main')
+  >(initialCalendar ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -387,7 +381,6 @@ export function StandInPrimaryProfile({
               calendar: original.calendar,
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
-            initialSource={initialSource}
             onScheduleDirtyChange={setScheduleDirty}
             onScheduleEditorOpenChange={setScheduleEditorOpen}
             tagDraft={tagDraft}

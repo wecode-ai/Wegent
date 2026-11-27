@@ -1,5 +1,4 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
-pub use super::stand_in_inbox::dots_inbox::project_delegation_result;
 use super::*;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -7,8 +6,6 @@ use wegent_protocol::StandInTaskPermissions;
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
-#[path = "stand_in_dots_delegation.rs"]
-mod dots_delegation;
 use connections::validate_connections;
 #[path = "personal_stand_in_share_copy.rs"]
 mod share_copy;
@@ -22,10 +19,6 @@ pub use connections::{
     connection_memory_scope, issue_training_source, source_collection_namespace, source_namespace,
     source_provider, stand_in_collection_connection, stand_in_connection, training_memory_scope,
     training_source_granted,
-};
-pub use dots_delegation::{
-    active_delegated_source, is_primary_dingtalk, permits_delegated_message,
-    permits_delegated_reply, requires_dingtalk_delegation,
 };
 pub use teams::{stand_in_team, supports_role_delegation, team_scope_id, StandInTeam};
 
@@ -51,7 +44,6 @@ pub(super) fn migrate_personal_settings(value: &mut Value) -> Result<bool, TaskR
     }
     if value["primary"].is_object() {
         changed |= normalize_stand_in_identity(&mut value["primary"], immediate)?;
-        changed |= dots_delegation::migrate_delegation_version(&mut value["primary"]);
     }
     changed |= value
         .as_object_mut()
@@ -577,20 +569,38 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     identities
 }
 
+pub fn is_primary_dingtalk(identity: &Value, source: &Value) -> bool {
+    identity["id"] == "@primary" && source_provider(source) == DINGTALK_PROVIDER
+}
+
+pub fn requires_dingtalk_delegation(identity: &Value, source: &Value) -> bool {
+    // Preserve the confirmation boundary for ordinary DingTalk connections.
+    is_primary_dingtalk(identity, source)
+        && (source["delegated"] == true
+            || source["policy"]["askBeforeAct"] != true
+            || (identity["dingTalkConnectionMode"] != "confirmed"
+                && (identity["delegation"]["version"].as_u64().unwrap_or(0) > 0
+                    || !is_selected_conversation(source))))
+}
+
+fn is_selected_conversation(source: &Value) -> bool {
+    matches!(source["kind"].as_str(), Some("direct" | "group"))
+        && source["id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty() && id != "*")
+        && source.get("scope").is_none()
+        && source.get("collectionKey").is_none()
+}
+
 pub fn matches_delegation_account(settings: &Value, role: &Value, source: &Value) -> bool {
-    if role != "@primary" || source_provider(source) != DINGTALK_PROVIDER {
-        return source["delegated"] != true;
-    }
-    let policy = &settings["primary"]["delegation"];
-    if policy["accountInvalidated"] == true {
+    if source["delegated"] == true {
         return false;
     }
-    if source["delegated"] != true {
-        return policy["accountId"].is_null();
+    if role != "@primary" || source_provider(source) != DINGTALK_PROVIDER {
+        return true;
     }
-    policy["accountId"].is_string()
-        && policy["accountId"] == source["accountId"]
-        && policy["profile"] == source["profile"]
+    let prior = &settings["primary"]["delegation"];
+    prior["accountId"].is_null() && prior["accountInvalidated"] != true
 }
 
 /// Project a saved identity or team into the fields allowed to leave its account.
@@ -652,10 +662,22 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
         .unwrap_or_else(|| json!({"automatic":role["enabled"] == true,"askBeforeAct":false}))
 }
 
+fn retire_dingtalk_delegation(identity: &mut Value) {
+    if let Some(fields) = identity.as_object_mut() {
+        fields.remove("delegation");
+    }
+    if let Some(sources) = identity
+        .get_mut("connections")
+        .and_then(Value::as_array_mut)
+    {
+        sources.retain(|source| {
+            source_provider(source) != DINGTALK_PROVIDER || source["delegated"] != true
+        });
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct StandInSaveOptions<'a> {
-    pub(super) direct_save: bool,
-    pub(super) verified_account: Option<&'a Value>,
     pub(super) backend: Option<&'a str>,
 }
 
@@ -758,25 +780,6 @@ impl LocalTaskStore {
         backend: Option<&str>,
         value: Value,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_personal_stand_in_with_verified_dingtalk_account_for_backend(
-            user, device, backend, value, None,
-        )
-    }
-
-    /// Keep connector-verified identity out of client input when saving a delegation.
-    pub fn save_personal_stand_in_with_verified_dingtalk_account_for_backend(
-        &self,
-        user: i64,
-        device: &str,
-        backend: Option<&str>,
-        value: Value,
-        verified_account: Option<&Value>,
-    ) -> Result<Value, TaskRuntimeError> {
-        if value["primary"]["delegation"]["action"] == "prepare" && verified_account.is_none() {
-            return Err(TaskRuntimeError::Invalid(
-                "Verify the selected DingTalk account before preparing delegation".into(),
-            ));
-        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let saved = self.save_personal_stand_in_on(
@@ -784,55 +787,10 @@ impl LocalTaskStore {
             user,
             device,
             value,
-            StandInSaveOptions {
-                direct_save: true,
-                verified_account,
-                backend,
-            },
+            StandInSaveOptions { backend },
         )?;
         connection.commit()?;
         Ok(saved)
-    }
-
-    /// Revoke a verified connector identity change without retiring a newer selection.
-    pub fn invalidate_delegation_account(
-        &self,
-        user: i64,
-        device: &str,
-        source: &Value,
-        expected_version: &Value,
-    ) -> Result<bool, TaskRuntimeError> {
-        let mut guard = self.connection()?;
-        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous = read_personal(&connection, user, device)?;
-        let mut settings = previous.clone();
-        if settings["executionDeviceId"] != device
-            || settings["version"] != *expected_version
-            || !dots_delegation::invalidate_account(&mut settings["primary"], source)?
-        {
-            return Ok(false);
-        }
-        settings["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
-        write_personal(&connection, &settings)?;
-        super::stand_in_inbox::dots_inbox::expire_unsent_delegated_messages(
-            &connection,
-            user,
-            &settings,
-        )?;
-        super::stand_in_ghost_proposals::retire_stale_candidates(
-            &connection,
-            user,
-            &settings["version"],
-        )?;
-        super::stand_in_processing::update_processing_configuration(
-            &connection,
-            user,
-            &previous,
-            &settings,
-        )?;
-        super::stand_in_telemetry::configuration_changes(&connection, user, &previous, &settings);
-        connection.commit()?;
-        Ok(true)
     }
 
     /// Update a routing reference without applying intake changes to local identities.
@@ -896,11 +854,7 @@ impl LocalTaskStore {
             user,
             device,
             value,
-            StandInSaveOptions {
-                direct_save: true,
-                verified_account: None,
-                backend: None,
-            },
+            StandInSaveOptions { backend: None },
         );
         transaction.rollback()?;
         result
@@ -955,9 +909,6 @@ impl LocalTaskStore {
             }
         }
         let previous = read_personal(connection, user, device)?;
-        if value.get("primary").is_none() && previous["primary"]["delegation"].is_object() {
-            value["primary"] = previous["primary"].clone();
-        }
         super::stand_in_lifecycle::preserve_stopped_import(&previous, &mut value)?;
         if value["version"] != previous["version"] {
             return Err(TaskRuntimeError::VersionConflict);
@@ -968,17 +919,12 @@ impl LocalTaskStore {
             fields.remove("delegationRoutes");
         }
         if value["primary"].is_object() {
+            retire_dingtalk_delegation(&mut value["primary"]);
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
-            dots_delegation::save_delegation(
-                &mut value["primary"],
-                &previous["primary"],
-                options.direct_save,
-                options.verified_account,
-            )?;
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
-            dots_delegation::strip_source_markers(role);
+            retire_dingtalk_delegation(role);
             let before = previous["roles"]
                 .as_array()
                 .unwrap()
@@ -1002,9 +948,6 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
-        super::stand_in_inbox::dots_inbox::expire_unsent_delegated_messages(
-            connection, user, &value,
-        )?;
         if let Some(backend) = options.backend.filter(|backend| {
             !backend.is_empty() && share_sync::share_configuration_changed(&previous, &value)
         }) {

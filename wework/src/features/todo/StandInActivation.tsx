@@ -18,7 +18,6 @@ export function StandInActivation({
   busy,
   active,
   onActivate,
-  onOpenConversation,
   onClose,
 }: {
   services: WorkbenchServices
@@ -30,7 +29,6 @@ export function StandInActivation({
   busy: boolean
   active: boolean
   onActivate(): Promise<boolean>
-  onOpenConversation(): void
   onClose(): void
 }) {
   const { t } = useTranslation('common')
@@ -46,7 +44,6 @@ export function StandInActivation({
       deviceId={target.deviceId}
       active={active}
       onActivate={onActivate}
-      onOpenConversation={onOpenConversation}
       onClose={onClose}
       configuration={{
         settings: settings.saved,

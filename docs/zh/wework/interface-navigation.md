@@ -79,7 +79,6 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 首次设置的执行设备 | 左侧栏 → 我的助理 → 首次引导 → 执行设备 | 可选本机或其他可用设备。选定设备后，从该设备的可用模型中选择聊天模型，见[首次使用助理](./personal-stand-in.md#assistant-first-use)。 |
 | 查看助理工作来源 | 我的助理 → 助理详情 → 管理助理 → 连接 | 为你添加的助理配置连接时，行内会显示接收状态，点击该行可调整接收范围。见[首次使用助理](./personal-stand-in.md#assistant-first-use)。 |
 | 接收我参与的事项 | 我的助理 → 助理详情 → 管理助理 → 连接 → 协作项目 → 添加接收范围 → 我参与的事项 | 保存后，接收参与人名单中有自己的事项发来的分配或 @。见[助理连接](./personal-stand-in.md)。 |
-| 查看代管消息 | 左侧栏 → 我的助理 → 消息处理中心 | 完成首次引导后可打开。查看钉钉处理记录、暂停或修改设置，见[消息处理中心](./personal-stand-in.md#stand-in-message-center)。 |
 | 个人助理                        | 左侧栏 → 我的助理                                                                          | Beta 功能。首次使用时显示默认助理，可从顶部点击 **添加助理**。版本不兼容时可从错误提示前往云端工作查看设备情况，见[个人助理](./personal-stand-in.md)                                                                                                                                                               |
 | 查看助理任务和委派 | 我的助理 → 选择助理 → 右上角任务与委派 | 在右侧查看任务和委派记录。通过助理详情浮层可查看进行中的委派。见[个人助理](./personal-stand-in.md#assistant-role-delegation)。 |
 | 助理团队                        | 左侧栏 → 我的助理 → 团队                                                    | 创建、编辑或打开个人助理团队，见[组建助理团队](./personal-stand-in.md#assistant-teams)。                                                                                                                                                                        |
@@ -95,9 +94,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 停止助理 / 更换绑定             | 左侧栏 → 我的助理 → 默认助理 → 助理详情 → 管理助理 → 设置面板左下角“停止助理”                | 停止当前绑定设备上的助理任务后才显示默认助理换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)                                                                                                                                    |
 | 迁移助理 | 左侧栏 → 我的助理 → 待处理的旧绑定 | 有可用目标设备时显示迁移流程。目标助理准备成功后开放对话，并收起该流程。见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)。 |
 | 下载助理定义备份 | 左侧栏 → 我的助理 → 默认助理 → 助理详情 → 管理助理 → 下载助理定义备份 | 登录云端后导出此实例发现的冲突定义。见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)。 |
-| 连接 IM / 改绑助理 | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 从聊天工具联系助理 | 在聊天渠道页直接选择钉钉、Telegram、Discord 或微博。需登录云端账号，点击连接立即保存。见[连接 IM 对话](./personal-stand-in.md#im-conversations)。 |
+| 从 IM 联系助理 | 已登记的机器人私聊 → 发送 `/standin` | 使用账号的默认助理。见[连接 IM 对话](./personal-stand-in.md#im-conversations)。 |
 | 连接钉钉 | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 连接 → 钉钉 | 首次引导也使用同一连接界面。选择全部消息或筛选来源后保存，见[连接钉钉](./personal-stand-in.md#dingtalk-delegation)。 |
-| 核查钉钉投递或接管 | 我的助理 → 默认助理 → 助理详情 → 近期活动 → 对应钉钉工作 | 结果未知且有渠道任务时可核查，仍需处理的工作可点击「我来处理」。见[钉钉代管](./personal-stand-in.md#dingtalk-delegation)。 |
 | 接收钉钉群聊的每条新消息 | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 添加接收范围 → 群聊 | 选好群聊范围后，在触发条件中选「每条新消息」，再保存。见[群消息接收范围](./personal-stand-in.md#dingtalk-group-message-scope)。 |
 | 排除钉钉群聊或联系人 | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 添加接收范围 → 群聊或私聊 | 在范围规则中选择「排除所选」，勾选要排除的来源，再保存。见[排除钉钉来源](./personal-stand-in.md#dingtalk-blacklist)。 |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                                                                    | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                                                                                                          |
