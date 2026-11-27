@@ -136,12 +136,33 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
           ],
         })
       const task = await apiRequest<{
-        subtasks: Array<{ role: string; team_id: number; bot_ids: number[]; status: string }>
+        id: number
+        subtasks: Array<{
+          id: number
+          role: string
+          team_id: number
+          bot_ids: number[]
+          status: string
+        }>
       }>(request, `/api/tasks/${taskId}`)
-      expect(task.subtasks.filter(row => row.role === 'ASSISTANT')).toMatchObject([
+      expect(task.id).toBe(taskId)
+      const subtasks = task.subtasks.filter(row => row.role === 'ASSISTANT')
+      expect(subtasks).toMatchObject([
         { team_id: team.id, bot_ids: [first.id], status: 'COMPLETED' },
         { team_id: team.id, bot_ids: [bot.id], status: 'COMPLETED' },
       ])
+      const subtaskIds = subtasks.map(row => row.id)
+      expect(subtaskIds.every(id => Number.isSafeInteger(id) && id > 0)).toBe(true)
+      expect(new Set(subtaskIds).size).toBe(2)
+      return {
+        taskId: task.id,
+        subtasks: subtasks.map(({ id, team_id, bot_ids, status }) => ({
+          subtaskId: id,
+          teamId: team_id,
+          botIds: bot_ids,
+          status,
+        })),
+      }
     }
 
     await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
@@ -179,7 +200,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     await releaseHeldStreamResponse(request, reviewPrompt)
     await clearGate()
     clearGate = undefined
-    await verifyPipeline(taskId)
+    const directPipeline = await verifyPipeline(taskId)
     await expect(page.getByTestId('messages-container')).toContainText(reviewAnswer)
     await capture(page, testInfo, '02-direct-team-delivery')
     const workspace = await apiRequest<{ id: string }>(request, '/api/v1/workspaces', {
@@ -264,7 +285,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
       .toEqual(['completed'])
     const [assigned] = await executions(issue.id)
     expect(assigned.teamId).toBe(team.id)
-    await verifyPipeline(assigned.backendTaskId!)
+    const issuePipeline = await verifyPipeline(assigned.backendTaskId!)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page).toHaveURL(url => url.pathname === `${projectPath}/issues/${issue.id}`)
     const activityCards = page
@@ -404,7 +425,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     const members = (await executions(grouped.id)).filter(row => row.agentId === agent.id)
     expect(members).toHaveLength(1)
     expect(members[0]).toMatchObject({ teamId: team.id, status: 'completed' })
-    await verifyPipeline(members[0].backendTaskId!)
+    const memberPipeline = await verifyPipeline(members[0].backendTaskId!)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
       'data-value',
@@ -455,11 +476,11 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
         {
           teamId: team.id,
           botIds: [first.id, bot.id],
-          direct: { taskId, status: 'completed' },
+          direct: { ...directPipeline, status: 'completed' },
           issue: {
             issueId: issue.id,
             executionId: assigned.id,
-            taskId: assigned.backendTaskId,
+            ...issuePipeline,
             status: assigned.status,
           },
           group: {
@@ -469,6 +490,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
             memberId: agent.id,
             managerTeamId: leaderTeam.id,
             managerBotIds: [coordinator.id, planner.id],
+            memberPipeline,
             executions: groupedRuns,
           },
         },
