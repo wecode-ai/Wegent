@@ -87,7 +87,14 @@ export interface ConnectionReadinessSource {
 }
 
 export interface ConnectionReadiness {
-  status: 'ready' | 'auth_required' | 'identity_required' | 'permissions_required' | 'error'
+  status:
+    | 'ready'
+    | 'auth_required'
+    | 'identity_required'
+    | 'permissions_required'
+    | 'component_unavailable'
+    | 'error'
+  code?: string
   identity?: ConnectionReadinessIdentity
   candidates?: ConnectionReadinessIdentity[]
   component?: { source: 'managed' | 'bundled' | 'external'; version: string }

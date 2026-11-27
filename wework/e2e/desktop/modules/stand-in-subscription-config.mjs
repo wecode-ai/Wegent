@@ -334,8 +334,12 @@ export function createSubscriptionConfigRegression() {
           '[data-workspace-tab-content="fixed-task"] [data-testid="personal-stand-in-button"]'
         )
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
         await openStandInSettings(control)
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-execution-toggle"]'
+        )
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-profile"] [data-testid="model-selector-button"]'

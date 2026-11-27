@@ -60,6 +60,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.equal(binding.status, 'active')
       assert.equal(binding.target.userId, userId)
       assert.equal(binding.target.deviceId, initial.executionDeviceId)
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await captureScreenshot(control, 'im-stand-in-00-channel-settings.png')

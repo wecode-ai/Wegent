@@ -350,6 +350,7 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-continue"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
       await control.command('waitFor', GUIDE, { visible: false })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await control.command('waitFor', '[data-testid="stand-in-details-open"]')
       const afterSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
       const roleSelector = '[data-testid="stand-in-role-selector"]'
@@ -503,6 +504,7 @@ export function createDesktopScenario(options) {
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openCalendarReviewTemplate(control)
       assert.equal(
         await control.command('getValue', '[data-testid="automation-name-input"]'),

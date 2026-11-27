@@ -78,7 +78,7 @@ Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换
 
 ## 启动会话
 
-构建时的 `prepare-codex-binary.mjs` 使用 Node 原生 HTTP/HTTPS 流下载锁定版本，处理重定向并删除失败的临时文件；归档通过完整性校验后才解包使用。下载流不依赖 Node 内置 Fetch 的 Undici 解析器，避免其异常终止构建进程。
+构建时的 `prepare-codex-binary.mjs` 使用 Undici 流下载锁定版本，处理重定向，遵守连接、响应头和响应体超时，并读取 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY` 环境变量。失败的重试会删除临时文件；归档通过完整性校验后才解包使用。
 
 ```bash
 pnpm --filter wework ai:verify start

@@ -31,16 +31,29 @@ export interface RemoteProjectSyncAttempt {
   activationRevision: number
 }
 
+export interface WorkbenchSessionStateOptions {
+  initialStandaloneChatKey?: number
+  onStandaloneChatKeyChange?: (value: number) => void
+}
+
 /** The reducer and scoped draft choices are the canonical state of one Workbench owner. */
 export function createWorkbenchSessionState(
   identity: User,
   sharedLifecycleStore: RuntimeTaskLifecycleStore,
-  initialLifecycleEnabled: boolean
+  initialLifecycleEnabled: boolean,
+  options: WorkbenchSessionStateOptions = {}
 ) {
   let alive = true
   let lifecycleEnabled = initialLifecycleEnabled
+  const initialState = workbenchReducer(initialWorkbenchState, {
+    type: 'user_updated',
+    user: identity,
+  })
   let snapshot = {
-    state: workbenchReducer(initialWorkbenchState, { type: 'user_updated', user: identity }),
+    state: {
+      ...initialState,
+      standaloneChatKey: options.initialStandaloneChatKey ?? initialState.standaloneChatKey,
+    },
     contextUsageByRuntimeTask: {} as Record<string, RuntimeContextUsage>,
     projectExecutionMode: 'current_workspace' as ProjectExecutionMode,
     projectWorktreeBranch: null as string | null,
@@ -97,6 +110,8 @@ export function createWorkbenchSessionState(
       if (receivedRuntimeWork) syncLifecycle(previous, true)
       return
     }
+    if (state.standaloneChatKey !== previous.standaloneChatKey)
+      options.onStandaloneChatKeyChange?.(state.standaloneChatKey)
     snapshot = { ...snapshot, state }
     if (
       previous.user?.preferences !== state.user?.preferences ||
