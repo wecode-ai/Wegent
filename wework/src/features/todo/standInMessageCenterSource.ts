@@ -23,7 +23,10 @@ function scopedSnapshot(snapshot: MessageCenterSnapshot): MessageCenterSnapshot 
     ...unavailableMessageCenterSnapshot,
     deviceName: snapshot.deviceName,
     status:
-      status === 'disconnected' || status === 'offline' || status === 'component_unavailable'
+      status === 'disconnected' ||
+      status === 'configured' ||
+      status === 'offline' ||
+      status === 'component_unavailable'
         ? status
         : 'unavailable',
     capabilities: snapshot.capabilities.filter(capability => capability === 'refresh'),

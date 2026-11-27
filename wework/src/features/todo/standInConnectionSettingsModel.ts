@@ -74,10 +74,11 @@ export function rebaseConnectionDraft<T extends ConnectionConfiguration>(
       editedProviders.delete(provider)
   }
   const keepDraft = (view: string) => view !== savedView && hasConnectionDraft(draft, before, view)
-  return {
+  const calendar = keepDraft('time') ? draft : accepted
+  const remaining = {
     ...draft,
     collaboration: keepDraft('projects') ? draft.collaboration : accepted.collaboration,
-    calendar: keepDraft('time') ? draft.calendar : accepted.calendar,
+    calendar: calendar.calendar,
     connections: editedProviders.size
       ? [
           ...(accepted.connections ?? []).filter(row => !editedProviders.has(row.providerId)),
@@ -85,6 +86,11 @@ export function rebaseConnectionDraft<T extends ConnectionConfiguration>(
         ]
       : accepted.connections,
   }
+  if (!Object.hasOwn(calendar, 'calendar')) delete remaining.calendar
+  if (!editedProviders.size && !Object.hasOwn(accepted, 'connections')) {
+    delete remaining.connections
+  }
+  return remaining
 }
 
 export interface ConnectionSettingsInput {

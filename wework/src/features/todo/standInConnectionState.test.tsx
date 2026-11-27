@@ -78,6 +78,12 @@ it('adopts a refreshed DingTalk boundary after saving a project while retaining 
 
   expect(hasConnectionDraft(remaining, accepted, dingtalk.providerId)).toBe(false)
   expect(remaining.connections).toEqual([...accepted.connections, mailbox])
+
+  const unconnected = newStandInPrimaryRole('local')
+  const savedProject = { ...unconnected, collaboration: accepted.collaboration }
+  expect(rebaseConnectionDraft(savedProject, unconnected, savedProject, 'projects')).toStrictEqual(
+    savedProject
+  )
 })
 
 it('drops the active wizard on Back and changes the scope list only after Save', async () => {
