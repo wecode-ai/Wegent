@@ -453,8 +453,11 @@ async fn published_comment_activity(
     ).await?;
     Ok(source.filter(|source| {
         let source_metadata = source.metadata();
-        source_metadata["activity_type"] == "member_execution"
-            && source_metadata["dispatch_id"] == metadata["dispatch_id"]
+        (source_metadata["activity_type"] == "member_execution"
+            && source_metadata["dispatch_id"] == metadata["dispatch_id"])
+            || (source_metadata["dispatch_role"] == "member"
+                && source_metadata["execution_id"].is_i64()
+                && source_metadata["execution_id"] == metadata["collaboration_member_execution_id"])
     }))
 }
 

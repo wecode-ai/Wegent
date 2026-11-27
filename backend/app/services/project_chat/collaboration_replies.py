@@ -68,6 +68,41 @@ def _reply_author(
             )
         ):
             return manager_id or "", activity
+        if (
+            metadata.get("dispatch_role") == "member"
+            and metadata.get("execution_id")
+            and metadata.get("activity_type") != "member_execution"
+        ):
+            member = (
+                db.query(LoopItemExecution)
+                .filter_by(
+                    id=metadata["execution_id"],
+                    cloud_project_id=dispatch.cloud_project_id,
+                    loop_item_id=dispatch.loop_item_id,
+                    agent_id=activity.agent_id,
+                    runtime_task_id=identity.task_id,
+                    executor_owner_user_id=dispatch.executor_owner_user_id,
+                )
+                .one_or_none()
+            )
+            if member is None:
+                continue
+            context = member.runtime_origin_context
+            if (
+                context.get("dispatch_role") == "member"
+                and context.get("collaboration_dispatch_execution_id") == dispatch.id
+                and context.get("dispatch_id") == identity.dispatch_id
+                and same_owned_device(
+                    db,
+                    user_id=member.executor_owner_user_id,
+                    left_device_id=member.runtime_device_id,
+                    right_device_id=identity.device_id,
+                )
+            ):
+                if not execution_authorized(db, member):
+                    raise HTTPException(403, "Member execution authority is revoked")
+                return member.agent_id, activity
+            continue
         if metadata.get("dispatch_id") != identity.dispatch_id:
             continue
         if metadata.get("activity_type") == "member_execution":
@@ -195,9 +230,9 @@ def publish_collaboration_reply(
     if not execution_authorized(db, dispatch):
         raise HTTPException(403, "Collaboration execution authority is revoked")
     agent_id, activity = _reply_author(db, dispatch=dispatch, identity=identity)
-    member_activity = (
-        activity is not None
-        and (activity.metadata_json or {}).get("activity_type") == "member_execution"
+    member_activity = activity is not None and (
+        (activity.metadata_json or {}).get("dispatch_role") == "member"
+        or (activity.metadata_json or {}).get("activity_type") == "member_execution"
     )
     agent = db.get(ProjectChatAgent, agent_id)
     if (
@@ -331,6 +366,14 @@ def publish_collaboration_reply(
         project_chat_service._validate_comment_mentions(
             db, project, user_id, item_id, mentions
         )
+    if member_activity:
+        author_binding = {"collaboration_member_activity_id": activity.message_id}
+        if activity.metadata_json.get("activity_type") != "member_execution":
+            author_binding["collaboration_member_execution_id"] = (
+                activity.metadata_json["execution_id"]
+            )
+    else:
+        author_binding = {"manager_runtime_task_id": identity.task_id}
     row = ProjectChatMessage(
         message_id=message_id,
         client_message_id=key,
@@ -355,11 +398,7 @@ def publish_collaboration_reply(
                 if mirror
                 else {}
             ),
-            **(
-                {"collaboration_member_activity_id": activity.message_id}
-                if member_activity
-                else {"manager_runtime_task_id": identity.task_id}
-            ),
+            **author_binding,
         },
         status="completed",
         thread_root_message_id=reply.root_message_id or message_id,

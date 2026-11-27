@@ -125,7 +125,16 @@ def _execution(
             )
             if activity is None or activity.agent_id != target.agent_id:
                 raise HTTPException(409, "The collaboration session is unavailable")
-            return resolve_collaboration_member_session(db, request, activity)
+            if metadata.get("collaboration_member_execution_id") is None:
+                return resolve_collaboration_member_session(db, request, activity)
+            if (activity.metadata_json or {}).get("execution_id") != metadata.get(
+                "collaboration_member_execution_id"
+            ):
+                raise HTTPException(
+                    409, "The collaboration member execution has changed"
+                )
+            target = activity
+            metadata = target.metadata_json
         if metadata.get("dispatch_id") and metadata.get("manager_runtime_task_id"):
             return resolve_collaboration_manager_session(db, request, target)
     if (target.metadata_json or {}).get("dispatch_role") == "manager" and (

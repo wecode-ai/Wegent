@@ -344,8 +344,35 @@ def test_group_root_comment_keeps_agent_authorship_and_mentions(member_scenario)
     )
 
 
-def test_autonomous_turn_publishes_one_start_and_threads_its_outputs(member_scenario):
+@pytest.mark.parametrize("execution_backed", [False, True])
+def test_autonomous_turn_publishes_one_start_and_threads_its_outputs(
+    member_scenario, execution_backed
+):
     s = member_scenario
+    if execution_backed:
+        execution = LoopItemExecution(
+            cloud_project_id=str(s.project.id),
+            loop_item_id=s.issue.id,
+            agent_id=s.member_agent.id,
+            assigner_user_id=s.owner.id,
+            executor_owner_user_id=s.owner.id,
+            runtime_task_id="codex-queue-2",
+            runtime_device_id="admin-cloud",
+            execution_environment="cloud",
+            execution_payload=json.dumps(
+                {
+                    "origin_context": {
+                        **s.execution.runtime_origin_context,
+                        "dispatch_role": "member",
+                        "collaboration_dispatch_execution_id": s.execution.id,
+                    }
+                }
+            ),
+        )
+        s.db.add(execution)
+        s.db.flush()
+        s.root.runtime_task_id = execution.runtime_task_id
+        s.root.metadata_json = {"execution_id": execution.id, "dispatch_role": "member"}
     s.root.content = "Unpublished progress and mirrored result"
     s.db.commit()
     scope = dict(user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id)
@@ -377,6 +404,34 @@ def test_autonomous_turn_publishes_one_start_and_threads_its_outputs(member_scen
         body="Additional output",
         identity=output.model_copy(update={"message_id": "output-b"}),
     )
+    if execution_backed:
+        saved = (
+            s.db.query(ProjectChatMessage).filter_by(message_id=result.message_id).one()
+        )
+        assert saved.metadata_json["collaboration_member_execution_id"] == execution.id
+        assert (
+            saved.metadata_json["collaboration_member_activity_id"] == s.root.message_id
+        )
+        execution.assigner_user_id = 999999
+        s.db.flush()
+        with pytest.raises(HTTPException) as revoked:
+            publish_collaboration_reply(s.db, **scope, body="Finished", identity=output)
+        assert revoked.value.status_code == 403
+        execution.assigner_user_id = s.owner.id
+        original = execution.execution_intent
+        execution.execution_payload = json.dumps(
+            {
+                **original,
+                "origin_context": {
+                    **original["origin_context"],
+                    "dispatch_id": "other",
+                },
+            }
+        )
+        s.db.flush()
+        with pytest.raises(HTTPException) as foreign:
+            publish_collaboration_reply(s.db, **scope, body="Finished", identity=output)
+        assert foreign.value.status_code == 425
     assert start.reply_to_message_id is None
     assert result_replay.message_id == result.message_id
     assert (
