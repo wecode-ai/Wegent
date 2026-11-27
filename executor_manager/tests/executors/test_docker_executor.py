@@ -549,16 +549,18 @@ class TestDockerExecutor:
             executor._create_new_container(sample_task, task_info, status)
 
             mock_wait_ready.assert_called_once_with("new-executor")
-            expected_task = sample_task.copy()
-            assert expected_task.pop("executor_callback_token") == "callback-token"
-            mock_dispatch.assert_called_once_with(expected_task, "new-executor", 8080)
+            assert "executor_callback_token" not in sample_task
+            mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
 
     @pytest.mark.parametrize("task_type", ["online", "sandbox"])
+    @pytest.mark.parametrize("nested_metadata", [False, True])
     def test_create_new_container_prepares_callback_token_before_creation(
-        self, executor, sample_task, task_type
+        self, executor, sample_task, task_type, nested_metadata
     ):
         """The callback credential must be ready before the container command."""
         sample_task["type"] = task_type
+        if nested_metadata:
+            sample_task = {"metadata": sample_task}
         status = {"executor_name": "new-executor"}
         task_info = executor._extract_task_info(sample_task)
 
@@ -576,8 +578,10 @@ class TestDockerExecutor:
 
         mock_prepare.assert_called_once_with()
         created_task = mock_create.call_args.args[0]
-        assert created_task["executor_callback_token"] == "callback-token"
-        assert sample_task["executor_callback_token"] == "callback-token"
+        startup_fields = created_task["metadata"] if nested_metadata else created_task
+        request_fields = sample_task["metadata"] if nested_metadata else sample_task
+        assert startup_fields["executor_callback_token"] == "callback-token"
+        assert "executor_callback_token" not in request_fields
         assert mock_create.call_count == 1
         assert mock_dispatch.call_count == (0 if task_type == "sandbox" else 1)
 
@@ -748,7 +752,12 @@ class TestDockerExecutor:
         ):
             executor._create_new_container(prepare_task, task_info, status)
 
-        mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
+        assert "executor_callback_token" not in prepare_task
+        mock_create.assert_called_once_with(
+            {**prepare_task, "executor_callback_token": "callback-token"},
+            task_info,
+            "prepare-executor",
+        )
         mock_wait_ready.assert_called_once_with("prepare-executor")
         mock_dispatch_task_to_instance.assert_not_called()
 

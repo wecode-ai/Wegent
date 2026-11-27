@@ -426,12 +426,13 @@ class DockerExecutor(Executor):
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
         callback_token = generate_callback_token()
+        startup_task = task.copy()
         metadata = task.get("metadata")
         if isinstance(metadata, dict) and "task_id" in metadata:
-            metadata[CALLBACK_TOKEN] = callback_token
+            startup_task["metadata"] = {**metadata, CALLBACK_TOKEN: callback_token}
         else:
-            task[CALLBACK_TOKEN] = callback_token
-        self.create_instance(task, task_info, executor_name)
+            startup_task[CALLBACK_TOKEN] = callback_token
+        self.create_instance(startup_task, task_info, executor_name)
 
         if not is_sandbox_task:
             try:
