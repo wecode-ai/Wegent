@@ -52,6 +52,23 @@ LEGACY_ACTIVE_SANDBOXES_ZSET = "wegent-sandbox:active"
 ACTIVE_SANDBOXES_ZSET_PREFIX = f"{LEGACY_ACTIVE_SANDBOXES_ZSET}:"
 E2B_SANDBOX_ID_INDEX_PREFIX = "wegent-sandbox-e2b-index:"
 
+# Status updates must not recreate a deleted session. Checking and writing in
+# one Redis operation also avoids losing valid updates during a keep-alive.
+_SAVE_EXECUTION_FOR_RUNTIME = """
+local raw = redis.call("HGET", KEYS[1], ARGV[1])
+if not raw then
+    return 0
+end
+local sandbox = cjson.decode(raw)
+if sandbox.created_at ~= tonumber(ARGV[2]) or sandbox.container_name ~= ARGV[3]
+    or sandbox.status == "terminating" or sandbox.status == "terminated" then
+    return 0
+end
+redis.call("HSET", KEYS[1], ARGV[4], ARGV[5])
+redis.call("EXPIRE", KEYS[1], ARGV[6])
+return 1
+"""
+
 
 def _build_active_sandboxes_zset(manager_scope: str) -> str:
     """Build a readable, collision-resistant Redis key for a manager scope."""
@@ -546,28 +563,18 @@ class SandboxRepository(metaclass=SingletonMeta):
             if expected_runtime is None:
                 self.redis_client.hset(hash_key, field, data)
                 self.redis_client.expire(hash_key, ttl)
-            else:
-                with self.redis_client.pipeline() as pipe:
-                    pipe.watch(hash_key)
-                    raw = pipe.hget(hash_key, SANDBOX_FIELD_NAME)
-                    if raw is None:
-                        return False
-                    current = json.loads(raw)
-                    if (
-                        current.get("created_at") != expected_runtime.created_at
-                        or current.get("container_name")
-                        != expected_runtime.container_name
-                        or current.get("status")
-                        in (
-                            SandboxStatus.TERMINATING.value,
-                            SandboxStatus.TERMINATED.value,
-                        )
-                    ):
-                        return False
-                    pipe.multi()
-                    pipe.hset(hash_key, field, data)
-                    pipe.expire(hash_key, ttl)
-                    pipe.execute()
+            elif not self.redis_client.eval(
+                _SAVE_EXECUTION_FOR_RUNTIME,
+                1,
+                hash_key,
+                SANDBOX_FIELD_NAME,
+                str(expected_runtime.created_at),
+                expected_runtime.container_name,
+                field,
+                data,
+                ttl,
+            ):
+                return False
 
             # Only update ZSet timestamp for new executions (not status updates)
             # This ensures GC only considers "last new task time" for expiration
@@ -578,8 +585,6 @@ class SandboxRepository(metaclass=SingletonMeta):
                 f"[SandboxRepository] Execution saved successfully: task_id={task_id}, subtask_id={subtask_id}"
             )
             return True
-        except redis.WatchError:
-            return False
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to save execution: {e}")
             return False
