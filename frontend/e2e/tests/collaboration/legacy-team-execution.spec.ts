@@ -5,7 +5,7 @@
 import { verifyGroupNativeMatrix } from '../../utils/group-native-matrix'
 import { writeFile } from 'node:fs/promises'
 import {
-  test,
+  test as base,
   expect,
   type APIRequestContext,
   type Locator,
@@ -169,7 +169,7 @@ async function createScenario(request: APIRequestContext, page: Page) {
         `${PROVIDER_NATIVE_API_URL}${path}?version=${item.version}`,
         { headers: authHeaders(token) }
       )
-      expect(deleted.status()).toBe(204)
+      expect(deleted.status(), `${path}: ${await deleted.text()}`).toBe(204)
     }
     for (const path of cleanup) {
       const deleted = await request.delete(
@@ -193,21 +193,22 @@ async function createScenario(request: APIRequestContext, page: Page) {
     dispose,
   }
 }
+const test = base.extend<{ scenario: Awaited<ReturnType<typeof createScenario>> }>({
+  scenario: async ({ request, page }, use) => {
+    const scenario = await createScenario(request, page)
+    await use(scenario)
+    await scenario.dispose()
+  },
+})
+
 test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatched group member', async ({
   request,
   page,
+  scenario,
 }, testInfo) => {
   test.setTimeout(240_000)
-  const {
-    suffix,
-    configuredPrompts,
-    cleanup,
-    apiRequest,
-    apiBot,
-    createProject,
-    createLeader,
-    dispose,
-  } = await createScenario(request, page)
+  const { suffix, configuredPrompts, cleanup, apiRequest, apiBot, createProject, createLeader } =
+    scenario
   const botName = `draft-${suffix}`
   const agentName = 'Review team'
   const memberWork = 'Check the release notes'
@@ -568,39 +569,34 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     })
   } finally {
     if (clearGate) await clearGate()
-    await dispose()
   }
 })
 test('dispatches six native Team configurations in one collaboration group', async ({
   page,
   request,
+  scenario,
 }, testInfo) => {
   test.setTimeout(420_000)
-  const { suffix, configuredPrompts, cleanup, apiRequest, createProject, createLeader, dispose } =
-    await createScenario(request, page)
-  try {
-    const { projectId, projectPath, assign, executions } = await createProject()
-    await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
-    await page.goto(projectPath)
-    await initializeProjectExecutionEnvironment(page)
-    const { leader } = await createLeader(projectId)
-    await verifyGroupNativeMatrix({
-      leaderName,
-      page,
-      request,
-      info: testInfo,
-      projectId,
-      projectPath,
-      suffix,
-      leader,
-      api: (path, data) =>
-        apiRequest(request, path, data === undefined ? {} : { method: 'POST', data }),
-      assign,
-      executions,
-      cleanup,
-      configuredPrompts,
-    })
-  } finally {
-    await dispose()
-  }
+  const { suffix, configuredPrompts, cleanup, apiRequest, createProject, createLeader } = scenario
+  const { projectId, projectPath, assign, executions } = await createProject()
+  await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
+  await page.goto(projectPath)
+  await initializeProjectExecutionEnvironment(page)
+  const { leader } = await createLeader(projectId)
+  await verifyGroupNativeMatrix({
+    leaderName,
+    page,
+    request,
+    info: testInfo,
+    projectId,
+    projectPath,
+    suffix,
+    leader,
+    api: (path, data) =>
+      apiRequest(request, path, data === undefined ? {} : { method: 'POST', data }),
+    assign,
+    executions,
+    cleanup,
+    configuredPrompts,
+  })
 })
