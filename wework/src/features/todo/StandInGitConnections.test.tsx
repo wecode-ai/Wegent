@@ -92,7 +92,12 @@ it.each([
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(name)
     await user.click(screen.getByTestId('stand-in-git-open-scope-repository-42'))
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(repository.name)
-    await user.click(screen.getByTestId('stand-in-processing-settings-toggle'))
+    const disclosure = screen.getByTestId('stand-in-processing-settings-toggle')
+    const summary = disclosure.textContent
+    await user.click(disclosure)
+    const selectedMode = screen.getByTestId('stand-in-git-policy-42').textContent!
+    expect(summary).toContain(selectedMode)
+    expect(disclosure.textContent).not.toContain(selectedMode)
     expect(screen.queryByTestId('stand-in-git-policy-12')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-git-policy-42'))
     await user.click(await screen.findByTestId('stand-in-git-policy-42-manual'))

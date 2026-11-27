@@ -44,6 +44,7 @@ export function StandInProcessingSettings({
   const first = rows[0]
   const firstMode = processingMode(first.policy)
   const uniformMode = compact && rows.every(row => processingMode(row.policy) === firstMode)
+  const singleCompact = compact && rows.length === 1
   return (
     <section
       className={compact ? 'border-t border-border pt-2' : 'mt-4 border-t border-border pt-4'}
@@ -66,13 +67,15 @@ export function StandInProcessingSettings({
         {compact ? (
           <>
             <span className="flex-1 font-medium">{t('standIn.workspace.processing_settings')}</span>
-            <span className="text-text-secondary">
-              {t(
-                uniformMode
-                  ? `standIn.workspace.processing_${firstMode}`
-                  : 'standIn.workspace.processing_varies'
-              )}
-            </span>
+            {!expanded && (
+              <span className="text-text-secondary">
+                {t(
+                  uniformMode
+                    ? `standIn.workspace.processing_${firstMode}`
+                    : 'standIn.workspace.processing_varies'
+                )}
+              </span>
+            )}
           </>
         ) : (
           <>
@@ -113,10 +116,11 @@ export function StandInProcessingSettings({
               aria-label={row.name}
               className="min-w-0 border-b border-border py-2 last:border-b-0"
             >
-              {(!compact || rows.length > 1) && (
-                <h5 className="break-words text-sm font-medium">{row.name}</h5>
-              )}
-              <SettingsRow className="px-0" label={t('standIn.workspace.processing_settings')}>
+              {!singleCompact && <h5 className="break-words text-sm font-medium">{row.name}</h5>}
+              <SettingsRow
+                className={singleCompact ? 'px-0 max-md:gap-0' : 'px-0'}
+                label={singleCompact ? null : t('standIn.workspace.processing_settings')}
+              >
                 <SelectRoot
                   value={processingMode(row.policy)}
                   disabled={disabled}

@@ -6769,7 +6769,7 @@
       "discard_title": "Discard mailbox changes?",
       "discard_help": "This account has not been verified or saved. Discard the entered settings?",
       "discard": "Discard changes",
-      "updated": "Mailbox credentials updated. Existing stand-in connections are preserved. If intake was paused, return to the work page and use Reload to retry.",
+      "updated": "Mailbox sign-in details updated.",
       "update_help": "Updates apply to all stand-ins using this account on this device. To change the mailbox or incoming server, add a new account.",
       "verify_update": "Verify and update credentials"
     },
