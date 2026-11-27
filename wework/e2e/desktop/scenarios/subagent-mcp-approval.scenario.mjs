@@ -104,11 +104,11 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       await control.command('waitFor', APPROVAL, { text: 'node_repl', timeoutMs: uiTimeoutMs })
+      // The first option is preselected. Clicking it also submits the form.
       await control.command(
-        'click',
-        `${CARD} [data-testid="request-user-input-option-__mcp_approval-0"]`
+        'clickWhenEnabled',
+        `${CARD} [data-testid="request-user-input-submit-button"]`
       )
-      await control.command('click', `${CARD} [data-testid="request-user-input-submit-button"]`)
       // Only a completed first native tool call can make the model issue the second one.
       await control.command(
         'waitFor',
