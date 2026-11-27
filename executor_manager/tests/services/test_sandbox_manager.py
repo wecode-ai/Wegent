@@ -2715,7 +2715,14 @@ class TestSandboxManager:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "condition",
-        ["new_session", "busy", "lookup_failed", "new_activity", "untracked"],
+        [
+            "new_session",
+            "busy",
+            "lookup_failed",
+            "new_activity",
+            "untracked",
+            "lease_lost",
+        ],
     )
     async def test_collect_expired_sandboxes_skips_orphan_during_activation(
         self,
@@ -2738,6 +2745,11 @@ class TestSandboxManager:
             mocker.patch.object(
                 manager, "_try_acquire_task_lifecycle_lease", return_value=None
             )
+        elif condition == "lease_lost":
+            mock_redis_client.zscore.return_value = 1.0
+            renew = mocker.patch.object(
+                manager._lifecycle_lock, "renew_owned", return_value=False
+            )
         executor = mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
         ).return_value
@@ -2750,6 +2762,8 @@ class TestSandboxManager:
             mock_redis_client.zscore.assert_called_once_with(
                 manager._repository.active_sandboxes_zset, "12345"
             )
+        elif condition == "lease_lost":
+            renew.assert_called_once()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("supports_label_lookup", [False, True])

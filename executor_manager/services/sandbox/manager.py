@@ -1911,7 +1911,9 @@ class SandboxManager(metaclass=SingletonMeta):
                 return
             if activity is None or activity > idle_before:
                 return
-            cleanup = asyncio.create_task(self._delete_orphaned_executor(task_id))
+            cleanup = asyncio.create_task(
+                self._delete_orphaned_executor(task_id, lease)
+            )
             try:
                 removed = await asyncio.shield(cleanup)
             except asyncio.CancelledError:
@@ -1929,18 +1931,27 @@ class SandboxManager(metaclass=SingletonMeta):
         finally:
             await self._release_task_lifecycle_lease(lease)
 
-    async def _delete_orphaned_executor(self, task_id: str) -> bool:
+    async def _delete_orphaned_executor(
+        self, task_id: str, lease: _TaskLifecycleLease
+    ) -> bool:
         """Delete a Pod whose sandbox record is gone but is still tracked.
 
         Returns True when the executor is removed (or already absent), so the
         active-set entry can be dropped; False keeps the entry for the next GC
         run to retry.
         """
-        try:
+
+        def delete_if_owned() -> Optional[Dict[str, Any]]:
+            # The worker may have queued behind other blocking runtime operations.
+            if lease.lost.is_set() or not self._lifecycle_lock.renew_owned(
+                lease.lock_name, lease.owner_token, SANDBOX_TASK_LOCK_TTL
+            ):
+                return None
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-            result = await asyncio.to_thread(
-                executor.delete_executor_by_task_id, task_id, sandbox_only=True
-            )
+            return executor.delete_executor_by_task_id(task_id, sandbox_only=True)
+
+        try:
+            result = await asyncio.to_thread(delete_if_owned)
         except Exception as exc:
             logger.warning(
                 "[SandboxManager] Failed to delete orphaned executor " "task_id=%s: %s",
@@ -1949,7 +1960,9 @@ class SandboxManager(metaclass=SingletonMeta):
             )
             return False
 
-        status = str((result or {}).get("status", "")).lower()
+        if result is None:
+            return False
+        status = str(result.get("status", "")).lower()
         if status in {"success", "not_found"}:
             logger.info(
                 "[SandboxManager] Removed orphaned executor task_id=%s status=%s",
