@@ -297,7 +297,9 @@
       "span_meta": "{{kind}} · Subtask {{subtask}} · {{duration}}",
       "open_span_meta": "{{kind}} · Subtask {{subtask}} · running as of the snapshot",
       "coverage": "Sample coverage",
-      "gap_meta": "Unsampled {{start}} → {{end}} · {{duration}} · check task logs for this interval"
+      "gap_meta": "Unsampled {{start}} → {{end}} · {{duration}} · check task logs for this interval",
+      "compress_waiting_user": "Collapse waiting user",
+      "compressed_note": "Non-linear analysis view: waiting-user intervals are fixed-width markers, not real time proportions"
     },
     "status": {
       "completed": "Completed",
@@ -313,6 +315,8 @@
     },
     "spans": {
       "title": "Execution intervals",
+      "report_order": "#",
+      "subtask_id": "Subtask ID",
       "subtask": "Subtask",
       "kind": "Type",
       "label": "Name",
@@ -326,8 +330,12 @@
       "interval": "Relative interval",
       "sort_by_duration": "Sort by duration",
       "sort_by_start": "Sort by start time",
-      "show_all": "Show all {{count}}",
-      "show_less": "Show less"
+      "pagination_range": "{{start}}-{{end}} of {{count}}",
+      "page_number": "{{page}} / {{totalPages}}",
+      "previous_page": "Previous page",
+      "next_page": "Next page",
+      "page_size": "Rows per page",
+      "page_size_all": "All"
     },
     "report": {
       "copy": "Copy diagnostic report",

@@ -1,10 +1,26 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, BarChart3, Loader2, RotateCcw, Timer, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  RotateCcw,
+  Timer,
+  X,
+} from 'lucide-react'
 import { taskApis, type TaskTimingResponse } from '@/apis/tasks'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   openTaskRightPanel,
@@ -17,7 +33,9 @@ import type { TimelineBounds } from './timing-types'
 import {
   buildMarkdownReport,
   buildTimelineTracks,
+  buildCompressedTimelineOffsets,
   categoryBackground,
+  compressedIntervalPosition,
   categoryDot,
   categoryTotal,
   formatDuration,
@@ -26,11 +44,13 @@ import {
   isOpenSpan,
   modelCallMetrics,
   percentValue,
+  percentPosition,
   spanDuration,
   spanInterval,
   spanTooltip,
   statusVariant,
   timelineBounds,
+  timelineCoverageBackground,
   timelineCategory,
   unobservedBackground,
   unobservedIntervals,
@@ -46,7 +66,8 @@ const LEGEND_CATEGORY_ORDER = [
   'other',
   'gap',
 ]
-const DEFAULT_VISIBLE_SPANS = 20
+const DEFAULT_SPAN_PAGE_SIZE = 25
+const SPAN_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
 let timingPanelRegistered = false
 
@@ -249,6 +270,7 @@ export function TaskTimingPanel({ panelProps, onClose }: TaskTimingPanelProps) {
 
 function TimingContent({ data }: { data: TaskTimingResponse }) {
   const { t } = useTranslation('tasks')
+  const [compressWaitingUser, setCompressWaitingUser] = useState(false)
   const bounds = useTimelineBounds(data)
   const gaps = useMemo(() => unobservedIntervals(data, bounds), [data, bounds])
   const wallTime = data.wall_time_ms ?? categoryTotal(data.triage)
@@ -379,7 +401,13 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
           <p className="mb-1 mt-1 text-[11px] leading-4 text-text-muted">
             {t('timing.timeline.inclusive_note')}
           </p>
-          <TimelineTrace data={data} bounds={bounds} gaps={gaps} />
+          <TimelineTrace
+            data={data}
+            bounds={bounds}
+            gaps={gaps}
+            compressWaitingUser={compressWaitingUser}
+            onToggleCompressWaitingUser={() => setCompressWaitingUser(current => !current)}
+          />
         </div>
       </section>
 
@@ -404,15 +432,28 @@ function TimelineTrace({
   data,
   bounds,
   gaps,
+  compressWaitingUser,
+  onToggleCompressWaitingUser,
 }: {
   data: TaskTimingResponse
   bounds: TimelineBounds
   gaps: Array<{ start: number; end: number }>
+  compressWaitingUser: boolean
+  onToggleCompressWaitingUser: () => void
 }) {
   const { t } = useTranslation('tasks')
   const tracks = useMemo(() => buildTimelineTracks(data.spans, bounds), [bounds, data.spans])
   const scale = Math.max((bounds.end ?? 0) - (bounds.start ?? 0), 1)
   const ticks = [0, 0.25, 0.5, 0.75, 1]
+  const waitingUserSpans = data.spans.filter(span => timelineCategory(span.kind) === 'waiting_user')
+  const canCompressWaitingUser = waitingUserSpans.length > 0
+  const compressedOffsets = useMemo(
+    () => buildCompressedTimelineOffsets(data.spans, bounds),
+    [bounds, data.spans]
+  )
+  const timelineScale = compressWaitingUser
+    ? Math.max(compressedOffsets.scale, 1)
+    : Math.max((bounds.end ?? 0) - (bounds.start ?? 0), 1)
 
   if (tracks.length === 0) {
     return <p className="mt-2 text-xs text-text-muted">{t('timing.timeline.empty')}</p>
@@ -421,15 +462,38 @@ function TimelineTrace({
   return (
     <TooltipProvider delayDuration={150}>
       <div className="mt-2" data-testid="task-timing-timeline-details">
+        <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+          {canCompressWaitingUser ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={
+                compressWaitingUser
+                  ? 'h-8 rounded-md border-primary bg-primary/10 px-2 text-xs text-primary'
+                  : 'h-8 rounded-md px-2 text-xs'
+              }
+              aria-pressed={compressWaitingUser}
+              onClick={onToggleCompressWaitingUser}
+              data-testid="task-timing-compress-waiting-user"
+            >
+              {t('timing.timeline.compress_waiting_user')}
+            </Button>
+          ) : null}
+        </div>
         <div className="flex gap-2">
           <span className="w-20 shrink-0" />
           <div className="relative min-w-0 flex-1">
             <div className="flex h-4 items-end border-b border-border text-[10px] text-text-muted">
-              {ticks.map(tick => (
-                <span key={tick} className="flex-1 tabular-nums">
-                  {formatDuration(scale * tick)}
-                </span>
-              ))}
+              {compressWaitingUser ? (
+                <span className="flex-1">{t('timing.timeline.compressed_note')}</span>
+              ) : (
+                ticks.map(tick => (
+                  <span key={tick} className="flex-1 tabular-nums">
+                    {formatDuration(scale * tick)}
+                  </span>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -447,12 +511,20 @@ function TimelineTrace({
               {t('timing.timeline.coverage')}
             </span>
             <div className="relative h-4 min-w-0 flex-1 overflow-hidden rounded bg-surface dark:bg-white/5">
+              <span
+                className={`absolute inset-0 ${timelineCoverageBackground()}`}
+                data-testid="task-timing-compressed-coverage"
+              />
               {gaps.map(gap => (
                 <Tooltip key={`coverage-gap-${gap.start}-${gap.end}`}>
                   <TooltipTrigger asChild>
                     <span
                       className={`group absolute inset-0 cursor-default ${unobservedBackground()}`}
-                      style={intervalPosition(gap.start, gap.end, bounds)}
+                      style={
+                        compressWaitingUser
+                          ? compressedIntervalPosition(gap.start, gap.end, compressedOffsets)
+                          : intervalPosition(gap.start, gap.end, bounds)
+                      }
                       data-testid="task-timing-interior-gap"
                       aria-label={t('timing.timeline.gap_meta', {
                         start: formatTimestamp(gap.start),
@@ -500,8 +572,16 @@ function TimelineTrace({
                     {lane.map(span => {
                       const interval = spanInterval(span, bounds)
                       if (!interval) return null
+                      const isWaitingUser = timelineCategory(span.kind) === 'waiting_user'
                       const duration = interval.end - interval.start
-                      const position = intervalPosition(interval.start, interval.end, bounds)
+                      const compressedPosition = compressedOffsets.positionBySpanId.get(span.id)
+                      const position = compressWaitingUser
+                        ? percentPosition(
+                            compressedPosition?.left ?? 0,
+                            compressedPosition?.width ?? 0,
+                            timelineScale
+                          )
+                        : intervalPosition(interval.start, interval.end, bounds)
                       return (
                         <Tooltip key={span.id}>
                           <TooltipTrigger asChild>
@@ -509,7 +589,12 @@ function TimelineTrace({
                               className={`group absolute inset-y-0.5 cursor-default rounded-sm timing-span-pulse ${categoryBackground(span.kind)}`}
                               style={{
                                 ...position,
-                                minWidth: duration > 0 ? '2px' : '1px',
+                                minWidth:
+                                  isWaitingUser && compressWaitingUser
+                                    ? '6px'
+                                    : duration > 0
+                                      ? '2px'
+                                      : '1px',
                               }}
                               aria-label={spanTooltip(span, bounds, t)}
                               data-testid="task-timing-span-bar"
@@ -611,7 +696,8 @@ function TimingTooltipRow({ label, value }: { label: string; value: ReactNode })
 function SpanTable({ data, bounds }: { data: TaskTimingResponse; bounds: TimelineBounds }) {
   const { t } = useTranslation('tasks')
   const [sortBy, setSortBy] = useState<'start' | 'duration'>('start')
-  const [showAll, setShowAll] = useState(false)
+  const [pageSize, setPageSize] = useState<number | 'all'>(DEFAULT_SPAN_PAGE_SIZE)
+  const [page, setPage] = useState(1)
 
   const sortedSpans = useMemo(() => {
     const spans = [...data.spans]
@@ -627,8 +713,32 @@ function SpanTable({ data, bounds }: { data: TaskTimingResponse; bounds: Timelin
     return spans
   }, [data.spans, sortBy])
 
-  const visibleSpans = showAll ? sortedSpans : sortedSpans.slice(0, DEFAULT_VISIBLE_SPANS)
-  const hasMoreSpans = sortedSpans.length > DEFAULT_VISIBLE_SPANS
+  const reportOrderById = useMemo(() => {
+    const spans = [...data.spans].sort((left, right) => {
+      const leftStart = left.start_at_ms ?? Number.POSITIVE_INFINITY
+      const rightStart = right.start_at_ms ?? Number.POSITIVE_INFINITY
+      return leftStart - rightStart || left.id - right.id
+    })
+    return new Map(spans.map((span, index) => [span.id, index + 1]))
+  }, [data.spans])
+
+  const totalSpans = sortedSpans.length
+  const effectivePageSize = pageSize === 'all' ? totalSpans || 1 : pageSize
+  const totalPages = Math.max(1, Math.ceil(totalSpans / effectivePageSize))
+  const currentPage = Math.min(page, totalPages)
+  const rangeStart = totalSpans === 0 ? 0 : (currentPage - 1) * effectivePageSize + 1
+  const rangeEnd = Math.min(currentPage * effectivePageSize, totalSpans)
+  const visibleSpans =
+    pageSize === 'all'
+      ? sortedSpans
+      : sortedSpans.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  const handlePageSizeChange = (nextPageSize: number | 'all') => {
+    setPageSize(nextPageSize)
+    setPage(1)
+  }
+  const hasPagination = totalSpans > 0
+  const hasMultiplePages = totalPages > 1
 
   return (
     <div className="mt-2">
@@ -645,19 +755,75 @@ function SpanTable({ data, bounds }: { data: TaskTimingResponse; bounds: Timelin
             ? t('timing.spans.sort_by_duration')
             : t('timing.spans.sort_by_start')}
         </Button>
-        {hasMoreSpans ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="min-h-11"
-            onClick={() => setShowAll(!showAll)}
-            data-testid="task-timing-toggle-spans"
+        {hasPagination ? (
+          <div
+            className="flex flex-wrap items-center justify-end gap-2"
+            data-testid="task-timing-span-pagination"
           >
-            {showAll
-              ? t('timing.spans.show_less')
-              : t('timing.spans.show_all', { count: sortedSpans.length })}
-          </Button>
+            <span className="text-xs tabular-nums text-text-muted">
+              {t('timing.spans.pagination_range', {
+                start: rangeStart,
+                end: rangeEnd,
+                count: totalSpans,
+              })}
+            </span>
+            {hasMultiplePages ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setPage(currentPage - 1)}
+                  disabled={currentPage <= 1}
+                  aria-label={t('timing.spans.previous_page')}
+                  data-testid="task-timing-prev-page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs tabular-nums text-text-secondary">
+                  {t('timing.spans.page_number', {
+                    page: currentPage,
+                    totalPages,
+                  })}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setPage(currentPage + 1)}
+                  disabled={currentPage >= totalPages}
+                  aria-label={t('timing.spans.next_page')}
+                  data-testid="task-timing-next-page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
+            <Select
+              value={pageSize === 'all' ? 'all' : String(pageSize)}
+              onValueChange={value => handlePageSizeChange(value === 'all' ? 'all' : Number(value))}
+            >
+              <SelectTrigger
+                className="h-8 w-[92px] text-xs"
+                aria-label={t('timing.spans.page_size')}
+                data-testid="task-timing-page-size"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SPAN_PAGE_SIZE_OPTIONS.map(size => (
+                  <SelectItem key={size} value={String(size)} className="text-xs">
+                    {size}
+                  </SelectItem>
+                ))}
+                <SelectItem value="all" className="text-xs">
+                  {t('timing.spans.page_size_all')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         ) : null}
       </div>
 
@@ -666,7 +832,10 @@ function SpanTable({ data, bounds }: { data: TaskTimingResponse; bounds: Timelin
           <thead>
             <tr className="text-left text-text-muted">
               <th className="border-b border-border px-2 py-1.5 font-medium">
-                {t('timing.spans.subtask')}
+                {t('timing.spans.report_order')}
+              </th>
+              <th className="border-b border-border px-2 py-1.5 font-medium">
+                {t('timing.spans.subtask_id')}
               </th>
               <th className="border-b border-border px-2 py-1.5 font-medium">
                 {t('timing.spans.kind')}
@@ -698,7 +867,10 @@ function SpanTable({ data, bounds }: { data: TaskTimingResponse; bounds: Timelin
                   title={spanTooltip(span, bounds, t)}
                 >
                   <td className="border-b border-border px-2 py-1.5 tabular-nums">
-                    {span.subtask_id}
+                    {reportOrderById.get(span.id) ?? '--'}
+                  </td>
+                  <td className="border-b border-border px-2 py-1.5 font-mono tabular-nums">
+                    {span.subtask_id ?? '--'}
                   </td>
                   <td className="border-b border-border px-2 py-1.5">
                     {t(`timing.summary.${timelineCategory(span.kind)}`, {

@@ -293,7 +293,9 @@
       "span_meta": "{{kind}} · 子任务 {{subtask}} · {{duration}}",
       "open_span_meta": "{{kind}} · 子任务 {{subtask}} · 进行中（截至快照时间）",
       "coverage": "采样覆盖",
-      "gap_meta": "未采样 {{start}} → {{end}} · {{duration}} · 请结合任务日志判断原因"
+      "gap_meta": "未采样 {{start}} → {{end}} · {{duration}} · 请结合任务日志判断原因",
+      "compress_waiting_user": "折叠等待用户",
+      "compressed_note": "非线性分析视图：等待用户已折叠为等宽标记，不表示真实时间比例"
     },
     "status": {
       "completed": "已完成",
@@ -309,6 +311,8 @@
     },
     "spans": {
       "title": "执行区间明细",
+      "report_order": "#",
+      "subtask_id": "子任务 ID",
       "subtask": "子任务",
       "kind": "类型",
       "label": "名称",
@@ -322,8 +326,12 @@
       "interval": "相对区间",
       "sort_by_duration": "按耗时排序",
       "sort_by_start": "按开始时间排序",
-      "show_all": "显示全部 {{count}} 项",
-      "show_less": "收起"
+      "pagination_range": "{{start}}-{{end}} / {{count}} 项",
+      "page_number": "{{page}} / {{totalPages}} 页",
+      "previous_page": "上一页",
+      "next_page": "下一页",
+      "page_size": "每页显示",
+      "page_size_all": "全部"
     },
     "report": {
       "copy": "复制诊断报告",

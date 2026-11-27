@@ -112,11 +112,98 @@ const modelCallTimingResponse: TaskTimingResponse = {
   ],
 }
 
+const paginatedTimingResponse: TaskTimingResponse = {
+  ...timingResponse,
+  spans: Array.from({ length: 27 }, (_, index) => ({
+    ...timingResponse.spans[0],
+    id: index + 1,
+    span_id: `span-${index + 1}`,
+    actor_label: `Span ${index + 1}`,
+    start_at_ms: 5_000 + index * 100,
+    end_at_ms: 5_500 + index * 100,
+    duration_ms: 500,
+  })),
+}
+
+const durationSortedTimingResponse: TaskTimingResponse = {
+  ...timingResponse,
+  spans: [
+    { ...timingResponse.spans[0], id: 1, span_id: 'later', start_at_ms: 6_000 },
+    { ...timingResponse.spans[1], id: 2, span_id: 'earlier', start_at_ms: 5_000 },
+  ],
+}
+
 const interiorGapResponse: TaskTimingResponse = {
   ...timingResponse,
   spans: [
     { ...timingResponse.spans[0], start_at_ms: 5_000, end_at_ms: 9_000, duration_ms: 4_000 },
     { ...timingResponse.spans[1], start_at_ms: 15_000, end_at_ms: 17_000, duration_ms: 2_000 },
+  ],
+}
+
+const waitingUserTimingResponse: TaskTimingResponse = {
+  ...timingResponse,
+  session_end_at_ms: 200_000,
+  spans: [
+    timingResponse.spans[0],
+    {
+      ...timingResponse.spans[1],
+      id: 3,
+      span_id: 'waiting-user',
+      kind: 'waiting_user',
+      actor_label: 'Waiting for user',
+      start_at_ms: 17_000,
+      end_at_ms: 200_000,
+      duration_ms: 183_000,
+    },
+  ],
+}
+
+const waitingUserMiddleTimingResponse: TaskTimingResponse = {
+  ...timingResponse,
+  session_start_at_ms: 0,
+  session_end_at_ms: 200_000,
+  wall_time_ms: 200_000,
+  spans: [
+    {
+      ...timingResponse.spans[0],
+      id: 1,
+      span_id: 'agent-before',
+      start_at_ms: 0,
+      end_at_ms: 50_000,
+      duration_ms: 50_000,
+    },
+    {
+      ...timingResponse.spans[0],
+      id: 2,
+      parent_span_id: 'agent-before',
+      span_id: 'model-before',
+      actor_id: 'provider/model-x',
+      actor_type: 'model',
+      actor_label: 'Model call: model-x',
+      start_at_ms: 10_000,
+      end_at_ms: 40_000,
+      duration_ms: 30_000,
+    },
+    {
+      ...timingResponse.spans[0],
+      id: 3,
+      span_id: 'waiting-user',
+      kind: 'waiting_user',
+      actor_label: 'Waiting for user',
+      start_at_ms: 50_000,
+      end_at_ms: 150_000,
+      duration_ms: 100_000,
+    },
+    {
+      ...timingResponse.spans[0],
+      id: 4,
+      span_id: 'agent-after',
+      actor_label: 'Agent after waiting',
+      start_at_ms: 150_000,
+      end_at_ms: 200_000,
+      duration_ms: 50_000,
+    },
   ],
 }
 
@@ -194,6 +281,10 @@ describe('TaskTimingPanel', () => {
     expect(screen.getAllByTestId('task-timing-legend-item')).toHaveLength(3)
     expect(screen.getAllByTestId('task-timing-attribution-segment')).toHaveLength(3)
     expect(screen.getAllByTestId('task-timing-span-row')).toHaveLength(2)
+    expect(screen.getByTestId('task-timing-span-pagination')).toHaveTextContent(
+      'timing.spans.pagination_range:1,2,2'
+    )
+    expect(screen.queryByTestId('task-timing-prev-page')).not.toBeInTheDocument()
     expect(screen.getAllByText('Agent execution').length).toBeGreaterThan(0)
     expect(screen.getAllByText('pnpm test').length).toBeGreaterThan(0)
     const firstDuration = screen.getAllByTestId('task-timing-span-row')[0]
@@ -380,5 +471,95 @@ describe('TaskTimingPanel', () => {
     expect(screen.getByTestId('task-timing-span-table')).toHaveClass('overflow-x-auto')
     expect(screen.queryByTestId('task-timing-suspect-table')).not.toBeInTheDocument()
     expect(container.querySelector('.bg-muted')).toBeInTheDocument()
+  })
+
+  it('paginates span details and supports showing all rows', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(paginatedTimingResponse)
+    renderPanel()
+
+    expect(await screen.findAllByTestId('task-timing-span-row')).toHaveLength(25)
+    expect(screen.getByTestId('task-timing-span-pagination')).toHaveTextContent(
+      'timing.spans.pagination_range:1,25,27'
+    )
+    expect(screen.queryByText('Span 26')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('task-timing-next-page'))
+    expect(await screen.findAllByTestId('task-timing-span-row')).toHaveLength(2)
+    expect(screen.getByText('Span 26')).toBeInTheDocument()
+    expect(screen.getByText('Span 27')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('task-timing-prev-page'))
+    expect(await screen.findAllByTestId('task-timing-span-row')).toHaveLength(25)
+  })
+
+  it('keeps report-order numbering stable when sorting by duration', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(durationSortedTimingResponse)
+    renderPanel()
+
+    expect(await screen.findAllByTestId('task-timing-span-row')).toHaveLength(2)
+    expect(screen.getAllByTestId('task-timing-span-row')[0]).toHaveTextContent('2')
+
+    await user.click(screen.getByTestId('task-timing-sort-spans'))
+
+    expect(screen.getAllByTestId('task-timing-span-row')[0]).toHaveTextContent('2')
+    expect(screen.getAllByTestId('task-timing-span-row')[1]).toHaveTextContent('1')
+  })
+
+  it('compresses waiting-user intervals in the analysis timeline', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(waitingUserTimingResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-compress-waiting-user')
+    const waitingTrack = screen
+      .getAllByTestId('task-timing-track')
+      .find(track => track.dataset.kind === 'waiting_user')
+    expect(waitingTrack).toBeDefined()
+    if (!waitingTrack) return
+
+    const waitingBar = within(waitingTrack).getByTestId('task-timing-span-bar')
+    expect(Number.parseFloat(waitingBar.style.width)).toBeCloseTo((183 / 197) * 100, 10)
+
+    await user.click(screen.getByTestId('task-timing-compress-waiting-user'))
+
+    expect(screen.getByTestId('task-timing-compressed-coverage')).toBeInTheDocument()
+    expect(Number.parseFloat(waitingBar.style.width)).toBeCloseTo((1 / 101) * 100, 10)
+    expect(waitingBar.style.minWidth).toBe('6px')
+    expect(screen.getByText('timing.timeline.compressed_note')).toBeInTheDocument()
+  })
+
+  it('keeps waiting-user position while stretching surrounding intervals', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(waitingUserMiddleTimingResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-compress-waiting-user')
+    await user.click(screen.getByTestId('task-timing-compress-waiting-user'))
+
+    const bars = screen.getAllByTestId('task-timing-span-bar')
+    const beforeBar = bars.find(
+      bar =>
+        bar.dataset.kind === 'agent' && bar.getAttribute('aria-label')?.includes('Agent execution')
+    )
+    const waitingBar = bars.find(bar => bar.dataset.kind === 'waiting_user')
+    const afterBar = bars.find(
+      bar =>
+        bar.dataset.kind === 'agent' &&
+        bar.getAttribute('aria-label')?.includes('Agent after waiting')
+    )
+    expect(beforeBar).toBeDefined()
+    expect(waitingBar).toBeDefined()
+    expect(afterBar).toBeDefined()
+    if (!beforeBar || !waitingBar || !afterBar) return
+
+    expect(Number.parseFloat(beforeBar.style.left)).toBeCloseTo(0, 10)
+    expect(Number.parseFloat(beforeBar.style.width)).toBeCloseTo((50 / 101) * 100, 10)
+    expect(Number.parseFloat(waitingBar.style.left)).toBeCloseTo((50 / 101) * 100, 10)
+    expect(Number.parseFloat(waitingBar.style.width)).toBeCloseTo((1 / 101) * 100, 10)
+    expect(waitingBar.style.minWidth).toBe('6px')
+    expect(Number.parseFloat(afterBar.style.left)).toBeCloseTo((51 / 101) * 100, 10)
+    expect(Number.parseFloat(afterBar.style.width)).toBeCloseTo((50 / 101) * 100, 10)
   })
 })

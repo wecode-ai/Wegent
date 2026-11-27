@@ -54,6 +54,120 @@ export function packTimelineLanes(spans: TimingSpan[], bounds: TimelineBounds): 
   return lanes.map(lane => lane.spans)
 }
 
+export function buildCompressedTimelineOffsets(
+  spans: TimingSpan[],
+  bounds: TimelineBounds
+): {
+  bySpanId: Map<number, number>
+  positionBySpanId: Map<number, { left: number; width: number }>
+  mapTimestamp: (timestamp: number) => number
+  scale: number
+} {
+  if (bounds.start === undefined || bounds.end === undefined) {
+    return {
+      bySpanId: new Map(),
+      positionBySpanId: new Map(),
+      mapTimestamp: timestamp => timestamp,
+      scale: 1,
+    }
+  }
+
+  // The waiting-user view preserves event order while replacing each waiting
+  // interval with a fixed-width marker. Timestamps outside waiting intervals
+  // are shifted by the removed time and the marker widths added before them.
+  const boundsStart = bounds.start
+  const intervals = spans
+    .map(span => ({
+      span,
+      interval: spanInterval(span, bounds),
+    }))
+    .filter(
+      (item): item is { span: TimingSpan; interval: { start: number; end: number } } =>
+        item.interval !== null
+    )
+
+  const waitingIntervals = mergeTimelineIntervals(
+    intervals
+      .filter(({ span }) => timelineCategory(span.kind) === 'waiting_user')
+      .map(({ interval }) => interval)
+  )
+  const nonWaitingDuration = Math.max(
+    bounds.end -
+      bounds.start -
+      waitingIntervals.reduce((total, interval) => total + interval.end - interval.start, 0),
+    0
+  )
+  const markerDuration = waitingIntervals.length > 0 ? nonWaitingDuration * 0.01 : 0
+  const compressedSegments = waitingIntervals.map(interval => ({
+    start: interval.start,
+    end: interval.end,
+    compressedStart:
+      interval.start - boundsStart - waitingTimeBefore(interval.start, waitingIntervals),
+  }))
+
+  const markerTimeBefore = (timestamp: number) =>
+    waitingIntervals.reduce(
+      (total, interval) => total + (interval.end <= timestamp ? markerDuration : 0),
+      0
+    )
+
+  const mapTimestamp = (timestamp: number) => {
+    const segment = compressedSegments.find(
+      candidate => timestamp >= candidate.start && timestamp < candidate.end
+    )
+    if (segment) return segment.compressedStart
+
+    const waitingBefore = waitingTimeBefore(timestamp, waitingIntervals)
+    return timestamp - boundsStart - waitingBefore + markerTimeBefore(timestamp)
+  }
+
+  const bySpanId = new Map<number, number>()
+  const positionBySpanId = new Map<number, { left: number; width: number }>()
+  for (const { span, interval } of intervals) {
+    const isWaitingUser = timelineCategory(span.kind) === 'waiting_user'
+    if (isWaitingUser) {
+      const left = mapTimestamp(interval.start)
+      bySpanId.set(span.id, left)
+      positionBySpanId.set(span.id, { left, width: markerDuration })
+      continue
+    }
+
+    const left = mapTimestamp(interval.start)
+    const right = mapTimestamp(interval.end)
+    bySpanId.set(span.id, left)
+    positionBySpanId.set(span.id, { left, width: Math.max(right - left, 0) })
+  }
+
+  const scale = nonWaitingDuration + markerDuration * waitingIntervals.length
+  return { bySpanId, positionBySpanId, mapTimestamp, scale: Math.max(scale, 1) }
+}
+
+function mergeTimelineIntervals(
+  intervals: Array<{ start: number; end: number }>
+): Array<{ start: number; end: number }> {
+  const sorted = [...intervals]
+    .filter(interval => interval.end > interval.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+  const merged: Array<{ start: number; end: number }> = []
+  for (const interval of sorted) {
+    const last = merged[merged.length - 1]
+    if (last && interval.start <= last.end) {
+      last.end = Math.max(last.end, interval.end)
+    } else {
+      merged.push({ ...interval })
+    }
+  }
+  return merged
+}
+
+function waitingTimeBefore(timestamp: number, intervals: Array<{ start: number; end: number }>) {
+  return intervals.reduce((total, interval) => {
+    const overlapEnd = Math.min(timestamp, interval.end)
+    const overlapStart = interval.start
+    return total + Math.max(overlapEnd - overlapStart, 0)
+  }, 0)
+}
+
 export function timelineCategory(kind: string): string {
   switch (kind) {
     case 'agent':
@@ -86,8 +200,12 @@ export function categoryBackground(kind: string): string {
   }
 }
 
+export function timelineCoverageBackground(): string {
+  return 'bg-primary/20 dark:bg-primary/25'
+}
+
 export function unobservedBackground(): string {
-  return 'bg-zinc-300 dark:bg-zinc-600'
+  return 'bg-zinc-400/60 dark:bg-zinc-500/50'
 }
 
 export function categoryDot(kind: string): string {
@@ -334,6 +452,31 @@ export function intervalPosition(
     left: `${(left / scale) * 100}%`,
     width: `${(Math.max(right - left, 0) / scale) * 100}%`,
   }
+}
+
+export function percentPosition(
+  left: number,
+  width: number,
+  scale: number
+): { left: string; width: string } {
+  const safeScale = Math.max(scale, 1)
+  return {
+    left: `${Math.max(Math.min(left / safeScale, 1), 0) * 100}%`,
+    width: `${Math.max(Math.min(width / safeScale, 1), 0) * 100}%`,
+  }
+}
+
+export function compressedIntervalPosition(
+  start: number,
+  end: number,
+  compressed: {
+    mapTimestamp: (timestamp: number) => number
+    scale: number
+  }
+): { left: string; width: string } {
+  const left = compressed.mapTimestamp(start)
+  const right = compressed.mapTimestamp(end)
+  return percentPosition(left, Math.max(right - left, 0), compressed.scale)
 }
 
 export function spanInterval(
