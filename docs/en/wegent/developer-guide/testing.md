@@ -331,8 +331,9 @@ Platform E2E selects tests by changed paths on PRs and merge queue commits.
 Platform E2E and Rust tests cover source-only changes in the task execution
 crates. Delivery-image verification still runs for packaging, startup and other
 Backend inputs, and during full regression runs.
-Ordinary PRs build the delivery image on the same CentOS base and compile the
-gateway with the Rust release profile at optimization level 1. The probes
+Ordinary PRs build the delivery image on the same CentOS base using the Rust
+release profile, with optimization level 1 for dependencies and level 0 for
+the gateway entry-point crate. The probes
 exercise real startup, health checks, and shutdown. Release builds and full
 regression runs use the default optimization level.
 Scheduled and manual runs retain full coverage. Executor device and sandbox

@@ -103,6 +103,13 @@ test('the Cloud workflow command accepts populated and empty classifier matrices
         .sort()
     assert.deepEqual(selected(balanced), selected(original))
     assert(balanced.include.every((entry) => entry.segments.length > 0))
+    if (selected(original).includes('plugin-write-coordination')) {
+      const coordination = balanced.include.find((entry) =>
+        entry.segments.split(',').includes('plugin-write-coordination'),
+      )
+      assert.equal(coordination.segments, 'plugin-write-coordination')
+      assert.equal(balanced.include.length, Math.ceil(original.include.length * 1.5))
+    }
   }
 })
 

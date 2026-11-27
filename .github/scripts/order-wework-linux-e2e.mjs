@@ -36,6 +36,10 @@ export function balanceLinuxCoreMatrix(
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
   const pinnedCheckpoint = (entry) => {
+    if (scope === 'cloud') {
+      // Keep the longest Cloud checkpoint off runners starting other stacks.
+      return checkpoints(entry).find(checkpoint => checkpoint === 'plugin-write-coordination')
+    }
     if (scope !== 'core') return undefined
     if (entry === history) return LINUX_CORE_HISTORY_CHECKPOINT
     if (['core-9', 'core-10'].includes(entry.id)) return checkpoints(entry)[0]

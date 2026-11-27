@@ -90,7 +90,6 @@ jobs:
                 wework/src/features/reply-predictions/*|\
                 wework/src/features/todo/IssueAssignmentReceipts*|\
                 wework/electron/*|wework/scripts/profile-renderer*|wework/scripts/ai-verify-devtools*|\
-                .github/actions/build-wework-macos-e2e/*|\
                 wework/e2e/desktop/modules/streaming-text-fixture.mjs|\
                 wework/e2e/desktop/modules/response-protocol.mjs|\
                 wework/e2e/desktop/modules/shell-command-response.mjs|\

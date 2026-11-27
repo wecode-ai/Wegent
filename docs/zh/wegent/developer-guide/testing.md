@@ -317,7 +317,8 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 仅改动任务执行 Rust crate 的源码时，由平台 E2E 和 Rust 测试验证执行行为。交付镜像
 继续在打包、启动和其余后端输入变动时验证，也会参加全量回归。
 普通 PR 的交付镜像使用相同的 CentOS 镜像和 Rust release profile，以优化级别 1 编译
-网关。探针仍覆盖真实进程启动、健康检查和关闭。发布和全量回归使用默认优化级别。
+Rust 依赖，以级别 0 编译网关入口 crate。探针覆盖真实进程启动、健康检查和关闭。
+发布和全量回归使用默认优化级别。
 Executor E2E 的设备用例和独立沙箱用例在不同 runner 上并行执行，各自使用独立的服务和数据库。
 设备用例保留单 worker，沙箱用例保留双 worker。Rust Backend 的 Clippy 与测试并行运行，
 `Test Summary` 要求两项都通过。
