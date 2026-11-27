@@ -134,6 +134,7 @@ export interface SharedIssueDetailUpdateInput {
   assignee_team_id?: number | null;
   assignee_group_id?: string | null;
   notify_assignee?: boolean;
+  redeliver?: boolean;
   start_at?: string | null;
   due_at?: string | null;
   tags?: string[];
@@ -398,6 +399,7 @@ export function createSharedIssueDetailPort(
           ...(input.notify_assignee !== undefined
             ? { notifyAssignee: input.notify_assignee }
             : {}),
+          ...(input.redeliver !== undefined ? { redeliver: input.redeliver } : {}),
           ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.tags !== undefined ? { tags: input.tags } : {}),

@@ -7,7 +7,7 @@ import type { CommentIssueActions } from './issueCommentActions'
 import type { CommentAssignment } from './useCommentAssignment'
 
 const mention = (id: number) => `[$@User ${id}](wework-member://${id})`
-const options = [
+const defaultOptions = [
   { value: '1', label: 'User 1' },
   { value: '2', label: 'User 2' },
   { value: 'agent:bot', label: 'Robot' },
@@ -21,12 +21,18 @@ describe('comment assignment', () => {
   let enabled: boolean
   let actions: CommentIssueActions | undefined
   let createChild: CommentAssignment['createChild']
+  let shortcuts: CommentAssignment['shortcuts']
+  let options: CommentAssignment['options']
+  let assignmentBusy: boolean
+  let assignmentSuccessRevision: number
   const assign = vi.fn<(id: string) => Promise<void | boolean>>()
   const send = vi.fn<() => Promise<boolean>>()
   function Harness() {
     transfer = useCommentAssignment(
       draft,
-      enabled ? { options, assign, createChild } : undefined,
+      enabled
+        ? { options, assign, createChild, shortcuts, assignmentBusy, assignmentSuccessRevision }
+        : undefined,
       send,
       actions
     )
@@ -42,6 +48,10 @@ describe('comment assignment', () => {
     enabled = true
     actions = undefined
     createChild = undefined
+    shortcuts = undefined
+    options = defaultOptions
+    assignmentBusy = false
+    assignmentSuccessRevision = 0
     assign.mockReset().mockResolvedValue(undefined)
     send.mockReset().mockResolvedValue(true)
   })
@@ -56,6 +66,16 @@ describe('comment assignment', () => {
     render('No mentions')
     expect(transfer.suggestion).toBeUndefined()
     expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('does not suggest a disabled member even when the mention was focused previously', () => {
+    render(`${mention(1)} ${mention(2)}`)
+    act(() => transfer.suggestReference(mention(1)))
+    expect(transfer.suggestion?.value).toBe('1')
+    options = options.map(option => (option.value === '1' ? { ...option, disabled: true } : option))
+    render(`${mention(1)} ${mention(2)}`)
+    expect(transfer.suggestion?.value).toBe('2')
+    expect(transfer.suggestReference(mention(1))).toBe(false)
   })
 
   it('only fills the selector when accepting an agent mention', () => {
@@ -78,6 +98,25 @@ describe('comment assignment', () => {
     expect(transfer.target).toBe('2')
     expect(assign).not.toHaveBeenCalled()
   })
+
+  it.each(['redeliver', 'return'] as const)(
+    'keeps a selected %s action when a mention already names the same assignee',
+    async kind => {
+      const value = `${kind}:user:1` as const
+      shortcuts = [{ kind, value, target: 'user:1', label: 'User 1' }]
+      render(mention(1))
+      act(() => transfer.setTarget(value))
+      expect(transfer.suggestion).toBeUndefined()
+      act(() => transfer.suggestReference(mention(1)))
+      expect(transfer.suggestion).toBeUndefined()
+
+      render(mention(2))
+      expect(transfer.suggestion?.value).toBe('2')
+      expect(transfer.target).toBe(value)
+      await act(() => transfer.submit(draft))
+      expect(assign).toHaveBeenCalledExactlyOnceWith(value)
+    }
+  )
 
   it('switches and reopens suggestions from clicked mentions without changing a manual target', () => {
     render(`${mention(1)} ${mention(2)}`)
@@ -161,6 +200,86 @@ describe('comment assignment', () => {
     expect(transfer.error).toBeNull()
   })
 
+  it.each(['assignment', 'assignee move', 'move', 'close'] as const)(
+    'clears only stale assignment errors after another entry succeeds (%s failure)',
+    async stage => {
+      const message = 'Operation unavailable'
+      const move = vi.fn().mockResolvedValue(undefined)
+      const toggle = vi.fn().mockResolvedValue(undefined)
+      const assigneeMove = stage === 'assignee move' || stage === 'close'
+      if (stage === 'assignment') assign.mockRejectedValueOnce(new Error(message))
+      else if (stage === 'close') toggle.mockRejectedValueOnce(new Error(message))
+      else move.mockRejectedValueOnce(new Error(message))
+      actions = {
+        moves: [],
+        assigneeMoves: assigneeMove ? ['review'] : [],
+        boardName: 'Board',
+        currentColumns: [],
+        closed: false,
+        canToggle: true,
+        move,
+        toggle,
+      }
+      render('Please review')
+      act(() => {
+        if (!assigneeMove) transfer.setTarget('1')
+        if (stage !== 'assignment') transfer.setMove('review')
+        if (stage === 'close') transfer.selectCloseWithComment(true)
+      })
+      await act(() => transfer.submit(draft))
+      expect(transfer.error).toBe(message)
+      expect(transfer.commentCommitted).toBe(true)
+
+      assignmentSuccessRevision++
+      render(draft)
+      expect(transfer.error).toBe(
+        stage === 'assignment' || stage === 'assignee move' ? null : message
+      )
+      expect(transfer.target).toBe(assigneeMove ? '' : '1')
+      expect(transfer.moveTarget).toBe(
+        stage === 'move' || stage === 'assignee move' ? 'review' : ''
+      )
+      expect(transfer.commentCommitted).toBe(true)
+      await act(() => transfer.submit(draft))
+      expect(send).toHaveBeenCalledOnce()
+      expect(transfer.target).toBe('')
+      expect(transfer.error).toBeNull()
+    }
+  )
+
+  it('requires reselection of stale shortcuts and unavailable assignees without blocking empty targets', async () => {
+    options = []
+    render('Ordinary comment')
+    expect(transfer.invalidTarget).toBe(false)
+    options = defaultOptions
+
+    shortcuts = [
+      { kind: 'redeliver', value: 'redeliver:user:1', target: 'user:1', label: 'User 1' },
+    ]
+    assign.mockRejectedValueOnce(new Error('Assignee changed'))
+    render('Please review')
+    act(() => transfer.setTarget('redeliver:user:1'))
+    await act(() => transfer.submit(draft))
+    expect(transfer.commentCommitted).toBe(true)
+
+    shortcuts = [
+      { kind: 'redeliver', value: 'redeliver:user:2', target: 'user:2', label: 'User 2' },
+    ]
+    render('Please review')
+    expect(transfer.invalidTarget).toBe(true)
+    await act(() => transfer.submit(draft))
+    expect(send).toHaveBeenCalledOnce()
+    expect(assign).toHaveBeenCalledExactlyOnceWith('redeliver:user:1')
+
+    act(() => transfer.setTarget('redeliver:user:2'))
+    expect(transfer.invalidTarget).toBe(false)
+    await act(() => transfer.submit(draft))
+    expect(send).toHaveBeenCalledOnce()
+    expect(assign).toHaveBeenNthCalledWith(2, 'redeliver:user:2')
+    expect(transfer.target).toBe('')
+    expect(transfer.commentCommitted).toBe(false)
+  })
+
   it('preserves a cancelled invitation and retries without duplicating its saved comment', async () => {
     assign.mockResolvedValueOnce(false).mockResolvedValueOnce(undefined)
     render(mention(1))
@@ -204,6 +323,77 @@ describe('comment assignment', () => {
     })
     expect(transfer.pendingChild).toBeNull()
   })
+
+  it('allows reselection when the target of a pending child becomes unavailable', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Assignment unavailable'))
+      .mockResolvedValueOnce({ id: 'child' })
+    createChild = create
+    render('Create a child')
+    act(() => {
+      transfer.setMode('child')
+      transfer.setTarget('1')
+    })
+    await act(() => transfer.submit(draft))
+    expect(transfer.childTargetLocked).toBe(true)
+
+    options = options.filter(option => option.value !== '1')
+    render('')
+    expect(transfer.invalidTarget).toBe(true)
+    expect(transfer.childTargetLocked).toBe(false)
+    await act(() => transfer.submit(''))
+    expect(create).toHaveBeenCalledOnce()
+
+    act(() => transfer.setTarget('2'))
+    expect(transfer.invalidTarget).toBe(false)
+    await act(() => transfer.submit(''))
+    expect(send).toHaveBeenCalledOnce()
+    expect(create).toHaveBeenNthCalledWith(2, {
+      ...create.mock.calls[0][0],
+      target: '2',
+    })
+    expect(transfer.pendingChild).toBeNull()
+  })
+
+  it.each(['assignee', 'lane'] as const)(
+    'blocks a staged %s assignment while an Issue assignment is active but allows an ordinary comment',
+    async kind => {
+      const move = vi.fn()
+      actions = {
+        moves: [],
+        assigneeMoves: ['assignee-lane'],
+        boardName: 'People',
+        currentColumns: [],
+        closed: false,
+        canToggle: true,
+        move,
+        toggle: vi.fn(),
+      }
+      render('Please review')
+      act(() => {
+        if (kind === 'assignee') transfer.setTarget('1')
+        else transfer.setMove('assignee-lane')
+      })
+      assignmentBusy = true
+      render(draft)
+      expect(transfer.assignmentBlocked).toBe(true)
+      await act(() => transfer.submit(draft))
+      expect(send).not.toHaveBeenCalled()
+      expect(assign).not.toHaveBeenCalled()
+      expect(move).not.toHaveBeenCalled()
+
+      act(() => {
+        if (kind === 'assignee') transfer.setTarget('')
+        else transfer.setMove('')
+      })
+      expect(transfer.assignmentBlocked).toBe(false)
+      await act(() => transfer.submit(draft))
+      expect(send).toHaveBeenCalledOnce()
+      expect(assign).not.toHaveBeenCalled()
+      expect(move).not.toHaveBeenCalled()
+    }
+  )
 
   it('prevents duplicate submissions', async () => {
     render('')
@@ -281,7 +471,7 @@ describe('comment assignment', () => {
     expect(transfer.commentCommitted).toBe(false)
   })
 
-  it('keeps the saved comment when cancelling assignment but retaining the pending move', async () => {
+  it('allows a new identical comment when cancelling a failed assignment after moving', async () => {
     const move = vi.fn().mockResolvedValue(undefined)
     actions = {
       moves: [],
@@ -299,10 +489,43 @@ describe('comment assignment', () => {
       transfer.setMove('review')
     })
     await act(() => transfer.submit(draft))
+    expect(transfer.moveTarget).toBe('')
     act(() => transfer.setTarget(''))
     await act(() => transfer.submit('Please review'))
-    expect(send).toHaveBeenCalledTimes(1)
-    expect(move).toHaveBeenCalledWith('review')
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(move).toHaveBeenCalledExactlyOnceWith('review')
+  })
+
+  it('retries a failed assignment without repeating its saved move or closure', async () => {
+    const move = vi.fn().mockResolvedValue(undefined)
+    const toggle = vi.fn().mockResolvedValue(undefined)
+    actions = {
+      moves: [],
+      boardName: 'Board',
+      currentColumns: [],
+      closed: false,
+      canToggle: true,
+      move,
+      toggle,
+    }
+    assign.mockRejectedValueOnce(new Error('Assignment unavailable'))
+    render('Please review')
+    act(() => {
+      transfer.setTarget('1')
+      transfer.setMove('review')
+      transfer.selectCloseWithComment(true)
+    })
+    await act(() => transfer.submit(draft))
+    expect(transfer.target).toBe('1')
+    expect(transfer.moveTarget).toBe('')
+    expect(transfer.closeWithComment).toBe(false)
+    expect(move.mock.invocationCallOrder[0]).toBeLessThan(toggle.mock.invocationCallOrder[0])
+    expect(toggle.mock.invocationCallOrder[0]).toBeLessThan(assign.mock.invocationCallOrder[0])
+    await act(() => transfer.submit(draft))
+    expect(send).toHaveBeenCalledOnce()
+    expect(move).toHaveBeenCalledOnce()
+    expect(toggle).toHaveBeenCalledOnce()
+    expect(assign).toHaveBeenCalledTimes(2)
   })
 
   it.each(['1', 'agent:bot', 'group:squad'])(

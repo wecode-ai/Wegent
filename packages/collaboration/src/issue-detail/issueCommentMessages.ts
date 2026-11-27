@@ -28,6 +28,16 @@ export const issueCommentMessages: Record<CollaborationLocale, Readonly<Record<s
     'todo.comment_move_unavailable': '该泳道变更当前不可用，请重新选择。',
     'todo.comment_move_conflict': '事项的来源泳道已变化，请重新选择目标泳道。',
     'todo.comment_update_failed': '评论已发送，事项更新未完成：{{error}}。重试不会重复发送原评论。',
+    'todo.redeliver_to_assignee': '重新投递给 {{name}}',
+    'todo.return_to_assignee': '转回给 {{name}}',
+    'todo.assignment_shortcuts': '快捷操作',
+    'todo.assignment_recent_transfers': '最近转派',
+    'todo.redeliver_assignee_changed': '负责人已变化，请重新选择。',
+    'todo.redeliver_unconfirmed': '未能确认重新投递，请升级服务后核实投递记录。',
+    'todo.assignment_reselect': '事项已更新，请重新选择负责人。',
+    'todo.assignment_reselect_short': '重新选择负责人',
+    'todo.redeliver': '重新投递',
+    'todo.send_and_redeliver': '发送并重新投递',
   },
   en: {
     'todo.comment_send_actions': 'Send options',
@@ -57,5 +67,16 @@ export const issueCommentMessages: Record<CollaborationLocale, Readonly<Record<s
     'todo.comment_move_conflict': 'The source lane has changed. Select a destination again.',
     'todo.comment_update_failed':
       'Comment sent, but the issue update is incomplete: {{error}}. Retrying will not resend the original comment.',
+    'todo.redeliver_to_assignee': 'Redeliver to {{name}}',
+    'todo.return_to_assignee': 'Return to {{name}}',
+    'todo.assignment_shortcuts': 'Quick actions',
+    'todo.assignment_recent_transfers': 'Recent transfers',
+    'todo.redeliver_assignee_changed': 'The assignee has changed. Select an action again.',
+    'todo.redeliver_unconfirmed':
+      'Redelivery could not be confirmed. Upgrade the service and check the delivery history.',
+    'todo.assignment_reselect': 'The Issue has changed. Select an assignee again.',
+    'todo.assignment_reselect_short': 'Select assignee again',
+    'todo.redeliver': 'Redeliver',
+    'todo.send_and_redeliver': 'Send and redeliver',
   },
 }

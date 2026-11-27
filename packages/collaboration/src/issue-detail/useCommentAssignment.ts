@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import type { SearchableSelectOption } from '../controls/SearchableSelect'
 import type { CommentIssueActions } from './issueCommentActions'
 import { issueCommentSubmission, type IssueMentionOption } from './issueCommentMentions'
+import { commentAssigneeValue, type IssueAssignmentShortcut } from './issueAssignmentShortcuts'
+import type { IssueAssigneeTarget } from './IssueDetailDraft'
 
 export interface CommentChildInput {
   body: string
@@ -14,8 +16,11 @@ export interface CommentSubmissionOptions {
 }
 export interface CommentAssignment {
   options: SearchableSelectOption[]
+  shortcuts?: IssueAssignmentShortcut[]
   currentAssignee?: string
   canAssignCurrent?: boolean
+  assignmentBusy?: boolean
+  assignmentSuccessRevision?: number
   assign(target: string): Promise<void | boolean>
   createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue | false>
 }
@@ -24,7 +29,7 @@ function firstAssignableMention(mentions: IssueMentionOption[], options: Searcha
   return (
     mentions
       .map(mention => (mention.type === 'user' ? mention.id : `agent:${mention.id}`))
-      .find(target => options.some(option => option.value === target)) ?? ''
+      .find(target => options.some(option => option.value === target && !option.disabled)) ?? ''
   )
 }
 
@@ -39,6 +44,11 @@ export function useCommentAssignment(
   actions?: CommentIssueActions
 ) {
   const [selectedTarget, setSelectedTarget] = useState('')
+  const [shortcutOrigin, setShortcutOrigin] = useState<{
+    value: string
+    currentTarget?: IssueAssigneeTarget
+    historyIndex?: number
+  } | null>(null)
   const [moveTarget, setMoveTarget] = useState('')
   const [closeSelected, setCloseSelected] = useState(false)
   const closeWithComment = closeSelected && actions?.canToggle === true && !actions.closed
@@ -54,35 +64,88 @@ export function useCommentAssignment(
   const [dismissedSuggestion, setDismissedSuggestion] = useState('')
   const [focusedSuggestion, setFocusedSuggestion] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{
+    message: string
+    assignmentRevision?: number
+  } | null>(null)
+  const assignmentRevision = assignment?.assignmentSuccessRevision
+  const latestAssignmentRevision = useRef(assignmentRevision)
+  latestAssignmentRevision.current = assignmentRevision
+  const staleAssignmentFailure =
+    failure?.assignmentRevision !== undefined &&
+    assignmentRevision !== undefined &&
+    assignmentRevision > failure.assignmentRevision
+  if (staleAssignmentFailure) setFailure(null)
+  const error = staleAssignmentFailure ? null : (failure?.message ?? null)
   const submitting = useRef(false)
   const options = assignment?.options ?? []
   const target = assignment ? selectedTarget : ''
   const mentions = issueCommentSubmission(value).mentions
   const mentioned = firstAssignableMention(mentions, options)
-  const focused = mentions.some(
-    mention => (mention.type === 'user' ? mention.id : `agent:${mention.id}`) === focusedSuggestion
-  )
-    ? focusedSuggestion
-    : ''
+  const focused =
+    options.some(option => option.value === focusedSuggestion && !option.disabled) &&
+    mentions.some(
+      mention =>
+        (mention.type === 'user' ? mention.id : `agent:${mention.id}`) === focusedSuggestion
+    )
+      ? focusedSuggestion
+      : ''
   const candidate = focused || mentioned || (!value.trim() ? sentSuggestion : '')
+  const selectedShortcut = assignment?.shortcuts?.find(
+    shortcut =>
+      shortcut.kind !== 'recent' &&
+      shortcut.value === target &&
+      (shortcutOrigin?.value !== target ||
+        ((shortcutOrigin.currentTarget === undefined ||
+          shortcut.currentTarget === shortcutOrigin.currentTarget) &&
+          (shortcutOrigin.historyIndex === undefined ||
+            shortcut.historyIndex === shortcutOrigin.historyIndex)))
+  )
+  const invalidTarget =
+    target !== '' &&
+    (target.startsWith('redeliver:') || target.startsWith('return:')
+      ? effectiveMode !== 'current' || !selectedShortcut
+      : !options.some(option => option.value === target && !option.disabled))
+  const assignmentBlocked =
+    assignment?.assignmentBusy === true &&
+    effectiveMode === 'current' &&
+    (target !== '' || actions?.assigneeMoves?.includes(moveTarget) === true)
+  const selectedAssignee = selectedShortcut ? commentAssigneeValue(selectedShortcut.target) : target
   const suggestion =
-    candidate !== target && candidate !== dismissedSuggestion
-      ? options.find(option => option.value === candidate)
+    candidate !== selectedAssignee && candidate !== dismissedSuggestion
+      ? options.find(option => option.value === candidate && !option.disabled)
       : undefined
 
   function setTarget(next: string) {
-    setError(null)
+    setFailure(null)
     setSelectedTarget(next)
-    if (childCancelled) setPendingChild(current => (current ? { ...current, target: next } : null))
+    const nextShortcut = assignment?.shortcuts?.find(
+      shortcut => shortcut.kind !== 'recent' && shortcut.value === next
+    )
+    setShortcutOrigin(
+      nextShortcut
+        ? {
+            value: next,
+            currentTarget: nextShortcut.currentTarget,
+            historyIndex: nextShortcut.historyIndex,
+          }
+        : null
+    )
+    if (pendingChild && (childCancelled || invalidTarget)) {
+      setPendingChild({ ...pendingChild, target: next })
+      setChildCancelled(true)
+    }
     if (next && actions?.assigneeMoves?.includes(moveTarget)) setMoveTarget('')
     if (!next && !moveTarget && !closeWithComment) clearCommittedComment()
   }
 
   function setMove(next: string) {
-    setError(null)
+    setFailure(null)
     setMoveTarget(next)
-    if (actions?.assigneeMoves?.includes(next)) setSelectedTarget('')
+    if (actions?.assigneeMoves?.includes(next)) {
+      setSelectedTarget('')
+      setShortcutOrigin(null)
+    }
     if (!next && !target && !closeWithComment) clearCommittedComment()
   }
 
@@ -96,6 +159,7 @@ export function useCommentAssignment(
     setAssignmentMode(next)
     setCloseSelected(false)
     setSelectedTarget('')
+    setShortcutOrigin(null)
     setFocusedSuggestion('')
     if (next === 'child') setMoveTarget('')
   }
@@ -118,12 +182,12 @@ export function useCommentAssignment(
   }
 
   function selectCloseWithComment(selected: boolean) {
-    setError(null)
+    setFailure(null)
     setCloseSelected(selected)
   }
 
   async function submit(draft: string) {
-    if (submitting.current) return
+    if (submitting.current || invalidTarget || assignmentBlocked) return
     const { body, mentions } = issueCommentSubmission(draft)
     const creatingChild = effectiveMode === 'child' && !closeWithComment
     const currentTarget = effectiveMode === 'child' && !creatingChild ? '' : target
@@ -138,7 +202,8 @@ export function useCommentAssignment(
     if (currentTarget && assignment?.canAssignCurrent === false && !creatingChild) return
     submitting.current = true
     setBusy(true)
-    setError(null)
+    setFailure(null)
+    let assignmentStage = false
     try {
       if (creatingChild) {
         if (!assignment?.createChild) return
@@ -155,6 +220,7 @@ export function useCommentAssignment(
         }
         setPendingChild(null)
         setSelectedTarget('')
+        setShortcutOrigin(null)
         setSentSuggestion('')
         clearCommittedComment()
         return
@@ -172,23 +238,30 @@ export function useCommentAssignment(
         setDismissedSuggestion('')
         setFocusedSuggestion('')
       }
-      if (currentTarget && assignment) {
-        // Only an explicitly selected target participates in submission.
-        if ((await assignment.assign(currentTarget)) === false) return
-        setSelectedTarget('')
-        setSentSuggestion('')
-      }
       if (moveTarget && actions) {
+        assignmentStage = actions.assigneeMoves?.includes(moveTarget) === true
         if ((await actions.move(moveTarget)) === false) return
+        assignmentStage = false
         setMoveTarget('')
       }
       if (closeWithComment && actions) {
         await actions.toggle(true)
         setCloseSelected(false)
       }
+      if (currentTarget && assignment) {
+        // Commit Issue changes before dispatch so the assignee can read the updated state.
+        assignmentStage = true
+        if ((await assignment.assign(currentTarget)) === false) return
+        setSelectedTarget('')
+        setShortcutOrigin(null)
+        setSentSuggestion('')
+      }
       clearCommittedComment()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setFailure({
+        message: cause instanceof Error ? cause.message : String(cause),
+        assignmentRevision: assignmentStage ? latestAssignmentRevision.current : undefined,
+      })
     } finally {
       submitting.current = false
       setBusy(false)
@@ -199,9 +272,11 @@ export function useCommentAssignment(
     mode: effectiveMode,
     setMode,
     pendingChild,
-    childTargetLocked: pendingChild !== null && !childCancelled,
+    childTargetLocked: pendingChild !== null && !childCancelled && !invalidTarget,
     options,
     target,
+    invalidTarget,
+    assignmentBlocked,
     moveTarget,
     setMove,
     closeWithComment,

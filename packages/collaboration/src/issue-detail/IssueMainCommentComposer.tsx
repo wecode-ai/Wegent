@@ -35,6 +35,7 @@ import type { CollaborationTranslate } from '../i18n'
 import { Button as ControlButton } from '../markdown/Button'
 import { IssueCommentComposer } from './IssueActivityPresentation'
 import { IssueCommentActionPicker } from './IssueCommentActionPicker'
+import { issueAssignmentOptions } from './issueAssignmentShortcuts'
 import type { CommentIssueActions } from './issueCommentActions'
 import type { IssueMentionOption } from './issueCommentMentions'
 import { useCommentAssignment, type CommentAssignment } from './useCommentAssignment'
@@ -123,6 +124,14 @@ export function IssueMainCommentComposer({
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const transfer = useCommentAssignment(value, assignment, onSubmit, issueActions)
+  const shortcuts = transfer.mode === 'current' ? (assignment?.shortcuts ?? []) : []
+  const selectedShortcut = shortcuts.find(shortcut => shortcut.value === transfer.target)
+  const assigneeOptions = issueAssignmentOptions(
+    shortcuts,
+    [{ value: '', label: translate('todo.keep_assignee') }, ...transfer.options],
+    `${testIds.form}-assignee`,
+    translate
+  )
   const blocked = disabled || sending || transfer.busy
   const inlineError =
     transfer.error && transfer.commentCommitted
@@ -137,6 +146,8 @@ export function IssueMainCommentComposer({
   const canSend =
     !blocked &&
     !uploading &&
+    !transfer.invalidTarget &&
+    !transfer.assignmentBlocked &&
     (transfer.closeWithComment
       ? Boolean(value.trim() || transfer.commentCommitted)
       : transfer.mode === 'child'
@@ -146,20 +157,27 @@ export function IssueMainCommentComposer({
     ? translate('todo.comment_and_close_issue')
     : transfer.mode === 'child'
       ? translate('todo.send_and_create_child')
-      : issueActions && (transfer.target || transfer.moveTarget)
+      : selectedShortcut?.kind === 'redeliver' && !transfer.moveTarget
         ? translate(
             value.trim() && !transfer.commentCommitted
-              ? 'todo.send_and_update_issue'
-              : 'todo.update_issue'
+              ? 'todo.send_and_redeliver'
+              : 'todo.redeliver'
           )
-        : transfer.target
-          ? translate(value.trim() ? 'todo.send_and_assign' : 'todo.assign_only')
-          : issueActions
-            ? translate('todo.comment_send')
-            : labels.send
+        : issueActions && (transfer.target || transfer.moveTarget)
+          ? translate(
+              value.trim() && !transfer.commentCommitted
+                ? 'todo.send_and_update_issue'
+                : 'todo.update_issue'
+            )
+          : transfer.target
+            ? translate(value.trim() ? 'todo.send_and_assign' : 'todo.assign_only')
+            : issueActions
+              ? translate('todo.comment_send')
+              : labels.send
   const submit = (draft: string) => {
     if (canSend) void transfer.submit(draft)
   }
+  const reselectLabel = translate('todo.assignment_reselect_short')
 
   const modeLabel = translate(
     transfer.mode === 'child' ? 'todo.create_child_issue' : 'todo.assign_current_issue'
@@ -206,8 +224,9 @@ export function IssueMainCommentComposer({
               label={translate('todo.comment_assign_action')}
               placeholder={translate('todo.comment_assign_placeholder')}
               currentLabel={transfer.mode === 'current' ? assignment.currentAssignee : undefined}
+              unavailableLabel={transfer.invalidTarget ? reselectLabel : undefined}
               value={transfer.target}
-              options={[{ value: '', label: translate('todo.keep_assignee') }, ...transfer.options]}
+              options={assigneeOptions}
               onChange={transfer.setTarget}
               disabled={
                 blocked ||
@@ -221,8 +240,12 @@ export function IssueMainCommentComposer({
           ) : (
             <SearchableSelect
               testId={`${testIds.form}-assignee`}
-              accessibleLabel={translate('todo.comment_assign_to')}
+              accessibleLabel={
+                transfer.invalidTarget ? reselectLabel : translate('todo.comment_assign_to')
+              }
+              triggerTitle={transfer.invalidTarget ? reselectLabel : undefined}
               value={transfer.target}
+              activateSelected={transfer.invalidTarget}
               onChange={transfer.setTarget}
               disabled={
                 blocked ||
@@ -236,7 +259,9 @@ export function IssueMainCommentComposer({
                 <>
                   {transfer.target ? (
                     <span className="truncate">
-                      {transfer.options.find(option => option.value === transfer.target)?.label}
+                      {transfer.invalidTarget
+                        ? reselectLabel
+                        : assigneeOptions.find(option => option.value === transfer.target)?.label}
                     </span>
                   ) : (
                     <span>
@@ -248,7 +273,7 @@ export function IssueMainCommentComposer({
                   <ChevronDown className="h-4 w-4 shrink-0" />
                 </>
               }
-              options={[{ value: '', label: translate('todo.keep_assignee') }, ...transfer.options]}
+              options={assigneeOptions}
             />
           )}
         </>

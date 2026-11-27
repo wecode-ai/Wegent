@@ -112,6 +112,7 @@
     "handoffActions": {
       "assign": "Assigned",
       "reassign": "Reassigned",
+      "redeliver": "Redelivered",
       "unassign": "Unassigned",
       "unknown": "Handoff"
     },

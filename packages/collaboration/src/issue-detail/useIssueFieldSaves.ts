@@ -7,6 +7,7 @@ import { createVersionMutationQueue } from '../versionMutationQueue'
 
 type VersionedIssue = { id: string; version: number }
 type Operation<T> = (source: T) => Promise<T>
+type SaveOptions = { retry?: boolean; reportError?: boolean }
 
 function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
   let source = initial
@@ -21,28 +22,36 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     pendingFields: ReadonlySet<string>
     error: unknown
     saved: boolean
+    canRetry: boolean
   } = {
     pending: false,
     pendingFields: new Set(),
     error: null,
     saved: false,
+    canRetry: false,
   }
   const queue = createVersionMutationQueue<T>(initial?.version ?? 0)
   const failures = new Map<
     string,
-    { operation: Operation<T>; error: unknown; submission: number }
+    { operation: Operation<T>; error: unknown; submission: number; options: SaveOptions }
   >()
   const listeners = new Set<() => void>()
   const publish = () => {
+    const latestFailure = [...failures.values()].at(-1)
     snapshot = {
       pending: pendingFields.size > 0,
       pendingFields: new Set(pendingFields.keys()),
-      error: [...failures.values()].at(-1)?.error ?? null,
+      error: latestFailure?.error ?? null,
       saved,
+      canRetry: Boolean(latestFailure && latestFailure.options.retry !== false),
     }
-    if (active) listeners.forEach((listener) => listener())
+    if (active) listeners.forEach(listener => listener())
   }
-  async function save(key: string, operation: Operation<T>): Promise<T | undefined> {
+  async function save(
+    key: string,
+    operation: Operation<T>,
+    options: SaveOptions = {}
+  ): Promise<T | undefined> {
     const submission = (submissions.get(key) ?? 0) + 1
     submissions.set(key, submission)
     pendingFields.set(key, (pendingFields.get(key) ?? 0) + 1)
@@ -50,7 +59,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     publish()
     try {
       const updated = await queue.enqueue(
-        async (version) => {
+        async version => {
           if (!source) throw new Error('Issue unavailable')
           const updated = await operation({ ...source, version })
           if (submissions.get(key) === submission) failures.delete(key)
@@ -61,13 +70,13 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
           saved = true
           return source
         },
-        (issue) => issue.version,
+        issue => issue.version
       )
       return active ? updated : undefined
     } catch (error) {
       if (submissions.get(key) === submission) {
-        failures.set(key, { operation, error, submission })
-        if (active) reportError?.(error)
+        failures.set(key, { operation, error, submission, options })
+        if (active && options.reportError !== false) reportError?.(error)
       }
       return undefined
     } finally {
@@ -81,13 +90,24 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
     save,
     retry() {
       for (const [key, failure] of [...failures]) {
-        if (submissions.get(key) === failure.submission) void save(key, failure.operation)
+        if (failure.options.retry !== false && submissions.get(key) === failure.submission)
+          void save(key, failure.operation, failure.options)
       }
     },
     discardFailure(key: string) {
       if (failures.delete(key)) publish()
     },
+    isPending: (key: string) => pendingFields.has(key),
     getSource: () => source,
+    acceptSource(next: T, confirmedWrite = false) {
+      if (!active || !source || next.id !== source.id) return
+      if (next.version > source.version || (confirmedWrite && next.version === source.version)) {
+        source = next
+        queue.synchronize(next.version)
+        accept?.(next)
+      }
+      return source
+    },
     synchronize(next: T | null, onSaved: (issue: T) => void, onError?: (error: unknown) => void) {
       if (next && (!source || next.version >= source.version)) source = next
       queue.synchronize(next?.version ?? 0)
@@ -110,7 +130,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
 export function useIssueFieldSaves<T extends VersionedIssue>(
   source: T | null,
   accept: (issue: T) => void,
-  onError?: (error: unknown) => void,
+  onError?: (error: unknown) => void
 ) {
   const [scope, setScope] = useState(() => ({
     id: source?.id,
@@ -131,6 +151,8 @@ export function useIssueFieldSaves<T extends VersionedIssue>(
     save: saves.save,
     retry: saves.retry,
     discardFailure: saves.discardFailure,
+    isPending: saves.isPending,
     getSource: saves.getSource,
+    acceptSource: saves.acceptSource,
   }
 }

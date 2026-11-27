@@ -26,9 +26,9 @@ export function createDesktopScenario({
 }) {
   let cloud, user, other, otherToken, project, environment, settings
   const evidence = []
-  async function request(path, body, token = cloud.authToken) {
+  async function request(path, body, token = cloud.authToken, method = body ? 'POST' : 'GET') {
     const response = await fetch(`${cloud.backendUrl}/api${path}`, {
-      method: body ? 'POST' : 'GET',
+      method,
       headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(uiTimeoutMs),
@@ -320,6 +320,72 @@ export function createDesktopScenario({
         'Manual delegation must resolve the second assignment'
       )
       await record('second-completed-and-manual-resolved', issue)
+
+      // Explicit redelivery to the current owner must trigger one new native turn automatically.
+      const beforeRedelivery = await request(`/v1/loop-items/${issue.id}`)
+      const secondIdentity = beforeRedelivery.human_task_binding
+      issue = await request(
+        `/v1/loop-items/${issue.id}`,
+        {
+          version: beforeRedelivery.version,
+          assignee_user_id: user.id,
+          notify_assignee: true,
+          redeliver: true,
+        },
+        cloud.authToken,
+        'PATCH'
+      )
+      const thirdIdentity = issue.human_task_binding
+      assert.equal(issue.id, beforeRedelivery.id)
+      assert.equal(issue.assignee_user_id, beforeRedelivery.assignee_user_id)
+      assert.ok(thirdIdentity?.assignmentId && thirdIdentity.humanAssignmentId)
+      assert.notEqual(thirdIdentity.assignmentId, secondIdentity.assignmentId)
+      assert.notEqual(thirdIdentity.humanAssignmentId, secondIdentity.humanAssignmentId)
+      await record('explicitly-redelivered', issue)
+      await refresh()
+      const thirdBindings = await until(
+        () => request(`/v1/loop-items/${issue.id}/tasks`),
+        rows =>
+          rows.length === 1 && rows[0].human_assignment_id === thirdIdentity.humanAssignmentId,
+        'Explicit redelivery did not bind the new grant to the existing assistant conversation'
+      )
+      assert.equal(thirdBindings[0].task_id, secondTask)
+      assert.equal(thirdBindings[0].assignment_id, thirdIdentity.assignmentId)
+      const thirdConversation = await until(
+        () => rpc('runtime.tasks.get', { taskId: secondTask }),
+        value => {
+          assert.notEqual(value.task?.status, 'failed', JSON.stringify(value))
+          const turnId = value.task?.executionState?.latestTurnId
+          return (
+            value.task?.status === 'done' &&
+            Boolean(turnId) &&
+            turnId !== secondConversation.task.executionState.latestTurnId
+          )
+        },
+        'Explicit redelivery did not complete a new native turn'
+      )
+      assert.equal(thirdConversation.task.threadId, secondConversation.task.threadId)
+      assert.equal(thirdConversation.task.runtimeHandle.origin.standInId, 'recovery-reviewer')
+      assert.equal(thirdConversation.task.runtimeHandle.origin.trigger, 'assignment')
+      assert.equal(
+        thirdConversation.task.runtimeHandle.origin.assignmentId,
+        thirdIdentity.assignmentId
+      )
+      assert.equal(
+        thirdConversation.task.runtimeHandle.origin.humanAssignmentId,
+        thirdIdentity.humanAssignmentId
+      )
+      await expectPublicResults(issue, 3)
+      await until(
+        () => request(`/v1/loop-items/${issue.id}/assignments`),
+        value =>
+          value.items.some(
+            row => row.id === thirdIdentity.assignmentId && row.stand_in_received_at
+          ),
+        'Explicit redelivery did not acknowledge the new assignment receipt'
+      )
+      await record('redelivered-and-completed', issue)
+
       await verifyRoundStandInAssignment({
         cloud,
         request,
@@ -339,7 +405,7 @@ export function createDesktopScenario({
         resultDir,
       })
       console.log(
-        '[stand-in-assignment-recovery] PASS: same Issue processed twice after transfer away and back'
+        '[stand-in-assignment-recovery] PASS: same Issue processed after transfer back and explicit redelivery'
       )
     },
     diagnostics() {

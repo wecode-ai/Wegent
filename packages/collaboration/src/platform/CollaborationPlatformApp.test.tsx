@@ -6249,6 +6249,326 @@ describe('CollaborationPlatformApp real component flow', () => {
     expect(container.querySelector('[data-testid="cloud-todo-save"]')).toBeNull()
   })
 
+  it.each(['property', 'comment'])(
+    'refreshes stale assignees before letting the user reselect a redelivery from %s',
+    async entry => {
+      const assignee = { ...member, user_name: 'User 7', email: null }
+      const assigned = {
+        ...issue,
+        assignee_user_id: assignee.user_id,
+        assignee_name: assignee.user_name,
+      }
+      const moved = {
+        ...assigned,
+        assignee_user_id: null,
+        assignee_name: null,
+        version: assigned.version + 1,
+      }
+      const { api } = createApi({ initialIssues: [assigned] })
+      vi.mocked(api.members.list).mockResolvedValue([assignee])
+      vi.mocked(api.issues.get).mockResolvedValue(assigned)
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: 'projects',
+            projectId: project.id,
+            issueId: issue.id,
+          }}
+        />
+      )
+      const picker =
+        entry === 'property'
+          ? 'cloud-todo-detail-assignee'
+          : 'collaboration-issue-comment-form-assignee'
+      await click(byTestId(picker))
+      const redeliver = portalByTestId(`${picker}-redeliver`)
+      vi.mocked(api.issues.get).mockClear().mockResolvedValue(moved)
+      if (entry === 'property') {
+        vi.mocked(api.issues.update).mockRejectedValueOnce(
+          Object.assign(new Error('TODO changed'), { status: 409 })
+        )
+        await click(redeliver)
+        expect(api.issues.update).toHaveBeenCalledExactlyOnceWith(issue.id, {
+          version: issue.version,
+          assigneeUserId: assignee.user_id,
+          notifyAssignee: true,
+          redeliver: true,
+        })
+        expect(byTestId('cloud-todo-save-error').textContent).toContain(
+          '事项已更新，请重新选择负责人'
+        )
+        expect(container.querySelector('[data-testid="cloud-todo-field-retry"]')).toBeNull()
+      } else {
+        await click(redeliver)
+        await click(byTestId('collaboration-issue-comment-submit'))
+        expect(api.issues.update).not.toHaveBeenCalled()
+        expect(container.textContent).toContain('负责人已变化，请重新选择')
+      }
+      expect(api.issues.get).toHaveBeenCalledExactlyOnceWith(issue.id)
+      expect(byTestId('cloud-todo-state-assignee').textContent).toContain('未指派')
+      await click(byTestId(picker))
+      expect(document.body.querySelector(`[data-testid="${picker}-redeliver"]`)).toBeNull()
+    }
+  )
+
+  it.each([
+    { store: 'backend' as const, marked: true, confirmed: true },
+    { store: 'backend' as const, marked: false, confirmed: false },
+    { store: 'local' as const, marked: false, confirmed: true },
+  ])('confirms redelivery for $store with marker=$marked', async ({ store, marked, confirmed }) => {
+    const assignee = { ...member, user_name: 'User 7', email: null }
+    const selectedWorkspace = store === 'local' ? localWorkspace : workspace
+    const selectedProject = {
+      ...project,
+      project_store: store,
+      workspace_id: selectedWorkspace.id,
+    }
+    const assigned: CollaborationIssue = {
+      ...issue,
+      assignee_user_id: assignee.user_id,
+      assignee_name: assignee.user_name,
+      assignment_history: [
+        {
+          by_user_id: assignee.user_id,
+          to_type: 'user',
+          to_id: String(assignee.user_id),
+          action: 'assign',
+          at: '2026-09-12T01:00:00Z',
+        },
+      ],
+    }
+    const updated: CollaborationIssue = {
+      ...assigned,
+      version: assigned.version + 1,
+      assignment_history: [
+        ...assigned.assignment_history!,
+        {
+          ...assigned.assignment_history![0],
+          action: 'reassign',
+          ...(marked ? { redeliver: true } : {}),
+          at: '2026-09-12T02:00:00Z',
+        },
+      ],
+    }
+    const { api } = createApi({
+      initialWorkspaces: [selectedWorkspace],
+      initialProjects: [selectedProject],
+      initialIssues: [assigned],
+    })
+    vi.mocked(api.members.list).mockResolvedValue([assignee])
+    vi.mocked(api.issues.get).mockResolvedValue(assigned)
+    vi.mocked(api.issues.update).mockResolvedValueOnce(updated)
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          collaborationDomain: store === 'local' ? 'local' : 'cloud',
+          workspaceId: selectedWorkspace.id,
+          workspaceView: 'projects',
+          projectId: selectedProject.id,
+          issueId: issue.id,
+        }}
+      />
+    )
+    vi.mocked(api.issues.get).mockClear()
+    const picker = 'cloud-todo-detail-assignee'
+    await click(byTestId(picker))
+    await click(portalByTestId(`${picker}-redeliver`))
+    expect(api.issues.update).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      version: assigned.version,
+      assigneeUserId: assignee.user_id,
+      notifyAssignee: true,
+      redeliver: true,
+    })
+    expect(api.issues.get).not.toHaveBeenCalled()
+    if (confirmed) {
+      expect(container.querySelector('[data-testid="cloud-todo-save-error"]')).toBeNull()
+    } else {
+      expect(byTestId('cloud-todo-save-error').textContent).toContain('未能确认重新投递')
+      expect(container.querySelector('[data-testid="cloud-todo-field-retry"]')).toBeNull()
+      await click(byTestId(picker))
+      await click(portalByTestId(`${picker}-option-empty`))
+      expect(api.issues.update).toHaveBeenLastCalledWith(issue.id, {
+        version: updated.version,
+        assigneeUserId: null,
+        assigneeAgentId: null,
+        assigneeTeamId: null,
+      })
+    }
+  })
+
+  it.each([
+    {
+      label: 'transferred to another member',
+      nextAssigneeId: 9,
+      nextAssigneeName: 'User 9',
+      extraHistory: [
+        {
+          by_user_id: 8,
+          to_type: 'user' as const,
+          to_id: '9',
+          to_name: 'User 9',
+          action: 'reassign',
+          at: '2026-09-12T02:00:00Z',
+        },
+      ],
+      expectedNextReturn: 'User 8',
+      expectedNextReturnId: 8,
+    },
+    {
+      label: 'transferred to a third member and back to current assignee',
+      nextAssigneeId: 8,
+      nextAssigneeName: 'User 8',
+      extraHistory: [
+        {
+          by_user_id: 8,
+          to_type: 'user' as const,
+          to_id: '9',
+          to_name: 'User 9',
+          action: 'reassign',
+          at: '2026-09-12T02:00:00Z',
+        },
+        {
+          by_user_id: 9,
+          to_type: 'user' as const,
+          to_id: '8',
+          to_name: 'User 8',
+          action: 'reassign',
+          at: '2026-09-12T02:05:00Z',
+        },
+      ],
+      expectedNextReturn: 'User 9',
+      expectedNextReturnId: 9,
+    },
+    {
+      label: 'round-tripped back through the same previous assignee',
+      nextAssigneeId: 8,
+      nextAssigneeName: 'User 8',
+      extraHistory: [
+        {
+          by_user_id: 8,
+          to_type: 'user' as const,
+          to_id: '7',
+          to_name: 'User 7',
+          action: 'reassign',
+          at: '2026-09-12T02:00:00Z',
+        },
+        {
+          by_user_id: 7,
+          to_type: 'user' as const,
+          to_id: '8',
+          to_name: 'User 8',
+          action: 'reassign',
+          at: '2026-09-12T02:05:00Z',
+        },
+      ],
+      expectedNextReturn: 'User 7',
+      expectedNextReturnId: 7,
+    },
+  ])(
+    'blocks returning to a stale previous assignee when the Issue was $label',
+    async ({
+      nextAssigneeId,
+      nextAssigneeName,
+      extraHistory,
+      expectedNextReturn,
+      expectedNextReturnId,
+    }) => {
+      const previous = { ...member, user_name: 'User 7', email: null }
+      const reviewer: CollaborationMember = {
+        id: 2,
+        user_id: 8,
+        user_name: 'User 8',
+        email: null,
+        role: 'Developer',
+      }
+      const third: CollaborationMember = {
+        id: 3,
+        user_id: 9,
+        user_name: 'User 9',
+        email: null,
+        role: 'Developer',
+      }
+      const initial: CollaborationIssue = {
+        ...issue,
+        assignee_user_id: reviewer.user_id,
+        assignee_name: reviewer.user_name,
+        version: 2,
+        assignment_history: [
+          {
+            by_user_id: previous.user_id,
+            to_type: 'user',
+            to_id: String(previous.user_id),
+            to_name: previous.user_name,
+            action: 'assign',
+            at: '2026-09-12T01:00:00Z',
+          },
+          {
+            by_user_id: previous.user_id,
+            to_type: 'user',
+            to_id: String(reviewer.user_id),
+            to_name: reviewer.user_name,
+            action: 'reassign',
+            at: '2026-09-12T01:30:00Z',
+          },
+        ],
+      }
+      const updatedOnServer: CollaborationIssue = {
+        ...initial,
+        assignee_user_id: nextAssigneeId,
+        assignee_name: nextAssigneeName,
+        version: initial.version + extraHistory.length,
+        assignment_history: [...(initial.assignment_history ?? []), ...extraHistory],
+      }
+      const { api } = createApi({ initialIssues: [initial] })
+      vi.mocked(api.members.list).mockResolvedValue([previous, reviewer, third])
+      vi.mocked(api.issues.get).mockResolvedValue(initial)
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: 'projects',
+            projectId: project.id,
+            issueId: issue.id,
+          }}
+        />
+      )
+      const picker = 'collaboration-issue-comment-form-assignee'
+      await click(byTestId(picker))
+      const returnOption = portalByTestId(`${picker}-return`)
+      expect(returnOption.textContent).toContain(previous.user_name)
+      await click(returnOption)
+
+      vi.mocked(api.issues.get).mockClear().mockResolvedValue(updatedOnServer)
+      await click(byTestId('collaboration-issue-comment-submit'))
+
+      expect(api.issues.update).not.toHaveBeenCalled()
+      expect(container.textContent).toContain('负责人已变化，请重新选择')
+      expect((byTestId('collaboration-issue-comment-submit') as HTMLButtonElement).disabled).toBe(
+        true
+      )
+      await click(byTestId(picker))
+      const refreshedReturn = portalByTestId(`${picker}-return`)
+      expect(refreshedReturn.textContent).toContain(expectedNextReturn)
+      await click(refreshedReturn)
+      expect((byTestId('collaboration-issue-comment-submit') as HTMLButtonElement).disabled).toBe(
+        false
+      )
+      await click(byTestId('collaboration-issue-comment-submit'))
+      expect(api.issues.update).toHaveBeenCalledExactlyOnceWith(issue.id, {
+        version: updatedOnServer.version,
+        assigneeUserId: expectedNextReturnId,
+        notifyAssignee: true,
+      })
+    }
+  )
+
   it('mentions and assigns a project agent', async () => {
     const api = await renderIssueWithCollaborationGroup()
     const comment = byTestId('collaboration-issue-comment') as HTMLTextAreaElement
