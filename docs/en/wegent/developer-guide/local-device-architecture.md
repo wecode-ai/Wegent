@@ -540,37 +540,37 @@ For device callbacks, Backend holds the same per-subtask event lock across queue
 ## 🔄 Task Execution Flow
 
 ```mermaid
-flowchart TB
-    subgraph "Frontend"
-        UI[Chat Interface]
-        DS[Device Selector]
+flowchart LR
+    P["task:execute"] --> A["admit_platform_turn"]
+    L["runtime.tasks.*"] --> B["schedule_turn"]
+    A --> C["submit_turn"]
+    B --> C
+    C --> Q["RuntimeTurnScheduler"]
+    Q --> S["start_authorized_turn"]
+    S --> H["launch_shell_turn"]
+    H --> Claude["Claude Code"]
+    H --> Codex["Codex"]
+```
+
+New requests wait in the shared queue while a turn is active for that session. Reassignment explicitly cancels the previous attempt. Shell exit releases capacity. Platform acknowledgements and session history retain their respective protocols.
+
+```mermaid
+sequenceDiagram
+    participant In as Protocol adapter
+    participant R as RuntimeWorkRpcHandler
+    participant J as Command journal
+    participant S as Shell
+    participant O as Event observer
+    In->>R: admit and deduplicate
+    R->>J: recover an accepted request
+    opt New execution
+        R->>S: start one turn
+        loop
+            S-->>O: execution event
+            O-->>In: deliver through the original protocol
+        end
+        S-->>R: ExecutionOutcome
     end
-
-    subgraph "Backend Services"
-        DR[Device Router]
-        TS[Task Service]
-        WS[WebSocket Handler]
-    end
-
-    subgraph "Local Device"
-        EX[Executor Client]
-        SDK[Claude Code SDK]
-    end
-
-    UI --> DS
-    DS -->|Select device| UI
-    UI -->|chat:send| WS
-    WS --> DR
-    DR -->|Verify online| TS
-    TS -->|Create subtask| DR
-    DR -->|task:execute| EX
-    EX --> SDK
-    SDK -->|Execute| EX
-    EX -->|task:progress| WS
-    WS -->|chat:chunk| UI
-
-    style DR fill:#14B8A6,color:#fff
-    style EX fill:#14B8A6,color:#fff
 ```
 
 ### Local collaboration group orchestration

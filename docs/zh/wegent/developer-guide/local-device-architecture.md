@@ -532,37 +532,37 @@ Backend 处理设备回调时，同一 subtask 的队列写回、文本存储、
 ## 🔄 任务执行流程
 
 ```mermaid
-flowchart TB
-    subgraph "前端"
-        UI[聊天界面]
-        DS[设备选择器]
+flowchart LR
+    P["task:execute"] --> A["admit_platform_turn"]
+    L["runtime.tasks.*"] --> B["schedule_turn"]
+    A --> C["submit_turn"]
+    B --> C
+    C --> Q["RuntimeTurnScheduler"]
+    Q --> S["start_authorized_turn"]
+    S --> H["launch_shell_turn"]
+    H --> Claude["Claude Code"]
+    H --> Codex["Codex"]
+```
+
+同一会话有正在运行的 turn 时，新请求在共享队列等待。重派显式取消旧 attempt。Shell 退出后释放容量，平台回执和会话历史仍使用各自的协议。
+
+```mermaid
+sequenceDiagram
+    participant In as Protocol adapter
+    participant R as RuntimeWorkRpcHandler
+    participant J as Command journal
+    participant S as Shell
+    participant O as Event observer
+    In->>R: 接单与防重
+    R->>J: 恢复已接单请求
+    opt New execution
+        R->>S: 启动一个 turn
+        loop
+            S-->>O: 执行事件
+            O-->>In: 按原协议投递
+        end
+        S-->>R: ExecutionOutcome
     end
-
-    subgraph "后端服务"
-        DR[设备路由器]
-        TS[任务服务]
-        WS[WebSocket 处理器]
-    end
-
-    subgraph "本地设备"
-        EX[Executor 客户端]
-        SDK[Claude Code SDK]
-    end
-
-    UI --> DS
-    DS -->|选择设备| UI
-    UI -->|chat:send| WS
-    WS --> DR
-    DR -->|验证在线| TS
-    TS -->|创建子任务| DR
-    DR -->|task:execute| EX
-    EX --> SDK
-    SDK -->|执行| EX
-    EX -->|task:progress| WS
-    WS -->|chat:chunk| UI
-
-    style DR fill:#14B8A6,color:#fff
-    style EX fill:#14B8A6,color:#fff
 ```
 
 ### 本地协作小组编排
