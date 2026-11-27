@@ -134,7 +134,8 @@ export function StandInOverviewPage({
       roleId:
         props.initialProfileId === '@primary'
           ? undefined
-          : (props.initialProfileId ?? initialSelectedRoleId),
+          : (props.initialProfileId ??
+            (initialSelectedRoleId === '@primary' ? undefined : initialSelectedRoleId)),
       profile:
         initialWorkView === 'scheduled'
           ? props.initialProfileId && props.initialProfileId !== '@primary'
@@ -405,7 +406,7 @@ export function StandInOverviewPage({
             roles.find(role => role.id === id)?.executionDeviceId)
           : primaryDeviceId)
       if (target && target !== deviceId && onSelectLocation) {
-        onSelectLocation(target, id)
+        onSelectLocation(target, id ?? '@primary')
         return
       }
       setCalendarRequest(0)
@@ -612,14 +613,10 @@ export function StandInOverviewPage({
               if (starterHome && !showWelcome && saved) setChatIntent('manage')
               else openProfile(role ? 'role' : 'primary', detailsAnchor)
             }}
-            onGuide={
-              starterHome
-                ? undefined
-                : () => {
-                    setDetailsAnchor(null)
-                    setGuideOpen(true)
-                  }
-            }
+            onGuide={() => {
+              setDetailsAnchor(null)
+              setGuideOpen(true)
+            }}
             onAllActivity={() => {
               setDetailsAnchor(null)
               setReview('work')
@@ -690,6 +687,7 @@ export function StandInOverviewPage({
             deviceId={deviceId}
             retiredRoles={retiredRoles}
             matchDevice={!!roleLocations}
+            launchBusy={welcome && launch?.busy}
             chooseRole={(id, target) => {
               if (!welcome || id || !launch) {
                 chooseRole(id, target)

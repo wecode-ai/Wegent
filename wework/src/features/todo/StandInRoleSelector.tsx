@@ -58,6 +58,7 @@ function StandInRoleSelector({
   deviceId,
   retiredRoles,
   matchDevice,
+  launchBusy = false,
   chooseRole,
   onCreate,
 }: {
@@ -67,6 +68,7 @@ function StandInRoleSelector({
   deviceId?: string
   retiredRoles: ReadonlySet<string>
   matchDevice: boolean
+  launchBusy?: boolean
   chooseRole(id?: string, device?: string): void
   onCreate(trigger: HTMLElement): void
 }) {
@@ -81,6 +83,7 @@ function StandInRoleSelector({
         <StandInNavigationButton
           selected={!roleId}
           data-testid="stand-in-primary-open"
+          disabled={launchBusy}
           aria-current={!roleId ? 'page' : undefined}
           onClick={() => chooseRole()}
         >
@@ -134,6 +137,7 @@ function StandInRoleSelector({
           variant="unstyled"
           type="button"
           data-testid="stand-in-create-role"
+          disabled={launchBusy}
           onClick={event => onCreate(event.currentTarget)}
           className="flex h-11 shrink-0 items-center gap-1 rounded-md px-2 text-text-secondary hover:bg-muted md:h-8"
         >

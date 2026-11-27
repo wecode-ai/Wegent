@@ -1,3 +1,4 @@
+import { openStandInConversationFromHome } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -177,7 +178,7 @@ export function createDesktopScenario({
       await control.command('navigate', 'body', { value: '/stand-in' })
       const composer = testId('stand-in-conversation')
       const input = `${composer} [data-testid="chat-message-input"]`
-      const openAssistant = () => control.command('waitFor', input, { timeoutMs: uiTimeoutMs })
+      const openAssistant = () => openStandInConversationFromHome(control, input, uiTimeoutMs)
       await openAssistant()
       assert.equal((await binding(control)).status, 'unbound')
       assert.equal((await readAssistant()).definitions[0].team.spec.collaborationModel, 'solo')
