@@ -1941,6 +1941,10 @@ class SandboxManager(metaclass=SingletonMeta):
                 return
             if activity is None or activity > idle_before:
                 return
+            binding = (
+                self._repository.load_executor_binding_full(int(task_id), sandbox=True)
+                or {}
+            )
             cleanup = asyncio.create_task(
                 self._delete_orphaned_executor(task_id, lease)
             )
@@ -1955,7 +1959,14 @@ class SandboxManager(metaclass=SingletonMeta):
             if (
                 removed
                 and not lease.lost.is_set()
-                and self._repository.delete_executor_binding(int(task_id), sandbox=True)
+                and self._repository.delete_executor_binding(
+                    int(task_id),
+                    expected_executor_name=binding.get("executor_name") or "",
+                    expected_callback_token=binding.get("callback_token") or "",
+                    expected_container_id=binding.get("container_id") or "",
+                    expect_missing=not binding,
+                    sandbox=True,
+                )
             ):
                 self._repository.remove_from_active_set(task_id)
         finally:

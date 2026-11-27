@@ -822,6 +822,7 @@ class SandboxRepository(metaclass=SingletonMeta):
         expected_executor_name: str = "",
         expected_callback_token: str = "",
         expected_container_id: str = "",
+        expect_missing: bool = False,
         sandbox: bool = False,
     ) -> bool:
         """Delete a task-to-executor binding after runtime cleanup."""
@@ -835,9 +836,12 @@ class SandboxRepository(metaclass=SingletonMeta):
             revoked = self.redis_client.eval(
                 """
                 local current = redis.call('GET', KEYS[1])
-                if current and (ARGV[2] ~= '' or ARGV[3] ~= '' or ARGV[4] ~= '') then
+                if current and (
+                    ARGV[2] ~= '' or ARGV[3] ~= '' or ARGV[4] ~= '' or ARGV[5] == '1'
+                ) then
                     local binding = cjson.decode(current)
                     if not binding.revoked and (
+                        ARGV[5] == '1' or
                         (ARGV[2] ~= '' and binding.executor_name ~= ARGV[2]) or
                         (ARGV[3] ~= '' and binding.callback_token ~= ARGV[3]) or
                         (ARGV[4] ~= '' and binding.container_id ~= ARGV[4])
@@ -854,6 +858,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 expected_executor_name,
                 expected_callback_token,
                 expected_container_id,
+                "1" if expect_missing else "0",
             )
             if not revoked:
                 return False

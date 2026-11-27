@@ -2751,7 +2751,14 @@ class TestSandboxManager:
         mock_executor.delete_executor_by_task_id.assert_called_once_with(
             "12345", sandbox_only=True
         )
-        revoke.assert_called_once_with(12345, sandbox=True)
+        revoke.assert_called_once_with(
+            12345,
+            expected_executor_name="",
+            expected_callback_token="",
+            expected_container_id="",
+            expect_missing=True,
+            sandbox=True,
+        )
         mock_redis_client.zrem.assert_not_called()
 
         await manager._collect_expired_sandboxes()
@@ -2761,6 +2768,46 @@ class TestSandboxManager:
             manager._repository.active_sandboxes_zset, "12345"
         )
         mock_redis_client.zrem.assert_any_call("wegent-sandbox:active", "12345")
+
+    @pytest.mark.asyncio
+    async def test_orphan_cleanup_uses_the_binding_observed_before_removal(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
+        mock_redis_client.zscore.return_value = 1.0
+        record = {
+            "executor_name": "runtime",
+            "callback_token": "old",
+            "container_id": "a" * 64,
+        }
+        mock_redis_client.get.return_value = json.dumps(record)
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
+        ).return_value
+
+        def delete_and_replace(*args, **kwargs):
+            mock_redis_client.get.return_value = json.dumps(
+                {**record, "callback_token": "new", "container_id": "b" * 64}
+            )
+            return {"status": "success"}
+
+        executor.delete_executor_by_task_id.side_effect = delete_and_replace
+        revoke = mocker.patch.object(
+            manager._repository, "delete_executor_binding", return_value=False
+        )
+
+        await manager._collect_expired_sandboxes()
+
+        revoke.assert_called_once_with(
+            12345,
+            expected_executor_name="runtime",
+            expected_callback_token="old",
+            expected_container_id="a" * 64,
+            expect_missing=False,
+            sandbox=True,
+        )
+        mock_redis_client.zrem.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
