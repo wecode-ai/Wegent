@@ -132,8 +132,13 @@ describe('stand-in entry links', () => {
 
   it('does not guess when a device or profile matches multiple assistants', async () => {
     const api = fixture([profile('primary', 'reviewer'), profile('remote', 'reviewer', 'writer')])
-    for (const query of ['deviceId=remote', 'profileId=reviewer'])
+    for (const query of ['deviceId=primary', 'deviceId=remote', 'profileId=reviewer'])
       await expect(resolve(query, api)).resolves.toEqual({ kind: 'error', error: 'ambiguous' })
+    await expect(resolve('deviceId=primary&profileId=%40primary', api)).resolves.toEqual({
+      kind: 'ready',
+      deviceId: 'primary',
+      profileId: '@primary',
+    })
     api.personalGet.mockClear()
     await expect(resolve('deviceId=remote&profileId=reviewer', api)).resolves.toEqual({
       kind: 'ready',

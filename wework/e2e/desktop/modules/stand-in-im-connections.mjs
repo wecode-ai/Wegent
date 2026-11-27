@@ -52,7 +52,10 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.equal((await rpc('runtime.stand_in.binding', { operation: 'get' })).status, 'unbound')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', {
-        value: `/stand-in?deviceId=${encodeURIComponent(initial.executionDeviceId)}`,
+        value: `/stand-in?${new URLSearchParams({
+          deviceId: initial.executionDeviceId,
+          profileId: '@primary',
+        })}`,
       })
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await finishStandInOnboarding(control)
