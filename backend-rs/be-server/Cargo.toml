@@ -97,6 +97,7 @@ wegent-crypto = { workspace = true }
 aes = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+aes-gcm = { workspace = true }
 base64 = { workspace = true }
 bcrypt = { workspace = true }
 cbc = { workspace = true, features = ["alloc", "block-padding"] }
@@ -143,7 +144,6 @@ yaml-rust2 = { workspace = true }
 zip = { workspace = true, features = ["deflate"] }
 
 [dev-dependencies]
-aes-gcm = { workspace = true }
 wegent-connector-apps = { workspace = true, features = ["test-support"] }
 wegent-plugin-runtime = { workspace = true, features = ["test-support"] }
 wegent-runtime-observations = { workspace = true, features = ["test-support"] }

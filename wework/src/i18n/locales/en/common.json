@@ -5082,6 +5082,7 @@
     "assignment_chain_team": "Wegent agent",
     "assignment_action_assign": "Assign",
     "assignment_action_reassign": "Reassign",
+    "assignment_action_redeliver": "Redeliver",
     "assignment_action_unassign": "Unassign",
     "status_history_title": "Status history",
     "status_history_trigger": "View status history",
@@ -5786,6 +5787,9 @@
   "standIn": {
     "pipeline_confirmation_failed": "Could not confirm the current stage.",
     "confirm_pipeline_stage": "Confirm and start the next stage",
+    "preference_loading": "Loading assistant preferences…",
+    "preference_error": "Couldn't load assistant preferences",
+    "preference_retry": "Try again",
     "dingtalk_delegation": {
       "account_identity": "DingTalk account and organization",
       "provider": "DingTalk",

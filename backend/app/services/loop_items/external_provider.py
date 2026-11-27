@@ -768,6 +768,11 @@ class ExternalLoopItemProvider:
                 issue_creator_user_id=self._creator_id(self._labels(current)),
                 user_id=user_id,
             )
+        if values.redeliver:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Redelivery requires a native project Issue",
+            )
         if "archived" in values.model_fields_set:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Use project archive actions"
@@ -1318,6 +1323,11 @@ class ExternalLoopItemProvider:
             issue_creator_user_id=self._creator_id(current_labels),
             user_id=user_id,
         )
+        if values.redeliver:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Redelivery requires a native project Issue",
+            )
         previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None

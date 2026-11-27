@@ -12,10 +12,10 @@ sidebar_position: 20
 | --- | --- | --- |
 | `SCHEDULED_TASKS_ENABLED` | `true` | Produce periodic and startup jobs allowed by this Rust process's allowlist |
 | `EMBEDDED_CELERY_ENABLED` | `true` | Enable this Rust process's native worker to consume allowed durable jobs |
-| `WEGENT_RS_JOB_ALLOWLIST` | Only `device_registration_retention` when unset | Limit Rust execution to comma-separated full kinds; no `*`; unknown names fail startup |
+| `WEGENT_RS_JOB_ALLOWLIST` | Native jobs when unset | Limit Rust execution to comma-separated full kinds; no `*`; unknown names fail startup |
 | `WEGENT_RS_JOBS_SHUTDOWN_GRACE_SECONDS` | `30` | Cooperative drain period after claims stop |
 
-Rust reuses Python's existing switch names and defaults. In Rust, `EMBEDDED_CELERY_ENABLED` controls only the native worker in this process; it does not start Celery. When the allowlist is unset, the application enables only native `device_registration_retention`. It checks one minute after startup and hourly thereafter, deactivating registrations that have been offline and idle for more than seven days. An explicit empty allowlist disables all Rust jobs; an explicit list must include this name to enable retention. Migrated Python job families remain opt-in. An API-only Rust process may configure an allowlist and set both runtime switches to `false`.
+Rust reuses Python's existing switch names and defaults. In Rust, `EMBEDDED_CELERY_ENABLED` controls only the native worker in this process; it does not start Celery. When the allowlist is unset, the application enables device registration retention, managed Issue execution, and external agent delivery. The `device_registration_retention` job checks one minute after startup and hourly thereafter, deactivating registrations that have been offline and idle for more than seven days. An explicit empty allowlist disables all Rust jobs; an explicit list must include this name to enable retention. Migrated Python job families remain opt-in. An API-only Rust process may configure an allowlist and set both runtime switches to `false`.
 
 The allowlist limits Rust execution without reserving task types exclusively. Python retains all existing Celery publishing and consumption, does not read this allowlist, and does not forward tasks to Rust. Configure the same-named switches separately for each process, and avoid scheduling the same execution family concurrently in Python and Rust.
 

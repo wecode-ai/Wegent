@@ -28,6 +28,8 @@ async function loadSetup(
   signal: AbortSignal,
   preferredDevice?: string
 ) {
+  if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
+    performance.mark('wework:assistant-account-load')
   const cloud = services.personalAssistantAccountApi!
   const account = await cloud.get(signal).catch((cause: unknown) => {
     signal.throwIfAborted()

@@ -58,6 +58,7 @@ For clone authentication failures, execution-environment device errors or Git au
 | Switch the base board and custom views | Collaboration → select project → view menu on the right of the board | The base board follows status order; the default custom view has a Default badge. See [Save and switch board views](./projects.md#board-views) |
 | Assigned issues and stand-in tasks                      | Top tab bar → + → Collaboration → My work                                                                                         | Switch Needs my action or Participating by project; selecting an Issue replaces the single right-hand detail tab. The assistant opens a separate chat; Assistant tasks lists role-grouped work with inline task conversations. Record directly at the top, or select Create task. See [Personal collaboration home](./projects.md#personal-collaboration-home) |
 | Assign, move or close an Issue in details               | Collaboration → open Issue → discussion composer                                                                                  | Stage assignee and destination, then Send and update; close/reopen in the menu beside Send inside the composer. See [Issue operations](./projects.md#project-controls)                                                                                                                                                                                         |
+| Redeliver or return to the previous assignee | Collaboration → open Issue → Assignee below the title / Assignee in the discussion composer | Available shortcuts require assignment permission. The title picker acts immediately, and the composer picker stages the action until Send. See [Issue operations](./projects.md#project-controls). |
 | Create a collaboration project                          | Collaboration → Personal group → … → New project                                                                                  | Defaults to local while disconnected and cloud while connected; choose an eligible space in the dialog, initially Personal group. The dialog configures a new project without folder creation or existing-project import buttons. See [Project navigation](./projects.md#workspace-resource-controls)                                                          |
 | Manage project Issues with AI                           | Collaboration → Projects → select project → Ask AI                                                                                | Query, create, and update current-project Issues; explicitly name personal tasks to query those. See [Project conversations](./projects.md#project-conversations).                                                                                                                                                                                             |
 | Create group                                            | Collaboration → add-folder button beside Projects                                                                                 | Requires a cloud connection. See [Space resources](./projects.md#workspace-resource-controls).                                                                                                                                                                                                                                                                 |
@@ -132,6 +133,8 @@ From **Projects → New project → Cloud project** in the sidebar, you can add 
 
 Edit Agent definitions from **Project settings → AI configuration**. Project Maintainers can edit non-private project definitions; shared source definitions retain their original permissions. Imported and manually created Agents share the same entry. See [Agent configuration](./projects.md#agent-capabilities) for device-conflict recovery.
 
+In cloud projects, use **Add agent → Connect external agent** to configure a hook or Worker. See [Connect an external agent](./projects.md#external-agents).
+
 ## Sidebar feature entries
 
 Project settings in narrow windows collapse the sidebar into **Collaboration navigation** above the page. Expand it for Home, projects and other collaboration entries; choosing a location collapses it again. See [Project settings](./projects.md).
@@ -167,7 +170,7 @@ Internal routes below support version maintenance and automated checks; they are
 
 ### Space and auxiliary feature links
 
-Enable the preview, open **top tab strip → + → Collaboration exp**, or roll back: [Collaboration experience preview](./collaboration-experience.md). In the preview sidebar, select **Assistant**, then open **My assistants → Manage assistants** to view or configure assistants.
+With the preview on, use **top tab strip → + → Collaboration exp** for tasks and projects. Open **Wework sidebar → My assistants → Manage assistants** to view or configure assistants in the new assistant center. See the [Collaboration experience preview](./collaboration-experience.md) for setup and rollback.
 
 Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
 

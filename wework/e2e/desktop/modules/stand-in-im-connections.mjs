@@ -52,7 +52,10 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.equal((await rpc('runtime.stand_in.binding', { operation: 'get' })).status, 'unbound')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', {
-        value: `/stand-in?deviceId=${encodeURIComponent(initial.executionDeviceId)}`,
+        value: `/stand-in?${new URLSearchParams({
+          deviceId: initial.executionDeviceId,
+          profileId: '@primary',
+        })}`,
       })
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await finishStandInOnboarding(control)
@@ -336,6 +339,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       }
       await closeConnections()
       await selectWorkbenchTheme(control, { mode: 'dark', themeId: 'wework' })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channels-toggle"]')
       await captureScreenshot(control, 'im-stand-in-10-channel-settings-dark.png')

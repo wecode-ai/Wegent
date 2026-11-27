@@ -5072,6 +5072,7 @@
     "assignment_chain_team": "Wegent 智能体",
     "assignment_action_assign": "指派",
     "assignment_action_reassign": "转派",
+    "assignment_action_redeliver": "重新投递",
     "assignment_action_unassign": "取消指派",
     "status_history_title": "状态历史",
     "status_history_trigger": "查看状态历史",
@@ -5776,6 +5777,9 @@
   "standIn": {
     "pipeline_confirmation_failed": "未能确认当前阶段。",
     "confirm_pipeline_stage": "确认并开始下一阶段",
+    "preference_loading": "正在读取助理偏好…",
+    "preference_error": "无法读取助理偏好",
+    "preference_retry": "重试",
     "dingtalk_delegation": {
       "account_identity": "钉钉账号和组织",
       "provider": "钉钉",

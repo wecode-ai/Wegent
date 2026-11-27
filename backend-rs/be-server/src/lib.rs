@@ -213,6 +213,7 @@ pub(crate) use wegent_backend_persistence::sql_support;
 pub(crate) use wegent_backend_test_support as sql_test_support;
 pub(crate) use wegent_socket_events::socketio_emit;
 pub use wegent_socket_events::socketio_rpc;
+mod external_agents;
 mod startup;
 mod state;
 mod stripe_webhook_probe;

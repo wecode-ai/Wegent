@@ -2536,15 +2536,44 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let todo = params.get("todo").unwrap_or(&params);
             let input = serde_json::from_value::<TaskUpdate>(todo.clone())
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let redeliver = match todo.get("redeliver") {
+                None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+                Some(Value::Bool(true)) => true,
+                Some(_) => {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "redeliver must be a boolean",
+                    ));
+                }
+            };
+            let start_at = optional_nullable_task_string(todo, "start_at")?;
+            let due_at = optional_nullable_task_string(todo, "due_at")?;
+            if redeliver {
+                if todo
+                    .get("notify_assignee")
+                    .is_some_and(|notify| notify.as_bool() != Some(true))
+                {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Redelivery requires notification",
+                    ));
+                }
+                if start_at.is_some() || due_at.is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Redelivery requires only the current human assignee",
+                    ));
+                }
+                return serialize_task_value(
+                    runtime
+                        .redeliver_task(project_id, task_id, input)
+                        .await
+                        .map_err(task_runtime_error)?,
+                );
+            }
             serialize_task_value(
                 runtime
-                    .update_task_with_schedule(
-                        project_id,
-                        task_id,
-                        input,
-                        optional_nullable_task_string(todo, "start_at")?,
-                        optional_nullable_task_string(todo, "due_at")?,
-                    )
+                    .update_task_with_schedule(project_id, task_id, input, start_at, due_at)
                     .await
                     .map_err(task_runtime_error)?,
             )

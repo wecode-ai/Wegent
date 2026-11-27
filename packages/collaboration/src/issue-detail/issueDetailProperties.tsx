@@ -1,6 +1,7 @@
 import { Checkbox } from '../controls/Checkbox'
 import { Button as ControlButton } from '../markdown/Button'
 import { SearchableSelect } from '../controls/SearchableSelect'
+import type { SearchableSelectOption } from '../controls/SearchableSelect'
 import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import { MilestonePicker } from '../milestones/MilestonePicker'
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from '../issue-card/priorityBadgeClasses'
@@ -38,6 +39,13 @@ import {
 } from './issueEditorSupport'
 import { ScheduleRangeControl, AvatarMark } from './IssueEditorControls'
 import type { IssueDetailModel } from './useSharedIssueDetailModel'
+import {
+  commentAssigneeValue,
+  issueAssignmentOptions,
+  issueAssignmentShortcuts,
+  type IssueAssignmentShortcut,
+} from './issueAssignmentShortcuts'
+
 export function createIssueDetailProperties(model: IssueDetailModel) {
   const {
     props,
@@ -117,9 +125,18 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     assigneeName,
     canAssign,
     commentActions,
+    assignmentBusy,
+    assignmentInFlight,
+    assignmentPending,
+    assignmentSuccessRevision,
+    runIssueAssignment,
+    completeIssueAssignment,
     assigneeChanged,
     creator,
     persistAssignee,
+    synchronizeAssigneeSource,
+    persistShortcutAssignee,
+    applyShortcutAssignee,
     addCollaborator,
     removeCollaborator,
   } = model
@@ -128,12 +145,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
   // activity rail on the right. Edit mode with a project always gets this
   // layout so the task detail shape matches the design even before chat
   // connectivity is available.
-  const assigneeOptions: Array<{
-    value: IssueAssigneeTarget
-    label: string
-    group?: string
-    description?: string
-  }> = [
+  const assigneeOptions: SearchableSelectOption<IssueAssigneeTarget>[] = [
     {
       value: '',
       label: t('todo.unassigned', '未指派'),
@@ -204,6 +216,61 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         group: t('todo.agent_teams', 'Wegent 智能体'),
       })),
   ]
+  const shortcuts =
+    item && canAssign && !assigneeChanged && !assignmentPending
+      ? issueAssignmentShortcuts(
+          item,
+          assigneeOptions,
+          assigneeName,
+          Boolean(project && (project.task_provider ?? 'local') === 'local'),
+          t
+        )
+      : []
+  const changeAssignee = (target: IssueAssigneeTarget) => {
+    if (!outsideTargetUser(target)) {
+      changeProperty('assigneeTarget', target)
+      return
+    }
+    void confirmOutsideTarget(target).then(approved => {
+      if (approved) changeProperty('assigneeTarget', target)
+    })
+  }
+  const selectShortcutAssignee = (shortcut: IssueAssignmentShortcut) => {
+    if (shortcut.kind === 'redeliver' || !outsideTargetUser(shortcut.target)) {
+      applyShortcutAssignee(shortcut)
+      return
+    }
+    void confirmOutsideTarget(shortcut.target).then(approved => {
+      if (approved) applyShortcutAssignee(shortcut)
+    })
+  }
+
+  async function assignCommentTarget(value: string, owner: number) {
+    if (!item || !editProps) return false
+    if (!canAssign || saving) throw new Error(t('todo.saving', '保存中…'))
+    const shortcut = shortcuts.find(option => option.kind !== 'recent' && option.value === value)
+    const target =
+      shortcut?.target ??
+      assigneeOptions.find(
+        option => !option.disabled && commentAssigneeValue(option.value) === value
+      )?.value
+    if (!target) throw new Error(t('todo.redeliver_assignee_changed', '负责人已变化，请重新选择。'))
+    if (shortcut?.kind !== 'redeliver' && !(await confirmOutsideTarget(target))) return false
+    if (!collections.isActive(owner)) return false
+    const current = synchronizeAssigneeSource(
+      await editorPort.issues.get(item.id),
+      issueAssigneeTarget(item),
+      owner
+    )
+    if (!current) return false
+    const currentTarget = issueAssigneeTarget(current)
+    if (!shortcut && currentTarget === target) return
+    const updated = shortcut
+      ? await persistShortcutAssignee(current, shortcut, currentTarget, owner)
+      : await persistAssignee(current, target, true)
+    if (!synchronizeAssigneeSource(updated, currentTarget, owner, true)) return false
+    completeIssueAssignment(owner)
+  }
 
   const activityView =
     item && editProps && editProps.project?.task_provider !== 'dingtalk_aitable'
@@ -236,25 +303,12 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
                     .map(option => ({
                       ...option,
                       // Preserve the comment selector's existing human target IDs.
-                      value: option.value.startsWith('user:')
-                        ? option.value.slice(5)
-                        : option.value,
+                      value: commentAssigneeValue(option.value),
                     })),
-                  assign: async value => {
-                    const target = assigneeOptions.find(
-                      option =>
-                        (option.value.startsWith('user:')
-                          ? option.value.slice(5)
-                          : option.value) === value
-                    )?.value
-                    if (!target) throw new Error('Assignee is no longer available')
-                    if (!canAssign || saving) throw new Error(t('todo.saving', '保存中…'))
-                    if (!(await confirmOutsideTarget(target))) return false
-                    const current = await editorPort.issues.get(item.id)
-                    if (!collections.isActive() || issueAssigneeTarget(current) === target) return
-                    const updated = await persistAssignee(current, target, true)
-                    if (collections.isActive()) editProps.onUpdated(updated)
-                  },
+                  shortcuts,
+                  assignmentBusy,
+                  assignmentSuccessRevision,
+                  assign: value => runIssueAssignment(owner => assignCommentTarget(value, owner)),
                 }
               : undefined,
           tasks: effectiveTasks,
@@ -333,7 +387,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
       <span className="inline-flex min-w-0 items-center gap-1.5">{assigneeValue}</span>
     ) : (
       <>
-        <SearchableSelect<IssueAssigneeTarget>
+        <SearchableSelect<IssueAssigneeTarget | IssueAssignmentShortcut['value']>
           testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
           accessibleLabel={t('todo.assignee', '负责人')}
           appearance={isCreate ? 'outline' : 'property'}
@@ -359,15 +413,16 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
             ) : null
           }
           onChange={value => {
-            if (!outsideTargetUser(value)) {
-              changeProperty('assigneeTarget', value)
+            const shortcut = shortcuts.find(option => option.value === value)
+            if (shortcut && shortcut.kind !== 'recent') {
+              selectShortcutAssignee(shortcut)
               return
             }
-            void confirmOutsideTarget(value).then(approved => {
-              if (approved) changeProperty('assigneeTarget', value)
-            })
+            const target =
+              shortcut?.target ?? assigneeOptions.find(option => option.value === value)?.value
+            if (target !== undefined) changeAssignee(target)
           }}
-          disabled={!canAssign}
+          disabled={!canAssign || assignmentInFlight}
           className={cn(
             'relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default',
             workspacePanel && 'min-w-0 max-w-full'
@@ -417,7 +472,12 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
               </label>
             ) : undefined
           }
-          options={assigneeOptions}
+          options={issueAssignmentOptions(
+            shortcuts,
+            assigneeOptions,
+            'cloud-todo-detail-assignee',
+            t
+          )}
         />
       </>
     )

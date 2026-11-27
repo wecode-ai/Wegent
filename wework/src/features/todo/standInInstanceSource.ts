@@ -8,6 +8,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { availableStandInDevices } from './standInDevices'
+import { resolveStandInEntry, type StandInEntry, type StandInEntryError } from './standInEntry'
 import {
   migrateStandIn,
   StandInMigrationError,
@@ -23,6 +24,8 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 
 interface InstanceSnapshot {
   binding?: StandInInstanceBinding
+  setupTarget?: StandInBindingTarget
+  entryFailure?: { entry: StandInEntry; error: StandInEntryError }
   stoppedProfile?: PersonalStandInSettings
   localDeviceId: string
   busy: boolean
@@ -33,6 +36,8 @@ interface InstanceObservation {
   connected: boolean
   active: boolean
   entryRequestKey?: number
+  entry?: StandInEntry
+  entryApi?: Pick<StandInExecutorApi, 'personalGet'>
 }
 export const hasSavedStandIn = (settings: PersonalStandInSettings) =>
   Boolean(
@@ -94,13 +99,13 @@ export function createStandInInstanceSource({
   api,
   userId,
   backendUrl,
-  initialDeviceId,
+  requireSetupConfirmation = true,
 }: {
   services: WorkbenchServices
   api: StandInExecutorApi | undefined
   userId: number
   backendUrl: string
-  initialDeviceId?: string
+  requireSetupConfirmation?: boolean
 }) {
   let snapshot: InstanceSnapshot = { localDeviceId: '', busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -111,14 +116,6 @@ export function createStandInInstanceSource({
   let activating:
     | { deviceId: string; version: number; result: Promise<StandInInstanceBinding> }
     | undefined
-  let initialization:
-    | {
-        deviceId: string
-        activation: number
-        lifetime: number
-        request: Promise<{ binding: StandInInstanceBinding; error?: unknown }>
-      }
-    | undefined
   const publish = (patch: Partial<InstanceSnapshot>) => {
     snapshot = { ...snapshot, ...patch }
     for (const listener of listeners) listener()
@@ -126,6 +123,7 @@ export function createStandInInstanceSource({
   const publishBinding = (binding: StandInInstanceBinding) =>
     publish({
       binding,
+      ...(binding.status !== 'unbound' ? { setupTarget: undefined, entryFailure: undefined } : {}),
       ...(binding.status !== 'stopped' ||
       binding.version !== snapshot.binding?.version ||
       !sameTarget(snapshot.binding?.target, binding.target) ||
@@ -141,25 +139,53 @@ export function createStandInInstanceSource({
     if (!observed(revision, deviceId))
       throw new DOMException('Stand-in instance owner changed', 'AbortError')
   }
+  const discoverSetupTarget = async (deviceId: string, owner: InstanceObservation) => {
+    const owned = await api!.personalGet(userId, deviceId)
+    const available = owner.connected ? availableStandInDevices(owner.devices) : []
+    const preferred = available.find(device => device.is_default) ?? available[0]
+    return setupBindingTarget(
+      hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)
+    )
+  }
+  const setupBindingTarget = (deviceId: string): StandInBindingTarget => ({
+    userId,
+    backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
+    deviceId,
+  })
+  const resolveSetupEntry = (
+    deviceId: string,
+    owner: InstanceObservation,
+    entry: Extract<StandInEntry, { kind: 'identity' }>
+  ) =>
+    resolveStandInEntry(
+      owner.entryApi ?? api!,
+      entry,
+      { userId, deviceId: entry.deviceId ?? deviceId },
+      new Set([
+        deviceId,
+        ...(owner.connected
+          ? availableStandInDevices(owner.devices).map(device => device.device_id)
+          : []),
+      ]),
+      { unbound: true }
+    )
   const initialize = async (
     deviceId: string,
     unbound: StandInInstanceBinding,
-    owner: InstanceObservation,
+    target: StandInBindingTarget,
     epoch: number,
     revision: number
   ) => {
-    const owned = await api!.personalGet(userId, deviceId)
     const mayBind = () =>
-      observed(revision, deviceId) && observation?.active && activation === epoch
+      observed(revision, deviceId) &&
+      observation?.active &&
+      activation === epoch &&
+      (target.deviceId === deviceId ||
+        (observation.connected &&
+          availableStandInDevices(observation.devices).some(
+            device => device.device_id === target.deviceId
+          )))
     if (!mayBind()) return { binding: unbound }
-    const available = owner.connected ? availableStandInDevices(owner.devices) : []
-    const preferred = available.find(device => device.is_default) ?? available[0]
-    const target = {
-      userId,
-      backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
-      deviceId:
-        initialDeviceId || (hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)),
-    }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)
       if (!mayBind()) return { binding: unbound }
@@ -203,12 +229,34 @@ export function createStandInInstanceSource({
         publish({
           localDeviceId: identity.deviceId,
           ...(snapshot.localDeviceId && snapshot.localDeviceId !== identity.deviceId
-            ? { binding: undefined, stoppedProfile: undefined }
+            ? { binding: undefined, stoppedProfile: undefined, setupTarget: undefined }
             : {}),
         })
-      // Finish the admitted binding read; only the current owner may initialize or publish it.
       let binding = await api.binding(identity.deviceId)
       if (!current()) return
+      if (binding.status === 'unbound') {
+        publishBinding(binding)
+        const entry = owner.entry
+        if (entry && entry.kind !== 'home') {
+          publish({ setupTarget: undefined, entryFailure: undefined, error: null })
+          if (requireSetupConfirmation || entry.kind !== 'identity') return
+          const resolved = await resolveSetupEntry(identity.deviceId, owner, entry)
+          if (!current()) return
+          if (resolved.kind === 'error') {
+            publish({ entryFailure: { entry, error: resolved.error } })
+            return
+          }
+          publish({ setupTarget: setupBindingTarget(resolved.deviceId) })
+          await mutate('setup', {})
+          return
+        }
+        if (snapshot.setupTarget) return
+        const setupTarget = await discoverSetupTarget(identity.deviceId, owner)
+        if (!current()) return
+        publish({ setupTarget, entryFailure: undefined, error: null })
+        if (!requireSetupConfirmation) await mutate('setup', {})
+        return
+      }
       if (
         binding.status === 'stopped' &&
         binding.target &&
@@ -234,41 +282,6 @@ export function createStandInInstanceSource({
         }
         binding = await activating.result
       }
-      if (binding.status === 'unbound') {
-        if (initialization?.deviceId !== identity.deviceId) {
-          const request = initialize(identity.deviceId, binding, owner, epoch, ownerRevision)
-          initialization = {
-            deviceId: identity.deviceId,
-            activation: epoch,
-            lifetime: ownerRevision,
-            request,
-          }
-          void request.then(
-            value => {
-              if (value.binding.status === 'unbound' && initialization?.request === request)
-                initialization = undefined
-            },
-            () => {
-              if (initialization?.request === request) initialization = undefined
-            }
-          )
-        }
-        const transaction = initialization
-        const initialized = await transaction.request
-        if (
-          current() &&
-          initialized.binding.status === 'unbound' &&
-          (transaction.activation !== epoch || transaction.lifetime !== ownerRevision)
-        ) {
-          void read()
-          return
-        }
-        binding = initialized.binding
-        if (initialized.error) {
-          if (current()) publishBinding(binding)
-          throw initialized.error
-        }
-      }
       if (current()) {
         publishBinding(binding)
         publish({ error: null })
@@ -278,7 +291,7 @@ export function createStandInInstanceSource({
     }
   }
   const mutate = async (
-    operation: 'stop' | 'bind' | 'migrate' | 'initialize',
+    operation: 'setup' | 'stop' | 'bind' | 'migrate' | 'initialize',
     input: {
       version?: number
       target?: StandInBindingTarget
@@ -288,12 +301,24 @@ export function createStandInInstanceSource({
       initializeTarget?(): Promise<void>
     }
   ) => {
-    if (!listeners.size || !observation?.active || snapshot.busy) return
+    const owner = observation
+    if (!listeners.size || !owner?.active || snapshot.busy) return
     const binding = snapshot.binding
     const localDeviceId = snapshot.localDeviceId
     const revision = lifetime
     publish({ busy: true, error: null })
     try {
+      if (operation === 'setup') {
+        const target = snapshot.setupTarget
+        if (!api || !localDeviceId || binding?.status !== 'unbound' || !target) return
+        readRevision++
+        const result = await initialize(localDeviceId, binding, target, ++activation, revision)
+        if (observed(revision, localDeviceId)) {
+          publishBinding(result.binding)
+          if (result.error) throw result.error
+        }
+        return
+      }
       if (!api || !binding || !localDeviceId) return
       const source = binding.target
       const ownsSource = source && isStandInBindingOwner(source.userId, userId)
@@ -401,7 +426,15 @@ export function createStandInInstanceSource({
         publish({ error: { cause, fallback: 'save_settings_failed' } })
       if (operation === 'migrate' || operation === 'initialize') throw cause
     } finally {
-      if (observed(revision, localDeviceId)) publish({ busy: false })
+      if (observed(revision, localDeviceId)) {
+        const setupScopeChanged =
+          operation === 'setup' &&
+          (owner.entry !== observation?.entry ||
+            owner.connected !== observation?.connected ||
+            owner.devices !== observation?.devices)
+        publish({ busy: false, ...(setupScopeChanged ? { setupTarget: undefined } : {}) })
+        if (setupScopeChanged) void read()
+      }
     }
   }
   return {
@@ -415,8 +448,11 @@ export function createStandInInstanceSource({
         previous.active !== owner.active ||
         previous.connected !== owner.connected ||
         previous.devices !== owner.devices ||
+        previous.entry !== owner.entry ||
+        previous.entryApi !== owner.entryApi ||
         previous.entryRequestKey !== owner.entryRequestKey
-      if (!previous || previous.active !== owner.active) activation++
+      if (!previous || previous.active !== owner.active || previous.entry !== owner.entry)
+        activation++
       if (changed) {
         readRevision++
         if (owner.active && !snapshot.busy) void read()
@@ -435,6 +471,15 @@ export function createStandInInstanceSource({
     },
     stop: async (version: number) => {
       await mutate('stop', { version })
+    },
+    setup: async () => {
+      const target = snapshot.setupTarget
+      await mutate('setup', {})
+      return (
+        !snapshot.error &&
+        snapshot.binding?.status === 'active' &&
+        sameTarget(snapshot.binding.target, target)
+      )
     },
     bind: async (target: StandInBindingTarget) => {
       await mutate('bind', { target })

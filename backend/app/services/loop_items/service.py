@@ -1846,6 +1846,26 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         item = self._get_item_row(db, item_id, for_update=True)
+        if values.redeliver:
+            if not item.cloud_project_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Redelivery requires a project Issue",
+                )
+            return self.assign(
+                db,
+                project_id=int(item.cloud_project_id),
+                item_id=item_id,
+                user_id=user_id,
+                values=LoopItemAssign(
+                    version=values.version,
+                    assignee_type="user",
+                    assignee_id=str(values.assignee_user_id),
+                    redeliver=True,
+                ),
+                automation_context=automation_context,
+                commit=commit,
+            )
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -1907,6 +1927,7 @@ class LoopItemService:
                 "version",
                 "automation_rule_id",
                 "notify_assignee",
+                "redeliver",
                 "runner_selection",
                 "assignee_group_id",
                 "security_level",
@@ -2330,6 +2351,11 @@ class LoopItemService:
         self._require_issue_access(db, item, user_id, allow_no_project=True)
         if item.cloud_project_id or item.version != values.version:
             raise self._issue_version_conflict()
+        if values.redeliver:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Redelivery requires a project Issue",
+            )
         assignee_fields = {
             "assignee_user_id",
             "assignee_agent_id",
@@ -2347,6 +2373,7 @@ class LoopItemService:
                 "due_at",
                 "status",
                 "notify_assignee",
+                "redeliver",
                 "archived",
             }
         ):
@@ -2354,7 +2381,13 @@ class LoopItemService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unsupported Issue fields"
             )
         updates = values.model_dump(
-            exclude={"version", "notify_assignee", "archived", *assignee_fields},
+            exclude={
+                "version",
+                "notify_assignee",
+                "redeliver",
+                "archived",
+                *assignee_fields,
+            },
             exclude_unset=True,
         )
         for field in ("title", "description", "priority", "status"):
@@ -2865,6 +2898,8 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
+            if values.redeliver and previous_assignee_user_id != target_user_id:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Issue assignee changed")
             require_active_issue_user(db, target_user_id)
             from app.services.issue_assignments import issue_assignment_service
 
@@ -2877,7 +2912,8 @@ class LoopItemService:
                 assigned_by_user_id=user_id,
                 workflow_step=values.workflow_step,
                 notify=values.notify_assignee,
-                trigger=values.trigger,
+                trigger="redelivery" if values.redeliver else values.trigger,
+                redeliver=values.redeliver,
                 comment_id=assignment_comment_id,
                 automation_context=automation_context,
             )
@@ -2894,6 +2930,7 @@ class LoopItemService:
                 str(target_user_id),
                 target.user_name if target else None,
                 automation_context=automation_context,
+                redeliver=values.redeliver,
             )
             cancelled_runs = (
                 self._sync_execution_for_assignment(
@@ -3003,8 +3040,9 @@ class LoopItemService:
                 target_user_id != user_id
                 or automation_context is not None
                 or values.notify_self
+                or values.redeliver
             )
-            and previous_assignee_user_id != target_user_id
+            and (values.redeliver or previous_assignee_user_id != target_user_id)
         ):
             from app.services.collaboration_human_assignments import (
                 notify_direct_human_assignment,
@@ -4210,12 +4248,13 @@ class LoopItemService:
         *,
         automation_context: dict[str, Any] | None = None,
         actor_agent: ProjectChatAgent | None = None,
+        redeliver: bool = False,
     ) -> None:
         """Record who assigned to whom. Run state lives in the execution table."""
 
         history = metadata.get(ASSIGNMENT_HISTORY_KEY)
         history = list(history) if isinstance(history, list) else []
-        action = "assign" if not history else "reassign"
+        action = "reassign" if history or redeliver else "assign"
         if to_id is None:
             action = "unassign"
         now = LoopItemService._now()
@@ -4235,6 +4274,7 @@ class LoopItemService:
                 "to_id": to_id,
                 "to_name": to_name,
                 "action": action,
+                **({"redeliver": True} if redeliver else {}),
                 "at": now.isoformat(),
             }
         )

@@ -177,7 +177,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsBusy = paneSession.status.isBusy
-  const showPauseButton = !paneSession.subagentStatuses.some(agent => agent.status === 'running')
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
   const taskPermissions = useRuntimeTaskPermissions(
@@ -597,7 +596,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                         guidanceMessages={paneGuidanceMessages}
                         codeComments={paneSession.codeCommentContexts}
                         isStreaming={paneIsBusy}
-                        showPauseButton={showPauseButton}
                         onPause={() => void paneSession.pauseCurrentResponse()}
                         onCompactContext={
                           currentRuntimeUsesCodex
@@ -700,7 +698,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsBusy}
-                showPauseButton={showPauseButton}
                 onPause={() => void paneSession.pauseCurrentResponse()}
                 onCompactContext={
                   currentRuntimeUsesCodex ? () => void paneSession.compactContext() : undefined

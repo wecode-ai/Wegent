@@ -1060,7 +1060,7 @@ export function createLocalDeliveryApi(
     runnerSelection?: RunnerSelection
   ) {
     let todo = localTaskUpdate(data)
-    delete todo.notify_assignee
+    if (!data.redeliver) delete todo.notify_assignee
     if (Array.isArray(data.tags)) {
       const current = await request<LocalLoopItemRecord>('todos.get', {
         project_id: projectId,

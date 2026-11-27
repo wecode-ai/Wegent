@@ -1,8 +1,17 @@
-import { useCallback, useMemo, type PointerEventHandler } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEventHandler,
+} from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
+import { DesktopWindowControls } from './DesktopWindowControls'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ExistingLocalProjectImportDialog } from '@/components/projects/ExistingLocalProjectImportDialog'
 import {
@@ -17,6 +26,7 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { TaskBoardView } from '@/features/todo/TaskBoardView'
 import { PersonalStandInWorkspace } from '@/features/todo/PersonalStandInWorkspace'
+import { StandInPreferenceGate } from '@/features/todo/StandInPreferenceGate'
 import { WeworkCollaborationPlatform } from '@/features/todo/WeworkCollaborationPlatform'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { projectSpaceRef } from '@/features/todo/projectSpaceSelection'
@@ -120,6 +130,7 @@ export function DesktopWorkbenchLayoutView({
     setNotice,
     routeWorkItemsOpen,
     standInOpen,
+    standInActive,
     standInRetention,
     taskBoardOpen,
     routedDefaultWorkItemsOpen,
@@ -146,12 +157,20 @@ export function DesktopWorkbenchLayoutView({
     openSettings,
     openSidebarPreview,
     closeSidebarPreview,
+    dismissCompactSidebar,
     updateSidebarCollapsed,
     collapseSidebar,
     sidebarWidth,
     handleSidebarResizeStart,
     toggleRuntimeTaskNotification,
   } = model
+  const standInSurface = useRef<HTMLDivElement>(null)
+  const [focusStandInEntry, setFocusStandInEntry] = useState<number>()
+  useFocusRequest(standInSurface, focusStandInEntry, {
+    enabled:
+      standInActive && effectiveSidebarCollapsed && focusStandInEntry === standInRetention.entryKey,
+    preventScroll: true,
+  })
   const splitGroupState = splitGroups.state
   const sidebarSplitGroupMemberships = useMemo(
     () => getWorkbenchSplitGroupMemberships(splitGroupState, !standInOpen),
@@ -163,6 +182,18 @@ export function DesktopWorkbenchLayoutView({
   )
   const expandSidebar = useCallback(() => updateSidebarCollapsed(false), [updateSidebarCollapsed])
   const openSearch = useCallback(() => setSearchOpen(true), [setSearchOpen])
+  const handleOpenStandIn = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      if (window.innerWidth < 768) {
+        const reopens = standInOpen && standInRetention.contentRoute === '/stand-in'
+        const entryKey = standInRetention.entryKey + (reopens ? 0 : 1)
+        setFocusStandInEntry(event.detail === 0 ? entryKey : undefined)
+        dismissCompactSidebar()
+      }
+      openStandIn()
+    },
+    [dismissCompactSidebar, standInOpen, standInRetention.contentRoute, standInRetention.entryKey]
+  )
   const renderDesktopSidebar = ({
     collapsed,
     containerTestId,
@@ -217,7 +248,7 @@ export function DesktopWorkbenchLayoutView({
       onPointerLeave={onPointerLeave}
       onToggleSidebar={onToggleSidebar ?? toggleSidebar}
       onNewChat={startNewChatOutsideHarness}
-      onOpenStandIn={openStandIn}
+      onOpenStandIn={handleOpenStandIn}
       onStartStandaloneChat={startStandaloneChatOutsideHarness}
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
@@ -276,6 +307,7 @@ export function DesktopWorkbenchLayoutView({
             <div
               data-testid="desktop-sidebar-preview"
               aria-hidden={!sidebarPreviewOpen}
+              inert={!sidebarPreviewOpen}
               onPointerEnter={openSidebarPreview}
               onPointerLeave={closeSidebarPreview}
               className={cn(
@@ -313,23 +345,38 @@ export function DesktopWorkbenchLayoutView({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {(standInOpen || standInRetention.visited) && (
+          {standInRetention.visited && (
             <div
-              className="min-h-0 min-w-0 flex-1 flex-col"
-              style={{ display: standInOpen ? 'flex' : 'none' }}
-              aria-hidden={!standInOpen}
-              inert={!standInOpen}
+              ref={standInSurface}
+              className={cn('min-h-0 min-w-0 flex-1 flex-col', standInActive ? 'flex' : 'hidden')}
+              tabIndex={-1}
+              aria-hidden={!standInActive}
+              inert={!standInActive}
             >
-              <PersonalStandInWorkspace
-                contentRoute={standInRetention.contentRoute}
-                entryRequestKey={standInRetention.entryKey}
-                services={services}
-                user={state.user ?? LOCAL_USER}
-                devices={state.devices}
-                active={standInOpen && routeActive && !settingsOpen}
-                onClose={() => navigateTo('/')}
-                onOpenTask={openRuntimeTaskOutsideHarness}
-              />
+              {standInActive && (
+                <DesktopWindowControls
+                  sidebarCollapsed={effectiveSidebarCollapsed}
+                  onToggleSidebar={toggleSidebar}
+                  className={cn('shrink-0', !effectiveSidebarCollapsed && 'md:hidden')}
+                  toggleTestId="stand-in-sidebar-toggle"
+                />
+              )}
+              <StandInPreferenceGate active={standInActive}>
+                {experienceEnabled => (
+                  <PersonalStandInWorkspace
+                    key={String(experienceEnabled)}
+                    contentRoute={standInRetention.contentRoute}
+                    entryRequestKey={standInRetention.entryKey}
+                    experienceEnabled={experienceEnabled}
+                    services={services}
+                    user={state.user ?? LOCAL_USER}
+                    devices={state.devices}
+                    active={standInActive}
+                    onClose={() => navigateTo('/')}
+                    onOpenTask={openRuntimeTaskOutsideHarness}
+                  />
+                )}
+              </StandInPreferenceGate>
             </div>
           )}
           {taskBoardOpen && routeActive && !settingsOpen ? (

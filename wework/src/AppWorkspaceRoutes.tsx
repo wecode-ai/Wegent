@@ -15,6 +15,7 @@ import {
   useContext,
   useSyncExternalStore,
 } from 'react'
+import { IssueDetailDraftProvider } from '@wegent/collaboration'
 import { PlugZap } from 'lucide-react'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -368,7 +369,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
       {unavailableRouteActive ? <UnavailableWorkspaceRoute path={tabPath} /> : null}
     </>
   )
-  return (
+  const surface = (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity mode={active || keepSurfaceActive ? 'visible' : 'hidden'}>
         <div
@@ -457,6 +458,9 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
         </div>
       </Activity>
     </WorkspaceTabPortalOwner>
+  )
+  return (
+    <IssueDetailDraftProvider scope={`${user.id}:${tab.id}`}>{surface}</IssueDetailDraftProvider>
   )
 })
 

@@ -94,6 +94,7 @@ export interface SharedIssueDetailDeliveryDetail extends SharedIssueDetailDelive
 }
 
 export interface SharedIssueDetailAgent {
+  runtime?: string;
   id: string;
   name: string;
   status?: string;
@@ -134,6 +135,7 @@ export interface SharedIssueDetailUpdateInput {
   assignee_team_id?: number | null;
   assignee_group_id?: string | null;
   notify_assignee?: boolean;
+  redeliver?: boolean;
   start_at?: string | null;
   due_at?: string | null;
   tags?: string[];
@@ -400,6 +402,7 @@ export function createSharedIssueDetailPort(
           ...(input.notify_assignee !== undefined
             ? { notifyAssignee: input.notify_assignee }
             : {}),
+          ...(input.redeliver !== undefined ? { redeliver: input.redeliver } : {}),
           ...(input.start_at !== undefined ? { startAt: input.start_at } : {}),
           ...(input.due_at !== undefined ? { dueAt: input.due_at } : {}),
           ...(input.tags !== undefined ? { tags: input.tags } : {}),
@@ -432,6 +435,7 @@ export function createSharedIssueDetailPort(
         api.agents.list(projectId).then((agents) =>
           agents.map((agent) => ({
             id: agent.id,
+            runtime: agent.runtime,
             name: String(agent.displayName || agent.display_name || agent.name),
             status: typeof agent.status === "string" ? agent.status : undefined,
             ...((agent.team_id ?? agent.wegentTeamId ?? agent.wegent_team_id) ==

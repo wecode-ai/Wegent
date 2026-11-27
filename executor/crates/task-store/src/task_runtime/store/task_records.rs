@@ -384,6 +384,68 @@ impl LocalTaskStore {
         self.update_task_with_receipt(project_id, task_id, input, start_at, due_at, None)
     }
 
+    pub fn redeliver_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if current.cloud_project_id.as_deref() != Some(project_id) {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if current.version != input.version {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        if current.assignee_user_id.is_none()
+            || input.assignee_user_id.flatten() != current.assignee_user_id
+            || current.assignee_agent_id.is_some()
+            || current.metadata["collaboration_group"]["id"].is_string()
+            || input.milestone_id.is_some()
+            || input.position.is_some()
+            || input.title.is_some()
+            || input.description.is_some()
+            || input.status.is_some()
+            || input.priority.is_some()
+            || input.parent_id.is_some()
+            || input.tags.is_some()
+            || input.assignee_agent_id.is_some()
+            || input.assignee_group_id.is_some()
+            || input.execution_payload.is_some()
+            || input.workflow.is_some()
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Redelivery requires only the current human assignee".to_owned(),
+            ));
+        }
+        let user_id = current.assignee_user_id.expect("validated human assignee");
+        let mut metadata = current.metadata;
+        super::collaboration::record_assignment_redelivery(
+            &mut metadata,
+            current.created_by_user_id,
+            &user_id.to_string(),
+        );
+        let changed = transaction.execute(
+            "UPDATE loop_items
+             SET metadata = ?1, version = version + 1, updated_at = ?2
+             WHERE id = ?3 AND version = ?4",
+            params![metadata.to_string(), now(), task_id, input.version],
+        )?;
+        if changed != 1 {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        assignment_receipts::sync_assignment_receipt(&transaction, project_id, task_id, &metadata)?;
+        refresh_runtime_projection_additional_context(&transaction, task_id)?;
+        let item =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let item = attach_execution(item, latest_execution(&transaction, task_id)?);
+        transaction.commit()?;
+        Ok(item)
+    }
+
     pub fn update_task_with_receipt(
         &self,
         project_id: &str,
@@ -558,14 +620,23 @@ impl LocalTaskStore {
             }
         } else if let Some(user_id) = input.assignee_user_id {
             if let Some(user_id) = user_id {
-                let user_id = user_id.to_string();
-                record_assignment_change(
-                    &mut metadata,
-                    current.created_by_user_id,
-                    Some("user"),
-                    Some(&user_id),
-                    None,
-                );
+                let target = user_id.to_string();
+                let same_assignment = metadata["assignment_history"]
+                    .as_array()
+                    .and_then(|history| history.last())
+                    .is_some_and(|entry| {
+                        entry["to_type"] == "user"
+                            && entry["to_id"].as_str() == Some(target.as_str())
+                    });
+                if current.assignee_user_id != Some(user_id) || !same_assignment {
+                    record_assignment_change(
+                        &mut metadata,
+                        current.created_by_user_id,
+                        Some("user"),
+                        Some(&target),
+                        None,
+                    );
+                }
             } else {
                 record_assignment_change(
                     &mut metadata,

@@ -116,6 +116,27 @@ afterEach(() => {
   cleanup()
 })
 
+test('a legacy assistant link keeps its identity and settings intent when the preview is off', () => {
+  render(
+    <Harness
+      tabs={[
+        { id: 'tasks', kind: 'task', title: 'Tasks', contentRoute: '/', fixed: true },
+        { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+      ]}
+    />
+  )
+  act(() => {
+    openWeworkScheme(
+      'wework://collaboration-exp?view=assistant&deviceId=runner&profileId=role-1&settingsRequest=1'
+    )
+  })
+  expect(screen.getByTestId('active-tab')).toHaveTextContent('tasks')
+  expect(screen.getByTestId('active-route')).toHaveTextContent(
+    '/stand-in?deviceId=runner&profileId=role-1&settingsRequest=1'
+  )
+  expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+})
+
 test('interaction deep links reuse a restored pending-route tab when the canonical tab points elsewhere', () => {
   render(
     <Harness

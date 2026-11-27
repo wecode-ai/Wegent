@@ -14,7 +14,7 @@ export interface ProjectAgentConfigurationRecord {
   canUse: boolean;
   unavailableReason: string | null;
   definitionSource: "project" | "shared_agent";
-  executorType: "codex" | "claude_code" | null;
+  executorType: "codex" | "claude_code" | "external" | null;
   status: "active" | "archived";
   version: number;
   wegentTeamId: number | null;
@@ -74,7 +74,9 @@ export function normalizeProjectAgent(
     executorType:
       runtime === "wegent"
         ? null
-        : runtime === "claude_code"
+        : runtime === "external"
+          ? "external"
+          : runtime === "claude_code"
           ? "claude_code"
           : "codex",
     status: status === "archived" ? "archived" : "active",

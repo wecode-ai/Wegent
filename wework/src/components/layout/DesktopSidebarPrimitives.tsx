@@ -61,7 +61,7 @@ export function DesktopSidebarNavItem({
       onClick={onClick}
       onPointerEnter={onPointerEnter}
       className={cn(
-        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base leading-5',
+        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary max-md:h-11',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'

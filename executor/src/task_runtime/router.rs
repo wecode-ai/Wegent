@@ -606,6 +606,21 @@ impl TaskRuntime {
             .await
     }
 
+    pub async fn redeliver_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self.local_store.redeliver_task(project_id, task_id, input),
+            _ => Err(TaskRuntimeError::UnsupportedProvider(
+                "Issue redelivery".to_owned(),
+            )),
+        }
+    }
+
     pub async fn update_task_with_schedule(
         &self,
         project_id: &str,

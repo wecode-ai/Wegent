@@ -293,7 +293,7 @@ Interrupting stops the current response but does not roll back completed file ed
 If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.
 
 <a id="question-answers"></a>
-While a subagent is running, the composer keeps the Send button visible. Enter a draft to send a follow-up message.
+While a subagent is running, an empty task composer shows the Stop button. Enter a draft to show the Send button and send a follow-up message.
 
 ### Answer AI questions
 
