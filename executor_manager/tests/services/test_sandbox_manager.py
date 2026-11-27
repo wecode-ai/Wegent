@@ -163,8 +163,12 @@ class TestSandboxManager:
         terminate.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "archive_outcome",
+        [_SandboxArchiveOutcome.ARCHIVED, _SandboxArchiveOutcome.EMPTY],
+    )
     async def test_cleanup_stale_sandboxes_deletes_old_sandbox(
-        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, archive_outcome
     ):
         """Test manual cleanup deletes sandboxes beyond the age threshold."""
         manager = sandbox_manager_with_mock_redis
@@ -185,7 +189,7 @@ class TestSandboxManager:
         mocker.patch.object(
             manager,
             "_archive_sandbox_before_cleanup",
-            return_value=_SandboxArchiveOutcome.ARCHIVED,
+            return_value=archive_outcome,
         )
         result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
 
@@ -223,6 +227,54 @@ class TestSandboxManager:
 
         assert result["deleted"][0]["sandbox_id"] == "12345"
         archive.assert_awaited_once_with(sample_sandbox)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("change", "reason"),
+        [
+            ("renewed", "not_stale"),
+            ("replaced", "sandbox_replaced"),
+            ("removed", "sandbox_not_found"),
+        ],
+    )
+    async def test_cleanup_rechecks_stale_sandbox_after_empty_archive(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker, change, reason
+    ):
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - 25 * 3600
+        current = sample_sandbox
+
+        async def archive(_sandbox):
+            nonlocal current
+            if change == "removed":
+                current = None
+            else:
+                current = copy.copy(sample_sandbox)
+                if change == "renewed":
+                    current.extend_timeout(3600)
+                else:
+                    current.created_at += 1
+            return _SandboxArchiveOutcome.EMPTY
+
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", side_effect=lambda _: current
+        )
+        mocker.patch.object(
+            manager, "_archive_sandbox_before_cleanup", side_effect=archive
+        )
+        terminate = mocker.patch.object(
+            manager, "terminate_sandbox", return_value=(True, "terminated")
+        )
+
+        result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
+
+        assert result["deleted"] == []
+        assert result["failed"] == []
+        assert result["skipped"][0]["reason"] == reason
+        terminate.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_sandboxes_keeps_runtime_when_archive_fails(

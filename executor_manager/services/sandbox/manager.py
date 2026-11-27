@@ -820,8 +820,8 @@ class SandboxManager(metaclass=SingletonMeta):
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """Clean up sandboxes inactive longer than inactive_hours."""
-        now = time.time()
         max_age_seconds = inactive_hours * 3600
+        cutoff = time.time() - max_age_seconds
         result: Dict[str, Any] = {
             "target": "sandboxes",
             "inactive_hours": inactive_hours,
@@ -840,18 +840,9 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
                 continue
 
-            inactive_seconds = now - sandbox.last_activity_at
-            if inactive_seconds < max_age_seconds:
-                eligible_at = sandbox.last_activity_at + max_age_seconds
+            if sandbox.last_activity_at > cutoff:
                 result["skipped"].append(
-                    {
-                        "sandbox_id": sandbox.sandbox_id,
-                        "reason": "not_stale",
-                        "last_activity_at": self._format_timestamp(
-                            sandbox.last_activity_at
-                        ),
-                        "eligible_after": self._format_timestamp(eligible_at),
-                    }
+                    self._recent_sandbox_cleanup_result(sandbox, max_age_seconds)
                 )
                 continue
 
@@ -867,6 +858,28 @@ class SandboxManager(metaclass=SingletonMeta):
                     {"sandbox_id": sandbox.sandbox_id, "reason": "archive_failed"}
                 )
                 continue
+
+            # Keep-alive and sandbox recreation can run while awaiting the archive.
+            refreshed = self._repository.load_sandbox(sandbox_id)
+            if refreshed is None:
+                result["skipped"].append(
+                    {"sandbox_id": sandbox_id, "reason": "sandbox_not_found"}
+                )
+                continue
+            if (
+                refreshed.created_at != sandbox.created_at
+                or refreshed.container_name != sandbox.container_name
+            ):
+                result["skipped"].append(
+                    {"sandbox_id": sandbox_id, "reason": "sandbox_replaced"}
+                )
+                continue
+            if refreshed.last_activity_at > cutoff:
+                result["skipped"].append(
+                    self._recent_sandbox_cleanup_result(refreshed, max_age_seconds)
+                )
+                continue
+
             success, message = await self.terminate_sandbox(sandbox.sandbox_id)
             if success:
                 result["deleted"].append(
@@ -885,6 +898,18 @@ class SandboxManager(metaclass=SingletonMeta):
                 )
 
         return result
+
+    def _recent_sandbox_cleanup_result(
+        self, sandbox: Sandbox, max_age_seconds: float
+    ) -> Dict[str, str]:
+        return {
+            "sandbox_id": sandbox.sandbox_id,
+            "reason": "not_stale",
+            "last_activity_at": self._format_timestamp(sandbox.last_activity_at),
+            "eligible_after": self._format_timestamp(
+                sandbox.last_activity_at + max_age_seconds
+            ),
+        }
 
     async def cleanup_sandbox_by_task_id(
         self,
