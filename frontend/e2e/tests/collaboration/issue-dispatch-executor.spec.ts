@@ -674,15 +674,17 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await captureEvidence(page, testInfo, '01-group-assigned')
 
-      const memberExecutionCard = (agentName: string) =>
+      const memberExecutionCard = (agentName: string, taskTitle: string) =>
         page
           .locator('[data-testid^="cloud-task-activity-card-"]')
           .filter({ hasText: agentName })
           .filter({
-            has: page.locator('[data-testid^="cloud-task-activity-execution-badge-"]'),
+            has: page
+              .locator('[data-testid^="cloud-task-activity-task-title-"]')
+              .filter({ hasText: taskTitle }),
           })
-      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`)
-      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`)
+      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`, collectorTask)
+      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`, reviewerTask)
       const managerAssignment = page
         .locator('[data-testid^="cloud-task-activity-card-"]')
         .filter({ hasText: collectorTask })
