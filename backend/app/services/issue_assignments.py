@@ -154,6 +154,7 @@ class IssueAssignmentService:
         comment_id: str | None = None,
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
+        redeliver: bool = False,
         initial_assignment: bool = False,
         automation_context: dict | None = None,
     ) -> tuple[AssignmentEvent, bool]:
@@ -171,12 +172,12 @@ class IssueAssignmentService:
             )
         )
         current = {self._event_key(event): event for event in active}
-        existing = current.get(
-            (normalized_type, normalized_id, self._workflow_step(workflow_step))
-        )
+        key = (normalized_type, normalized_id, self._workflow_step(workflow_step))
+        existing = current.get(key)
         if (
             existing is not None
             and not replace_root_assignments
+            and not redeliver
             and not (
                 existing.metadata.get("trigger") == "default" and trigger != "default"
             )
@@ -186,7 +187,9 @@ class IssueAssignmentService:
             normalized_type == "human" or replace_root_assignments
         ) and not self._workflow_step(workflow_step):
             for previous in active:
-                if previous.workflow_step:
+                if previous.workflow_step or (
+                    redeliver and self._event_key(previous) != key
+                ):
                     continue
                 self._cancel_dispatch(previous, "superseded")
                 db.add(

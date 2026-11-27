@@ -99,7 +99,7 @@ export function TimelineNode({
         <p className="experience-timeline-summary">
           {t('timeline.handoff', {
             action: t(
-              `timeline.handoffActions.${['assign', 'reassign', 'unassign'].includes(node.handoff.action) ? node.handoff.action : 'unknown'}`
+              `timeline.handoffActions.${['assign', 'reassign', 'redeliver', 'unassign'].includes(node.handoff.action) ? node.handoff.action : 'unknown'}`
             ),
             target:
               node.handoff.targetName ??

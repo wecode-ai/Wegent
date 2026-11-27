@@ -219,6 +219,7 @@ class LoopItemAssign(ProjectChatSchema):
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     notify_self: bool = False
+    redeliver: bool = False
     position: LoopItemPosition | None = None
 
     version: int = Field(ge=1)
@@ -232,6 +233,18 @@ class LoopItemAssign(ProjectChatSchema):
         "automation",
         "mention",
     ] = "manual"
+
+    @model_validator(mode="after")
+    def validate_redelivery(self) -> "LoopItemAssign":
+        if self.redeliver and (
+            self.assignee_type != "user"
+            or not self.notify_assignee
+            or self.workflow_step
+            or self.position is not None
+            or self.trigger != "manual"
+        ):
+            raise ValueError("Redelivery requires a manual direct human assignment")
+        return self
 
 
 class LoopItemApproval(ProjectChatSchema):

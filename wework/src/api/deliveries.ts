@@ -167,6 +167,7 @@ export interface CloudLoopItem {
     to_id: string | null
     to_name?: string | null
     action: 'assign' | 'reassign' | 'unassign'
+    redeliver?: boolean
     at: string
   }>
   status_history?: Array<{
@@ -1046,6 +1047,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         automation_rule_id?: string | null
         notify_assignee?: boolean
+        redeliver?: boolean
         position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {

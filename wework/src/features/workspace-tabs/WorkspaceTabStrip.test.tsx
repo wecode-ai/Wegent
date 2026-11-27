@@ -242,6 +242,20 @@ describe('WorkspaceTabStrip', () => {
     )
   })
 
+  test('selects fixed tabs in both directions', async () => {
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/', true, '/todo')
+
+    const board = screen.getByTestId('workspace-tab-select-fixed-board')
+    const task = screen.getByTestId('workspace-tab-select-fixed-task')
+    await user.click(board)
+    expect(board).toHaveAttribute('aria-selected', 'true')
+    await user.click(task)
+    expect(task).toHaveAttribute('aria-selected', 'true')
+    await user.click(board)
+    expect(board).toHaveAttribute('aria-selected', 'true')
+  })
+
   test('keeps the selected project when clicking the active fixed project-space tab', async () => {
     const user = userEvent.setup()
     renderStrip(
