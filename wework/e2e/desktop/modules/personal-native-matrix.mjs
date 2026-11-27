@@ -7,6 +7,11 @@ import {
   startPersonalBotProbe,
 } from './personal-bot-capabilities.mjs'
 import { isCollaborationSubagentRequest } from './subagent-request.mjs'
+import {
+  approvePersonalClaude,
+  handleNegativeProbe,
+  verifyNegativeProbes,
+} from './personal-claude-approvals.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
@@ -45,6 +50,7 @@ export function personalNativeMatrix({
       child ||
       (cell.mode === 'pipeline' && request.includes(cell.second) && input.includes(cell.handoff))
     assert.ok(request.includes(reviewer ? cell.second : cell.first), 'Unexpected Bot instructions')
+    if (handleNegativeProbe(cell, body, response, writeText, writeToolCall)) return true
     if (checkPersonalBotTurn({ cell, reviewer, body, headers, response, writeToolCall }))
       return true
     if (reviewer) {
@@ -283,6 +289,17 @@ export function personalNativeMatrix({
         cell = null
         continue
       }
+      const approvalContext = {
+        control,
+        chat,
+        cell,
+        deviceId,
+        taskId,
+        captureScreenshot,
+        handled: new Set(),
+      }
+      const approvals =
+        runtime === 'claude_code' ? await approvePersonalClaude(approvalContext) : undefined
       await control.command('waitFor', chat + ' [data-testid="message-assistant"]', {
         text: cell.result,
         timeoutMs: 60000,
@@ -304,6 +321,11 @@ export function personalNativeMatrix({
       evidence.push({
         boundBots: cell.boundBots,
         botCapabilities: Object.values(cell.observed),
+        approvals,
+        negativeProbes:
+          runtime === 'claude_code' && mode === 'solo'
+            ? await verifyNegativeProbes(approvalContext)
+            : undefined,
         taskId: task.taskId,
         teamRef,
         mode,
