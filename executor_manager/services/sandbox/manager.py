@@ -924,7 +924,9 @@ class SandboxManager(metaclass=SingletonMeta):
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
             direct_delete_status = None
             if sandbox is not None and sandbox.container_name:
-                direct_delete_status = executor.delete_executor(sandbox.container_name)
+                direct_delete_status = await asyncio.to_thread(
+                    executor.delete_executor, sandbox.container_name
+                )
                 result["delete_attempts"].append(
                     {
                         "mode": "container_name",
@@ -937,7 +939,9 @@ class SandboxManager(metaclass=SingletonMeta):
                 not direct_delete_status
                 or direct_delete_status.get("status") != "success"
             ):
-                fallback_delete_status = executor.delete_executor_by_task_id(sandbox_id)
+                fallback_delete_status = await asyncio.to_thread(
+                    executor.delete_executor_by_task_id, sandbox_id
+                )
                 result["delete_attempts"].append(
                     {
                         "mode": "task_id",

@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import time
+from threading import Event
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -1282,10 +1283,18 @@ class TestSandboxManager:
             "status": "unauthorized",
             "error_msg": "stale saved container name",
         }
-        mock_executor.delete_executor_by_task_id.return_value = {
-            "status": "success",
-            "deleted_containers": ["wegent-task-testuser-orphan"],
-        }
+        loop = asyncio.get_running_loop()
+
+        def delete_by_label(task_id):
+            loop_advanced = Event()
+            loop.call_soon_threadsafe(loop_advanced.set)
+            assert loop_advanced.wait(2), "Container lookup blocked the event loop"
+            return {
+                "status": "success",
+                "deleted_containers": ["wegent-task-testuser-orphan"],
+            }
+
+        mock_executor.delete_executor_by_task_id.side_effect = delete_by_label
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
