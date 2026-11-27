@@ -18,7 +18,7 @@ import {
   resourceKey,
 } from './standInGitConnectionsModel'
 import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
-import { useConnectionScopeBack } from './connectionScopeNavigation'
+import { useConnectionScopeBack, useConnectionScopeTitle } from './connectionScopeNavigation'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
@@ -85,7 +85,6 @@ function StandInGitConnectionsContent({
   const setKind = (value: string) => model.set('kind', value)
   const setQuery = (value: string) => model.set('query', value)
   const resetSearch = model.resetSearch
-  const search = model.search
   const authTransport = useMemo<LocalConnectorAuthTransport>(
     () => ({
       start: target =>
@@ -119,17 +118,34 @@ function StandInGitConnectionsContent({
   const repositories = currentRows.filter(row => row.kind === 'repository')
   const editedScope =
     editing === 'item' ? currentRows.find(row => resourceKey(row) === scopeKey) : undefined
+  const setScopeTitle = useConnectionScopeTitle()
+  const scopeKindTitle = (kind: 'personal' | 'repository') =>
+    t(
+      kind === 'personal'
+        ? 'standIn.workspace.connection_git_personal_type'
+        : 'standIn.workspace.connection_git_repository_type'
+    )
+  const openScope = (next: typeof editing, title: string | null) => {
+    setEditing(next)
+    setScopeTitle?.(title)
+  }
+  const chooseScope = () => openScope('choose', t('standIn.workspace.connection_add_scope'))
+  const searchRepositories = async (page?: string) => {
+    await model.search(page)
+    if (model.getSnapshot().accountStatus !== 'ready') openScope(null, null)
+  }
   const editKind = (value: 'personal' | 'repository') => {
     resetSearch()
     setQuery('')
     setKind(value)
-    setEditing(value)
+    openScope(value, scopeKindTitle(value))
   }
   useConnectionScopeBack(
     editing && canSelectScope
       ? () => {
           resetSearch()
-          setEditing(editing === 'personal' || editing === 'repository' ? 'choose' : null)
+          if (editing === 'personal' || editing === 'repository') chooseScope()
+          else openScope(null, null)
         }
       : null
   )
@@ -153,7 +169,10 @@ function StandInGitConnectionsContent({
                   className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
                   value={instance}
                   disabled={disabled || busy}
-                  onChange={event => model.setInstance(event.target.value)}
+                  onChange={event => {
+                    model.setInstance(event.target.value)
+                    openScope(null, null)
+                  }}
                   onBlur={() => {
                     if (accountStatus === 'unavailable' && instanceOrigin(instance))
                       void model.checkAccount()
@@ -218,7 +237,7 @@ function StandInGitConnectionsContent({
                 }
                 disabled={disabled || busy}
                 testId="stand-in-git-add-scope"
-                onAdd={() => setEditing('choose')}
+                onAdd={chooseScope}
               >
                 {currentRows.map(row => (
                   <ConnectionScopeRow
@@ -237,7 +256,7 @@ function StandInGitConnectionsContent({
                     onRemove={() => model.changeScope([row])}
                     onClick={() => {
                       setScopeKey(resourceKey(row))
-                      setEditing('item')
+                      openScope('item', row.name)
                     }}
                   />
                 ))}
@@ -245,7 +264,6 @@ function StandInGitConnectionsContent({
             )}
             {canSelectScope && editedScope && (
               <div className="space-y-2">
-                <h4 className="break-words text-sm font-medium">{editedScope.name}</h4>
                 {editedScope.configurationSummary && (
                   <p className="text-sm text-text-secondary">{editedScope.configurationSummary}</p>
                 )}
@@ -257,7 +275,7 @@ function StandInGitConnectionsContent({
                   data-testid={`stand-in-git-remove-scope-${editedScope.id}`}
                   onClick={() => {
                     model.changeScope([editedScope])
-                    setEditing(null)
+                    openScope(null, null)
                   }}
                 >
                   {t('standIn.workspace.connection_remove_scope')}
@@ -267,13 +285,13 @@ function StandInGitConnectionsContent({
             {canSelectScope && editing === 'choose' && (
               <ul className="divide-y divide-border">
                 <ConnectionScopeRow
-                  name={t('standIn.workspace.connection_git_personal_type')}
+                  name={scopeKindTitle('personal')}
                   testId="stand-in-git-kind-personal"
                   disabled={disabled || busy}
                   onClick={() => editKind('personal')}
                 />
                 <ConnectionScopeRow
-                  name={t('standIn.workspace.connection_git_repository_type')}
+                  name={scopeKindTitle('repository')}
                   testId="stand-in-git-kind-repository"
                   disabled={disabled || busy}
                   onClick={() => editKind('repository')}
@@ -282,9 +300,6 @@ function StandInGitConnectionsContent({
             )}
             {canSelectScope && editing === 'personal' && (
               <div className="space-y-2">
-                <h4 className="text-sm font-medium">
-                  {t('standIn.workspace.connection_git_personal_type')}
-                </h4>
                 {accounts.map(account => {
                   const row = personal.find(item => item.profile === account.profile)
                   return (
@@ -315,7 +330,7 @@ function StandInGitConnectionsContent({
                   className="flex items-center gap-2"
                   onSubmit={event => {
                     event.preventDefault()
-                    void search()
+                    void searchRepositories()
                   }}
                 >
                   <ControlInput
@@ -390,7 +405,7 @@ function StandInGitConnectionsContent({
                     variant="ghost"
                     disabled={disabled || busy}
                     data-testid="stand-in-git-more"
-                    onClick={() => void search(cursor)}
+                    onClick={() => void searchRepositories(cursor)}
                   >
                     {t('standIn.git.more')}
                   </Button>

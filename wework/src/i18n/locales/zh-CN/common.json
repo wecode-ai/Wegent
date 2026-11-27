@@ -6728,7 +6728,7 @@
       "encryption": "加密方式",
       "verifying": "正在验证 IMAP 和 SMTP…",
       "verify_connect": "验证账号",
-      "verified": "邮箱已验证。在「自定义」中勾选收件箱，保存设置后开始接收新邮件。",
+      "verified": "邮箱已验证。点击「添加接收范围」并选择此邮箱，保存设置后开始接收新邮件。",
       "continue_editing": "继续填写",
       "email_connection_failed": "无法连接 IMAP。请检查服务器、端口、加密方式和登录信息，然后重试。",
       "email_transport_failed": "暂时无法连接 IMAP，请检查网络后重试验证。",

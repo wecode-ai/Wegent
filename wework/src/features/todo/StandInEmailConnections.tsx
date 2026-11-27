@@ -32,7 +32,7 @@ import {
 } from './standInEmailConnectionsModel'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
-import { useConnectionScopeBack } from './connectionScopeNavigation'
+import { useConnectionScopeBack, useConnectionScopeTitle } from './connectionScopeNavigation'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 export { EMAIL_PROVIDER } from './standInEmailConnectionsModel'
 
@@ -94,6 +94,7 @@ function StandInEmailConnectionsContent({
   const rows = (role.connections ?? []).filter(row => row.providerId === EMAIL_PROVIDER)
   const [selectingInbox, setSelectingInbox] = useState(false)
   const [inboxId, setInboxId] = useState<string | null>(null)
+  const setScopeTitle = useConnectionScopeTitle()
   const editedInbox = rows.find(row => row.profile === inboxId)
   const availableInboxes = local
     ? accounts.filter(account => !rows.some(row => row.profile === account.id))
@@ -101,6 +102,7 @@ function StandInEmailConnectionsContent({
   const backToScopes = () => {
     setSelectingInbox(false)
     setInboxId(null)
+    setScopeTitle?.(null)
   }
   useConnectionScopeBack(!adding && (selectingInbox || editedInbox) ? backToScopes : null)
   useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
@@ -417,7 +419,6 @@ function StandInEmailConnectionsContent({
               </>
             ) : editedInbox ? (
               <>
-                <p className="break-words text-sm font-medium">{editedInbox.name}</p>
                 <ControlButton
                   variant="outline"
                   type="button"
@@ -441,7 +442,10 @@ function StandInEmailConnectionsContent({
                 empty={rows.length ? undefined : t('standIn.workspace.connection_not_configured')}
                 disabled={disabled || busy || availableInboxes.length === 0}
                 testId="stand-in-email-add-scope"
-                onAdd={() => setSelectingInbox(true)}
+                onAdd={() => {
+                  setSelectingInbox(true)
+                  setScopeTitle?.(t('standIn.workspace.connection_add_scope'))
+                }}
               >
                 {rows.map(row => (
                   <ConnectionScopeRow
@@ -449,7 +453,10 @@ function StandInEmailConnectionsContent({
                     name={row.name}
                     testId={`stand-in-email-open-scope-${row.profile}`}
                     disabled={disabled || busy}
-                    onClick={() => setInboxId(row.profile)}
+                    onClick={() => {
+                      setInboxId(row.profile)
+                      setScopeTitle?.(row.name)
+                    }}
                     onRemove={() =>
                       onChange({
                         ...role,

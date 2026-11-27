@@ -15,6 +15,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import { createDailyBriefStory } from '../modules/stand-in-daily-brief-story.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -307,16 +308,16 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `[data-testid="stand-in-add-${PROVIDER}-connection"]`
       )
-      await control.command(
-        'waitFor',
-        `[data-testid="stand-in-email-open-scope-${accountId}"]`
-      )
+      await control.command('waitFor', `[data-testid="stand-in-email-open-scope-${accountId}"]`)
       assert.deepEqual(
         await runtimeSettings(),
         verifiedSettings,
         'The inbox stays in the draft until saving'
       )
-      await control.command('clickWhenEnabled', `[data-testid="stand-in-email-open-scope-${accountId}"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-email-open-scope-${accountId}"]`
+      )
       await control.command(
         'clickWhenEnabled',
         '[data-testid="stand-in-processing-settings-toggle"]'
@@ -534,6 +535,74 @@ export function createDesktopScenario({
         mail,
         model
       )
+      const openMailboxSettings = async () => {
+        await openStandInSettings(control)
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-primary-connections-open"]'
+        )
+        await openConnectionTypePicker(control)
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="stand-in-add-${PROVIDER}-connection"]`
+        )
+        await control.command('waitFor', '[data-testid="stand-in-email-connections"]')
+      }
+      const savedScope = `[data-testid="stand-in-email-open-scope-${accountId}"]`
+      const manageAccounts = '[data-testid="stand-in-email-manage"]'
+      await reloadMainWindow(
+        control,
+        'Read the restored settings version before mailbox maintenance'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
+      await openMailboxSettings()
+      await control.command('waitFor', savedScope)
+      await control.command('clickWhenEnabled', manageAccounts)
+      await control.command('clickWhenEnabled', `[data-testid="stand-in-email-edit-${accountId}"]`)
+      await control.command('fill', '[data-testid="stand-in-email-password"]', {
+        value: mail.config.password,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-email-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-email-verified"]', {
+        text: '登录信息已更新',
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      assert.deepEqual(
+        (await backend(control, 'emailAccounts')).map(row => row.id),
+        [accountId]
+      )
+      const savedBeforeRemoval = await runtimeSettings()
+      await captureScreenshot(control, '11-mailbox-account-updated.png')
+
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-email-open-scope-${accountId}-remove"]`
+      )
+      await control.command('waitFor', savedScope, { visible: false })
+      assert.deepEqual(
+        (await runtimeSettings()).primary.connections,
+        savedBeforeRemoval.primary.connections
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-save"]', { visible: false })
+      assert.ok(
+        !(await runtimeSettings()).primary.connections?.some(row => row.profile === accountId)
+      )
+
+      await openMailboxSettings()
+      await control.command('waitFor', manageAccounts)
+      await control.command('waitFor', savedScope, { visible: false })
+      await captureScreenshot(control, '12-mailbox-scope-removed.png')
+      await control.command('clickWhenEnabled', manageAccounts)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="stand-in-email-delete-${accountId}"]`
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-email-delete-confirm"]')
+      await control.command('waitFor', manageAccounts, { visible: false })
+      assert.deepEqual(await backend(control, 'emailAccounts'), [])
+      await captureScreenshot(control, '13-mailbox-account-removed.png')
     },
     async cleanup() {
       await mail?.stop()

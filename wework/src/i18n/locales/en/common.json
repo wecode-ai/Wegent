@@ -6747,7 +6747,7 @@
       "encryption": "Encryption",
       "verifying": "Verifying IMAP and SMTP…",
       "verify_connect": "Verify account",
-      "verified": "Mailbox verified. In Custom, select the inbox and save settings to receive new mail.",
+      "verified": "Mailbox verified. Choose this inbox under Add a receive scope, then save settings to receive new mail.",
       "continue_editing": "Continue editing",
       "email_connection_failed": "Could not connect to IMAP. Check the server, port, encryption and credentials, then retry.",
       "email_transport_failed": "Could not reach IMAP temporarily. Check the network and retry verification.",
