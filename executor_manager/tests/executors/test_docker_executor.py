@@ -632,7 +632,10 @@ class TestDockerExecutor:
         )
         if delete_status in {"success", "not_found"}:
             repository.delete_executor_binding.assert_called_once_with(
-                123, expected_executor_name="sandbox", sandbox=True
+                123,
+                expected_executor_name="sandbox",
+                expected_container_id="b" * 64,
+                sandbox=True,
             )
         else:
             repository.delete_executor_binding.assert_not_called()
@@ -690,9 +693,19 @@ class TestDockerExecutor:
             executor._create_new_container(sample_task, task_info, status)
 
         assert callback_repository.save_executor_binding.call_args_list == [
-            call(123, "new-executor", sandbox=False, callback_token="callback-token"),
             call(
-                123, "new-executor", sandbox=False, callback_token="replacement-token"
+                123,
+                "new-executor",
+                sandbox=False,
+                callback_token="callback-token",
+                container_id="container-id",
+            ),
+            call(
+                123,
+                "new-executor",
+                sandbox=False,
+                callback_token="replacement-token",
+                container_id="replacement-container-id",
             ),
         ]
 

@@ -549,19 +549,18 @@ def renew_running_docker_callback_bindings() -> None:
         return
     repository = get_sandbox_repository()
     for offset in range(0, len(containers), 100):
-        for task_id, name, token, sandbox in _inspect_docker_callback_bindings(
-            containers[offset : offset + 100]
-        ):
+        bindings = _inspect_docker_callback_bindings(containers[offset : offset + 100])
+        for task_id, name, token, container_id, sandbox in bindings:
             repository.renew_docker_callback_binding(
-                task_id, name, token, sandbox=sandbox
+                task_id, name, token, container_id, sandbox=sandbox
             )
 
 
 def _inspect_docker_callback_bindings(
     containers: list[str],
-) -> list[tuple[int, str, str, bool]]:
+) -> list[tuple[int, str, str, str, bool]]:
     template = (
-        '{{.State.Running}} {{.Name}} {{index .Config.Labels "owner"}} '
+        '{{.State.Running}} {{.Id}} {{.Name}} {{index .Config.Labels "owner"}} '
         '{{index .Config.Labels "task_id"}} {{json .Config.Env}}'
     )
     try:
@@ -580,13 +579,14 @@ def _inspect_docker_callback_bindings(
 
     bindings = []
     for line in result.stdout.splitlines():
-        fields = line.split(maxsplit=4)
-        if len(fields) != 5:
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6:
             continue
-        running, name, owner, task_id, environment = fields
+        running, container_id, name, owner, task_id, environment = fields
         if (
             running != "true"
             or owner != CONTAINER_OWNER
+            or not re.fullmatch(r"[0-9a-f]{64}", container_id)
             or not task_id.removeprefix("-").isdecimal()
         ):
             continue
@@ -609,6 +609,7 @@ def _inspect_docker_callback_bindings(
                         int(task_id),
                         name.removeprefix("/"),
                         token,
+                        container_id,
                         sandbox,
                     )
                 )

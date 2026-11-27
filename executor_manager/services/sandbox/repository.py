@@ -705,7 +705,13 @@ class SandboxRepository(metaclass=SingletonMeta):
         return binding.get("executor_name") if binding else None
 
     def renew_docker_callback_binding(
-        self, task_id: int, executor_name: str, token: str, *, sandbox: bool = False
+        self,
+        task_id: int,
+        executor_name: str,
+        token: str,
+        container_id: str,
+        *,
+        sandbox: bool = False,
     ) -> None:
         """Refresh a running Docker executor's lease without replacing another binding."""
         if self.redis_client is None:
@@ -716,6 +722,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             "task_id": task_id,
             "created_at": time.time(),
             "callback_token": token,
+            "container_id": container_id,
         }
         try:
             self.redis_client.eval(
@@ -727,7 +734,12 @@ class SandboxRepository(metaclass=SingletonMeta):
                 end
                 local binding = cjson.decode(current)
                 if binding.executor_name == ARGV[3] and binding.callback_token == ARGV[4] then
-                    redis.call('EXPIRE', KEYS[1], ARGV[1])
+                    if not binding.container_id then
+                        binding.container_id = ARGV[5]
+                        redis.call('SETEX', KEYS[1], ARGV[1], cjson.encode(binding))
+                    elseif binding.container_id == ARGV[5] then
+                        redis.call('EXPIRE', KEYS[1], ARGV[1])
+                    end
                 end
                 """,
                 1,
@@ -736,6 +748,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 json.dumps(binding),
                 executor_name,
                 token,
+                container_id,
             )
         except (redis.RedisError, ValueError) as error:
             logger.warning(
@@ -802,6 +815,7 @@ class SandboxRepository(metaclass=SingletonMeta):
         *,
         expected_executor_name: str = "",
         expected_callback_token: str = "",
+        expected_container_id: str = "",
         sandbox: bool = False,
     ) -> bool:
         """Delete a task-to-executor binding after runtime cleanup."""
@@ -815,11 +829,12 @@ class SandboxRepository(metaclass=SingletonMeta):
             revoked = self.redis_client.eval(
                 """
                 local current = redis.call('GET', KEYS[1])
-                if current and (ARGV[2] ~= '' or ARGV[3] ~= '') then
+                if current and (ARGV[2] ~= '' or ARGV[3] ~= '' or ARGV[4] ~= '') then
                     local binding = cjson.decode(current)
                     if not binding.revoked and (
                         (ARGV[2] ~= '' and binding.executor_name ~= ARGV[2]) or
-                        (ARGV[3] ~= '' and binding.callback_token ~= ARGV[3])
+                        (ARGV[3] ~= '' and binding.callback_token ~= ARGV[3]) or
+                        (ARGV[4] ~= '' and binding.container_id ~= ARGV[4])
                     ) then
                         return 0
                     end
@@ -832,6 +847,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 max(300, self._config.executor.executor_binding_ttl),
                 expected_executor_name,
                 expected_callback_token,
+                expected_container_id,
             )
             if not revoked:
                 return False

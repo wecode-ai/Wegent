@@ -594,6 +594,7 @@ class DockerExecutor(Executor):
             executor_name,
             sandbox=task_type == "sandbox",
             callback_token=get_metadata_field(task, CALLBACK_TOKEN),
+            container_id=container_id,
         ):
             return
 
@@ -1753,6 +1754,7 @@ class DockerExecutor(Executor):
                     get_sandbox_repository().delete_executor_binding(
                         int(task_id),
                         expected_executor_name=container_name,
+                        expected_container_id=container_id,
                         sandbox=True,
                     )
 
