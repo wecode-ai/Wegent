@@ -57,7 +57,7 @@ The workbench then includes server models, cloud devices, and remote devices. Di
 
 ### Cloud device upgrade reminder
 
-When the cloud device version is at or below the deployment's reminder threshold and a newer version is published in that environment, the desktop app prompts when you send a task to the device, open its cloud terminal, or access its cloud workspace. Opening Wework, restoring a project, browsing history, and working locally do not prompt. Each device prompts at most once a day per account in this desktop client.
+The deployment sets a single reminder threshold in `CLOUD_DEVICE_UPGRADE_THRESHOLD`. For example, with a threshold of `2.0.4`, the desktop app prompts on a device running `2.0.4` or earlier when the environment has published a newer version and you send a task to that device, open its cloud terminal, or access its cloud workspace. Opening Wework, restoring a project, browsing history, and working locally do not prompt. Each device prompts at most once a day per account in this desktop client.
 
 Choose **Not now** to continue without restarting. The project row keeps its **Upgrade needed** badge. Use **Upgrade needed** next to the composer or **Restart to upgrade** in the dialog to use the existing restart flow. Wait for running tasks to finish. The desktop app verifies the version reported by the device after reconnecting.
 

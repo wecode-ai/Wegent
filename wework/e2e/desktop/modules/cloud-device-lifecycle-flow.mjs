@@ -39,6 +39,13 @@ async function closeTerminal(control) {
   await control.command('click', '[data-testid="settings-device-terminal-close-button"]')
 }
 
+async function readWorkbenchState(control) {
+  const snapshot = await control.command('getWorkbenchDebugSnapshot', 'body', {
+    value: 'state-only',
+  })
+  return JSON.parse(snapshot).workbench
+}
+
 async function simulateNextReminderDay(control) {
   const { apiBaseUrl, user } = JSON.parse(
     await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
@@ -106,14 +113,14 @@ async function verifyWorkspaceReminderActions(control, cloud, createProject) {
     await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
     await control.command('waitFor', UPGRADE_REMINDER, {
       text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('click', CANCEL_RESTART)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: CHECKPOINT_TASK_COMPLETION_TEXT,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    const task = JSON.parse(await control.command('snapshot', 'body')).workbench?.currentRuntimeTask
+    const task = (await readWorkbenchState(control))?.currentRuntimeTask
     assert.equal(
       task?.deviceId,
       CLOUD_DEVICE_ID,
@@ -219,18 +226,28 @@ async function verifyReminderRestart(control, cloud) {
     const old = await cloud.device(CLOUD_DEVICE_ID)
     assert.equal(old.status, 'online')
     assert.equal(old.executor_version.replace(/^v/i, ''), CLOUD_DEVICE_LIFECYCLE_THRESHOLD)
-    // Keep the old Executor online through a full renderer device poll.
-    const waiting = await control.command('getText', restartStatus)
+    await waitForCondition(
+      async () => {
+        const device = (await readWorkbenchState(control))?.devices.find(
+          item => item.device_id === CLOUD_DEVICE_ID
+        )
+        return (
+          device?.status === 'online' &&
+          device.executor_version?.replace(/^v/i, '') === CLOUD_DEVICE_LIFECYCLE_THRESHOLD
+        )
+      },
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The renderer did not consume the old-version online report'
+    )
     assert.match(
-      waiting,
+      await control.command('getText', restartStatus),
       WAITING_ONLINE,
       'The old Executor version incorrectly completed the upgrade'
     )
-    await control.command('waitFor', restartStatus, { text: waiting, stableMs: 2_250 })
     await assert.rejects(control.command('click', terminalButton), /disabled/)
     await captureVerificationScreenshot(control, 'cloud-device-reminder-old-version.png')
 
-    await Promise.all([
+    const [statusResult, restartResult] = await Promise.allSettled([
       waitForRestartStatus(
         control,
         restartStatus,
@@ -239,6 +256,8 @@ async function verifyReminderRestart(control, cloud) {
       ),
       cloud.restartCloudExecutor({ version: target }),
     ])
+    if (statusResult.status === 'rejected') throw statusResult.reason
+    if (restartResult.status === 'rejected') throw restartResult.reason
     const upgraded = await cloud.device(CLOUD_DEVICE_ID)
     assert.equal(upgraded.status, 'online')
     assert.equal(upgraded.executor_version.replace(/^v/i, ''), target)
