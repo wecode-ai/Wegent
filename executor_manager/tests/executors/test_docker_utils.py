@@ -125,16 +125,29 @@ class TestDockerUtils:
         mock_run.return_value = MagicMock(returncode=0)
         result = delete_container("test-container")
         assert result["status"] == "success"
+        assert [call.args[0] for call in mock_run.call_args_list] == [
+            ["docker", "stop", "--", "test-container"],
+            ["docker", "rm", "--", "test-container"],
+        ]
 
+    @pytest.mark.parametrize(
+        ("inspect_error", "status"),
+        [
+            ("Error: No such object: test-container", "not_found"),
+            ("API unavailable", "failed"),
+        ],
+    )
     @patch("subprocess.run")
-    def test_delete_container_error(self, mock_run):
-        """Test deleting container with error"""
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "docker", stderr="error"
-        )
+    def test_delete_container_error(self, mock_run, inspect_error, status):
+        """A delete failure is conclusive only when Docker confirms absence."""
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(1, "docker", stderr="error"),
+            MagicMock(returncode=1, stderr=inspect_error),
+        ]
         result = delete_container("test-container")
-        assert result["status"] == "failed"
-        assert "error" in result["error_msg"]
+        assert result["status"] == status
+        if status == "failed":
+            assert "error" in result["error_msg"]
 
     @patch("subprocess.run")
     def test_get_container_ports_success(self, mock_run):

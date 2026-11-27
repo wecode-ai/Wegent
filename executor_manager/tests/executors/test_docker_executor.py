@@ -1004,10 +1004,12 @@ class TestDockerExecutor:
         """Test deleting executor successfully"""
         # Mock subprocess.run calls:
         # 1. check_container_ownership
-        # 2. delete_container (shell command)
+        # 2. stop the container
+        # 3. remove the container
         mock_run.side_effect = [
             MagicMock(stdout="test-executor\n", returncode=0),  # ownership check
-            MagicMock(returncode=0),  # delete command
+            MagicMock(returncode=0),  # stop
+            MagicMock(returncode=0),  # remove
         ]
 
         result = executor.delete_executor("test-executor")

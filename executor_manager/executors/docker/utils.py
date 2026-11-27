@@ -117,12 +117,23 @@ def delete_container(container_name: str) -> dict:
         dict: Result with status and optional error message
     """
     try:
-        # Stop and remove container in one command
-        cmd = f"docker stop {container_name} && docker rm {container_name}"
-        subprocess.run(cmd, shell=True, check=True, capture_output=True)
+        subprocess.run(
+            ["docker", "stop", "--", container_name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["docker", "rm", "--", container_name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         logger.info(f"Deleted Docker container '{container_name}'")
         return {"status": "success"}
     except subprocess.CalledProcessError as e:
+        if get_container_status(container_name).get("status") == "not_found":
+            return {"status": "not_found"}
         logger.error(f"Docker error deleting container '{container_name}': {e.stderr}")
         return {"status": "failed", "error_msg": f"Docker error: {e.stderr}"}
     except Exception as e:
