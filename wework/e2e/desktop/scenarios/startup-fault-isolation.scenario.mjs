@@ -247,7 +247,7 @@ export async function createDesktopScenario({
         assert.ok(prepared.components.executor)
         assert.ok(prepared.components.codex)
         for (const [id, path] of Object.entries(prepared.components)) {
-          if (id !== 'contentSha256') await access(path)
+          if (id !== 'contentSha256' && id !== 'dwsSource') await access(path)
         }
         await writeFile(
           join(resultDir, 'manual-install-reconciliation.json'),

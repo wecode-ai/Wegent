@@ -6,7 +6,7 @@ FROM node:24.14.1-bookworm AS downloads
 WORKDIR /seed
 COPY wework/electron/package.json /tmp/electron-package.json
 RUN version="$(node -p 'require("/tmp/electron-package.json").devDependencies.electron')" \
-    && npm install --prefix /seed --ignore-scripts --no-package-lock "electron@$version" tar@7.5.22
+    && npm install --prefix /seed --ignore-scripts --no-package-lock "electron@$version" tar@7.5.22 undici@7.27.2
 COPY wework/codex-binaries.lock.json ./wework/codex-binaries.lock.json
 COPY LICENSES/Apache-2.0.txt ./LICENSES/Apache-2.0.txt
 COPY wework/third_party/codex ./wework/third_party/codex

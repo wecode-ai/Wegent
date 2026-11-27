@@ -420,6 +420,7 @@ export function createDesktopScenario({
       }
       const activeBinding = await binding(control)
       assert.equal(await control.command('getElementCount', executionDevice), '0')
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await openExecutionSettings()
       await control.command('clickWhenEnabled', executionDevice)
       await control.command('waitFor', '[role="listbox"] [role="option"]', {
@@ -437,6 +438,7 @@ export function createDesktopScenario({
       })
       await captureScreenshot(control, 'personal-assistant-04-execution-device.png')
       await reloadMainWindow(control)
+      await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
       await control.command('waitFor', testId('stand-in-conversation'))
       await sendChat(control, testId('stand-in-conversation'), LOCAL_PROMPT)
       await control.command('waitFor', testId('stand-in-conversation'), {

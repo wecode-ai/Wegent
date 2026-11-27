@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
+import { openStoryPrimary, STORY_CHAT as CHAT } from '../modules/stand-in-source-story-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -17,7 +18,6 @@ const USER = 9001
 const OFFLINE_USER = 9101
 const MARKER = 'STAND_IN_TELEMETRY_PRIVATE_INPUT'
 const COMPLETE = 'STAND_IN_TELEMETRY_COMPLETE'
-const CHAT = '[data-testid="stand-in-conversation"]'
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   return {
@@ -142,8 +142,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await rpc('runtime.stand_in.telemetry.configure', { userId: USER, enabled: true })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('waitFor', CHAT)
+      await openStoryPrimary(control)
       await control.awaitTelemetryEvent('stand_in_opened')
       await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, { value: MARKER })
       await control.command('waitFor', `${CHAT} [data-testid="send-message-button"]:enabled`)

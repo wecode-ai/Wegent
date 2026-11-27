@@ -15,6 +15,12 @@ import {
 
 const temporaryDirectories = []
 
+function proxyConnectServer(sockets) {
+  const server = createServer()
+  server.on('connect', (_request, socket) => sockets.push(socket))
+  return server
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))
@@ -61,7 +67,6 @@ describe('downloadWithRetry', () => {
     const destination = join(directory, 'codex.tgz')
     const archive = Buffer.alloc(2 * 1024 * 1024, 'archive')
     const server = createServer((request, response) => {
-      response.setHeader('Connection', 'close')
       if (request.url === '/redirect') {
         response.writeHead(302, { Location: '/archive' }).end()
         return
@@ -75,6 +80,34 @@ describe('downloadWithRetry', () => {
       })
       expect((await readFile(destination)).equals(archive)).toBe(true)
     } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
+  })
+
+  test('destroys the body when rejecting too many redirects', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
+    temporaryDirectories.push(directory)
+    const destination = join(directory, 'codex.tgz')
+    const server = createServer((request, response) => {
+      const redirectNumber = Number(new URL(request.url, 'http://localhost').searchParams.get('n'))
+      response.writeHead(302, { Location: '/?n=' + (redirectNumber + 1) })
+      response.end(Buffer.alloc(128 * 1024))
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+
+    try {
+      await expect(
+        downloadWithRetry('http://127.0.0.1:' + server.address().port + '/?n=1', destination, {
+          attempts: 1,
+          timeouts: {
+            connectTimeoutMs: 1_000,
+            headersTimeoutMs: 1_000,
+            bodyTimeoutMs: 1_000,
+          },
+        })
+      ).rejects.toThrow('Too many download redirects')
+    } finally {
+      server.closeAllConnections?.()
       await new Promise(resolve => server.close(resolve))
     }
   })
@@ -105,20 +138,22 @@ describe('downloadWithRetry', () => {
     const destination = join(directory, 'codex.tgz')
     await writeFile(destination, 'partial archive')
 
-    const fetchImpl = vi
+    const downloadImpl = vi
       .fn()
       .mockRejectedValueOnce(new Error('fetch failed'))
       .mockRejectedValueOnce(new Error('fetch failed'))
-      .mockResolvedValue(new Response('complete archive'))
+      .mockImplementation(async (_url, destination) => {
+        await writeFile(destination, 'complete archive')
+      })
     const sleepImpl = vi.fn().mockResolvedValue(undefined)
 
     await downloadWithRetry('https://example.test/codex.tgz', destination, {
-      fetchImpl,
+      downloadImpl,
       sleepImpl,
       retryDelayMs: 10,
     })
 
-    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(downloadImpl).toHaveBeenCalledTimes(3)
     expect(sleepImpl).toHaveBeenNthCalledWith(1, 10)
     expect(sleepImpl).toHaveBeenNthCalledWith(2, 20)
     expect(await readFile(destination, 'utf8')).toBe('complete archive')
@@ -128,17 +163,135 @@ describe('downloadWithRetry', () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
     temporaryDirectories.push(directory)
     const destination = join(directory, 'codex.tgz')
-    const fetchImpl = vi.fn().mockRejectedValue(new Error('network unavailable'))
+    const downloadImpl = vi.fn().mockRejectedValue(new Error('network unavailable'))
 
     await expect(
       downloadWithRetry('https://example.test/codex.tgz', destination, {
         attempts: 2,
-        fetchImpl,
+        downloadImpl,
         sleepImpl: vi.fn().mockResolvedValue(undefined),
         retryDelayMs: 0,
       })
     ).rejects.toThrow('network unavailable')
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(downloadImpl).toHaveBeenCalledTimes(2)
+  })
+
+  test('rejects a stalled response and retries it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
+    temporaryDirectories.push(directory)
+    const destination = join(directory, 'codex.tgz')
+    const server = createServer((request, response) => {
+      response.writeHead(200, { 'Content-Length': 32 })
+      response.write('partial')
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const sleepImpl = vi.fn().mockResolvedValue(undefined)
+    const attempts = 2
+
+    try {
+      await downloadWithRetry(`http://127.0.0.1:${server.address().port}/archive`, destination, {
+        attempts,
+        sleepImpl,
+        retryDelayMs: 10,
+        timeouts: {
+          connectTimeoutMs: 1_000,
+          headersTimeoutMs: 1_000,
+          bodyTimeoutMs: 50,
+        },
+      })
+      throw new Error('Expected the stalled download to fail')
+    } catch (error) {
+      expect(error.message).toBe('Body Timeout Error')
+    } finally {
+      server.closeAllConnections?.()
+      await new Promise(resolve => server.close(resolve))
+    }
+
+    expect(sleepImpl).toHaveBeenCalledTimes(attempts - 1)
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  test('routes downloads through the configured proxy environment', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
+    temporaryDirectories.push(directory)
+    const destination = join(directory, 'codex.tgz')
+    const archive = Buffer.from('proxied archive')
+    const proxyServer = createServer((request, response) => {
+      expect(request.url).toBe('http://example.test/codex.tgz')
+      response.end(archive)
+    })
+    await new Promise(resolve => proxyServer.listen(0, '127.0.0.1', resolve))
+    const proxyUrl = `http://127.0.0.1:${proxyServer.address().port}`
+    const previousEnvironment = {
+      HTTP_PROXY: process.env.HTTP_PROXY,
+      http_proxy: process.env.http_proxy,
+      NO_PROXY: process.env.NO_PROXY,
+      no_proxy: process.env.no_proxy,
+    }
+    process.env.HTTP_PROXY = proxyUrl
+    process.env.http_proxy = proxyUrl
+    process.env.NO_PROXY = ''
+    process.env.no_proxy = ''
+
+    try {
+      await downloadWithRetry('http://example.test/codex.tgz', destination, {
+        attempts: 1,
+        timeouts: {
+          connectTimeoutMs: 1_000,
+          headersTimeoutMs: 1_000,
+          bodyTimeoutMs: 50,
+        },
+      })
+      expect((await readFile(destination)).equals(archive)).toBe(true)
+    } finally {
+      proxyServer.closeAllConnections?.()
+      await new Promise(resolve => proxyServer.close(resolve))
+      for (const [name, value] of Object.entries(previousEnvironment)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
+  test('rejects a silent proxy CONNECT within the header timeout', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-codex-download-'))
+    temporaryDirectories.push(directory)
+    const destination = join(directory, 'codex.tgz')
+    const proxySockets = []
+    const proxyServer = proxyConnectServer(proxySockets)
+    await new Promise(resolve => proxyServer.listen(0, '127.0.0.1', resolve))
+    const proxyUrl = 'http://127.0.0.1:' + proxyServer.address().port
+    const previousEnvironment = {
+      HTTPS_PROXY: process.env.HTTPS_PROXY,
+      https_proxy: process.env.https_proxy,
+      NO_PROXY: process.env.NO_PROXY,
+      no_proxy: process.env.no_proxy,
+    }
+    process.env.HTTPS_PROXY = proxyUrl
+    process.env.https_proxy = proxyUrl
+    process.env.NO_PROXY = ''
+    process.env.no_proxy = ''
+
+    try {
+      await expect(
+        downloadWithRetry('https://example.test/codex.tgz', destination, {
+          attempts: 1,
+          timeouts: {
+            connectTimeoutMs: 1_000,
+            headersTimeoutMs: 100,
+            bodyTimeoutMs: 1_000,
+          },
+        })
+      ).rejects.toThrow()
+    } finally {
+      for (const socket of proxySockets) socket.destroy()
+      proxyServer.closeAllConnections?.()
+      await new Promise(resolve => proxyServer.close(resolve))
+      for (const [name, value] of Object.entries(previousEnvironment)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
   })
 })
 

@@ -30,13 +30,13 @@ export async function sendSystemNotification({
   address,
   url = address ? weworkTaskScheme(address) : undefined,
   reply,
-}: RuntimeTaskCompletionNotification): Promise<void> {
-  if (!isElectronRuntime()) return
+}: RuntimeTaskCompletionNotification): Promise<boolean> {
+  if (!isElectronRuntime()) return false
 
   const testState = systemNotificationTestState()
   if (testState) {
     testState.notifications.push({ title, body, address, url })
-    if (!reply) return
+    if (!reply) return true
   }
 
   try {
@@ -46,7 +46,11 @@ export async function sendSystemNotification({
       ...(url ? { url } : {}),
       ...(reply ? { reply } : {}),
     })
+    return true
   } catch (error) {
     console.error('[Wework] Failed to send system notification', error)
+    if (typeof window !== 'undefined')
+      window.dispatchEvent(new Event('wework:notification-delivery-failed'))
+    return false
   }
 }

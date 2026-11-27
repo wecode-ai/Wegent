@@ -116,6 +116,7 @@ export async function verifyAppUpdateRetry(control, { policy, requests, advertis
     [manifestPath, '/unavailable-release.tar.gz'],
     'The error dialog retry must refresh the catalog and perform the advertised download'
   )
+  await control.command('clickWhenEnabled', '[data-testid="settings-button"]', { visible: true })
   await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]', { visible: true })
   await control.command('waitFor', button, { visible: true, enabled: true })
   const requestCount = requests.length

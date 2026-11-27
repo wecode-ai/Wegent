@@ -1,4 +1,5 @@
 //! Transactional outcomes and send claims for the primary DingTalk delegation.
+use super::super::personal_stand_in::{matches_delegation_account, read_personal};
 use super::*;
 
 fn delegated_work(
@@ -23,31 +24,24 @@ fn nonempty_id(value: &Value) -> Option<&str> {
 
 pub(super) fn mark_delegation_taken_over(result: &mut Value) {
     if result.is_null() {
-        *result =
-            json!({"action":"skip","status":"complete","reason":"The owner took over this work."});
+        *result = json!({
+            "action":"skip",
+            "status":"complete",
+            "reason":"The owner took over this work.",
+            "reasonCode":"owner_intervened"
+        });
     }
     result["takenOver"] = json!(true);
 }
 
-/// Project a grouped DingTalk outcome from messages ordered newest first.
-/// Callers showing account-scoped results must supply only visible work and messages.
-pub fn project_dingtalk_delegation_result<'a>(
-    work: &Value,
-    messages: impl IntoIterator<Item = &'a Value>,
-) -> Value {
-    let mut latest = None;
-    let mut needs_user = None;
+/// Summarize delegation using the visible messages in oldest-first order.
+pub fn project_delegation_result(work: &Value, messages: &[Value]) -> Value {
     let mut owner_intervention = None;
-    let mut all_skipped = true;
-    for message in messages {
-        latest.get_or_insert(message);
+    let mut all_skipped = !messages.is_empty();
+    for message in messages.iter().rev() {
         let result = &message["delegationResult"];
         match result["action"].as_str() {
-            Some("reply") => return projected_message_result(work, Some(message)),
-            Some("needs_user") => {
-                needs_user.get_or_insert(message);
-                all_skipped = false;
-            }
+            Some("reply" | "needs_user") => return projected_message_result(work, Some(message)),
             Some("skip") => {
                 if result["reasonCode"] == "owner_intervened"
                     || (result["reasonCode"].is_null()
@@ -59,8 +53,106 @@ pub fn project_dingtalk_delegation_result<'a>(
             _ => all_skipped = false,
         }
     }
-    let skipped = owner_intervention.or(latest).filter(|_| all_skipped);
-    projected_message_result(work, needs_user.or(skipped))
+    let fallback = all_skipped
+        .then(|| owner_intervention.or_else(|| messages.last()))
+        .flatten();
+    projected_message_result(work, fallback)
+}
+
+fn expired_boundary_reason(identity: &Value, source: &Value) -> (&'static str, &'static str) {
+    let policy = &identity["delegation"];
+    if policy["authorized"] != true {
+        return (
+            "delegation_inactive",
+            "The message arrived outside an active DingTalk delegation and was not answered automatically.",
+        );
+    }
+    if policy["paused"] == true {
+        return (
+            "delegation_paused",
+            "Delegation was paused when this message was waiting. It was not answered automatically.",
+        );
+    }
+    match super::personal_stand_in::stand_in_connection(identity, source) {
+        None => (
+            "source_scope_removed",
+            "This DingTalk source is outside the current delegation scope and was not answered automatically.",
+        ),
+        Some(current) if current["paused"] == true => (
+            "source_paused",
+            "This DingTalk source was paused while the message was waiting. It was not answered automatically.",
+        ),
+        Some(_) => (
+            "delegation_boundary_exceeded",
+            "The message arrived before the current delegation boundary and was not answered automatically.",
+        ),
+    }
+}
+
+/// Close only unsent messages that the current pause or scope boundary no longer permits.
+/// A submission already marked sending has an unknown external outcome and must remain intact.
+pub(crate) fn expire_unsent_delegated_messages(
+    connection: &Connection,
+    user: i64,
+    settings: &Value,
+) -> Result<(), TaskRuntimeError> {
+    let identities = super::personal_stand_in::stand_in_identities(settings);
+    let Some(identity) = identities
+        .iter()
+        .find(|identity| identity["id"] == "@primary")
+    else {
+        return Ok(());
+    };
+    let rows = {
+        let mut statement = connection.prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
+             AND json_extract(metadata,'$.userId')=?1
+             AND json_extract(metadata,'$.roleId')='@primary'
+             AND json_extract(metadata,'$.source.delegated')=1
+             AND json_extract(metadata,'$.dispatchStatus')='pending'
+             AND json_extract(metadata,'$.delegationResult') IS NULL",
+        )?;
+        let queued = statement
+            .query_map(params![user], |row| row.get::<_, String>(0))?
+            .map(|row| {
+                serde_json::from_str::<Value>(&row?)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        queued
+    };
+    for mut message in rows {
+        if super::personal_stand_in::permits_delegated_message(
+            identity,
+            &message["source"],
+            &message["at"],
+        ) {
+            continue;
+        }
+        let (reason_code, reason) = expired_boundary_reason(identity, &message["source"]);
+        let record_id = message["recordId"].as_str().unwrap_or_default().to_owned();
+        message["delegationResult"] = json!({
+            "action":"skip",
+            "status":"complete",
+            "reason":reason,
+            "reasonCode":reason_code,
+            "recordId":record_id,
+            "policyVersion":identity["delegation"]["version"],
+            "decidedAt":now(),
+        });
+        message["dispatchStatus"] = json!("sent");
+        write_record(connection, &record_id, "stand_in_message", &message)?;
+        if let Some(mut work) = read_record(
+            connection,
+            message["workId"].as_str().unwrap_or_default(),
+            "stand_in_work",
+        )?
+        .filter(|work| work["userId"] == user)
+        {
+            refresh_work(connection, &mut work)?;
+        }
+    }
+    Ok(())
 }
 
 fn projected_message_result(work: &Value, message: Option<&Value>) -> Value {
@@ -76,9 +168,9 @@ fn projected_message_result(work: &Value, message: Option<&Value>) -> Value {
     result
 }
 
-enum SubmissionUpdate {
+enum SubmissionUpdate<'a> {
     Finish,
-    Reconcile,
+    Reconcile { device: &'a str },
 }
 
 const REPLY_CLAIM_KIND: &str = "stand_in_delegation_reply_claim";
@@ -100,19 +192,25 @@ impl LocalTaskStore {
     pub fn delegated_work_message(
         &self,
         user: i64,
+        device: &str,
         work_id: &str,
         record_id: &str,
     ) -> Result<Value, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let work = delegated_work(&connection, user, work_id)?;
-        read_record(&connection, record_id, "stand_in_message")?
+        let mut guard = self.connection()?;
+        let snapshot = guard.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let work = delegated_work(&snapshot, user, work_id)?;
+        let settings = read_personal(&snapshot, user, device)?;
+        let message = read_record(&snapshot, record_id, "stand_in_message")?
             .filter(|row| {
                 row["userId"] == user
                     && row["workId"] == work_id
                     && row["roleId"] == "@primary"
                     && same_delegated_scope(&work["source"], &row["source"])
+                    && matches_delegation_account(&settings, &row["roleId"], &row["source"])
             })
-            .ok_or(TaskRuntimeError::TaskNotFound)
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        snapshot.commit()?;
+        Ok(message)
     }
 
     /// Claim one scoped channel send or record a terminal local decision.
@@ -125,7 +223,7 @@ impl LocalTaskStore {
         mut result: Value,
     ) -> Result<Option<Value>, TaskRuntimeError> {
         use super::super::personal_stand_in::{
-            active_delegated_source, permits_delegated_reply, read_personal, stand_in_identities,
+            active_delegated_source, permits_delegated_reply, stand_in_identities,
         };
 
         let mut guard = self.connection()?;
@@ -150,6 +248,7 @@ impl LocalTaskStore {
         }
         let settings = read_personal(&connection, user, device)?;
         if settings["executionDeviceId"] != device
+            || !matches_delegation_account(&settings, &message["roleId"], &message["source"])
             || matches!(
                 settings["lifecycle"]["status"].as_str(),
                 Some("stopping" | "stopped")
@@ -225,11 +324,24 @@ impl LocalTaskStore {
         result["recordId"] = json!(record_id);
         result["decidedAt"] = json!(now());
         let submit = claim.is_some();
+        let terminal_failure = !submit && result["status"] == "failed";
         if submit {
             result["submittedAt"] = result["decidedAt"].clone();
         }
-        result["status"] = json!(if submit { "submitting" } else { "complete" });
-        message["dispatchStatus"] = json!(if submit { "sending" } else { "sent" });
+        result["status"] = json!(if submit {
+            "submitting"
+        } else if terminal_failure {
+            "failed"
+        } else {
+            "complete"
+        });
+        message["dispatchStatus"] = json!(if submit {
+            "sending"
+        } else if terminal_failure {
+            "failed"
+        } else {
+            "sent"
+        });
         message["delegationResult"] = result;
         write_record(&connection, record_id, "stand_in_message", &message)?;
         refresh_work(&connection, &mut work)?;
@@ -252,6 +364,7 @@ impl LocalTaskStore {
     pub fn reconcile_delegated_receipt(
         &self,
         user: i64,
+        device: &str,
         work_id: &str,
         record_id: &str,
         outcome: &Value,
@@ -261,7 +374,7 @@ impl LocalTaskStore {
             work_id,
             record_id,
             outcome,
-            SubmissionUpdate::Reconcile,
+            SubmissionUpdate::Reconcile { device },
         )
     }
 
@@ -271,11 +384,11 @@ impl LocalTaskStore {
         work_id: &str,
         record_id: &str,
         outcome: &Value,
-        update: SubmissionUpdate,
+        update: SubmissionUpdate<'_>,
     ) -> Result<(), TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let reconcile = matches!(update, SubmissionUpdate::Reconcile);
+        let reconcile = matches!(update, SubmissionUpdate::Reconcile { .. });
         let previous_status = if reconcile { "unknown" } else { "submitting" };
         let Some(mut message) =
             read_record(&connection, record_id, "stand_in_message")?.filter(|row| {
@@ -291,6 +404,12 @@ impl LocalTaskStore {
         let mut work = delegated_work(&connection, user, work_id)?;
         if !same_delegated_scope(&work["source"], &message["source"]) {
             return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if let SubmissionUpdate::Reconcile { device } = update {
+            let settings = read_personal(&connection, user, device)?;
+            if !matches_delegation_account(&settings, &message["roleId"], &message["source"]) {
+                return Err(TaskRuntimeError::TaskNotFound);
+            }
         }
         if reconcile
             && (nonempty_id(&outcome["channelTaskId"]).is_none()
@@ -339,11 +458,23 @@ impl LocalTaskStore {
     pub fn take_over_delegated_work(
         &self,
         user: i64,
+        device: &str,
         work_id: &str,
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut work = delegated_work(&connection, user, work_id)?;
+        let settings = read_personal(&connection, user, device)?;
+        let messages = read_stand_in_messages(&connection, user, work_id)?;
+        if !matches_delegation_account(&settings, &work["roleId"], &work["source"])
+            || messages.is_empty()
+            || messages.iter().any(|message| {
+                message["roleId"] != "@primary"
+                    || !same_delegated_scope(&work["source"], &message["source"])
+            })
+        {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
         if work["takenOverAt"].is_null() {
             work["takenOverAt"] = json!(now());
             mark_delegation_taken_over(&mut work["delegationResult"]);

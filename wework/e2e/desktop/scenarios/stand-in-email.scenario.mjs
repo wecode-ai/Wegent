@@ -226,6 +226,7 @@ export function createDesktopScenario({
         'workspace-tab-select-fixed-board',
         'workspace-tab-select-fixed-task',
         'personal-stand-in-button',
+        'stand-in-primary-open',
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
       ])
@@ -426,6 +427,7 @@ export function createDesktopScenario({
       for (const target of [
         'workspace-tab-select-fixed-task',
         'personal-stand-in-button',
+        'stand-in-primary-open',
         'stand-in-settings-open',
         'stand-in-primary-connections-open',
         `stand-in-add-${PROVIDER}-connection`,
