@@ -56,7 +56,7 @@ The number beside **My assistants** counts unread AI messages in primary and rol
 
 <a id="assistant-teams"></a>
 
-Each assistant is a Team. Its Bots and collaboration mode determine how it runs tasks. Open **Manage assistant → Execution environment** to configure its device, model, workspace and default task permissions.
+When creating an assistant, create a Team or select an existing one. An assistant that uses an existing Team runs with its prompt, Bots and collaboration mode. To change those settings for this assistant, confirm that you want to copy the Team and save your changes to the copy. Cancel to keep the original Team and its configuration. Changing the device or workspace under **Manage assistant → Execution environment** does not require a copy.
 
 ## Organize assistant teams
 
