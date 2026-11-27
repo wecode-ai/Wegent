@@ -17,7 +17,6 @@ import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Text
 import { dequal } from 'dequal'
 import type { ReactNode, Ref } from 'react'
 import { useCallback, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
-import { StandInTeamBinding } from './StandInTeamBinding'
 import { StandInComposer } from './StandInComposer'
 import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
@@ -429,16 +428,6 @@ export function StandInPrimaryProfile({
       )}
       {view === 'advanced' && (
         <div data-testid="stand-in-primary-execution" className="space-y-3">
-          {api && (
-            <StandInTeamBinding
-              api={api}
-              userId={settings.userId}
-              deviceId={executionDeviceId}
-              value={draft.teamRef}
-              disabled={blocked}
-              onChange={teamRef => setDraft(current => ({ ...current, teamRef }))}
-            />
-          )}
           <StandInComposer
             draft={role}
             showPrompt={false}

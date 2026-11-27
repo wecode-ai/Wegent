@@ -56,7 +56,7 @@ The number beside **My assistants** counts unread AI messages in primary and rol
 
 <a id="assistant-teams"></a>
 
-In **My assistants → select an assistant → Manage assistant → Execution environment**, choose **Agent for this assistant** and save. Keep the assistant’s own configuration or select an authorized Agent on the execution device to reuse its Team and Bots.
+Each assistant is a Team. Its Bots and collaboration mode determine how it runs tasks. Open **Manage assistant → Execution environment** to configure its device, model, workspace and default task permissions.
 
 ## Organize assistant teams
 

@@ -6334,8 +6334,6 @@
       "connections": "连接",
       "connections_help": "选择助理要跟进的工作来源，例如项目、钉钉群消息或邮件。",
       "execution_settings": "运行环境",
-      "execution_agent": "执行此助理的智能体",
-      "execution_agent_default": "使用助理自身配置",
       "execution_settings_help": "设置新工作的默认工作目录和模型；助理聊天的新回合也使用此模型。",
       "task_permissions": "任务默认权限",
       "task_permissions_help": "用于你主动交办后由此助理新建的 Codex 任务。",

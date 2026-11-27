@@ -6353,8 +6353,6 @@
       "connections": "Connections",
       "connections_help": "Choose the work sources the assistant follows, such as projects, DingTalk group messages or email.",
       "execution_settings": "Execution environment",
-      "execution_agent": "Agent for this assistant",
-      "execution_agent_default": "This assistant’s own configuration",
       "execution_settings_help": "Choose the default working directory and model for new work. New stand-in chat turns also use this model.",
       "task_permissions": "Default task permissions",
       "task_permissions_help": "Applies to new Codex tasks this assistant creates for work you initiate.",
