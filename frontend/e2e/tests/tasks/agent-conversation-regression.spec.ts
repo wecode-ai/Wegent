@@ -26,7 +26,7 @@ import {
   verifyGroupBotProbe,
 } from '../../utils/group-bot-capabilities'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
-import { ApiClient, createApiClient } from '../../utils/api-client'
+import { createApiClient } from '../../utils/api-client'
 import { startLocalCodexDevice } from '../../utils/artifact-device-fixture'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 import {
@@ -150,7 +150,6 @@ function canAcquireHomeLock(lock: string): boolean {
 test.describe.configure({ mode: 'serial', timeout: 180_000 })
 
 test.describe('Agent conversation regression', () => {
-  let apiClient: ApiClient
   let token = ''
   let chatShellTeam: CreatedTeam
   let inheritedClaudeTeam: CreatedTeam
@@ -169,7 +168,7 @@ test.describe('Agent conversation regression', () => {
 
   test.beforeAll(async ({ request }) => {
     await test.step('Prepare isolated database dependencies', prepareIsolatedDatabaseState)
-    apiClient = createApiClient(request)
+    const apiClient = createApiClient(request)
     const loginResponse = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
     token = loginResponse.data?.access_token || ''
     expect(token, 'Admin login should return an access token').toBeTruthy()
@@ -1069,6 +1068,7 @@ test.describe('Agent conversation regression', () => {
       page,
       request,
     }, testInfo) => {
+      const apiClient = createApiClient(request, API_BASE_URL, token)
       const name = makeContextToken('capability').toLowerCase().replaceAll('_', '-')
       const codex = runtime === 'Codex'
       const cleanup: string[] = []
