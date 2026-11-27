@@ -435,7 +435,7 @@ describe('ChatInput', () => {
   })
 
   test.each(['desktop', 'compact'] as const)(
-    'keeps the %s composer in send mode while a subagent is running',
+    'keeps the %s composer in send mode when the assistant view hides pause',
     async variant => {
       const onSubmit = vi.fn()
       const props = {
