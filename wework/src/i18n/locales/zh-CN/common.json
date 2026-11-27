@@ -1480,6 +1480,8 @@
     "send_message": "发送消息",
     "send_after_turn": "当前回复结束后发送",
     "guide_current_turn": "引导当前回复",
+    "guidance_correction_prompt": "请以这条修正后的引导为准：\n\n{{content}}",
+    "guidance_attachment_correction_prompt": "请以这些附件作为修正后的引导继续。",
     "guide_current_turn_with_model": "引导当前回复 · {{model}}",
     "interrupt_and_send": "打断并立即发送",
     "interrupt_and_send_with_model": "打断并使用 {{model}}",
