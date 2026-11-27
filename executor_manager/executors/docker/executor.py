@@ -432,7 +432,7 @@ class DockerExecutor(Executor):
             startup_task["metadata"] = {**metadata, CALLBACK_TOKEN: callback_token}
         else:
             startup_task[CALLBACK_TOKEN] = callback_token
-        self.create_instance(startup_task, task_info, executor_name)
+        container_id = self.create_instance(startup_task, task_info, executor_name)
 
         if not is_sandbox_task:
             try:
@@ -448,18 +448,33 @@ class DockerExecutor(Executor):
                         executor_name,
                     )
                 else:
-                    try:
-                        delete_container(executor_name)
-                    except Exception as cleanup_error:
-                        logger.warning(
-                            f"Failed to cleanup container {executor_name} after "
-                            f"initial dispatch failure: {cleanup_error}"
-                        )
+                    self._cleanup_failed_start(
+                        container_id,
+                        int(task_info["task_id"]),
+                        executor_name,
+                        callback_token,
+                    )
                 raise
+
+    def _cleanup_failed_start(
+        self, container_id: str, task_id: int, executor_name: str, callback_token: str
+    ) -> None:
+        from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+        if delete_container(container_id).get("status") not in {"success", "not_found"}:
+            logger.warning(
+                "Could not remove executor %s after startup failure", executor_name
+            )
+            return
+        get_sandbox_repository().delete_executor_binding(
+            task_id,
+            expected_executor_name=executor_name,
+            expected_callback_token=callback_token,
+        )
 
     def create_instance(
         self, task: Dict[str, Any], task_info: Dict[str, Any], executor_name: str
-    ) -> None:
+    ) -> str:
         """Create a new Docker container instance."""
         task_id = task_info["task_id"]
         is_validation_task = get_metadata_field(task, "type") == "validation"
@@ -521,6 +536,7 @@ class DockerExecutor(Executor):
             # This catches cases where the container exits immediately (e.g., binary incompatibility)
             if base_image:
                 self._check_container_health(task, executor_name, is_validation_task)
+            return container_id
 
         except subprocess.CalledProcessError as e:
             # Use the selected image and exit code only. Docker's diagnostics

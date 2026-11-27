@@ -761,13 +761,48 @@ class TestDockerExecutor:
         mock_wait_ready.assert_called_once_with("prepare-executor")
         mock_dispatch_task_to_instance.assert_not_called()
 
-    @patch.dict(
-        os.environ,
-        {
-            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
-        },
-        clear=False,
-    )
+    @pytest.mark.parametrize("delete_status", ["success", "failed"])
+    def test_initial_dispatch_failure_revokes_only_the_removed_runtime(
+        self, executor, sample_task, callback_repository, mocker, delete_status
+    ):
+        status = {"executor_name": "new-executor"}
+        task_info = executor._extract_task_info(sample_task)
+        mocker.patch.object(
+            docker_executor_module,
+            "generate_callback_token",
+            return_value="issued-token",
+        )
+        mocker.patch.object(
+            executor, "create_instance", return_value="new-container-id"
+        )
+        mocker.patch.object(
+            executor, "wait_instance_ready", return_value={"port": 8080}
+        )
+        mocker.patch.object(
+            executor,
+            "dispatch_task_to_instance",
+            side_effect=RuntimeError("dispatch failed"),
+        )
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": delete_status},
+        )
+
+        with pytest.raises(RuntimeError, match="dispatch failed"):
+            executor._create_new_container(sample_task, task_info, status)
+
+        delete.assert_called_once_with("new-container-id")
+        if delete_status == "success":
+            callback_repository.delete_executor_binding.assert_called_once_with(
+                123,
+                expected_executor_name="new-executor",
+                expected_callback_token="issued-token",
+            )
+        else:
+            callback_repository.delete_executor_binding.assert_not_called()
+
+    @patch.dict(os.environ, {"VALIDATION_KEEP_FAILED_CONTAINER": "true"}, clear=False)
     @patch("executor_manager.executors.docker.executor.delete_container")
     def test_create_new_container_keeps_validation_container_on_dispatch_failure(
         self, mock_delete_container, executor

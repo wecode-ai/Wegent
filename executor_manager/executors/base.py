@@ -92,13 +92,16 @@ class Executor(abc.ABC):
     @abc.abstractmethod
     def create_instance(
         self, task: Dict[str, Any], task_info: Dict[str, Any], executor_name: str
-    ) -> None:
+    ) -> Optional[str]:
         """Create a new runtime instance (container/pod).
 
         Args:
             task: Task payload dictionary
             task_info: Extracted task metadata
             executor_name: Runtime instance name
+
+        Returns:
+            Immutable runtime identifier when available.
         """
         pass
 
