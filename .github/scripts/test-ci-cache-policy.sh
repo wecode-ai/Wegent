@@ -728,15 +728,14 @@ jobs = YAML.load_file(ARGV[0])['jobs']
     ]
   end
   commands = step['run'].lines.map(&:strip).reject(&:empty?)
-  abort "#{name} must install the locked Electron toolchain" unless commands.first == 'pnpm --dir wework prepare:electron'
+  abort "#{name} must install the locked Electron toolchain" unless commands.first == expected_commands.first
   if name.include?('windows')
     resolved = step['run'].include?("const binary = require('electron');")
     verified = resolved && step['run'].include?('fs.statSync(binary)')
     exported = step['run'].include?('WEWORK_E2E_ELECTRON_BIN=') && step['run'].include?('process.env.GITHUB_ENV')
     abort "#{name} must verify and export its native Electron binary" unless verified && exported
   else
-    expected = %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
-    abort "#{name} must verify the locked Electron toolchain" unless commands == [commands.first, expected]
+    abort "#{name} must verify the locked Electron toolchain" unless commands == expected_commands
   end
 end
 RUBY

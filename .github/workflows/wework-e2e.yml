@@ -1324,18 +1324,16 @@ jobs:
           # Segments excluded from the Windows arm64 matrix only, each with
           # evidence in https://github.com/wecode-ai/Wegent/issues/4622.
           # Coverage stays intact on Linux and Windows x64:
-          # - conversation-state: deterministic pixel-level anchor mismatch;
-          #   Windows 11 client overlay scrollbars reflow text versus the
-          #   Server-classic scrollbars the assertion was calibrated on.
           # - collaboration-shared-core: cloud-dependent selector stays
           #   disabled under the emulated x64 Backend helper.
+          # conversation-state is enabled with its content-relative anchor
+          # assertion so Windows arm64 failures report scroll-offset samples.
           # local-harness is covered again since opencode-ai 1.19.5, whose
           # release builds embed Bun >= 1.4.2 with Windows arm64 bun:ffi
           # support (oven-sh/bun#33696, anomalyco/opencode#47446).
           # plugin-development is covered again; its focus assertion now waits
           # for the isolated window's foreground activation.
           $unsupportedSegments = @(
-            'conversation-state',
             'collaboration-shared-core'
           )
           $segments = @(

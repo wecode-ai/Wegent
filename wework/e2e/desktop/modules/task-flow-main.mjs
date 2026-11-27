@@ -37,6 +37,7 @@ import {
   verifyViewImageProcessingBlock,
   verifyWorktreeCreationStatus,
   waitForElementInsideScroller,
+  waitForAnchorOffset,
   waitForElementTop,
   waitForElementWidth,
   waitForOverflowMetrics,
@@ -4071,6 +4072,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           conversationScrollerSelector,
           'The linked file paragraph before opening the file panel'
         )
+      const filePanelAnchorOffsetBeforeOpen =
+        filePanelAnchorBeforeOpen.top -
+        filePanelScrollerBeforeOpen.top +
+        filePanelScrollerBeforeOpen.scrollTop
       assert.ok(
         distanceFromBottom(filePanelScrollerBeforeOpen) > 100,
         'The linked file paragraph did not move the conversation away from the bottom'
@@ -4111,12 +4116,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
       let filePanelAnchorAfterOpen
       try {
-        filePanelAnchorAfterOpen = await waitForElementTop(
+        filePanelAnchorAfterOpen = await waitForAnchorOffset(
           control,
           filePanelAnchorSelector,
-          top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-          'The linked file paragraph after opening the file panel',
-          DEFAULT_STEP_TIMEOUT_MS
+          conversationScrollerSelector,
+          filePanelAnchorOffsetBeforeOpen,
+          'The linked file paragraph after opening the file panel'
         )
       } catch (error) {
         const settled = {
@@ -4168,13 +4173,31 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The conversation after closing a linked file',
         DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterClose = await waitForElementTop(
-        control,
-        filePanelAnchorSelector,
-        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
-        'The linked file paragraph after closing the file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      let filePanelAnchorAfterClose
+      try {
+        filePanelAnchorAfterClose = await waitForAnchorOffset(
+          control,
+          filePanelAnchorSelector,
+          conversationScrollerSelector,
+          filePanelAnchorOffsetBeforeOpen,
+          'The linked file paragraph after closing the file panel'
+        )
+      } catch (error) {
+        const settled = {
+          anchor: (await getElementMetrics(control, filePanelAnchorSelector)).at(-1) ?? null,
+          scroller: await getSingleElementMetrics(
+            control,
+            conversationScrollerSelector,
+            'The conversation after the closing anchor expectation failed'
+          ),
+        }
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} (before=${JSON.stringify({
+            anchor: filePanelAnchorBeforeOpen,
+            scroller: filePanelScrollerBeforeOpen,
+          })} settled=${JSON.stringify(settled)})`
+        )
+      }
       assert.ok(
         Math.abs(filePanelScrollerAfterClose.width - filePanelScrollerBeforeOpen.width) <= 1,
         `Closing the file panel did not restore the conversation width from ${filePanelScrollerAfterOpen.width}px; after=${filePanelScrollerAfterClose.width}px`
