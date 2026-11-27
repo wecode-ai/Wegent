@@ -623,11 +623,17 @@ export function KnowledgeSourcePicker({
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
   const returnFocus = useRef<HTMLButtonElement | null>(null)
+  const restoreFocusOnBack = useRef(false)
   useEffect(() => {
-    if (activeKnowledgeBase || activeDingTalkSpace || !returnFocus.current) return
-    returnFocus.current.focus({ preventScroll: true })
+    if (activeKnowledgeBase || activeDingTalkSpace) return
+    if (restoreFocusOnBack.current) returnFocus.current?.focus({ preventScroll: true })
+    restoreFocusOnBack.current = false
     returnFocus.current = null
   }, [activeKnowledgeBase, activeDingTalkSpace])
+  const handleBack = () => {
+    if (activeKnowledgeBase || activeDingTalkSpace) restoreFocusOnBack.current = true
+    navigateBack()
+  }
   const nativeSource =
     activeSource === 'all' ||
     activeSource === 'personal' ||
@@ -1666,27 +1672,29 @@ export function KnowledgeSourcePicker({
             <ChevronDown className="h-4 w-4 shrink-0" aria-hidden />
           </Button>
         </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="max-h-[min(55dvh,24rem)] w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1"
-        >
-          {sourceRows.map(row => (
-            <Button
-              type="button"
-              key={row.key}
-              variant="ghost"
-              className="min-h-11 w-full justify-start whitespace-normal text-left"
-              aria-current={currentSourceRow?.key === row.key ? 'true' : undefined}
-              data-testid={`knowledge-picker-mobile-source-${row.key}`}
-              onClick={() => {
-                openSource(row.key)
-                setSourceMenuOpen(false)
-              }}
-            >
-              {row.label}
-            </Button>
-          ))}
-        </PopoverContent>
+        {sourceMenuOpen && (
+          <PopoverContent
+            align="start"
+            className="max-h-[min(55dvh,24rem)] w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1"
+          >
+            {sourceRows.map(row => (
+              <Button
+                type="button"
+                key={row.key}
+                variant="ghost"
+                className="min-h-11 w-full justify-start whitespace-normal text-left"
+                aria-current={currentSourceRow?.key === row.key ? 'true' : undefined}
+                data-testid={`knowledge-picker-mobile-source-${row.key}`}
+                onClick={() => {
+                  openSource(row.key)
+                  setSourceMenuOpen(false)
+                }}
+              >
+                {row.label}
+              </Button>
+            ))}
+          </PopoverContent>
+        )}
       </Popover>
     </div>
   )
@@ -2075,7 +2083,7 @@ export function KnowledgeSourcePicker({
             <div className="min-h-0 flex-1">{renderDocumentColumn()}</div>
           </div>
         }
-        onBack={navigateBack}
+        onBack={handleBack}
       />
     </div>
   )

@@ -33,7 +33,12 @@ import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
-import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
+import {
+  KnowledgeBaseMultiSelector,
+  KnowledgeBindingValidationError,
+} from './knowledge/KnowledgeBaseMultiSelector'
+import { useKnowledgeBindingValidation } from '../hooks/useKnowledgeBaseOptions'
+import { useUser } from '@/features/common/UserContext'
 
 import { Bot } from '@/types/api'
 import { botApis, CreateBotRequest, KnowledgeBaseDefaultRef, SkillRefMeta } from '@/apis/bots'
@@ -173,7 +178,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const { t, i18n } = useTranslation()
 
   const [botSaving, setBotSaving] = useState(false)
-  const [invalidKnowledgeBindings, setInvalidKnowledgeBindings] = useState(false)
   const [shells, setShells] = useState<UnifiedShell[]>([])
   const [loadingShells, setLoadingShells] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
@@ -261,6 +265,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Check if current agent is Dify
   const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName])
+  const { user } = useUser()
+  const bindingGroup =
+    scope !== 'public' && knowledgeBindingNamespace !== 'default'
+      ? knowledgeBindingNamespace
+      : undefined
+  const knowledgeBinding = useKnowledgeBindingValidation(
+    defaultKnowledgeBaseRefs.map(item => item.id),
+    readOnly || isDifyAgent ? undefined : user?.id,
+    bindingGroup,
+    scope === 'public' || (scope === 'group' && !editingBot && !bindingGroup)
+  )
+  const invalidKnowledgeBindings = knowledgeBinding.blocksSave
   const mcpAgentType = useMemo(
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
@@ -1800,7 +1816,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <KnowledgeBaseMultiSelector
                       value={defaultKnowledgeBaseRefs}
                       onChange={setDefaultKnowledgeBaseRefs}
-                      onInvalidBindingsChange={setInvalidKnowledgeBindings}
+                      bindingValidation={knowledgeBinding}
                       disabled={readOnly}
                       allowedSources={
                         scope === 'public'
@@ -1817,6 +1833,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           : undefined
                       }
                     />
+                    <KnowledgeBindingValidationError validation={knowledgeBinding} />
                   </div>
                 </div>
               )}

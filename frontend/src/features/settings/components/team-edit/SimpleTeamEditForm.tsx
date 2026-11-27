@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
 import McpConfigSection from '@/features/settings/components/McpConfigSection'
 import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
+import type { KnowledgeBindingValidation } from '../../hooks/useKnowledgeBaseOptions'
 import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
 import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
 import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
@@ -94,7 +95,7 @@ interface SimpleTeamEditFormProps {
   onReloadSkills: () => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
-  onInvalidKnowledgeBindingsChange?: (invalid: boolean) => void
+  knowledgeBinding?: KnowledgeBindingValidation
   mcpConfig: string
   onMcpConfigChange: (value: string) => void
   mcpAgentType?: McpAgentType
@@ -200,7 +201,7 @@ export default function SimpleTeamEditForm({
   onReloadSkills,
   defaultKnowledgeBaseRefs,
   onDefaultKnowledgeBaseRefsChange,
-  onInvalidKnowledgeBindingsChange,
+  knowledgeBinding,
   mcpConfig,
   onMcpConfigChange,
   mcpAgentType,
@@ -561,7 +562,7 @@ export default function SimpleTeamEditForm({
                   <KnowledgeBaseMultiSelector
                     value={defaultKnowledgeBaseRefs}
                     onChange={onDefaultKnowledgeBaseRefsChange}
-                    onInvalidBindingsChange={onInvalidKnowledgeBindingsChange}
+                    bindingValidation={knowledgeBinding}
                     helperText={null}
                     allowedSources={
                       scope === 'group'

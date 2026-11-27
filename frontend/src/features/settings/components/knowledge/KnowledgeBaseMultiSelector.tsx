@@ -28,7 +28,8 @@ import {
   KnowledgeBaseOption,
   KnowledgeBaseOptionSource,
   toCatalogKnowledgeBaseOption,
-  useInvalidKnowledgeBaseBindings,
+  useKnowledgeBindingValidation,
+  type KnowledgeBindingValidation,
   useKnowledgeBaseOptions,
 } from '../../hooks/useKnowledgeBaseOptions'
 
@@ -39,7 +40,7 @@ interface KnowledgeBaseMultiSelectorProps {
   allowedSources?: KnowledgeBaseOptionSource[]
   allowedGroupNamespaces?: string[]
   helperText?: string | null
-  onInvalidBindingsChange?: (invalid: boolean) => void
+  bindingValidation?: KnowledgeBindingValidation
 }
 
 interface GroupedKnowledgeBaseOption {
@@ -303,6 +304,23 @@ function SelectedKnowledgeBaseChip({
   )
 }
 
+export function KnowledgeBindingValidationError({
+  validation,
+}: {
+  validation: KnowledgeBindingValidation
+}) {
+  const { t } = useTranslation('knowledge')
+  if (validation.status !== 'failed') return null
+  return (
+    <div className="flex items-center gap-2 text-sm text-error" role="alert">
+      {t('fetch_error')}
+      <Button type="button" variant="outline" onClick={validation.retry}>
+        {t('common:actions.retry')}
+      </Button>
+    </div>
+  )
+}
+
 export function KnowledgeBaseMultiSelector({
   value,
   onChange,
@@ -310,7 +328,7 @@ export function KnowledgeBaseMultiSelector({
   allowedSources,
   allowedGroupNamespaces,
   helperText,
-  onInvalidBindingsChange,
+  bindingValidation,
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
   const { user } = useUser()
@@ -322,16 +340,14 @@ export function KnowledgeBaseMultiSelector({
   const [space, setSpace] = useState<'personal' | 'group' | 'organization' | undefined>()
   const organizationOnly = allowedSources?.length === 1 && allowedSources[0] === 'organization'
   const bindingGroup = allowedGroupNamespaces?.[0]
-  const invalidIds = useInvalidKnowledgeBaseBindings(
+  const localValidation = useKnowledgeBindingValidation(
     value.map(item => item.id),
-    disabled ? undefined : user?.id,
+    disabled || bindingValidation ? undefined : user?.id,
     bindingGroup,
     organizationOnly
   )
-  const hasInvalidBindings = invalidIds.size > 0
-  useEffect(() => {
-    onInvalidBindingsChange?.(hasInvalidBindings)
-  }, [hasInvalidBindings, onInvalidBindingsChange])
+  const { invalidIds } = bindingValidation ?? localValidation
+  const hasInvalidBindings = value.some(item => invalidIds.has(item.id))
   const catalog = useKnowledgeCatalog(
     {
       query: search,

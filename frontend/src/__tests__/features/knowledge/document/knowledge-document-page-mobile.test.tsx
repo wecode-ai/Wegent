@@ -582,10 +582,51 @@ it('retries a failed initial link lookup and recovers the requested detail', asy
   mockPathname = '/knowledge/default/Docs'
   mockParams = new URLSearchParams({ kb: '7' })
   jest.mocked(knowledgeBaseApi.getAllGrouped).mockRejectedValueOnce(new Error('offline'))
+  jest.mocked(getKnowledgeCatalogPage).mockRejectedValueOnce(new Error('catalog offline'))
   render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
   expect(await screen.findByTestId('knowledge-url-error')).toBeInTheDocument()
   await userEvent.setup().click(screen.getByTestId('knowledge-url-retry'))
   expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Docs')
+})
+
+it('loads and retries a deep link for a library absent from the grouped snapshot', async () => {
+  const library = { ...baseKb, id: 81, name: 'Catalog library' }
+  mockPathname = '/knowledge/default/Catalog%20library'
+  mockParams = new URLSearchParams({ kb: '81' })
+  jest.mocked(getKnowledgeCatalogPage).mockResolvedValue({
+    items: [
+      {
+        ...library,
+        kb_type: 'classic',
+        namespace_level: 'personal',
+        namespace_display_name: null,
+      },
+    ],
+    total: 1,
+    returned_count: 1,
+    limit: 50,
+    offset: 0,
+    has_more: false,
+    space_counts: { default: 1 },
+  })
+  jest
+    .mocked(getKnowledgeBase)
+    .mockRejectedValueOnce(new Error('detail offline'))
+    .mockResolvedValue(library)
+  jest.spyOn(console, 'error').mockImplementation(() => {})
+
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName={library.name} />)
+  await userEvent.setup().click(await screen.findByTestId('knowledge-url-retry'))
+  expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent(library.name)
+  expect(getKnowledgeBase).toHaveBeenCalledTimes(2)
+  expect(getKnowledgeBase).toHaveBeenLastCalledWith(library.id)
+})
+
+it('keeps the All catalog usable while the grouped navigation request fails', async () => {
+  jest.mocked(knowledgeBaseApi.getAllGrouped).mockRejectedValue(new Error('navigation offline'))
+  render(<KnowledgeDocumentPageDesktop />)
+  expect(await screen.findByTestId('retry-knowledge-navigation')).toBeInTheDocument()
+  expect(await screen.findByTestId('kb-row-7')).toBeInTheDocument()
 })
 
 it('retains the mounted detail through a same-scope refresh failure and retries', async () => {

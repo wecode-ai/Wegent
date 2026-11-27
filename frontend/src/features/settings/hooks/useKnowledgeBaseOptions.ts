@@ -142,17 +142,33 @@ export function useKnowledgeBaseOptions(enabled = true): UseKnowledgeBaseOptions
 const NO_INVALID_KNOWLEDGE_BASES: ReadonlySet<number> = new Set()
 const VALIDATION_PAGE_SIZE = 50
 
-export function useInvalidKnowledgeBaseBindings(
+export interface KnowledgeBindingValidation {
+  status: 'pending' | 'ready' | 'failed'
+  invalidIds: ReadonlySet<number>
+  blocksSave: boolean
+  retry: () => void
+}
+
+export function useKnowledgeBindingValidation(
   ids: number[],
   userId: number | undefined,
   bindingGroup: string | undefined,
   organizationOnly: boolean
-): ReadonlySet<number> {
+): KnowledgeBindingValidation {
   const idKey = [...new Set(ids)].sort((a, b) => a - b).join(',')
-  const key = JSON.stringify([userId, bindingGroup, organizationOnly, idKey])
-  const [validation, setValidation] = useState<{ key: string; invalidIds: Set<number> }>()
+  const scope = JSON.stringify([userId, bindingGroup, organizationOnly])
+  const enabled =
+    userId !== undefined && Boolean(idKey) && Boolean(bindingGroup || organizationOnly)
+  const [attempt, setAttempt] = useState(0)
+  const key = JSON.stringify([scope, idKey, attempt])
+  const [validation, setValidation] = useState<{
+    scope: string
+    key: string
+    invalidIds: ReadonlySet<number>
+    status: 'ready' | 'failed'
+  }>()
   useEffect(() => {
-    if (userId === undefined || !idKey || (!bindingGroup && !organizationOnly)) return
+    if (!enabled) return
     const ids = idKey.split(',').map(Number)
     const controller = new AbortController()
     const requests = []
@@ -176,13 +192,32 @@ export function useInvalidKnowledgeBaseBindings(
       .then(pages => {
         if (controller.signal.aborted) return
         const validIds = new Set(pages.flatMap(page => page.items.map(row => row.id)))
-        setValidation({ key, invalidIds: new Set(ids.filter(id => !validIds.has(id))) })
+        setValidation({
+          scope,
+          key,
+          invalidIds: new Set(ids.filter(id => !validIds.has(id))),
+          status: 'ready',
+        })
       })
       .catch(() => {
-        // The save path verifies permissions even if the catalog request fails.
+        if (controller.signal.aborted) return
+        setValidation(previous => ({
+          scope,
+          key,
+          invalidIds: previous?.scope === scope ? previous.invalidIds : NO_INVALID_KNOWLEDGE_BASES,
+          status: 'failed',
+        }))
       })
     return () => controller.abort()
-  }, [bindingGroup, idKey, key, organizationOnly, userId])
+  }, [bindingGroup, enabled, idKey, key, organizationOnly, scope])
 
-  return validation?.key === key ? validation.invalidIds : NO_INVALID_KNOWLEDGE_BASES
+  const status = !enabled ? 'ready' : validation?.key === key ? validation.status : 'pending'
+  const invalidIds =
+    enabled && validation?.scope === scope ? validation.invalidIds : NO_INVALID_KNOWLEDGE_BASES
+  return {
+    status,
+    invalidIds,
+    blocksSave: status !== 'ready' || invalidIds.size > 0,
+    retry: () => setAttempt(value => value + 1),
+  }
 }

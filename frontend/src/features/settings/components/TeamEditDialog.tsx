@@ -63,6 +63,9 @@ import { useSimpleTeamDraft } from './team-edit/useSimpleTeamDraft'
 import { isRetainedPrivateModel, toModelSelectValue } from './team-edit/model-select-utils'
 import { useShellModels } from '../hooks/useShellModels'
 import { useTeamLeaderBot } from '../hooks/useTeamLeaderBot'
+import { useUser } from '@/features/common/UserContext'
+import { useKnowledgeBindingValidation } from '../hooks/useKnowledgeBaseOptions'
+import { KnowledgeBindingValidationError } from './knowledge/KnowledgeBaseMultiSelector'
 import {
   bindModeRequiresCodingAgent,
   getDefaultSimpleBindMode,
@@ -222,7 +225,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
   const [saving, setSaving] = useState(false)
-  const [invalidKnowledgeBindings, setInvalidKnowledgeBindings] = useState(false)
   const [creatingPublishTarget, setCreatingPublishTarget] = useState<CapabilityPublishTarget>(
     createTarget.scope === 'group' ? 'team' : 'personal'
   )
@@ -542,6 +544,25 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     failed: leaderBotFailed,
     reload: reloadLeaderBot,
   } = useTeamLeaderBot(formTeam, bots, open && isEditing && useSimpleEditor)
+  const { user } = useUser()
+  const sourceBotNamespace = isEditing ? scopedLeaderBot?.namespace : undefined
+  const createsInTeam = !isEditing && creatingPublishTarget === 'team'
+  const knowledgeScope = sourceBotNamespace
+    ? sourceBotNamespace === 'default'
+      ? 'personal'
+      : 'group'
+    : createsInTeam
+      ? 'group'
+      : scope
+  const knowledgeGroupName =
+    sourceBotNamespace ?? (createsInTeam ? publishGroupNames[0] : groupName)
+  const bindingGroup = knowledgeScope === 'group' ? knowledgeGroupName : undefined
+  const knowledgeBinding = useKnowledgeBindingValidation(
+    simpleDefaultKnowledgeBaseRefs.map(item => item.id),
+    open && useSimpleEditor ? user?.id : undefined,
+    bindingGroup,
+    knowledgeScope === 'group' && !bindingGroup
+  )
 
   const selectedSimpleShell = useMemo(
     () =>
@@ -1138,7 +1159,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     identityConfirmed?: boolean
     publicationReductionConfirmed?: boolean
   } = {}) => {
-    if (useSimpleEditor && (leaderBotPending || invalidKnowledgeBindings)) return
+    if (useSimpleEditor && (leaderBotPending || knowledgeBinding.blocksSave)) return
     if (!name.trim()) {
       toast({
         variant: 'destructive',
@@ -1528,7 +1549,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   }}
                   onReloadSkills={reloadSimpleSkills}
                   defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
-                  onInvalidKnowledgeBindingsChange={setInvalidKnowledgeBindings}
+                  knowledgeBinding={knowledgeBinding}
                   onDefaultKnowledgeBaseRefsChange={value =>
                     setSimpleField('simpleDefaultKnowledgeBaseRefs', value)
                   }
@@ -1542,22 +1563,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     setSimpleField('simpleInheritBaseCapabilities', value)
                   }
                   toast={toast}
-                  scope={
-                    isEditing && scopedLeaderBot
-                      ? scopedLeaderBot.namespace === 'default'
-                        ? 'personal'
-                        : 'group'
-                      : creatingPublishTarget === 'team' && !isEditing
-                        ? 'group'
-                        : scope
-                  }
-                  groupName={
-                    isEditing && scopedLeaderBot
-                      ? scopedLeaderBot.namespace
-                      : creatingPublishTarget === 'team' && !isEditing
-                        ? publishGroupNames[0]
-                        : groupName
-                  }
+                  scope={knowledgeScope}
+                  groupName={knowledgeGroupName}
                 />
               </>
             ) : (
@@ -1689,6 +1696,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               useSimpleEditor ? 'shrink-0 border-t border-border bg-base px-8 py-4' : undefined
             }
           >
+            {knowledgeBinding.status === 'failed' && (
+              <KnowledgeBindingValidationError validation={knowledgeBinding} />
+            )}
             <Button variant="outline" onClick={onClose}>
               {t('common:actions.cancel')}
             </Button>
@@ -1699,7 +1709,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 (publishTarget === 'team' && publishGroupNames.length === 0) ||
                 (useSimpleEditor &&
                   (leaderBotPending ||
-                    invalidKnowledgeBindings ||
+                    knowledgeBinding.blocksSave ||
                     loadingShells ||
                     (!!simpleModelName && simpleLoadingModels)))
               }

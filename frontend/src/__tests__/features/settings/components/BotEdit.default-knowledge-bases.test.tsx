@@ -906,6 +906,53 @@ describe('BotEdit default knowledge bases', () => {
     await waitFor(() => expect(screen.getByTestId('save-button')).toBeEnabled())
   })
 
+  test('keeps a retained conflict and blocks save when revalidation fails', async () => {
+    mockCatalogUserId = 7
+    const emptyPage = {
+      items: [],
+      total: 0,
+      returned_count: 0,
+      limit: 50,
+      offset: 0,
+      has_more: false,
+      space_counts: {},
+    }
+    const catalog = jest.mocked(getKnowledgeCatalogPage)
+    catalog
+      .mockResolvedValueOnce(emptyPage)
+      .mockRejectedValueOnce(new Error('Catalog temporarily unavailable'))
+      .mockResolvedValue(emptyPage)
+
+    await renderBotEdit({
+      namespace: 'existing-group',
+      default_knowledge_base_refs: [
+        { id: 101, name: 'First' },
+        { id: 102, name: 'Retained' },
+      ],
+    })
+    const retained = await screen.findByTestId('default-knowledge-base-chip-102')
+    await waitFor(() => expect(retained).toHaveTextContent('picker.invalidBinding'))
+    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-101'))
+    expect(retained).toHaveTextContent('picker.invalidBinding')
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+
+    const retry = await screen.findByRole('button', { name: 'common:actions.retry' })
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+    fireEvent.click(retry)
+    await waitFor(() =>
+      expect(catalog).toHaveBeenLastCalledWith(
+        expect.objectContaining({ candidate_ids: [102] }),
+        0,
+        expect.any(AbortSignal)
+      )
+    )
+    await waitFor(() => expect(retry).not.toBeInTheDocument())
+    expect(retained).toHaveTextContent('picker.invalidBinding')
+    expect(screen.getByTestId('save-button')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-102'))
+    await waitFor(() => expect(screen.getByTestId('save-button')).toBeEnabled())
+  })
+
   test('uses creation scope without a source Bot', async () => {
     await renderBotEdit({}, { mode: 'new', scope: 'group', groupName: 'target-group' })
     expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalled()

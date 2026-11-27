@@ -15,6 +15,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
 import client from '@/apis/client'
+import { getKnowledgeBase } from '@/apis/knowledge'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { KnowledgeAccessDialog } from './KnowledgeAccessDialog'
 import { usePathname } from 'next/navigation'
@@ -51,7 +53,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { CodeWikiView } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeBase } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -92,7 +94,8 @@ function KnowledgeDocumentSession({
   }, [])
   const createTrigger = useRef<HTMLElement | null>(null)
   const [navigationOpen, setNavigationOpen] = useState(false)
-  const [accessKbId, setAccessKbId] = useState<number | null>(null)
+  const [accessKb, setAccessKb] = useState<Pick<KnowledgeBase, 'id' | 'namespace'> | null>(null)
+  const rowActionRequest = useRef(0)
   const [permissionRevision, setPermissionRevision] = useState(0)
   const { user } = useUser()
   const pathname = usePathname()
@@ -113,17 +116,7 @@ function KnowledgeDocumentSession({
     setCatalogRevision(revision => revision + 1)
   }, [sidebar.allKnowledgeBasesWithGroupInfo])
   const visibleKnowledgeBases = sidebar.visibleKnowledgeBases
-  const accessKb = sidebar.allKnowledgeBasesWithGroupInfo.find(kb => kb.id === accessKbId)
-  useEffect(() => {
-    if (
-      accessKbId !== null &&
-      sidebar.hasLoaded &&
-      !sidebar.isGroupsLoading &&
-      !sidebar.loadError &&
-      !accessKb
-    )
-      setAccessKbId(null)
-  }, [accessKbId, accessKb, sidebar.hasLoaded, sidebar.isGroupsLoading, sidebar.loadError])
+  const usesCatalog = sidebar.viewMode === 'all' && user?.id !== undefined
   const hasAdvancedKnowledge = useMemo(
     () =>
       getRuntimeConfigSync().enableCodeWiki || hasAdvancedKnowledgeBases(sidebar.allKnowledgeBases),
@@ -284,12 +277,15 @@ function KnowledgeDocumentSession({
     initialUrlSyncDone,
     kbResolution,
     retainedKbId,
+    retryKbResolution,
     updateUrlParams,
     navigateToKbViaHistory,
   } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
     scopeKey: sidebar.scopeKey,
+    catalogAccountId: user?.id,
+    catalogRevision: permissionRevision,
     organizationKnowledgeBases,
     hasLoadError: Boolean(sidebar.loadError),
     allKnowledgeBases: sidebar.allKnowledgeBases,
@@ -353,7 +349,7 @@ function KnowledgeDocumentSession({
 
   const { refreshAll } = sidebar
   // Closing the dialog preserves the owner of writes that are still in flight.
-  const permissionResource = accessKbId ?? sidebar.selectedKbId
+  const permissionResource = accessKb?.id ?? sidebar.selectedKbId
   const permissionOwner = useRef({ kbId: permissionResource, version: 0 })
   if (permissionResource !== null && permissionResource !== permissionOwner.current.kbId) {
     permissionOwner.current = {
@@ -375,7 +371,7 @@ function KnowledgeDocumentSession({
   }, [refreshAll, permissionVersion, permissionCacheScope])
 
   useEffect(() => {
-    if (sidebar.selectedKbId !== null) setAccessKbId(null)
+    if (sidebar.selectedKbId !== null) setAccessKb(null)
   }, [sidebar.selectedKbId])
 
   // Auto-collapse sidebar in Notebook view.
@@ -405,27 +401,39 @@ function KnowledgeDocumentSession({
 
   const handleSelectKb = useCallback(
     (kb: KbDataItem | { id: number; name: string; namespace: string }) => {
-      const fullKb =
-        sidebar.allKnowledgeBases.find(k => k.id === kb.id) ??
-        ('group_type' in kb ? toKnowledgeBase(kb) : undefined)
+      const groupedKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
+      const fullKb = groupedKb ?? ('group_type' in kb ? toKnowledgeBase(kb) : undefined)
       if (fullKb) {
         const isKbSwitch = fullKb.id !== sidebar.selectedKbId
         // Always update state and URL without causing a page remount to avoid UI flickering.
         // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
         // the entire page component. This works for both the main page and detail pages.
         setNavigationOpen(false)
-        sidebar.selectKb(fullKb)
+        sidebar.selectKb(fullKb, !groupedKb)
         if (isKbSwitch) {
           setCurrentView(getDefaultKnowledgeView(fullKb.kb_type))
         }
         // Update sidebar collapse synchronously (not via useEffect) so the
         // sidebar state is correct in the same render cycle as the selectedKb update
         updateSidebarCollapsed(fullKb.kb_type !== 'classic')
-        navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
+        navigateToKbViaHistory(kb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
     [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed]
   )
+
+  const openRowAction = async (id: number, openDialog: (kb: KnowledgeBase) => void) => {
+    const request = ++rowActionRequest.current
+    const scope = client.getCacheScope()
+    const isCurrent = () =>
+      alive.current && request === rowActionRequest.current && scope === client.getCacheScope()
+    try {
+      const kb = await getKnowledgeBase(id, { cache: 'no-store' })
+      if (isCurrent()) openDialog(kb)
+    } catch {
+      if (isCurrent()) toast.error(t('fetch_error'))
+    }
+  }
 
   const handleSelectAll = useCallback(() => {
     setNavigationOpen(false)
@@ -511,7 +519,12 @@ function KnowledgeDocumentSession({
     (kbResolution?.status === 'loading' || kbResolution?.status === 'error')
   const renderMainContent = () => {
     if (kbResolution && kbResolution.status !== 'resolved' && !retainsDetail) {
-      return <KnowledgeUrlStatus status={kbResolution.status} onRetry={sidebar.refreshAll} />
+      return (
+        <KnowledgeUrlStatus
+          status={kbResolution.status}
+          onRetry={retryKbResolution ?? sidebar.refreshAll}
+        />
+      )
     }
     const expectedKbId =
       kbResolution?.status === 'resolved'
@@ -622,7 +635,7 @@ function KnowledgeDocumentSession({
     return (
       <KnowledgeGroupListPage
         mobile={mobile}
-        onViewPermissions={kb => setAccessKbId(kb.id)}
+        onViewPermissions={kb => setAccessKb({ id: kb.id, namespace: kb.namespace })}
         groupId={sidebar.selectedGroupId}
         groupName={t('document.navigation.' + titleKey)}
         knowledgeBases={visibleKnowledgeBases.all}
@@ -646,14 +659,8 @@ function KnowledgeDocumentSession({
         hasAdvancedKnowledge={hasAdvancedKnowledge}
         showAdvancedKnowledge={showAdvancedKnowledge}
         onShowAdvancedKnowledgeChange={setShowAdvancedKnowledge}
-        onEditKb={kb => {
-          const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-          if (full) dialogs.setEditingKb(full)
-        }}
-        onDeleteKb={kb => {
-          const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-          if (full) dialogs.setDeletingKb(full)
-        }}
+        onEditKb={kb => void openRowAction(kb.id, dialogs.setEditingKb)}
+        onDeleteKb={kb => void openRowAction(kb.id, dialogs.setDeletingKb)}
         canManageKb={canManageKbInList}
         onToggleFavorite={handleToggleFavorite}
         isFavorite={isFavorite}
@@ -663,10 +670,7 @@ function KnowledgeDocumentSession({
         filterGroupId={sidebar.filterGroupId}
         onFilterGroupChange={sidebar.setFilterGroupId}
         availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}
-        onMigrateKb={kb => {
-          const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
-          if (full) dialogs.setMigratingKb(full)
-        }}
+        onMigrateKb={kb => void openRowAction(kb.id, dialogs.setMigratingKb)}
         canMigrate={dialogs.canMigrateKb}
       />
     )
@@ -766,16 +770,22 @@ function KnowledgeDocumentSession({
           </div>
         )}
         {retainsDetail && kbResolution?.status === 'error' && (
-          <KnowledgeUrlStatus status="error" onRetry={sidebar.refreshAll} compact />
+          <KnowledgeUrlStatus
+            status="error"
+            onRetry={retryKbResolution ?? sidebar.refreshAll}
+            compact
+          />
         )}
-        {sidebar.loadError && !sidebar.hasLoaded && !kbResolution ? null : renderMainContent()}
+        {sidebar.loadError && !sidebar.hasLoaded && !kbResolution && !usesCatalog
+          ? null
+          : renderMainContent()}
       </div>
 
       {accessKb && (
         <KnowledgeAccessDialog
           kbId={accessKb.id}
           kbNamespace={accessKb.namespace}
-          onClose={() => setAccessKbId(null)}
+          onClose={() => setAccessKb(null)}
           onChanged={permissionsChanged}
           onAccessLost={() => sidebar.removeInaccessibleKnowledgeBase(accessKb.id)}
         />
