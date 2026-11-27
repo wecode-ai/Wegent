@@ -199,7 +199,8 @@ export function createDesktopScenario({
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = accountStartup.backendUrl
     },
     async beforeWorkbenchSetup(control) {
-      const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+      const rpc = (method, params, timeoutMs = uiTimeoutMs) =>
+        requestExecutor(control, method, params, timeoutMs)
       rhythm = createCollaborationExpRhythmFixture(rpc, modelResponseTimeoutMs)
       try {
         await accountStartup.prepareNative(control, async () => {

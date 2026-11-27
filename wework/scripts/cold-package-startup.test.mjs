@@ -22,7 +22,7 @@ test('release-package resource ownership selects cold startup without a second o
     'utf8'
   )
   assert.ok(
-    /const ready\s*=\s*usesReleasePackageRuntimeAssets && !usesDefaultUserData\s*\? await waitForColdPackageStartup/.test(
+    /waitForReady:\s*async\s*\(\)\s*=>\s*usesReleasePackageRuntimeAssets && !usesDefaultUserData\s*\? await waitForColdPackageStartup/.test(
       runner
     ),
     'Only ordinary packaged cold starts use phase readiness; release-pair diagnostics retain their deadline'

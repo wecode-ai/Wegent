@@ -12,6 +12,7 @@ import {
   COLLABORATION_EXP_RHYTHM_MARKER,
   createCollaborationExpRhythmFixture,
 } from '../e2e/desktop/modules/collaboration-exp-rhythm.mjs'
+import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 import { readTeam } from '../e2e/desktop/modules/collaboration-exp-state-motion.mjs'
 
 function rhythmProtocol() {
@@ -59,7 +60,10 @@ function rhythmProtocol() {
       configured = { ...input.settings, version: configured.version + 1 }
       return structuredClone(configured)
     },
-    'runtime.stand_in.device_identity': () => ({ deviceId: 'local-device' }),
+    'runtime.stand_in.device_identity': () => ({
+      deviceId: 'local-device',
+      backendDeviceId: 'registered-device',
+    }),
     'runtime.runner.catalog': () => ({
       models: state.catalogs.length > 1 ? state.catalogs.shift() : state.catalogs[0],
     }),
@@ -203,7 +207,7 @@ test('team evidence requires the same visible status, accessible name and state 
 test('rhythm waits for the bound native task without requiring a robot execution projection', async () => {
   const protocol = rhythmProtocol()
   const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
-  const result = await fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99)
+  const result = await fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 7)
   assert.equal(result.runningIssue, protocol.issue)
   assert.equal(result.runningIssue.execution_state, undefined)
   assert.equal(result.runningIssue.created_by_user_id, 0)
@@ -231,7 +235,7 @@ test('rhythm rejects an in-progress Issue when its bound native task is not runn
   protocol.tasks.splice(1, 1)
   const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 20)
   await assert.rejects(
-    () => fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99),
+    () => fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 7),
     /owning executor did not expose running task native-task/
   )
   assert.equal(
@@ -247,7 +251,7 @@ test('rhythm requires one binding and the exact local Issue origin', async () =>
     createCollaborationExpRhythmFixture(duplicated.rpc, 1000).prepare(
       { id: 'local-project' },
       { id: 'LOCAL-2' },
-      99
+      7
     )
   )
   assert.equal(
@@ -263,7 +267,7 @@ test('rhythm requires one binding and the exact local Issue origin', async () =>
     createCollaborationExpRhythmFixture(otherIssue.rpc, 1000).prepare(
       { id: 'local-project' },
       { id: 'LOCAL-2' },
-      99
+      7
     )
   )
   assert.equal(
@@ -275,7 +279,7 @@ test('rhythm requires one binding and the exact local Issue origin', async () =>
 test('early native role preparation creates no Issue or execution and late dispatch preserves its owner/device and original team', async () => {
   const protocol = rhythmProtocol()
   const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
-  const prepared = await fixture.prepareRole({ id: 'local-project' }, 99)
+  const prepared = await fixture.prepareRole({ id: 'local-project' }, 7)
   assert.equal(prepared.userId, 7)
   assert.equal(prepared.executionDeviceId, 'local-device')
   const role = prepared.roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
@@ -288,7 +292,7 @@ test('early native role preparation creates no Issue or execution and late dispa
     ),
     false
   )
-  const execution = await fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99)
+  const execution = await fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 7)
   assert.equal(execution.ownerId, prepared.userId)
   assert.equal(execution.address.deviceId, prepared.executionDeviceId)
   await fixture.cleanup()
@@ -299,11 +303,11 @@ for (const fault of ['owner', 'device'])
   test('late dispatch rejects a changed prepared ' + fault, async () => {
     const protocol = rhythmProtocol()
     const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
-    await fixture.prepareRole({ id: 'local-project' }, 99)
+    await fixture.prepareRole({ id: 'local-project' }, 7)
     if (fault === 'owner') protocol.state.ownerId = 8
     else protocol.current().executionDeviceId = 'another-device'
     await assert.rejects(
-      () => fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99),
+      () => fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 7),
       /must remain unchanged/
     )
     assert.equal(
@@ -318,7 +322,7 @@ test('early preparation waits for the actual default model within its startup de
   const protocol = rhythmProtocol()
   protocol.state.catalogs.unshift([])
   const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
-  await fixture.prepareRole({ id: 'local-project' }, 99, 1000)
+  await fixture.prepareRole({ id: 'local-project' }, 7, 1000)
   assert.equal(protocol.calls.filter(call => call.method === 'runtime.runner.catalog').length, 2)
   const role = protocol.current().roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
   assert.equal(role.model.is_default, true)
@@ -330,7 +334,7 @@ test('missing default model fails at the startup deadline before saving a role o
   protocol.state.catalogs = [[]]
   const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
   await assert.rejects(
-    () => fixture.prepareRole({ id: 'local-project' }, 99, 20),
+    () => fixture.prepareRole({ id: 'local-project' }, 7, 20),
     /configured E2E model/
   )
   assert.equal(
@@ -343,3 +347,199 @@ test('missing default model fails at the startup deadline before saving a role o
     false
   )
 })
+
+const pendingRegistration = {
+  status: 500,
+  error: {
+    code: 'cloud_unavailable',
+    message: 'Wait for this Runtime to register with the backend',
+  },
+}
+
+// Exercise the scenario's actual raw native response adapter, including typed failures.
+function registrationRpc(protocol, identityReplies) {
+  const calls = []
+  const control = {
+    async command(action, selector, options) {
+      if (action === 'getLocationOrigin') return 'http://127.0.0.1:4100'
+      assert.equal(action, 'fetchLocalRuntime')
+      const init = JSON.parse(options.value)
+      const { method, params } = JSON.parse(init.body)
+      calls.push({ method, timeoutMs: init.timeoutMs })
+      const reply =
+        method === 'runtime.stand_in.device_identity' && identityReplies.length
+          ? identityReplies.shift()
+          : null
+      const payload = reply?.error
+        ? { ok: false, error: reply.error }
+        : { ok: true, result: reply?.result ?? (await protocol.rpc(method, params)) }
+      return JSON.stringify({
+        status: reply?.status ?? 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    },
+  }
+  return {
+    calls,
+    rpc: (method, params, timeoutMs = 1000) => requestExecutor(control, method, params, timeoutMs),
+  }
+}
+
+test('early preparation waits for genuine registered identity before reading the native owner/profile', async () => {
+  const protocol = rhythmProtocol()
+  const native = registrationRpc(protocol, [pendingRegistration])
+  const prepared = await createCollaborationExpRhythmFixture(native.rpc, 1000).prepareRole(
+    { id: 'local-project' },
+    7,
+    1000
+  )
+  assert.equal(
+    native.calls.filter(call => call.method === 'runtime.stand_in.device_identity').length,
+    2
+  )
+  const identity = native.calls.findLastIndex(
+    call => call.method === 'runtime.stand_in.device_identity'
+  )
+  assert.ok(native.calls.findIndex(call => call.method === 'runtime.stand_in.binding') > identity)
+  assert.ok(
+    native.calls.findIndex(call => call.method === 'runtime.stand_in.personal.get') > identity
+  )
+  assert.equal(prepared.userId, 7)
+  assert.equal(prepared.executionDeviceId, 'local-device')
+  const role = prepared.roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
+  assert.equal(role.executionDeviceId, prepared.executionDeviceId)
+  assert.equal(role.model.is_default, true)
+  assert.equal(
+    protocol.calls.some(call => call.method.startsWith('todos.')),
+    false
+  )
+})
+
+for (const [name, reply] of [
+  [
+    'another native error code',
+    { ...pendingRegistration, error: { ...pendingRegistration.error, code: 'query_failed' } },
+  ],
+  [
+    'another cloud_unavailable error',
+    {
+      ...pendingRegistration,
+      error: { ...pendingRegistration.error, message: 'Cloud authorization is required' },
+    },
+  ],
+  ['another HTTP status', { ...pendingRegistration, status: 503 }],
+])
+  test('early registration readiness rejects ' + name + ' immediately', async () => {
+    const protocol = rhythmProtocol()
+    const native = registrationRpc(protocol, [reply])
+    await assert.rejects(() =>
+      createCollaborationExpRhythmFixture(native.rpc, 1000).prepareRole(
+        { id: 'local-project' },
+        7,
+        1000
+      )
+    )
+    assert.equal(
+      native.calls.filter(call => call.method === 'runtime.stand_in.device_identity').length,
+      1
+    )
+    assert.equal(
+      protocol.calls.some(
+        call =>
+          call.method === 'runtime.stand_in.personal.get' || call.method === 'runtime.stand_in.save'
+      ),
+      false
+    )
+  })
+
+test('registration and default-model discovery share the original startup deadline', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 })
+  const protocol = rhythmProtocol()
+  const native = registrationRpc(protocol, [pendingRegistration])
+  const observed = []
+  let catalogReads = 0
+  const rpc = async (method, params, timeoutMs) => {
+    observed.push({ method, timeoutMs })
+    const result = await native.rpc(method, params, timeoutMs)
+    if (method === 'runtime.runner.catalog') {
+      catalogReads++
+      t.mock.timers.tick(catalogReads === 1 ? 160 : 80)
+      return { models: catalogReads === 1 ? [] : result.models }
+    }
+    return result
+  }
+  const fixture = createCollaborationExpRhythmFixture(rpc, 1000)
+  const failure = assert.rejects(
+    fixture.prepareRole({ id: 'local-project' }, 7, 300),
+    /register.*configured E2E model/
+  )
+  for (let turn = 0; turn < 30; turn++) await Promise.resolve()
+  t.mock.timers.tick(100)
+  await failure
+  assert.equal(catalogReads, 2)
+  assert.deepEqual(
+    observed
+      .filter(call => call.method === 'runtime.stand_in.device_identity')
+      .map(call => call.timeoutMs),
+    [300, 40]
+  )
+  assert.equal(
+    observed.some(
+      call =>
+        call.method === 'runtime.stand_in.personal.get' || call.method === 'runtime.stand_in.save'
+    ),
+    false
+  )
+})
+
+for (const fault of ['owner', 'profile owner', 'local device', 'backend device'])
+  test('registered readiness rejects a mismatched ' + fault + ' before saving a role', async () => {
+    const protocol = rhythmProtocol()
+    if (fault === 'owner') protocol.state.ownerId = 8
+    if (fault === 'profile owner') protocol.current().userId = 8
+    const identity = {
+      deviceId: fault === 'local device' ? 'another-device' : 'local-device',
+      backendDeviceId: fault === 'backend device' ? '' : 'registered-device',
+    }
+    const native = registrationRpc(protocol, [{ result: identity }])
+    await assert.rejects(() =>
+      createCollaborationExpRhythmFixture(native.rpc, 1000).prepareRole(
+        { id: 'local-project' },
+        7,
+        1000
+      )
+    )
+    assert.equal(
+      protocol.calls.some(call => call.method === 'runtime.stand_in.save'),
+      false
+    )
+  })
+
+for (const failure of ['catalog', 'transport'])
+  test('registration readiness never retries an unrelated ' + failure + ' failure', async () => {
+    const protocol = rhythmProtocol()
+    const native = registrationRpc(protocol, failure === 'catalog' ? [pendingRegistration] : [])
+    const expected = new Error('unrelated ' + failure + ' failure')
+    const rpc = (method, params, timeoutMs) =>
+      method ===
+      (failure === 'catalog' ? 'runtime.runner.catalog' : 'runtime.stand_in.device_identity')
+        ? Promise.reject(expected)
+        : native.rpc(method, params, timeoutMs)
+    await assert.rejects(
+      () =>
+        createCollaborationExpRhythmFixture(rpc, 1000).prepareRole(
+          { id: 'local-project' },
+          7,
+          1000
+        ),
+      error => error === expected
+    )
+    assert.equal(
+      protocol.calls.some(
+        call =>
+          call.method === 'runtime.stand_in.personal.get' || call.method === 'runtime.stand_in.save'
+      ),
+      false
+    )
+  })

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { ExecutorRpcError } from './executor-rpc.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import {
   waitForCompletedRuntimeTaskThread,
@@ -17,18 +18,54 @@ export function createCollaborationExpRhythmFixture(rpc, timeoutMs) {
   return {
     async prepareRole(project, fallbackOwnerId, setupTimeoutMs = timeoutMs) {
       assert.equal(original, undefined, 'The native role must be prepared only once')
-      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
-      ownerId = binding.target?.userId ?? fallbackOwnerId
-      original = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
-      const identity = await rpc('runtime.stand_in.device_identity', {})
-      assert.equal(original.userId, ownerId)
-      assert.equal(original.executionDeviceId, identity.deviceId)
-      const model = await waitForValue(
-        () => rpc('runtime.runner.catalog', {}),
-        catalog => catalog.models.find(model => model.runtime === 'codex' && model.is_default),
-        'The real runner must expose its configured E2E model',
+      const deadline = Date.now() + setupTimeoutMs
+      const readinessMessage =
+        'The real Runtime must register with the backend and expose its configured E2E model'
+      const { identity, model } = await waitForValue(
+        async () => {
+          const remainingMs = deadline - Date.now()
+          assert.ok(remainingMs > 0, readinessMessage)
+          const [identity, catalog] = await Promise.all([
+            rpc('runtime.stand_in.device_identity', {}, remainingMs).catch(error => {
+              if (
+                !(error instanceof ExecutorRpcError) ||
+                error.rpcMethod !== 'runtime.stand_in.device_identity' ||
+                error.httpStatus !== 500 ||
+                error.rpcOk !== false ||
+                error.rpcCode !== 'cloud_unavailable' ||
+                error.rpcMessage !== 'Wait for this Runtime to register with the backend'
+              )
+                throw error
+              return null
+            }),
+            rpc('runtime.runner.catalog', {}, remainingMs),
+          ])
+          assert.ok(Date.now() < deadline, readinessMessage)
+          return {
+            identity,
+            model: catalog.models.find(model => model.runtime === 'codex' && model.is_default),
+          }
+        },
+        ready => ready.identity && ready.model && ready,
+        readinessMessage,
         setupTimeoutMs
       )
+      assert.ok(identity.deviceId?.trim(), 'The real Runtime must retain its local device identity')
+      assert.ok(
+        identity.backendDeviceId?.trim(),
+        'The real Runtime must have its registered backend identity'
+      )
+      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
+      ownerId = binding.target?.userId ?? fallbackOwnerId
+      assert.equal(
+        ownerId,
+        fallbackOwnerId,
+        'The registered native owner must match the original cloud account'
+      )
+      const personal = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
+      assert.equal(personal.userId, ownerId)
+      assert.equal(personal.executionDeviceId, identity.deviceId)
+      original = personal
       const target = {
         projectId: project.id,
         projectStore: 'local',
