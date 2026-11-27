@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyAssistantTeamCreation } from './assistant-team-creation.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { seedStandInRoleFixture } from './stand-in-role-fixture.mjs'
@@ -38,6 +39,7 @@ export async function verifyAssistantTeam(
   const userId = 9001
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const settings = await seedStandInRoleFixture(rpc, userId)
+  await verifyAssistantTeamCreation(control, rpc, settings, captureScreenshot)
   const role = settings.roles.find(row => row.id === 'default')
   assert.ok(role?.teamRef, 'The saved assistant must already have its own Team')
   const permission =
