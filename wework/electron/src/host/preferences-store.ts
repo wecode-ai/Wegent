@@ -37,14 +37,21 @@ export class PreferencesStore {
           ? Number(current.telemetryConsentRevision)
           : 0
       if (
-        patch.telemetryEnabled === true &&
+        (patch.telemetryEnabled === true || patch.detailedTelemetryEnabled === true) &&
         expectedTelemetryConsentRevision !== undefined &&
         expectedTelemetryConsentRevision !== revision
       )
         throw new Error('Telemetry preference changed in another window; refresh and retry')
       const preferences = { ...current, ...patch }
       delete preferences.telemetryConsentRevision
-      if (typeof patch.telemetryEnabled === 'boolean') {
+      if (patch.telemetryEnabled === false || patch.detailedTelemetryEnabled === false) {
+        preferences.detailedTelemetryEnabled = false
+        delete preferences.detailedTelemetryDestination
+      }
+      if (
+        typeof patch.telemetryEnabled === 'boolean' ||
+        typeof patch.detailedTelemetryEnabled === 'boolean'
+      ) {
         preferences.telemetryConsentRevision = revision + 1
       } else if (Object.hasOwn(current, 'telemetryConsentRevision')) {
         preferences.telemetryConsentRevision = revision

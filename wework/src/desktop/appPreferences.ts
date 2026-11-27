@@ -56,6 +56,7 @@ export interface AppPreferences {
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
   telemetryConsentRevision: number
+  detailedTelemetryEnabled: boolean
   telemetryEnabled: boolean
   performanceRecordingEnabled: boolean
   supervisorPrinciples: string
@@ -143,6 +144,8 @@ export interface AppPreferencesPatch {
   collaborationExperienceEnabled?: boolean
   localCodexSubscriptionEnabled?: boolean
   telemetryConsentAsked?: boolean
+  detailedTelemetryEnabled?: boolean
+  detailedTelemetryDestination?: { host: string; projectKey: string } | null
   telemetryEnabled?: boolean
   performanceRecordingEnabled?: boolean
   supervisorPrinciples?: string
@@ -196,6 +199,7 @@ export const defaultAppPreferences: AppPreferences = {
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryConsentRevision: 0,
+  detailedTelemetryEnabled: false,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
   supervisorPrinciples: '',
@@ -368,6 +372,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryConsentAsked === 'boolean'
         ? record.telemetryConsentAsked
         : defaultAppPreferences.telemetryConsentAsked,
+    detailedTelemetryEnabled: record.detailedTelemetryEnabled === true,
     telemetryEnabled:
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled

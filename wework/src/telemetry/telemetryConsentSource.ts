@@ -84,9 +84,10 @@ export function createTelemetryConsentSource() {
       })
     }
   }
+  let chosenDetails: boolean | undefined
   const saveChoice = async (enabled: boolean, expectedRevision: number) => {
     try {
-      await saveTelemetryConsent(enabled, expectedRevision)
+      await saveTelemetryConsent(enabled, expectedRevision, chosenDetails)
       if (snapshot.failedChoice === enabled) publish({ failedChoice: null })
     } catch (error) {
       if (isLatestTelemetryConsentChoice(enabled)) publish({ failedChoice: enabled })
@@ -107,7 +108,8 @@ export function createTelemetryConsentSource() {
         })
       }
     },
-    choose(enabled: boolean) {
+    choose(enabled: boolean, details?: boolean) {
+      chosenDetails = details
       if (input) void saveChoice(enabled, input.consentRevision)
     },
     clearFailure() {

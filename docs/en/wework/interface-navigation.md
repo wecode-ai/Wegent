@@ -184,7 +184,7 @@ Open **bottom-left account menu → Settings**, then select the group and page b
 
 | Group → page                    | What to find / visibility                                                                                    | Internal route                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| Personal → General              | Language, feature mode, experimental features, startup, task execution, storage cleanup                      | `/settings`                             |
+| Personal → General              | Language, feature mode, experimental features, startup, task execution, diagnostic detail sharing, storage cleanup                      | `/settings`                             |
 | Personal → Cloud connection     | Wegent sign-in, connections and devices. See [Devices and cloud work](./devices.md)                          | `/settings/connections`                 |
 | Personal → Appearance           | Theme and background                                                                                         | `/settings/appearance`                  |
 | Personal → Context              | Personality and task context preferences                                                                     | `/settings/personal/context`            |

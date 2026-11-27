@@ -114,6 +114,11 @@ pub(super) async fn handle_harness_messages(
             status: StatusCode::BAD_GATEWAY,
             detail: format!("Failed to read harness model error response: {error}"),
         })?;
+        crate::detailed_telemetry::capture_model_http_error(
+            status,
+            response_body.clone(),
+            upstream.model_id.clone(),
+        );
         if let Some(normalized) = long_context::normalize_context_overflow(
             status.as_u16(),
             &response_body,
@@ -502,6 +507,11 @@ pub(super) async fn handle_for_token(
             status: StatusCode::BAD_GATEWAY,
             detail: format!("Failed to read local model error response: {error}"),
         })?;
+        crate::detailed_telemetry::capture_model_http_error(
+            status,
+            response_body.clone(),
+            upstream.model_id.clone(),
+        );
         log_executor_event(
             "local model proxy upstream rejected request",
             &[

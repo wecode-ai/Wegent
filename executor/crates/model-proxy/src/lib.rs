@@ -8,4 +8,5 @@ pub mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 pub mod harness_context;
 pub mod local_decision_proxy;
+mod detailed_telemetry;
 pub mod local_model_proxy;

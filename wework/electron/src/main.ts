@@ -3475,6 +3475,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const environment = prepareWorkbenchEnvironment({
     environment: {
       ...runtimeEnvironment,
+      WEWORK_DETAILED_TELEMETRY_PREFERENCES: join(app.getPath('userData'), 'app-preferences.json'),
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       WEWORK_HARNESS_RESOURCE_ROOT:
         components?.coreDsh ?? join(componentResourcesRoot, 'harness-runtime'),

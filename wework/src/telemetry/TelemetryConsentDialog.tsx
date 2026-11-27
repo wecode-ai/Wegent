@@ -2,16 +2,21 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ShieldCheck } from 'lucide-react'
-import { useRef } from 'react'
+import { getTelemetryConfig } from './config'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { TelemetryCollectionNotice } from './TelemetryCollectionNotice'
 
 interface TelemetryConsentDialogProps {
-  onChoose: (enabled: boolean) => void
+  onChoose: (enabled: boolean, details?: boolean) => void
 }
 
 export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps) {
   const { t } = useTranslation('common')
+  const config = getTelemetryConfig()
+  const [details, setDetails] = useState(
+    import.meta.env.VITE_WEWORK_DETAILED_TELEMETRY_DEFAULT === 'true'
+  )
   const sectionRef = useRef<HTMLElement>(null)
 
   return createPortal(
@@ -46,6 +51,20 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
           {t('workbench.telemetry_consent_privacy')}
         </p>
         <TelemetryCollectionNotice />
+        {config.posthogKey && (
+          <label className="mt-3 flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              data-testid="telemetry-consent-details"
+              checked={details}
+              onChange={event => setDetails(event.currentTarget.checked)}
+            />
+            <span>
+              {t('workbench.detailed_telemetry_enabled')} —{' '}
+              {t('workbench.detailed_telemetry_description', { host: config.posthogHost })}
+            </span>
+          </label>
+        )}
         <div className="mt-6 flex justify-end gap-2">
           <ControlButton
             variant="outline"
@@ -63,7 +82,7 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
             type="button"
             autoFocus
             data-testid="telemetry-consent-accept"
-            onClick={() => onChoose(true)}
+            onClick={() => onChoose(true, Boolean(config.posthogKey) && details)}
             className="h-10 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {t('workbench.telemetry_consent_accept')}
