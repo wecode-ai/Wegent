@@ -1518,6 +1518,39 @@ class TestSandboxManager:
         mock_redis_client.delete.assert_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("lost_before_fallback", [False, True])
+    async def test_admin_cleanup_skips_delete_after_losing_lifecycle_lease(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+        lost_before_fallback,
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        executor = mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor"
+        ).return_value
+        executor.delete_executor.return_value = {"status": "failed"}
+        renew = mocker.patch.object(
+            manager._lifecycle_lock,
+            "renew_owned",
+            side_effect=[True, False] if lost_before_fallback else [False],
+        )
+
+        result = await manager.cleanup_sandbox_by_task_id(
+            task_id=12345, archive_before_delete=False
+        )
+
+        assert result["reason"] == "sandbox_lifecycle_lease_lost"
+        assert result["redis_cleared"] is False
+        assert renew.call_count == (2 if lost_before_fallback else 1)
+        assert executor.delete_executor.call_count == int(lost_before_fallback)
+        executor.delete_executor_by_task_id.assert_not_called()
+        mock_redis_client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("tracked_by_manager", [False, True])
     async def test_admin_cleanup_keeps_orphan_index_until_binding_is_revoked(
         self,

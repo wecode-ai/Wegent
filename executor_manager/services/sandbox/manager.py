@@ -14,7 +14,7 @@ This service handles:
 import asyncio
 import os
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1017,6 +1017,26 @@ class SandboxManager(metaclass=SingletonMeta):
             if held_lease is None:
                 await self._release_task_lifecycle_lease(lease)
 
+    async def _delete_with_lifecycle_lease(
+        self,
+        lease: _TaskLifecycleLease,
+        delete: Callable[..., Dict[str, Any]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        def delete_if_owned() -> Optional[Dict[str, Any]]:
+            # Check Redis when the worker starts, after any thread-pool wait.
+            if lease.lost.is_set() or not self._lifecycle_lock.renew_owned(
+                lease.lock_name, lease.owner_token, SANDBOX_TASK_LOCK_TTL
+            ):
+                return None
+            return delete(*args, **kwargs)
+
+        result = await asyncio.to_thread(delete_if_owned)
+        if result is None:
+            lease.lost.set()
+        return result
+
     async def _delete_sandbox_runtime(
         self,
         sandbox_id: str,
@@ -1030,8 +1050,8 @@ class SandboxManager(metaclass=SingletonMeta):
             container_name = sandbox.container_name if sandbox else None
             delete_status = None
             if container_name:
-                delete_status = await asyncio.to_thread(
-                    executor.delete_executor, container_name
+                delete_status = await self._delete_with_lifecycle_lease(
+                    lease, executor.delete_executor, container_name
                 )
                 result["delete_attempts"].append(
                     {
@@ -1044,8 +1064,11 @@ class SandboxManager(metaclass=SingletonMeta):
             if not lease.lost.is_set() and (
                 not delete_status or delete_status.get("status") != "success"
             ):
-                fallback = await asyncio.to_thread(
-                    executor.delete_executor_by_task_id, sandbox_id, sandbox_only=True
+                fallback = await self._delete_with_lifecycle_lease(
+                    lease,
+                    executor.delete_executor_by_task_id,
+                    sandbox_id,
+                    sandbox_only=True,
                 )
                 result["delete_attempts"].append(
                     {
@@ -1057,7 +1080,7 @@ class SandboxManager(metaclass=SingletonMeta):
                 # Confirm the exact target when label-based cleanup follows a
                 # failed named deletion.
                 named_status = (delete_status or {}).get("status")
-                fallback_status = fallback.get("status")
+                fallback_status = (fallback or {}).get("status")
                 if (
                     named_status in {None, "not_found"}
                     or (named_status == "unauthorized" and fallback_status == "success")
@@ -1836,10 +1859,10 @@ class SandboxManager(metaclass=SingletonMeta):
 
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-            result = await asyncio.to_thread(
-                executor.delete_executor, sandbox.container_name
+            result = await self._delete_with_lifecycle_lease(
+                lease, executor.delete_executor, sandbox.container_name
             )
-            if lease.lost.is_set():
+            if result is None or lease.lost.is_set():
                 return
             if result.get("status") not in ("success", "not_found"):
                 logger.warning(
@@ -1941,17 +1964,11 @@ class SandboxManager(metaclass=SingletonMeta):
         run to retry.
         """
 
-        def delete_if_owned() -> Optional[Dict[str, Any]]:
-            # The worker may have queued behind other blocking runtime operations.
-            if lease.lost.is_set() or not self._lifecycle_lock.renew_owned(
-                lease.lock_name, lease.owner_token, SANDBOX_TASK_LOCK_TTL
-            ):
-                return None
-            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-            return executor.delete_executor_by_task_id(task_id, sandbox_only=True)
-
         try:
-            result = await asyncio.to_thread(delete_if_owned)
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            result = await self._delete_with_lifecycle_lease(
+                lease, executor.delete_executor_by_task_id, task_id, sandbox_only=True
+            )
         except Exception as exc:
             logger.warning(
                 "[SandboxManager] Failed to delete orphaned executor " "task_id=%s: %s",
