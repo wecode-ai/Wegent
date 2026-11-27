@@ -168,7 +168,7 @@ def _record_transition(
 @trace_sync(
     span_name="knowledge.prepare_document_index_enqueue",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False, expected_generation=None, capture_refresh_snapshot=False: {
+    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False, expected_generation=None, capture_refresh_snapshot=False, commit=True: {
         "knowledge.document_id": document_id,
         "knowledge.allow_if_success": allow_if_success,
         "knowledge.replace_active": replace_active,
@@ -182,6 +182,7 @@ def _prepare_document_index_enqueue(
     replace_active: bool = False,
     expected_generation: Optional[int] = None,
     capture_refresh_snapshot: bool = False,
+    commit: bool = True,
 ) -> IndexEnqueueDecision:
     """
     Implement the atomic transition into a new indexing generation.
@@ -254,11 +255,14 @@ def _prepare_document_index_enqueue(
     document.index_generation = decision.generation
     document.index_status = DocumentIndexStatus(decision.next_status)
     document.clear_processing_error_payload()
-    db.commit()
-    if superseded_attachment_ids:
-        _cleanup_external_refresh_attachments(
-            db, owner_user_id=document.user_id, attachment_ids=superseded_attachment_ids
-        )
+    if commit:
+        db.commit()
+        if superseded_attachment_ids:
+            _cleanup_external_refresh_attachments(
+                db,
+                owner_user_id=document.user_id,
+                attachment_ids=superseded_attachment_ids,
+            )
     _record_transition(
         "knowledge.index.enqueue.scheduled",
         document_id=document_id,
@@ -278,8 +282,9 @@ def prepare_document_index_enqueue(
     allow_if_success: bool = False,
     replace_active: bool = False,
     expected_generation: Optional[int] = None,
+    commit: bool = True,
 ) -> IndexEnqueueDecision:
-    """Prepare an ordinary document for a new indexing generation."""
+    """Prepare indexing, optionally leaving the row locked for the caller's commit."""
     return _prepare_document_index_enqueue(
         db,
         document_id,
@@ -287,6 +292,7 @@ def prepare_document_index_enqueue(
         replace_active=replace_active,
         expected_generation=expected_generation,
         capture_refresh_snapshot=False,
+        commit=commit,
     )
 
 

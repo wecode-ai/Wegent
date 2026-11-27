@@ -1609,6 +1609,69 @@ def test_web_refresh_rolls_back_when_upload_loses_lease(
         assert "attachment_id" not in document.source_config["_web_refresh"]
 
 
+def test_web_refresh_loses_lease_before_staging_without_hiding_legacy_index(
+    test_db, test_user, staged_web
+):
+    from app.services.knowledge import web_refresh
+    from app.tasks.knowledge_tasks import index_document_task
+
+    document, lease = staged_web
+    legacy_config = {"url": document.source_config["url"]}
+    document.source_config = legacy_config
+    test_db.commit()
+    document_id = document.id
+    old_attachment, old_generation = document.attachment_id, document.index_generation
+    lease.owned.return_value = False
+    web_refresh.scrape_with_domain_lease.reset_mock()
+
+    with pytest.raises(web_refresh.WebRefreshInvalid) as raised:
+        asyncio.run(web_refresh.refresh_web_document(test_db, test_user, document_id))
+
+    assert raised.value.code == "REFRESH_SUPERSEDED"
+    assert not test_db.in_transaction()
+    assert document.index_status == "success"
+    assert document.index_generation == old_generation
+    assert document.attachment_id == old_attachment
+    assert document.source_config == legacy_config
+    assert KnowledgeService.resolve_usable_document_ids(
+        test_db,
+        knowledge_base_id=document.kind_id,
+        user_id=test_user.id,
+        document_ids=[document_id],
+    ) == [document_id]
+    web_refresh.scrape_with_domain_lease.assert_not_awaited()
+    index_document_task.apply_async.assert_not_called()
+
+
+def test_web_refresh_preserves_cancellation_when_cleanup_cannot_check_redis(
+    test_db, test_user, staged_web, monkeypatch, caplog
+):
+    from redis.exceptions import TimeoutError
+
+    from app.services.knowledge import web_refresh
+    from app.tasks.knowledge_tasks import index_document_task
+
+    document, lease = staged_web
+    old_attachment = document.attachment_id
+    original_draft = document.source_config["_web_refresh"]
+    lease.owned.side_effect = [True, TimeoutError("ownership lookup timed out")]
+    cancellation = asyncio.CancelledError()
+    monkeypatch.setattr(
+        web_refresh, "scrape_with_domain_lease", AsyncMock(side_effect=cancellation)
+    )
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        asyncio.run(web_refresh.refresh_web_document(test_db, test_user, document.id))
+
+    assert raised.value is cancellation
+    assert not test_db.in_transaction()
+    assert "Could not clean up cancelled web refresh" in caplog.text
+    assert document.attachment_id == old_attachment
+    assert document.index_status == "queued"
+    assert document.source_config["_web_refresh"]["previous_draft"] == original_draft
+    index_document_task.apply_async.assert_not_called()
+
+
 @pytest.mark.parametrize("superseded", [False, True])
 def test_web_reindex_stages_only_current_queued_generation(
     test_db, test_user, kb, staged_web, monkeypatch, superseded

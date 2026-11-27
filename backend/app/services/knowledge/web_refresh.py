@@ -312,53 +312,56 @@ async def refresh_web_document(
             index_owner_user_id=owner_id,
         )
         revision = resource_revision(db, kb)["retriever"]
-        decision = prepare_document_index_enqueue(
-            db, doc_id, allow_if_success=True, expected_generation=expected_generation
-        )
-        if not decision.should_enqueue:
-            return response(code="REFRESH_BUSY", message=decision.reason)
-        generation = decision.generation
-        document = KnowledgeService._lock_document_row(db, doc_id)
-        if (
-            document is None
-            or document.index_generation != generation
-            or document.index_status != DocumentIndexStatus.QUEUED
-        ):
-            db.rollback()
-            raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
-        previous_draft = (document.source_config or {}).get(CANDIDATE_KEY) or {}
-        candidate = {
-            **(
-                {"previous_draft": previous_draft}
-                if previous_draft.get("draft")
-                else {}
-            ),
-            "generation": generation,
-            "url": url,
-            "automatic": automatic,
-            "requested_by": user.id,
-            "config_fingerprint": fingerprint,
-            "previous_index_status": getattr(
-                decision.previous_status, "value", decision.previous_status
+        try:
+            decision = prepare_document_index_enqueue(
+                db,
+                doc_id,
+                allow_if_success=True,
+                expected_generation=expected_generation,
+                commit=False,
             )
-            or "not_indexed",
-            "doc_ref": f"{doc_id}@{generation}",
-            "user_state": {"is_active": document.is_active, "status": document.status},
-            "user_status_override": (document.source_config or {}).get(
-                "web_user_status"
-            ),
-        }
-        candidate["delete_spec"] = {
-            **delete_spec.model_dump(mode="json"),
-            "document_ref": candidate["doc_ref"],
-        }
-        state = dict(document.source_config or {})
-        state[CANDIDATE_KEY] = candidate
-        document.source_config = state
-        if not lease.owned():
+            if not decision.should_enqueue:
+                return response(code="REFRESH_BUSY", message=decision.reason)
+            generation = decision.generation
+            # The enqueue transition refreshed this row and still holds its lock.
+            previous_draft = (document.source_config or {}).get(CANDIDATE_KEY) or {}
+            candidate = {
+                **(
+                    {"previous_draft": previous_draft}
+                    if previous_draft.get("draft")
+                    else {}
+                ),
+                "generation": generation,
+                "url": url,
+                "automatic": automatic,
+                "requested_by": user.id,
+                "config_fingerprint": fingerprint,
+                "previous_index_status": getattr(
+                    decision.previous_status, "value", decision.previous_status
+                )
+                or "not_indexed",
+                "doc_ref": f"{doc_id}@{generation}",
+                "user_state": {
+                    "is_active": document.is_active,
+                    "status": document.status,
+                },
+                "user_status_override": (document.source_config or {}).get(
+                    "web_user_status"
+                ),
+            }
+            candidate["delete_spec"] = {
+                **delete_spec.model_dump(mode="json"),
+                "document_ref": candidate["doc_ref"],
+            }
+            state = dict(document.source_config or {})
+            state[CANDIDATE_KEY] = candidate
+            document.source_config = state
+            if not lease.owned():
+                raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
+            db.commit()
+        except Exception:
             db.rollback()
-            raise WebRefreshInvalid("REFRESH_SUPERSEDED", "Refresh was superseded")
-        db.commit()
+            raise
         try:
             result = await scrape_with_domain_lease(url)
             if not result.success or not result.content.strip():
@@ -509,36 +512,46 @@ async def refresh_web_document(
         except (Exception, asyncio.CancelledError) as exc:
             if isinstance(exc, WebRefreshBusy):
                 exc.generation = generation
-            db.rollback()
-            document = (
-                db.query(KnowledgeDocument)
-                .filter(KnowledgeDocument.id == doc_id)
-                .populate_existing()
-                .with_for_update()
-                .first()
-            )
-            if (
-                document is not None
-                and candidate_is_running(document, candidate["doc_ref"])
-                and lease.owned()
-            ):
-                abandon_candidate(document, generation)
-                state = dict(document.source_config or {})
-                state["webAutoUpdate"] = {
-                    **state.get("webAutoUpdate", {}),
-                    "last_checked_at": datetime.now(timezone.utc).isoformat(),
-                    "last_error_code": (
-                        exc.code
-                        if isinstance(exc, WebRefreshInvalid)
-                        else (
-                            "refresh_busy"
-                            if isinstance(exc, WebRefreshBusy)
-                            else "refresh_failed"
-                        )
-                    ),
-                }
-                document.source_config = state
-                db.commit()
-            else:
+            try:
                 db.rollback()
+                document = (
+                    db.query(KnowledgeDocument)
+                    .filter(KnowledgeDocument.id == doc_id)
+                    .populate_existing()
+                    .with_for_update()
+                    .first()
+                )
+                if (
+                    document is not None
+                    and candidate_is_running(document, candidate["doc_ref"])
+                    and lease.owned()
+                ):
+                    abandon_candidate(document, generation)
+                    state = dict(document.source_config or {})
+                    state["webAutoUpdate"] = {
+                        **state.get("webAutoUpdate", {}),
+                        "last_checked_at": datetime.now(timezone.utc).isoformat(),
+                        "last_error_code": (
+                            exc.code
+                            if isinstance(exc, WebRefreshInvalid)
+                            else (
+                                "refresh_busy"
+                                if isinstance(exc, WebRefreshBusy)
+                                else "refresh_failed"
+                            )
+                        ),
+                    }
+                    document.source_config = state
+                    db.commit()
+                else:
+                    db.rollback()
+            except Exception:
+                db.rollback()
+                if not isinstance(exc, asyncio.CancelledError):
+                    raise
+                logger.warning(
+                    "Could not clean up cancelled web refresh for document %s",
+                    doc_id,
+                    exc_info=True,
+                )
             raise
