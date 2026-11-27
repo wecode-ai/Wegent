@@ -515,6 +515,10 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
     refreshActiveSettlementChecks()
 
     const unsubscribe = services.chatStream.subscribe({
+      onRuntimeSupervisorUpdated: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        if (address && payload.task) store.syncRuntimeTask(address, payload.task)
+      },
       onRuntimeTurnUpdated: payload => {
         const address = matchingLifecycleAddress(store, payload)
         if (address && payload.task) store.syncRuntimeTask(address, payload.task)

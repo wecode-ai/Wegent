@@ -726,6 +726,10 @@ class DesktopE2EServer {
     this.supervisorInitialRelease = new Promise(resolvePromise => {
       this.releaseSupervisorInitial = resolvePromise
     })
+    this.supervisorReviewGates = {
+      initial: Promise.withResolvers(),
+      final: Promise.withResolvers(),
+    }
     this.supervisorCorrectionStarted = new Promise(resolvePromise => {
       this.resolveSupervisorCorrectionStarted = resolvePromise
     })
@@ -1207,6 +1211,37 @@ class DesktopE2EServer {
 
   releaseSupervisorInitialResponse() {
     this.releaseSupervisorInitial()
+  }
+
+  releaseSupervisorReview(stage) {
+    this.supervisorReviewGates[stage].resolve()
+  }
+
+  async supervisorReview(body, request) {
+    const requestText = JSON.stringify(body)
+    assert.ok(
+      requestText.includes('correction'),
+      'The supervisor evaluator request did not include its structured output schema'
+    )
+    assert.equal(
+      requestText.includes(SUPERVISOR_PROMPT),
+      false,
+      'The supervisor evaluator received the original user transcript instead of recent AI content'
+    )
+    const input = latestModelInputText(body)
+    const corrected = input.includes(SUPERVISOR_CORRECTION_COMPLETION_TEXT)
+    assert.ok(
+      corrected || input.includes(SUPERVISOR_COMPLETION_TEXT),
+      'The supervisor evaluator did not receive the latest assistant progress'
+    )
+    this.recordScenarioRequest('supervisor', request)
+    await this.supervisorReviewGates[corrected ? 'final' : 'initial'].promise
+    return JSON.stringify({
+      correction: corrected ? null : SUPERVISOR_CORRECTION,
+      rationale: corrected
+        ? 'The corrected reply satisfies the constraint.'
+        : 'The completed reply should restate the original constraint.',
+    })
   }
 
   awaitSupervisorCorrectionResponseStarted() {
@@ -2030,7 +2065,6 @@ class DesktopE2EServer {
       this.scenario === 'supervisor'
     ) {
       const body = await readRequestBody(request)
-      const requestText = JSON.stringify(body)
       assert.equal(
         request.headers.authorization,
         'Bearer wework-desktop-e2e-cloud-token',
@@ -2051,29 +2085,13 @@ class DesktopE2EServer {
         'wework-supervisor',
         'The supervisor model API request did not identify its source'
       )
-      assert.ok(
-        requestText.includes('correction'),
-        'The supervisor evaluator request did not include its structured output schema'
-      )
-      assert.ok(
-        requestText.includes(SUPERVISOR_COMPLETION_TEXT),
-        'The supervisor evaluator did not receive the latest assistant progress'
-      )
-      assert.equal(
-        requestText.includes(SUPERVISOR_PROMPT),
-        false,
-        'The supervisor evaluator received the original user transcript instead of recent AI content'
-      )
-      this.recordScenarioRequest('supervisor', {
+      const outputText = await this.supervisorReview(body, {
         body,
         headers: request.headers,
         pathname: url.pathname,
       })
       json(response, 200, {
-        output_text: JSON.stringify({
-          correction: SUPERVISOR_CORRECTION,
-          rationale: 'The completed reply should restate the original constraint.',
-        }),
+        output_text: outputText,
         model: CLOUD_PUBLIC_MODEL_NAME,
         created_at: '2026-08-12T00:00:00Z',
       })
@@ -4427,23 +4445,9 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'supervisor') {
-      this.recordScenarioRequest('supervisor', modelRequest)
-      const requestText = JSON.stringify(body)
       if (body.metadata?.source === 'wework-supervisor') {
         assert.equal(body.stream, false, 'The supervisor evaluator request must not stream')
-        assert.ok(
-          requestText.includes('correction'),
-          'The supervisor evaluator request did not include its structured output schema'
-        )
-        assert.ok(
-          requestText.includes(SUPERVISOR_COMPLETION_TEXT),
-          'The supervisor evaluator did not receive the latest assistant progress'
-        )
-        assert.equal(
-          requestText.includes(SUPERVISOR_PROMPT),
-          false,
-          'The supervisor evaluator received the original user transcript instead of recent AI content'
-        )
+        const outputText = await this.supervisorReview(body, modelRequest)
         json(response, 200, {
           id: responseId,
           object: 'response',
@@ -4458,10 +4462,7 @@ class DesktopE2EServer {
               content: [
                 {
                   type: 'output_text',
-                  text: JSON.stringify({
-                    correction: SUPERVISOR_CORRECTION,
-                    rationale: 'The completed reply should restate the original constraint.',
-                  }),
+                  text: outputText,
                   annotations: [],
                 },
               ],
@@ -4477,6 +4478,8 @@ class DesktopE2EServer {
         })
         return
       }
+      this.recordScenarioRequest('supervisor', modelRequest)
+      const requestText = JSON.stringify(body)
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
         const stream = streamingTextEvents(responseId, SUPERVISOR_CORRECTION_COMPLETION_TEXT)
         response.writeHead(200, {
@@ -4510,11 +4513,11 @@ class DesktopE2EServer {
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(
-        createSse([responseCreated(responseId), assistantMessage(SUPERVISOR_COMPLETION_TEXT)])
-      )
+      response.write(createSse([responseCreated(responseId)]))
       await this.supervisorInitialRelease
-      response.end(createSse([responseCompleted(responseId)]))
+      response.end(
+        createSse([assistantMessage(SUPERVISOR_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
       return
     }
 

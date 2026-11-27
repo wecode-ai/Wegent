@@ -73,6 +73,7 @@ export interface RuntimeTaskSummary {
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
+  supervisorCompletionPending?: boolean
 }
 
 export interface RuntimeProjectRef {

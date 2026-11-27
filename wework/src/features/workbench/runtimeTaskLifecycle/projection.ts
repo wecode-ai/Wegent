@@ -182,6 +182,12 @@ export function mergeRuntimeTaskSnapshotMetadata(
   if (current.taskId !== candidate.taskId) return current
   if (!isNewerRuntimeTaskSnapshotRevision(candidate.snapshotRevision, current.snapshotRevision))
     return current
+  const sameSettledTurn =
+    current.executionState?.phase === 'idle' &&
+    candidate.executionState?.phase === 'idle' &&
+    current.executionState.epoch === candidate.executionState.epoch &&
+    current.executionState.latestTurnId != null &&
+    current.executionState.latestTurnId === candidate.executionState.latestTurnId
   const runtimeHandle = { ...current.runtimeHandle }
   // These fields can change without starting a new native turn or replacing session bindings.
   for (const field of [
@@ -204,6 +210,9 @@ export function mergeRuntimeTaskSnapshotMetadata(
     runtimeHandle,
     title: candidate.title,
     modelSelection: candidate.modelSelection,
+    ...(sameSettledTurn && candidate.supervisorCompletionPending !== undefined
+      ? { supervisorCompletionPending: candidate.supervisorCompletionPending }
+      : {}),
   }
 }
 

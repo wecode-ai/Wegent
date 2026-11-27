@@ -65,6 +65,10 @@ function sameTaskKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): bo
   return true
 }
 
+function hasPendingContinuation(snapshot: RuntimeTaskLifecycleSnapshot): boolean {
+  return snapshot.goalStatus === 'active' || snapshot.task?.supervisorCompletionPending === true
+}
+
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getSidebarSnapshot',
   'getActiveTurnAddresses',
@@ -86,7 +90,7 @@ export class RuntimeTaskLifecycleStore {
   private readonly deviceAliases = new Map<string, string>()
   private readonly unreadStateByTask: Map<string, TaskUnreadState>
   private readonly previousRunningTaskKeys: Set<string>
-  private readonly deferredGoalUnreadTaskKeys = new Set<string>()
+  private readonly deferredCompletionTaskKeys: Set<string>
   private readonly listeners = new Set<Listener>()
   private readonly taskListeners = new Map<string, Set<TaskListener>>()
   private readonly taskChangesListeners = new Set<TaskChangesListener>()
@@ -94,10 +98,12 @@ export class RuntimeTaskLifecycleStore {
   private aliasesChanged = false
   private readonly unreadStorageKey: string
   private readonly runningStorageKey: string
+  private readonly deferredCompletionStorageKey: string
   private currentTaskKey: string | null = null
   private windowFocused = true
   private persistedUnreadSerialized: string | null = null
   private persistedRunningSerialized: string | null = null
+  private persistedDeferredCompletionSerialized: string | null = null
   private unreadRevision = 0
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
@@ -116,6 +122,7 @@ export class RuntimeTaskLifecycleStore {
     this.messageReceipts = new RuntimeMessageReceipts(`${storageScope}.messages.v1`)
     this.unreadStorageKey = `${storageScope}.unread.v2`
     this.runningStorageKey = `${storageScope}.running.v2`
+    this.deferredCompletionStorageKey = `${storageScope}.deferredCompletion.v1`
     // Task snapshots may arrive separately, after device aliases and other events.
     const unreadKeys = readStoredTaskKeys(this.unreadStorageKey)
     this.unreadStateByTask = new Map(
@@ -124,6 +131,8 @@ export class RuntimeTaskLifecycleStore {
     this.persistedUnreadSerialized = serializeTaskKeys(unreadKeys)
     this.previousRunningTaskKeys = readStoredTaskKeys(this.runningStorageKey)
     this.persistedRunningSerialized = serializeTaskKeys(this.previousRunningTaskKeys)
+    this.deferredCompletionTaskKeys = readStoredTaskKeys(this.deferredCompletionStorageKey)
+    this.persistedDeferredCompletionSerialized = serializeTaskKeys(this.deferredCompletionTaskKeys)
   }
 
   subscribe = (listener: Listener): (() => void) => {
@@ -554,7 +563,7 @@ export class RuntimeTaskLifecycleStore {
       removed,
       this.unreadStateByTask.delete(key),
       this.previousRunningTaskKeys.delete(key),
-      this.deferredGoalUnreadTaskKeys.delete(key),
+      this.deferredCompletionTaskKeys.delete(key),
     ]
     if (changes.some(Boolean)) this.publish()
   }
@@ -697,23 +706,16 @@ export class RuntimeTaskLifecycleStore {
     // A task is read only while its pane is open and the window is focused.
     // Background completion of the open task still needs an unread reminder.
     const currentTaskVisible = next.key === this.currentTaskKey && this.windowFocused
-    const becameBackgroundIdle =
-      wasRunning && !next.derived.isRunning && !next.derived.isQueued && !currentTaskVisible
-    if (becameBackgroundIdle && next.goalStatus === 'active') {
-      this.deferredGoalUnreadTaskKeys.add(key)
+    const backgroundIdle = !next.derived.isRunning && !next.derived.isQueued && !currentTaskVisible
+    if (backgroundIdle && (wasRunning || this.deferredCompletionTaskKeys.has(key))) {
+      if (hasPendingContinuation(next)) this.deferredCompletionTaskKeys.add(key)
+      else {
+        this.deferredCompletionTaskKeys.delete(key)
+        changed = machine.dispatch({ type: 'marked_unread' }) || changed
+      }
     }
-    if (
-      (becameBackgroundIdle || this.deferredGoalUnreadTaskKeys.has(key)) &&
-      !next.derived.isRunning &&
-      !next.derived.isQueued &&
-      next.goalStatus !== 'active' &&
-      !currentTaskVisible
-    ) {
-      changed = machine.dispatch({ type: 'marked_unread' }) || changed
-      this.deferredGoalUnreadTaskKeys.delete(key)
-    }
-    if (next.derived.isRunning || currentTaskVisible) {
-      this.deferredGoalUnreadTaskKeys.delete(key)
+    if (next.derived.isRunning || currentTaskVisible || canonicalEvent.type === 'marked_read') {
+      changed = this.deferredCompletionTaskKeys.delete(key) || changed
       changed = machine.dispatch({ type: 'marked_read' }) || changed
     }
     if (canonicalEvent.type === 'marked_read' || currentTaskVisible) {
@@ -779,7 +781,7 @@ export class RuntimeTaskLifecycleStore {
     const storedKeys = new Set([
       ...this.unreadStateByTask.keys(),
       ...this.previousRunningTaskKeys,
-      ...this.deferredGoalUnreadTaskKeys,
+      ...this.deferredCompletionTaskKeys,
     ])
     const migratedKeys = new Set<string>()
     for (const key of storedKeys) {
@@ -841,7 +843,7 @@ export class RuntimeTaskLifecycleStore {
     if (previousUnread && (!nextUnread || previousUnread.revision > nextUnread.revision)) {
       this.unreadStateByTask.set(nextKey, previousUnread)
     }
-    for (const keys of [this.previousRunningTaskKeys, this.deferredGoalUnreadTaskKeys]) {
+    for (const keys of [this.previousRunningTaskKeys, this.deferredCompletionTaskKeys]) {
       if (!keys.delete(previousKey)) continue
       keys.add(nextKey)
       changed = true
@@ -859,20 +861,23 @@ export class RuntimeTaskLifecycleStore {
     if (snapshot.execution.known && !snapshot.derived.isRunning) {
       const wasRunning = this.previousRunningTaskKeys.delete(key)
       if (
-        wasRunning &&
+        (wasRunning || this.deferredCompletionTaskKeys.has(key)) &&
         !snapshot.derived.isQueued &&
         !currentTaskVisible &&
         !this.unreadStateByTask.has(key)
       ) {
-        if (snapshot.goalStatus === 'active') this.deferredGoalUnreadTaskKeys.add(key)
-        else this.recordUnreadState(key, true)
+        if (hasPendingContinuation(snapshot)) this.deferredCompletionTaskKeys.add(key)
+        else {
+          this.deferredCompletionTaskKeys.delete(key)
+          this.recordUnreadState(key, true)
+        }
       }
     }
     if (snapshot.derived.isRunning || currentTaskVisible) {
       machine.dispatch({ type: 'marked_read' })
       if (currentTaskVisible) this.recordUnreadState(key, false)
       else this.unreadStateByTask.delete(key)
-      this.deferredGoalUnreadTaskKeys.delete(key)
+      this.deferredCompletionTaskKeys.delete(key)
     } else {
       const unread = this.unreadStateByTask.get(key)
       if (unread) machine.dispatch({ type: unread.unread ? 'marked_unread' : 'marked_read' })
@@ -880,9 +885,9 @@ export class RuntimeTaskLifecycleStore {
   }
 
   private clearCompletionUnread(key: string, machine: RuntimeTaskMachine): boolean {
-    this.deferredGoalUnreadTaskKeys.delete(key)
+    const deferred = this.deferredCompletionTaskKeys.delete(key)
     if (this.unreadStateByTask.get(key)?.unread) this.recordUnreadState(key, false)
-    return machine.dispatch({ type: 'marked_read' })
+    return machine.dispatch({ type: 'marked_read' }) || deferred
   }
 
   private recordUnreadState(key: string, unread: boolean): void {
@@ -980,6 +985,7 @@ export class RuntimeTaskLifecycleStore {
     }
     this.persistUnreadKeys()
     this.persistRunningKeys()
+    this.persistDeferredCompletionKeys()
     const migratedListeners = this.reindexTaskListeners()
     this.listeners.forEach(listener => listener())
     if (changedKeys.size)
@@ -1034,6 +1040,18 @@ export class RuntimeTaskLifecycleStore {
       this.persistedRunningSerialized = serialized
     } catch (error) {
       console.warn('Failed to persist runtime task running state', error)
+    }
+  }
+
+  private persistDeferredCompletionKeys(): void {
+    if (typeof window === 'undefined') return
+    const serialized = serializeTaskKeys(this.deferredCompletionTaskKeys)
+    if (serialized === this.persistedDeferredCompletionSerialized) return
+    try {
+      window.localStorage.setItem(this.deferredCompletionStorageKey, serialized)
+      this.persistedDeferredCompletionSerialized = serialized
+    } catch (error) {
+      console.warn('Failed to persist deferred runtime task completion', error)
     }
   }
 }

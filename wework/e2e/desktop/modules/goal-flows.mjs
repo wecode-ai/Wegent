@@ -63,6 +63,7 @@ import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { verifyGoalDraftNavigation } from './goal-draft-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
+const NOTIFICATIONS_BUTTON = '[data-testid="wework-notifications-button"]'
 
 async function verifyMissingGoalSnapshotReconciliation({ composerSelector, control }) {
   control.setScenario('goal_snapshot_reconciliation')
@@ -748,6 +749,20 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   )
 }
 
+async function openTaskCompletionNotifications(control) {
+  await control.command('clickWhenEnabled', NOTIFICATIONS_BUTTON)
+  await control.command('clickWhenEnabled', '[data-testid="wework-notifications-category-tasks"]')
+  await control.command('waitFor', '[data-testid="wework-notifications-task-list"]')
+}
+
+async function assertNoTaskCompletionNotification(control, selector, message) {
+  assert.equal(Number(await control.command('getElementCount', selector)), 0, message)
+  await control.command('waitFor', selector, {
+    visible: false,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+  })
+}
+
 async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRuntimeTask }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
@@ -800,24 +815,49 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRu
   await control.command('click', '[data-testid="task-supervisor-close-button"]')
   await captureVerificationScreenshot(control, 'supervisor-pending-context.png')
   await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
-  control.releaseSupervisorInitialResponse()
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: SUPERVISOR_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const supervisorTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeSupervisor,
+    'WEWORK_DESKTOP_E2E_SUPERVISOR'
+  )
+  const supervisorTaskId = supervisorTaskRowTestId.replace('runtime-local-task-row-', '')
+  const runningSelector = `[data-testid="runtime-local-task-running-${supervisorTaskId}"]`
+  const notificationSelector = `[data-testid="wework-notification-task-${supervisorTaskId}"]`
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('pending-supervisor-indicator'),
     'The pre-task supervisor indicator remained after the task was created'
   )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await control.command('waitFor', runningSelector, { visible: true })
+  control.releaseSupervisorInitialResponse()
 
   // Scheduled cloud evaluations include transcript reads and a model request.
   // Use the shared model budget for both waits, including the counter's deadline.
-  await withTimeout(
-    control.awaitScenarioRequestCount('supervisor', 2, MODEL_REQUEST_TIMEOUT_MS),
-    MODEL_REQUEST_TIMEOUT_MS,
-    'The supervisor evaluator did not inspect the completed task'
-  )
+  try {
+    await withTimeout(
+      control.awaitScenarioRequestCount('supervisor', 2, MODEL_REQUEST_TIMEOUT_MS),
+      MODEL_REQUEST_TIMEOUT_MS,
+      'The supervisor evaluator did not inspect the completed task'
+    )
+    await control.command('waitFor', runningSelector, { visible: false })
+    await openTaskCompletionNotifications(control)
+    await assertNoTaskCompletionNotification(
+      control,
+      notificationSelector,
+      'The notification center reported completion while the first review was pending'
+    )
+    await control.command('click', NOTIFICATIONS_BUTTON)
+    await control.command('clickWhenEnabled', `[data-testid="${supervisorTaskRowTestId}"]`)
+  } finally {
+    control.releaseSupervisorReview('initial')
+  }
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
   await withTimeout(
     control.awaitScenarioRequestCount('supervisor', 3, MODEL_REQUEST_TIMEOUT_MS),
     MODEL_REQUEST_TIMEOUT_MS,
@@ -828,14 +868,7 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRu
     MODEL_REQUEST_TIMEOUT_MS,
     'The supervisor correction response did not start'
   )
-  const supervisorTaskRowTestId = await waitForNewTaskRow(
-    control,
-    taskRowsBeforeSupervisor,
-    'WEWORK_DESKTOP_E2E_SUPERVISOR'
-  )
-  const supervisorTaskId = supervisorTaskRowTestId.replace('runtime-local-task-row-', '')
-  const supervisorRunningTestId = `runtime-local-task-running-${supervisorTaskId}`
-  await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
+  await control.command('waitFor', runningSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const readOwnerTask =
@@ -892,9 +925,45 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRu
       'The supervisor correction had a live executor response but task execution was idle'
     )
     await captureVerificationScreenshot(control, 'supervisor-01-correction-running.png')
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await waitForBlankConversation(control, composerSelector)
+    await control.command('waitFor', runningSelector, { visible: true })
+    await openTaskCompletionNotifications(control)
+    await assertNoTaskCompletionNotification(
+      control,
+      notificationSelector,
+      'The notification center reported completion while the auto-correction was running'
+    )
   } finally {
     control.releaseSupervisorCorrectionResponse()
   }
+  try {
+    await withTimeout(
+      control.awaitScenarioRequestCount('supervisor', 4, MODEL_REQUEST_TIMEOUT_MS),
+      MODEL_REQUEST_TIMEOUT_MS,
+      'The supervisor did not inspect the completed auto-correction'
+    )
+    await control.command('waitFor', runningSelector, { visible: false })
+    await assertNoTaskCompletionNotification(
+      control,
+      notificationSelector,
+      'The notification center reported completion before the final review cleared the task'
+    )
+  } finally {
+    control.releaseSupervisorReview('final')
+  }
+  await control.command('waitFor', notificationSelector, { text: '任务已完成' })
+  assert.equal(
+    Number(await control.command('getElementCount', notificationSelector)),
+    1,
+    'The notification center did not show exactly one approved completion'
+  )
+  await control.command('clickWhenEnabled', notificationSelector)
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId,
+    'The completion notification did not open the supervised task'
+  )
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: SUPERVISOR_CORRECTION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -918,11 +987,6 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRu
     await getSelectedSupervisorModel(control),
     SUPERVISOR_MODEL_KEY,
     'The active supervisor did not retain its selected model'
-  )
-  await withTimeout(
-    control.awaitScenarioRequestCount('supervisor', 4, MODEL_REQUEST_TIMEOUT_MS),
-    MODEL_REQUEST_TIMEOUT_MS,
-    'The supervisor did not inspect the completed auto-correction'
   )
   const supervisorStatusSelector = '[data-testid="task-supervisor-status"]'
   await control.command('clickWhenEnabled', '[data-testid="task-supervisor-run-now-button"]')

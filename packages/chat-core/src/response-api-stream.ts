@@ -1,5 +1,6 @@
 import type {
   RuntimeGoal,
+  RuntimeSupervisorEventPayload,
   RuntimeTurnUpdatedPayload,
   RuntimeSupervisorState,
   RuntimeTaskTitleUpdatedPayload,
@@ -243,6 +244,9 @@ export function emitResponseApiEvent(
   if (eventName === "runtime.supervisor.updated") {
     handlers.onRuntimeSupervisorUpdated?.({
       ...base,
+      ...(data.task && typeof data.task === "object"
+        ? { task: data.task as RuntimeSupervisorEventPayload["task"] }
+        : {}),
       supervisor: (data.supervisor ?? null) as RuntimeSupervisorState | null,
     });
     return;

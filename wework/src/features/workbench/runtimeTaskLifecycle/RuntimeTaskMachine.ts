@@ -154,7 +154,8 @@ export class RuntimeTaskMachine {
         canQueue: continuable && isBusy,
         shouldShowSidebarRunning: isRunning && !hasPendingUserInput,
         shouldShowSidebarWaiting: hasPendingUserInput,
-        shouldShowUnread: unread && !isRunning && !hasPendingUserInput,
+        shouldShowUnread:
+          unread && !isRunning && !hasPendingUserInput && !task?.supervisorCompletionPending,
       },
     }
     return this.snapshot

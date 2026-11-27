@@ -47,6 +47,38 @@ pub(crate) struct RuntimeSupervisorState {
     pub last_content_hash: Option<String>,
     pub last_error: Option<String>,
     pub suggestions: Vec<RuntimeSupervisorSuggestion>,
+    #[serde(default = "legacy_supervisor_completion_review")]
+    pub completion_review: Option<RuntimeSupervisorCompletionReview>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum RuntimeSupervisorCompletionReview {
+    Legacy,
+    Reviewed {
+        completion_id: String,
+        approved: bool,
+    },
+}
+
+fn legacy_supervisor_completion_review() -> Option<RuntimeSupervisorCompletionReview> {
+    Some(RuntimeSupervisorCompletionReview::Legacy)
+}
+
+impl RuntimeSupervisorState {
+    pub fn reviewed_completion(&self, completion_id: &str) -> Option<bool> {
+        match &self.completion_review {
+            Some(RuntimeSupervisorCompletionReview::Reviewed {
+                completion_id: reviewed,
+                approved,
+            }) if reviewed == completion_id => Some(*approved),
+            _ => None,
+        }
+    }
 }
 
 fn default_supervisor_interval_seconds() -> u64 {
@@ -106,6 +138,64 @@ pub(crate) struct RuntimeTaskLink {
 }
 
 impl RuntimeTaskLink {
+    pub fn supervisor_completion_id(&self) -> Option<String> {
+        let supervisor = self.supervisor.as_ref()?;
+        let completed_at = self.completed_at?;
+        if supervisor.mode != "auto"
+            || supervisor.status == "disabled"
+            || self.running
+            || self.status != "done"
+        {
+            return None;
+        }
+        Some(
+            self.runtime_handle["lastTurnId"]
+                .as_str()
+                .map(|turn_id| format!("turn:{turn_id}"))
+                .unwrap_or_else(|| format!("completed-at:{completed_at}")),
+        )
+    }
+
+    fn supervisor_completion_pending(&self) -> bool {
+        self.supervisor_completion_id()
+            .is_some_and(|completion_id| {
+                self.supervisor
+                    .as_ref()
+                    .and_then(|supervisor| supervisor.reviewed_completion(&completion_id))
+                    != Some(true)
+            })
+    }
+
+    pub fn restore_legacy_supervisor_review(&mut self) {
+        let completion_id = self.supervisor_completion_id();
+        let completed_at = self.completed_at;
+        let Some(supervisor) = self.supervisor.as_mut() else {
+            return;
+        };
+        if !matches!(
+            supervisor.completion_review,
+            Some(RuntimeSupervisorCompletionReview::Legacy)
+        ) {
+            return;
+        }
+        // Keep already checked idle tasks idle across upgrades. New task snapshots
+        // persist an explicit null until the specific completed turn is reviewed.
+        supervisor.completion_review = completion_id
+            .filter(|_| {
+                completed_at
+                    .zip(supervisor.last_evaluated_at)
+                    .is_some_and(|(completed, evaluated)| evaluated >= completed)
+                    && supervisor.last_content_hash.is_some()
+                    && supervisor.last_error.is_none()
+            })
+            .map(
+                |completion_id| RuntimeSupervisorCompletionReview::Reviewed {
+                    completion_id,
+                    approved: true,
+                },
+            );
+    }
+
     pub fn new_pending(local_task_id: String, workspace_path: String, title: String) -> Self {
         Self::new_pending_with_runtime(local_task_id, workspace_path, title, "codex")
     }
@@ -687,6 +777,10 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
     let native_state = crate::runtime_work::lifecycle::native_execution_state(&link);
     let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
+    task.insert(
+        "supervisorCompletionPending".to_owned(),
+        Value::Bool(link.supervisor_completion_pending()),
+    );
     task.insert(
         "modelSelection".to_owned(),
         runtime_handle
