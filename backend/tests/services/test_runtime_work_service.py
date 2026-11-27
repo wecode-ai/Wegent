@@ -2640,17 +2640,18 @@ async def test_send_runtime_guidance_normalizes_runtime_rpc_failure_without_task
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("correction_content", [None, "Revised guidance", ""])
 async def test_send_runtime_message_forwards_ready_attachments_without_task_rows(
     test_db,
     test_user,
     monkeypatch,
     runtime_send_history,
+    correction_content,
 ):
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
     from app.schemas.runtime_work import (
         DeviceWorkspaceUpsert,
         RuntimeSendRequest,
-        RuntimeTaskAddress,
     )
     from app.services import runtime_work_service
 
@@ -2692,22 +2693,34 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
         lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
     )
 
+    prompt = "Continue with the revised guidance and attached file"
+    body = {
+        "address": {"deviceId": "device-1", "taskId": "codex-1"},
+        "message": prompt,
+        "clientUserMessageId": "continuation-1",
+        "attachmentIds": [attachment.id],
+    }
+    if correction_content is not None:
+        body["guidanceCorrection"] = {
+            "clientGuidanceId": "original-guidance-1",
+            "content": correction_content,
+        }
     response = await runtime_work_service.send_runtime_message(
         db=test_db,
         user_id=test_user.id,
-        request=RuntimeSendRequest(
-            address=RuntimeTaskAddress(
-                deviceId="device-1",
-                localTaskId="codex-1",
-            ),
-            message="continue",
-            attachmentIds=[attachment.id],
-        ),
+        request=RuntimeSendRequest.model_validate(body),
     )
 
     assert response.accepted is True
     rpc.assert_awaited_once()
     payload = rpc.await_args.kwargs["payload"]
+    assert payload["clientUserMessageId"] == "continuation-1"
+    assert payload["message"] == prompt
+    assert payload["executionRequest"] == {"prompt": prompt}
+    if correction_content is None:
+        assert "guidanceCorrection" not in payload
+    else:
+        assert payload["guidanceCorrection"] == body["guidanceCorrection"]
     assert payload["attachments"] == [
         {
             "id": attachment.id,

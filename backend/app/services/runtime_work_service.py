@@ -795,6 +795,10 @@ async def send_runtime_message(
     if request.resource_event_keys is not None:
         payload["resourceEventKeys"] = request.resource_event_keys
     _apply_runtime_user_message_identity(payload, request)
+    if request.guidance_correction is not None:
+        payload["guidanceCorrection"] = request.guidance_correction.model_dump(
+            by_alias=True
+        )
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
         payload["attachments"] = attachments
