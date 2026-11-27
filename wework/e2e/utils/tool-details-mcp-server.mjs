@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import readline from 'node:readline'
 
 const serverName = process.argv[2]
@@ -102,6 +103,9 @@ input.on('line', line => {
   if (request.method === 'tools/call') {
     const result = callTool(request.params?.name, request.params?.arguments ?? {})
     if (result) {
+      if (process.argv[3] === 'receipts') {
+        result.content.push({ type: 'text', text: `MCP_RECEIPT:${randomUUID()}` })
+      }
       respond(request.id, result)
     } else {
       respondError(request.id, -32601, `Unknown tool: ${request.params?.name}`)
