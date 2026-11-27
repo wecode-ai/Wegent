@@ -66,6 +66,24 @@ async function clickWithNativeMouse(control, selector, timeoutMs) {
   }
 }
 
+async function navigateBackInRenderer(timeoutMs) {
+  let client
+  let target
+  try {
+    client = await createDevtoolsClient(resultDir, timeoutMs)
+    target = await mainRendererTarget(client)
+    assert.ok(target, 'The main renderer is unavailable for browser history navigation')
+    await client({
+      action: 'command',
+      target,
+      method: 'Runtime.evaluate',
+      params: { expression: 'history.back()', returnByValue: true },
+    })
+  } finally {
+    if (target) await client({ action: 'detach', target }).catch(() => {})
+  }
+}
+
 async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
   try {
     await captureDrawerMotion(control, scope, action, direction, timeoutMs, reduced)
@@ -260,9 +278,11 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
   await control.command('waitFor', save, { visible: true, timeoutMs })
 
   await clickWithNativeMouse(control, taskTab, timeoutMs)
-  await control.command('waitFor', `${taskTab}[aria-selected="true"]`, { timeoutMs })
-  await control.command('waitFor', boardTab, { stableMs: 300, timeoutMs })
-  await clickWithNativeMouse(control, boardTab, timeoutMs)
+  await control.command('waitFor', `${taskTab}[aria-selected="true"]`, {
+    stableMs: 300,
+    timeoutMs,
+  })
+  await navigateBackInRenderer(timeoutMs)
   await control.command('waitFor', `${boardTab}[aria-selected="true"]`, { timeoutMs })
   await control.command('waitFor', detail, { visible: true, timeoutMs })
   await control.command('waitFor', description, {
