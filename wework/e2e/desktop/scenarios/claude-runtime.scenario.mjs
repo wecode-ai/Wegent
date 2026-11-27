@@ -1,3 +1,4 @@
+import { personalNativeMatrix } from '../modules/personal-native-matrix.mjs'
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
@@ -353,6 +354,13 @@ export async function createDesktopScenario({
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
   const requests = []
+  const assistants = personalNativeMatrix({
+    captureScreenshot,
+    resultDir,
+    uiTimeoutMs,
+    writeText,
+    writeToolCall,
+  })
   const concurrentHomes = createConcurrentClaudeHomes({
     resultDir,
     workspacePath: remoteWorkspacePath,
@@ -395,6 +403,7 @@ export async function createDesktopScenario({
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
       const body = await readJson(request)
+      if (assistants.handleModel(body, response)) return true
       if (concurrentHomes.handleModel(body, response)) return true
       if (sharedSkills.handleModel(body, response)) return true
       if (codexSkills.handleModel(body, response)) return true
@@ -626,6 +635,7 @@ export async function createDesktopScenario({
       await sharedSkills.verify(cloudEnvironment)
       await codexSkills.verify(cloudEnvironment)
       await concurrentHomes.verify(cloudEnvironment)
+      await assistants.verify(control, cloudEnvironment)
     },
 
     async cleanup() {

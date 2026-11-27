@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { verifyGroupNativeMatrix } from '../../utils/group-native-matrix'
 import { writeFile } from 'node:fs/promises'
 import {
   test,
@@ -52,22 +53,14 @@ async function capture(surface: Page | Locator, info: TestInfo, name: string) {
   await surface.screenshot({ path, animations: 'disabled' })
   await info.attach(name, { path, contentType: 'image/png' })
 }
-test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatched group member', async ({
-  request,
-  page,
-}, testInfo) => {
-  test.setTimeout(240_000)
+const leaderName = 'Coordinator'
+async function createScenario(request: APIRequestContext, page: Page) {
   const model = await createIssueDispatchMockModel(request, TEST_PREFIX)
   const { modelName, token } = model
   const suffix = Date.now().toString(36).slice(-6)
-  const botName = `draft-${suffix}`
-  const agentName = 'Review team'
-  const leaderName = 'Coordinator'
-  const memberWork = 'Check the release notes'
   const configuredPrompts = new Set<string>()
   const cleanup: string[] = []
   const projectCleanup: string[] = []
-  let clearGate: (() => Promise<void>) | undefined
   async function apiRequest<T>(
     api: APIRequestContext,
     path: string,
@@ -91,6 +84,133 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
         agent_config: { bind_model: modelName, bind_model_type: 'user' },
       },
     })
+  async function createProject() {
+    const workspace = await apiRequest<{ id: string }>(request, '/api/v1/workspaces', {
+      method: 'POST',
+      data: { name: `Release ${suffix}` },
+    })
+    projectCleanup.push(`/api/v1/workspaces/${workspace.id}`)
+    const project = await apiRequest<{ id: string }>(
+      request,
+      `/api/v1/workspaces/${workspace.id}/projects`,
+      {
+        method: 'POST',
+        data: { name: 'Release review', task_provider: 'local', visibility: 'private' },
+      }
+    )
+    const projectId = project.id
+    const projectPath = `/collaboration/workspaces/${workspace.id}/projects/${projectId}`
+    projectCleanup.unshift(`/api/v1/cloud-projects/${projectId}`)
+    async function assign(issueId: string, value: string) {
+      await page.goto(`${projectPath}/issues/${issueId}`)
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId(`cloud-todo-detail-assignee-option-${value}`).click()
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        value
+      )
+    }
+    async function executions(id: string) {
+      const rows = await apiRequest<{ items: CollaborationExecution[] }>(
+        request,
+        `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
+      )
+      return rows.items.filter(row => row.loopItemId === id)
+    }
+    return { projectId, projectPath, assign, executions }
+  }
+  async function createLeader(projectId: string) {
+    const coordinatorName = `coordinator-${suffix}`
+    const plannerName = `planner-${suffix}`
+    const coordinator = await apiBot(coordinatorName, 'Coordinate the release review.')
+    const planner = await apiBot(plannerName, 'Help the coordinator plan release reviews.')
+    cleanup.unshift(`bots/${coordinatorName}`, `bots/${plannerName}`)
+    const leaderTeamName = `release-coordinators-${suffix}`
+    const leaderTeam = await apiRequest<{ id: number; bots: Array<{ bot_id: number }> }>(
+      request,
+      '/api/teams',
+      {
+        method: 'POST',
+        data: {
+          name: leaderTeamName,
+          namespace: 'default',
+          workflow: { mode: 'coordinate', leader_bot_id: coordinator.id },
+          bots: [
+            { bot_id: coordinator.id, role: 'leader' },
+            { bot_id: planner.id, role: 'worker' },
+          ],
+        },
+      }
+    )
+    cleanup.unshift(`teams/${leaderTeamName}`)
+    expect(leaderTeam.bots.map(member => member.bot_id)).toEqual([coordinator.id, planner.id])
+    const leader = await apiRequest<CollaborationAgent>(
+      request,
+      `/api/v1/cloud-projects/${projectId}/chat-agents`,
+      {
+        method: 'POST',
+        data: {
+          name: leaderName,
+          runtime: 'wegent',
+          wegent_team_id: leaderTeam.id,
+          share_with_workspace: true,
+        },
+      }
+    )
+    expect(leader.wegentTeamId).toBe(leaderTeam.id)
+    return { leader, leaderTeam, coordinator, planner }
+  }
+  async function dispose() {
+    for (const prompt of configuredPrompts) await clearToolScenario(request, prompt)
+    for (const path of projectCleanup) {
+      const item = await apiRequest<{ version: number }>(request, path)
+      const deleted = await request.delete(
+        `${PROVIDER_NATIVE_API_URL}${path}?version=${item.version}`,
+        { headers: authHeaders(token) }
+      )
+      expect(deleted.status()).toBe(204)
+    }
+    for (const path of cleanup) {
+      const deleted = await request.delete(
+        `${PROVIDER_NATIVE_API_URL}/api/v1/namespaces/default/${path}`,
+        {
+          headers: authHeaders(token),
+        }
+      )
+      expect(deleted.ok(), await deleted.text()).toBe(true)
+    }
+    await deleteIssueDispatchMockModel(request, model)
+  }
+  return {
+    suffix,
+    configuredPrompts,
+    cleanup,
+    apiRequest,
+    apiBot,
+    createProject,
+    createLeader,
+    dispose,
+  }
+}
+test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatched group member', async ({
+  request,
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000)
+  const {
+    suffix,
+    configuredPrompts,
+    cleanup,
+    apiRequest,
+    apiBot,
+    createProject,
+    createLeader,
+    dispose,
+  } = await createScenario(request, page)
+  const botName = `draft-${suffix}`
+  const agentName = 'Review team'
+  const memberWork = 'Check the release notes'
+  let clearGate: (() => Promise<void>) | undefined
   try {
     const first = await apiBot(botName, 'Perform the initial review.')
     cleanup.unshift(`bots/${botName}`)
@@ -203,22 +323,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     const directPipeline = await verifyPipeline(taskId)
     await expect(page.getByTestId('messages-container')).toContainText(reviewAnswer)
     await capture(page, testInfo, '02-direct-team-delivery')
-    const workspace = await apiRequest<{ id: string }>(request, '/api/v1/workspaces', {
-      method: 'POST',
-      data: { name: `Release ${suffix}` },
-    })
-    projectCleanup.push(`/api/v1/workspaces/${workspace.id}`)
-    const project = await apiRequest<{ id: string }>(
-      request,
-      `/api/v1/workspaces/${workspace.id}/projects`,
-      {
-        method: 'POST',
-        data: { name: 'Release review', task_provider: 'local', visibility: 'private' },
-      }
-    )
-    const projectId = project.id
-    const projectPath = `/collaboration/workspaces/${workspace.id}/projects/${projectId}`
-    projectCleanup.unshift(`/api/v1/cloud-projects/${projectId}`)
+    const { projectId, projectPath, assign, executions } = await createProject()
     const agent = await apiRequest<CollaborationAgent>(
       request,
       `/api/v1/cloud-projects/${projectId}/chat-agents`,
@@ -233,15 +338,6 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
       }
     )
     expect(agent.wegentTeamId).toBe(team.id)
-    async function assign(issueId: string, value: string) {
-      await page.goto(`${projectPath}/issues/${issueId}`)
-      await page.getByTestId('cloud-todo-detail-assignee').click()
-      await page.getByTestId(`cloud-todo-detail-assignee-option-${value}`).click()
-      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-        'data-value',
-        value
-      )
-    }
     const issue = await apiRequest<{ id: string }>(
       request,
       `/api/v1/cloud-projects/${projectId}/loop-items`,
@@ -253,13 +349,6 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     clearGate = await configureHeldStreamResponse(request, reviewPrompt, reviewAnswer)
     await assign(issue.id, `agent:${agent.id}`)
     await capture(page, testInfo, '03-issue-team-assigned')
-    async function executions(id: string) {
-      const rows = await apiRequest<{ items: CollaborationExecution[] }>(
-        request,
-        `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
-      )
-      return rows.items.filter(row => row.loopItemId === id)
-    }
     await waitForHeldStreamResponse(request, reviewPrompt)
     const [activeIssueRun] = await executions(issue.id)
     expect(activeIssueRun).toMatchObject({ teamId: team.id, status: 'running' })
@@ -303,44 +392,7 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
 
     await page.goto(projectPath)
     await initializeProjectExecutionEnvironment(page)
-    const coordinatorName = `coordinator-${suffix}`
-    const plannerName = `planner-${suffix}`
-    const coordinator = await apiBot(coordinatorName, 'Coordinate the release review.')
-    const planner = await apiBot(plannerName, 'Help the coordinator plan release reviews.')
-    cleanup.unshift(`bots/${coordinatorName}`, `bots/${plannerName}`)
-    const leaderTeamName = `release-coordinators-${suffix}`
-    const leaderTeam = await apiRequest<{ id: number; bots: Array<{ bot_id: number }> }>(
-      request,
-      '/api/teams',
-      {
-        method: 'POST',
-        data: {
-          name: leaderTeamName,
-          namespace: 'default',
-          workflow: { mode: 'coordinate', leader_bot_id: coordinator.id },
-          bots: [
-            { bot_id: coordinator.id, role: 'leader' },
-            { bot_id: planner.id, role: 'worker' },
-          ],
-        },
-      }
-    )
-    cleanup.unshift(`teams/${leaderTeamName}`)
-    expect(leaderTeam.bots.map(member => member.bot_id)).toEqual([coordinator.id, planner.id])
-    const leader = await apiRequest<CollaborationAgent>(
-      request,
-      `/api/v1/cloud-projects/${projectId}/chat-agents`,
-      {
-        method: 'POST',
-        data: {
-          name: leaderName,
-          runtime: 'wegent',
-          wegent_team_id: leaderTeam.id,
-          share_with_workspace: true,
-        },
-      }
-    )
-    expect(leader.wegentTeamId).toBe(leaderTeam.id)
+    const { leader, leaderTeam, coordinator, planner } = await createLeader(projectId)
     expect(leader.wegentTeamId).not.toBe(team.id)
     await page.reload({ waitUntil: 'domcontentloaded' })
     await selectCollaborationProjectView(page, 'manage')
@@ -508,24 +560,38 @@ test('runs one legacy two-Bot Team directly, as Issue assignee and as a dispatch
     })
   } finally {
     if (clearGate) await clearGate()
-    for (const prompt of configuredPrompts) await clearToolScenario(request, prompt)
-    for (const path of projectCleanup) {
-      const item = await apiRequest<{ version: number }>(request, path)
-      const deleted = await request.delete(
-        `${PROVIDER_NATIVE_API_URL}${path}?version=${item.version}`,
-        { headers: authHeaders(token) }
-      )
-      expect(deleted.status()).toBe(204)
-    }
-    for (const path of cleanup) {
-      const deleted = await request.delete(
-        `${PROVIDER_NATIVE_API_URL}/api/v1/namespaces/default/${path}`,
-        {
-          headers: authHeaders(token),
-        }
-      )
-      expect(deleted.ok(), await deleted.text()).toBe(true)
-    }
-    await deleteIssueDispatchMockModel(request, model)
+    await dispose()
+  }
+})
+test('dispatches six native Team configurations in one collaboration group', async ({
+  page,
+  request,
+}, testInfo) => {
+  test.setTimeout(420_000)
+  const { suffix, configuredPrompts, cleanup, apiRequest, createProject, createLeader, dispose } =
+    await createScenario(request, page)
+  try {
+    const { projectId, projectPath, assign, executions } = await createProject()
+    await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
+    await page.goto(projectPath)
+    await initializeProjectExecutionEnvironment(page)
+    const { leader } = await createLeader(projectId)
+    await verifyGroupNativeMatrix({
+      page,
+      request,
+      info: testInfo,
+      projectId,
+      projectPath,
+      suffix,
+      leader,
+      api: (path, data) =>
+        apiRequest(request, path, data === undefined ? {} : { method: 'POST', data }),
+      assign,
+      executions,
+      cleanup,
+      configuredPrompts,
+    })
+  } finally {
+    await dispose()
   }
 })

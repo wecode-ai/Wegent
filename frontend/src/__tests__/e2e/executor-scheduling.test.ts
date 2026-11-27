@@ -31,7 +31,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/provider-native-claudecode.spec.ts': 4,
   'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 2,
-  'collaboration/legacy-team-execution.spec.ts': 1,
+  'collaboration/legacy-team-execution.spec.ts': 2,
   'collaboration/dual-turn-delivery.spec.ts': 1,
   'collaboration/issue-dispatch-executor.spec.ts': 6,
 }
