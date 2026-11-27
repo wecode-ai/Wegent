@@ -52,7 +52,7 @@ mod transcript_transport;
 pub(crate) mod transcript_work;
 mod util;
 pub(crate) use util::stand_in_requires_confirmation;
-pub(crate) use util::{calendar_allows_full_access, external_work_kind};
+pub(crate) use util::{calendar_allows_full_access, external_work_kind, ExternalWorkKind};
 pub(crate) use util::{normalize_runtime_goal_timestamps, prompt_text};
 mod worktrees;
 
