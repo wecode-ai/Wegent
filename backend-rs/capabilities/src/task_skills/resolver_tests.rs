@@ -30,13 +30,7 @@ fn skill_row_in_namespace(user_id: i64, namespace: &str, spec: serde_json::Value
 fn capture_store(
     mysql: &crate::sql_test_support::KindQueryCapture,
 ) -> KindCacheStore<'_, crate::sql_test_support::KindQueryCapture> {
-    KindCacheStore {
-        mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    }
+    KindCacheStore::sql(mysql)
 }
 
 #[test]

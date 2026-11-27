@@ -112,13 +112,8 @@ async fn team_skills(
 ) -> Result<TeamSkillsResponse, HttpError> {
     let user_id = i64::from(current_user.users_id);
 
-    let kinds: KindStore<'_, brz_mysql::MysqlService, brz_redis::RedisService> = KindStore {
-        mysql: &state.mysql,
-        redis: state
-            .redis
-            .as_ref()
-            .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
-    };
+    let kinds: KindStore<'_, brz_mysql::MysqlService, brz_redis::RedisService> =
+        KindStore::sql(&state.mysql);
 
     // `team_share_service.get_resource_for_use` -> `_get_resource`: a direct
     // `db.query(Kind)` by id. The source does not route this lookup through
@@ -252,13 +247,12 @@ async fn check_team_access(
     // entity bindings, then the native group role read through
     // `_get_active_team`'s namespace.
     let store: KindCacheStore<'_, brz_mysql::MysqlService, brz_redis::RedisService> =
-        KindCacheStore {
-            mysql: &state.mysql,
-            redis: state.redis.as_ref(),
-            use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-            erp: Some(state.erp.as_ref()),
-            resolvers: Some(&state.entity_resolvers),
-        };
+        KindCacheStore::new(
+            &state.mysql,
+            state.redis.as_ref(),
+            state.erp.as_ref(),
+            &state.entity_resolvers,
+        );
     if store
         .team_share_permission(team.kinds_id, user_id)
         .await

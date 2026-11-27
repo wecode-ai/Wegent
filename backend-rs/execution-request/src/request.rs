@@ -750,13 +750,12 @@ async fn build_request_with_runtime(
 
     // The ghost chain reads through the deployment's cached kind reader.
     let ghost_ref = bot_spec.get("ghostRef");
-    let kinds_cache = wegent_capabilities::task_skills::kinds::KindCacheStore {
-        mysql: state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp),
-        resolvers: Some(state.entity_resolvers),
-    };
+    let kinds_cache = wegent_capabilities::task_skills::kinds::KindCacheStore::new(
+        state.mysql,
+        state.redis.as_ref(),
+        state.erp,
+        state.entity_resolvers,
+    );
     let chain = load_ghost_chain(
         &kinds_cache,
         input.team.user_id,

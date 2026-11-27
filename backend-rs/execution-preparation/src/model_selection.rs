@@ -390,13 +390,7 @@ mod tests {
     #[tokio::test]
     async fn member_validation_reads_one_cached_bot_per_member() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            use_kind_cache: false,
-            erp: None,
-            resolvers: None,
-        };
+        let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
         let team = serde_json::json!({
             "spec": {"members": [{"botRef": {"name": "bot", "namespace": "ns-b"}}]}
         });
@@ -417,13 +411,7 @@ mod tests {
     #[tokio::test]
     async fn member_validation_reads_every_member_bot() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            use_kind_cache: false,
-            erp: None,
-            resolvers: None,
-        };
+        let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
         let team = serde_json::json!({
             "spec": {"members": [
                 {"botRef": {"name": "first", "namespace": "ns-b"}},
@@ -442,13 +430,7 @@ mod tests {
     #[tokio::test]
     async fn member_validation_rejects_a_team_without_members() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            use_kind_cache: false,
-            erp: None,
-            resolvers: None,
-        };
+        let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
         let empty = serde_json::json!({"spec": {"members": []}});
         let error = resolve_model_selection(&store, 6527, "ns-b", "team-beta", 6527, &empty, None)
             .await
@@ -474,13 +456,7 @@ mod tests {
     #[tokio::test]
     async fn member_validation_rejects_a_member_without_a_bot_name() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            use_kind_cache: false,
-            erp: None,
-            resolvers: None,
-        };
+        let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
         let empty_name = serde_json::json!({"spec": {"members": [{"botRef": {"name": ""}}]}});
         let error =
             resolve_model_selection(&store, 6527, "ns-b", "team-beta", 6527, &empty_name, None)
@@ -506,13 +482,7 @@ mod tests {
     #[tokio::test]
     async fn member_validation_defaults_a_missing_bot_namespace() {
         let mysql = crate::sql_test_support::KindQueryCapture::writing();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            use_kind_cache: false,
-            erp: None,
-            resolvers: None,
-        };
+        let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
         let team = serde_json::json!({"spec": {"members": [{"botRef": {"name": "bot"}}]}});
         resolve_model_selection(&store, 6527, "ns-b", "team-beta", 6527, &team, None)
             .await

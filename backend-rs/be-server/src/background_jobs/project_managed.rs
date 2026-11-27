@@ -260,13 +260,12 @@ pub(crate) async fn request_for_task(
     let directory = state
         .entity_resolvers
         .execution_directory(state.erp.as_ref());
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(directory),
-        resolvers: Some(&resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        directory,
+        &resolvers,
+    );
     let stage = task.json.0["spec"]["currentStage"].as_u64().unwrap_or(0) as usize;
     let turn_team =
         resolution::turn_team(&team.json.0, stage).context("Managed Team stage unavailable")?;

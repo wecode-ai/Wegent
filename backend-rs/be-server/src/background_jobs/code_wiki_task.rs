@@ -20,13 +20,12 @@ pub(super) async fn create(
     execution: i64,
     prompt: &str,
 ) -> Result<i64> {
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &app.mysql,
-        redis: app.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(app.erp.as_ref()),
-        resolvers: Some(&app.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &app.mysql,
+        app.redis.as_ref(),
+        app.erp.as_ref(),
+        &app.entity_resolvers,
+    );
     let bots = resolution::resolve_team_bots(&cache, team.user_id, &team.json.0).await?;
     let bot = resolution::resolve_bot(
         &app.mysql,

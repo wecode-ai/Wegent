@@ -77,13 +77,12 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
             json!({"status":"success","task_id":data.execution.task_id,"execution_id":input.execution_id,"subscription_id":input.subscription_id}),
         );
     }
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &app.mysql,
-        redis: app.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(app.erp.as_ref()),
-        resolvers: Some(&app.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &app.mysql,
+        app.redis.as_ref(),
+        app.erp.as_ref(),
+        &app.entity_resolvers,
+    );
     let bots = resolution::resolve_team_bots(&cache, data.team.user_id, &data.team.json.0).await?;
     let bot = resolution::resolve_bot(
         &app.mysql,

@@ -467,13 +467,12 @@ async fn is_deep_research_protocol(
     ) else {
         return Ok(false);
     };
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let Some(bot) = cache
         .get_by_name_and_namespace_row(team.user_id, "Bot", namespace, name)
         .await?
@@ -1304,13 +1303,7 @@ pub async fn handle(
 
             // `get_bot_ids_from_team`: one cached reader lookup per team
             // member.
-            let cache = crate::task_skills::kinds::KindCacheStore {
-                mysql: &state.mysql,
-                redis: state.redis.as_ref(),
-                use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-                erp: Some(state.erp.as_ref()),
-                resolvers: Some(&state.entity_resolvers),
-            };
+            let cache = crate::task_skills::kinds::KindCacheStore::new(&state.mysql, state.redis.as_ref(), state.erp.as_ref(), &state.entity_resolvers);
             if pipeline {
                 crate::responses::create::request::authorize_pipeline(state,user_id,&team,payload.task_id.map(|id|(id,&scope.task_json))).await?;
             }
@@ -2395,13 +2388,7 @@ mod tests {
     async fn the_first_available_bot_reads_members_in_order() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let cache: crate::task_skills::kinds::KindCacheStore<'_, _> =
-            crate::task_skills::kinds::KindCacheStore {
-                mysql: &mysql,
-                redis: None,
-                use_kind_cache: false,
-                erp: None,
-                resolvers: None,
-            };
+            crate::task_skills::kinds::KindCacheStore::sql(&mysql);
         let team = json!({
             "spec": {"members": [
                 {"botRef": {"name": "first", "namespace": "ns-b"}},
@@ -2424,13 +2411,7 @@ mod tests {
     async fn a_team_without_members_resolves_no_bot() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let cache: crate::task_skills::kinds::KindCacheStore<'_, _> =
-            crate::task_skills::kinds::KindCacheStore {
-                mysql: &mysql,
-                redis: None,
-                use_kind_cache: false,
-                erp: None,
-                resolvers: None,
-            };
+            crate::task_skills::kinds::KindCacheStore::sql(&mysql);
         let resolved = resolve_first_available_bot(&cache, 6501, &json!({"spec": {"members": []}}))
             .await
             .expect("no member means no read");

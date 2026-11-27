@@ -389,13 +389,7 @@ fn stage_selection_preserves_the_team_and_reports_missing_stages() {
 #[tokio::test]
 async fn resolve_team_bots_reads_one_cached_bot_per_member() {
     let mysql = crate::sql_test_support::KindQueryCapture::writing();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let team = serde_json::json!({
         "spec": {"members": [{"botRef": {"name": "bot", "namespace": "ns-b"}}]}
     });
@@ -493,13 +487,7 @@ fn share_check_reads_match_the_recorded_statements() {
 #[tokio::test]
 async fn resolve_team_group_branch_returns_none_when_the_group_is_absent() {
     let mysql = crate::sql_test_support::KindQueryCapture::writing();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let team = resolve_team(&store, 6527, "ns-b", "team-beta")
         .await
         .expect("resolve");

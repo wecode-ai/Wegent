@@ -50,13 +50,7 @@ fn shared_team_list_payload_matches_the_recorded_document() {
 #[tokio::test]
 async fn null_team_ref_runs_the_source_step_order() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let team_id = store
         .get_team_id_by_name_and_namespace(2630, "default", "wegent-chat")
         .await
@@ -84,13 +78,7 @@ async fn null_team_ref_runs_the_source_step_order() {
 #[tokio::test]
 async fn anonymous_viewer_resolves_only_the_public_team() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let team_id = store
         .get_team_id_by_name_and_namespace(0, "default", "wegent-chat")
         .await
@@ -195,13 +183,7 @@ fn isoformat_keeps_microseconds_only_when_present() {
 #[tokio::test]
 async fn group_is_public_reads_the_namespace_when_the_cache_misses() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     assert!(
         !store
             .group_is_public("rcdp/community")
@@ -219,13 +201,7 @@ async fn group_is_public_reads_the_namespace_when_the_cache_misses() {
 #[tokio::test]
 async fn group_member_role_reads_the_namespace_when_the_cache_misses() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     assert_eq!(
         store
             .group_member_role("rcdp/community", 6013)
@@ -379,13 +355,7 @@ impl brz_redis::Redis for HitRedis {
 #[tokio::test]
 async fn group_team_cache_miss_reads_through_the_request_handle() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let mut sql = RecordingRequestSql::default();
     let team = store
         .resolve_team_on(&mut sql, 6526, "support", "Profile review")
@@ -412,13 +382,7 @@ async fn group_team_cache_miss_reads_through_the_request_handle() {
 #[tokio::test]
 async fn team_cache_miss_reads_through_the_request_handle() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let mut sql = RecordingRequestSql::default();
     let team = store
         .resolve_team_on(&mut sql, 2630, "default", "wegent-chat")
@@ -495,14 +459,13 @@ async fn team_cache_hit_issues_no_sql() {
     assert!(sql.calls().is_empty(), "{:?}", sql.calls());
     assert!(mysql.queries().is_empty(), "{:?}", mysql.queries());
 
-    // Without a writer-side extension the same Redis document can outlive
-    // a deleted Kind. The public reader must observe the SQL deletion.
-    let public = KindCacheStore {
-        use_kind_cache: false,
-        ..store
-    };
+    // A Redis document can outlive a deleted Kind. Production resolution must observe SQL.
+    let resolvers = crate::permissions::EntityResolvers::public(
+        brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").unwrap(),
+    );
+    let public = KindCacheStore::new(&mysql, Some(&redis), &NOOP_ERP, &resolvers);
     let retired = public
-        .cached_kinds()
+        .kind_store()
         .get_personal_team_on(&mut sql, 2630, "default", "wegent-chat")
         .await
         .expect("SQL lookup succeeds");
@@ -517,13 +480,7 @@ async fn team_cache_hit_issues_no_sql() {
 #[tokio::test]
 async fn bot_cache_miss_reads_through_the_request_handle() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let store: KindCacheStore<'_, _> = KindCacheStore {
-        mysql: &mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let store: KindCacheStore<'_, _> = KindCacheStore::sql(&mysql);
     let mut sql = RecordingRequestSql::default();
     let bot = store
         .get_by_name_and_namespace_row_on(&mut sql, 6527, "Bot", "default", "AI助理")

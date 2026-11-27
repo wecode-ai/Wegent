@@ -62,13 +62,12 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
     team.json.0["spec"]["collaborationModel"] = strategy["collaborationModel"].clone();
     let resolvers = app.entity_resolvers.for_execution();
     let directory = app.entity_resolvers.execution_directory(app.erp.as_ref());
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &app.mysql,
-        redis: app.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(directory),
-        resolvers: Some(&resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &app.mysql,
+        app.redis.as_ref(),
+        directory,
+        &resolvers,
+    );
     let turn_team = resolution::turn_team(
         &team.json.0,
         continuation

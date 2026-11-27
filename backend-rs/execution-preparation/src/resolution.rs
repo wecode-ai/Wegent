@@ -816,13 +816,7 @@ pub async fn resolve_task_ref_team<M: Mysql>(
     }
     // A ref without `user_id` resolves through the cached-reader team branch;
     // the store shares the caller's MySQL client.
-    let cache = KindCacheStore::<M, brz_redis::RedisService> {
-        mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let cache = KindCacheStore::<M, brz_redis::RedisService>::sql(mysql);
     resolve_team(&cache, viewer_user_id, namespace, name).await
 }
 

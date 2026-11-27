@@ -220,13 +220,12 @@ async fn resolve_create_scope(
         }
         None => None,
     };
-    let kinds_cache = KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let kinds_cache = KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let team = kinds_cache
         .resolve_team_on(
             &mut *transaction,

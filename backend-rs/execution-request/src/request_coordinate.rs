@@ -69,13 +69,12 @@ pub(super) async fn members(
     accepted_bots: Option<&Value>,
 ) -> Result<Vec<Value>, FastApiError> {
     let mut configs = Vec::new();
-    let cache = KindCacheStore {
-        mysql: state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp),
-        resolvers: Some(state.entity_resolvers),
-    };
+    let cache = KindCacheStore::new(
+        state.mysql,
+        state.redis.as_ref(),
+        state.erp,
+        state.entity_resolvers,
+    );
     for member in input.team.json.0["spec"]["members"]
         .as_array()
         .into_iter()

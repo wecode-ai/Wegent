@@ -63,13 +63,12 @@ pub(crate) async fn authorize_pipeline(
     } else if team.user_id == user || team.user_id == 0 {
         true
     } else {
-        let cache = crate::task_skills::kinds::KindCacheStore {
-            mysql: &state.mysql,
-            redis: state.redis.as_ref(),
-            use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-            erp: Some(state.erp.as_ref()),
-            resolvers: Some(&state.entity_resolvers),
-        };
+        let cache = crate::task_skills::kinds::KindCacheStore::new(
+            &state.mysql,
+            state.redis.as_ref(),
+            state.erp.as_ref(),
+            &state.entity_resolvers,
+        );
         cache
             .resolve_team(user, &team.namespace, &team.name)
             .await

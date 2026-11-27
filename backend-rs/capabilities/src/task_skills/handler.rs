@@ -70,20 +70,13 @@ async fn run(
     }
 
     let context = TaskContext::from_task_row(task_id, &task);
-    let kinds_cache = KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: crate::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
-    let raw_kinds = crate::kind_store::KindStore {
-        mysql: &state.mysql,
-        redis: state
-            .redis
-            .as_ref()
-            .filter(|_| crate::kind_store::deployment_kind_cache_enabled()),
-    };
+    let kinds_cache = KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
+    let raw_kinds = kinds_cache.kind_store();
     let resolved =
         resolver::resolve_task_skills(&state.mysql, &kinds_cache, &raw_kinds, &context, user_id)
             .await

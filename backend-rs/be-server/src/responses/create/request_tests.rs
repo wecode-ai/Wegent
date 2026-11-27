@@ -496,13 +496,9 @@ async fn coordinate_member_skills_resolve_in_the_team_owner_and_group_scope() {
         (schema, rows)
     })
     .await;
-    let cache = crate::task_skills::kinds::KindCacheStore::<_, brz_redis::RedisService> {
-        mysql: &fixture.mysql,
-        redis: None,
-        use_kind_cache: false,
-        erp: None,
-        resolvers: None,
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::<_, brz_redis::RedisService>::sql(
+        &fixture.mysql,
+    );
     let mut members = [json!({
         "skills": ["personal-tool", "group-tool"],
         "skill_refs": {"group-tool": {"namespace": "reviews"}}

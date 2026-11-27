@@ -346,13 +346,12 @@ async fn resolve_team_json(
     namespace: &str,
     name: &str,
 ) -> Result<Option<OpaqueJson>, FastApiError> {
-    let store = wegent_capabilities::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let store = wegent_capabilities::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let team = store
         .resolve_team(user_id, namespace, name)
         .await

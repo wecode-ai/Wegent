@@ -605,13 +605,12 @@ async fn team_bot_ids(
     state: &AppState,
     team: &crate::responses::create::resolution::KindRow,
 ) -> Result<Vec<i64>, RetryFailure> {
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        state.erp.as_ref(),
+        &state.entity_resolvers,
+    );
     let bots =
         crate::responses::create::resolution::resolve_team_bots(&cache, team.user_id, &team.json.0)
             .await

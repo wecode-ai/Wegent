@@ -79,13 +79,12 @@ pub(crate) async fn readiness(
     if members.is_empty() {
         bail!("Team has no members")
     }
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(directory),
-        resolvers: Some(&resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        directory,
+        &resolvers,
+    );
     // `_validate_team_member` reads the Bot and its single Ghost reference
     // through `kindReader.get_by_name_and_namespace` (cached version/value
     // reads), never the whole Ghost chain, then resolves the Shell and, when
@@ -257,13 +256,12 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     if members.is_empty() {
         bail!("Team has no members")
     }
-    let cache = crate::task_skills::kinds::KindCacheStore {
-        mysql: &state.mysql,
-        redis: state.redis.as_ref(),
-        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
-        erp: Some(directory),
-        resolvers: Some(&resolvers),
-    };
+    let cache = crate::task_skills::kinds::KindCacheStore::new(
+        &state.mysql,
+        state.redis.as_ref(),
+        directory,
+        &resolvers,
+    );
     if team.json.0["spec"]["collaborationModel"] != "solo" || members.len() != 1 {
         config["team_strategy"] = strategy;
         return Ok(config);
