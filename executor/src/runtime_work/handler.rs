@@ -754,20 +754,22 @@ struct TurnDisposition {
     )>,
 }
 
+type ShellLaunch<'a> = Box<
+    dyn FnOnce(
+            u64,
+            oneshot::Receiver<()>,
+            Arc<ScheduledTurnGuard>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + 'a,
+>;
+
 /// Authenticated Shell resources prepared synchronously while admission still owns the session.
 struct PreparedShell<'a> {
     session: String,
     journal_session: String,
     command: Option<String>,
     platform: Option<Arc<dyn wegent_execution_contracts::ipc::PlatformTurn>>,
-    run: Box<
-        dyn FnOnce(
-                u64,
-                oneshot::Receiver<()>,
-                Arc<ScheduledTurnGuard>,
-            ) -> Pin<Box<dyn Future<Output = ()> + Send>>
-            + 'a,
-    >,
+    run: ShellLaunch<'a>,
 }
 
 impl<'a> PreparedShell<'a> {

@@ -272,18 +272,18 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    async fn open_and_send_require_the_current_authenticated_native_binding() {
+    #[test]
+    fn open_and_send_require_the_current_authenticated_native_binding() {
+        crate::test_env::run_with_executor_home(verify_platform_continuation());
+    }
+
+    async fn verify_platform_continuation() {
         use axum::{
             extract::State,
             http::HeaderMap,
             routing::{get, post},
             Json, Router,
         };
-        let _env = crate::test_env::lock();
-        let home = tempfile::tempdir().unwrap();
-        let _home =
-            crate::test_env::ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
         let evidence = Arc::new(Mutex::new(
             json!({"task_id":42,"team_id":6,"user_id":7,"device_id":"here",
             "thread_id":"native","shell_type":"ClaudeCode","title":"Task","messages":[{"id":"m","role":"assistant","content":"original"}]}),

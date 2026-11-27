@@ -366,14 +366,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn cancellation_blocks_events_from_detached_streaming_callbacks() {
+    #[test]
+    fn cancellation_blocks_events_from_detached_streaming_callbacks() {
+        crate::test_env::run_with_executor_home(verify_detached_callback_cancellation());
+    }
+
+    async fn verify_detached_callback_cancellation() {
         let release_late_event = Arc::new(Notify::new());
         let sink = RecordingSink::default();
-        let _lock = crate::test_env::lock();
-        let home = tempfile::tempdir().unwrap();
-        let _home =
-            crate::test_env::ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
         let runner = PlatformTaskAdapter::new(
             DetachedLateEventEngine {
                 release_late_event: Arc::clone(&release_late_event),
@@ -403,13 +403,13 @@ mod tests {
         assert_eq!(events[1].data["response"]["status"], "cancelled");
     }
 
-    #[tokio::test]
-    async fn late_cancellation_cannot_abort_a_newer_turn_of_the_same_task() {
+    #[test]
+    fn late_cancellation_cannot_abort_a_newer_turn_of_the_same_task() {
+        crate::test_env::run_with_executor_home(verify_late_cancellation());
+    }
+
+    async fn verify_late_cancellation() {
         let sink = RecordingSink::default();
-        let _lock = crate::test_env::lock();
-        let home = tempfile::tempdir().unwrap();
-        let _home =
-            crate::test_env::ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
         let runner = PlatformTaskAdapter::new(
             DetachedLateEventEngine {
                 release_late_event: Arc::new(Notify::new()),
@@ -446,13 +446,14 @@ mod tests {
                 .await
         );
         assert!(runner.running_task_ids().is_empty());
-        let events = sink.events.lock().expect("event sink lock");
-        assert_eq!(events.len(), 4);
-        assert_eq!(events[2].event_type, "response.created");
-        assert_eq!(events[3].event_type, "response.incomplete");
-        assert_eq!(events[3].subtask_id, "537");
-        assert_eq!(events[3].data["response"]["status"], "cancelled");
-        drop(events);
+        {
+            let events = sink.events.lock().expect("event sink lock");
+            assert_eq!(events.len(), 4);
+            assert_eq!(events[2].event_type, "response.created");
+            assert_eq!(events[3].event_type, "response.incomplete");
+            assert_eq!(events[3].subtask_id, "537");
+            assert_eq!(events[3].data["response"]["status"], "cancelled");
+        }
 
         let mut retry = request("537");
         retry

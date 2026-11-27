@@ -645,7 +645,7 @@ impl RuntimeWorkRpcHandler {
                 if claimed {
                     let result =
                         if let Some(command_journal::TerminalDelivery::Pending(event)) = pending {
-                            self.deliver_saved_terminal(&key, binding.job.as_ref(), event)
+                            self.deliver_saved_terminal(&key, binding.job.as_ref(), *event)
                                 .await
                         } else {
                             binding.deliver_queue_cancellation(self, &key).await

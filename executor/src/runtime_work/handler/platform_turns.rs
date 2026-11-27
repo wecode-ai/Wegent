@@ -190,7 +190,7 @@ impl RuntimeWorkRpcHandler {
         key: &Key,
     ) -> Result<Option<TaskStatus>, AppIpcError> {
         let command = command_journal::RuntimeCommand::from_turn(
-            &turn,
+            turn,
             command_journal::CommandState::Queued,
         )?
         .expect("platform turn has command identity");
@@ -232,7 +232,7 @@ impl RuntimeWorkRpcHandler {
             .remove(&wildcard);
         if let Some(pending_cancel) = pending_cancel {
             let cancelled = command_journal::RuntimeCommand::from_turn(
-                &turn,
+                turn,
                 command_journal::CommandState::Cancelled,
             )?
             .expect("platform turn has command identity");
@@ -495,9 +495,10 @@ impl RuntimeWorkRpcHandler {
                         "Terminal execution no longer owns command",
                     ));
                 }
-                command.pending_terminal =
-                    Some(command_journal::TerminalDelivery::Pending(terminal.clone()));
-            } else if matches!(command.pending_terminal.as_ref(), Some(command_journal::TerminalDelivery::Pending(event)) if event == terminal)
+                command.pending_terminal = Some(command_journal::TerminalDelivery::Pending(
+                    Box::new(terminal.clone()),
+                ));
+            } else if matches!(command.pending_terminal.as_ref(), Some(command_journal::TerminalDelivery::Pending(event)) if event.as_ref() == terminal)
             {
                 command.pending_terminal = Some(command_journal::TerminalDelivery::Acknowledged);
             } else {
@@ -802,12 +803,12 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn local_capacity_queues_platform_work_and_restored_attempts_attach_once() {
-        let _lock = crate::test_env::lock();
-        let home = tempfile::tempdir().unwrap();
-        let _home =
-            crate::test_env::ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
+    #[test]
+    fn local_capacity_queues_platform_work_and_restored_attempts_attach_once() {
+        crate::test_env::run_with_executor_home(verify_platform_queue_recovery());
+    }
+
+    async fn verify_platform_queue_recovery() {
         let handler = RuntimeWorkRpcHandler::new("device", "unused");
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "local".into(),
@@ -828,6 +829,183 @@ mod tests {
             "task_id":"11","subtask_id":"1","device_id":"device","user_id":7,"backend_url":"https://backend-a.example","bot":[{"shell_type":"Codex"}],
             "inherited_sessions":[{"agent":"Codex","threadId":"shared-thread"}]
         })).unwrap();
+        assert_eq!(
+            handler
+                .bound_local_session(&request, Some("https://backend-a.example"))
+                .unwrap(),
+            None
+        );
+        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+            backend_url: "https://backend-a.example".into(),
+            authenticated_user_id: Some(7),
+            ..Default::default()
+        });
+        handler.store.update_task("local", |link| {
+            link.execution_backend = Some(super::super::super::response::ExecutionBackend {
+                url: "https://backend-a.example".into(),
+                owner: 7,
+                device: "device".into(),
+                task_id: None,
+            });
+        });
+        assert_eq!(
+            handler
+                .bound_local_session(&request, Some("https://backend-a.example"))
+                .unwrap(),
+            None
+        );
+        handler.store.update_task("local", |link| {
+            link.execution_backend.as_mut().unwrap().task_id = Some("11".into());
+        });
+        assert_eq!(
+            handler
+                .bound_local_session(&request, Some("https://backend-b.example"))
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        let mut wrong_task = request.clone();
+        wrong_task.task_id = "12".into();
+        assert_eq!(
+            handler
+                .bound_local_session(&wrong_task, Some("https://backend-a.example"))
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        let mut foreign = request.clone();
+        foreign.extra.insert("user_id".into(), json!(8));
+        assert_eq!(
+            handler
+                .bound_local_session(&foreign, Some("https://backend-a.example"))
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        let cancelled = Arc::new(CountedTurn {
+            request: ExecutionRequest {
+                subtask_id: "2".into(),
+                ..request.clone()
+            },
+            ..Default::default()
+        });
+        handler
+            .admit_platform_turn(
+                "session".into(),
+                "2".into(),
+                cancelled.clone(),
+                cancelled.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(handler.remove_queued_turn("local").await.unwrap());
+        assert_eq!(cancelled.starts.load(Ordering::Relaxed), 0);
+        assert_eq!(cancelled.queued_cancellations.load(Ordering::Relaxed), 1);
+        let job = Arc::new(CountedTurn {
+            failed_ack: AtomicBool::new(true),
+            request,
+            ..Default::default()
+        });
+        let result = handler
+            .admit_platform_turn("session".into(), "1".into(), job.clone(), job.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Pending);
+        assert_eq!(job.starts.load(Ordering::Relaxed), 0);
+        drop(handler);
+        let (events, mut subscriber) = broadcast::channel(32);
+        let mut restored = RuntimeWorkRpcHandler::new("device", "unused");
+        restored.event_tx = Some(events);
+        restored.resume_persisted_turns().await;
+        assert_eq!(job.starts.load(Ordering::Relaxed), 0);
+        let result = restored
+            .admit_platform_turn("session".into(), "1".into(), job.clone(), job.clone())
+            .await
+            .unwrap();
+        assert_eq!(result.status, TaskStatus::Running);
+        job.started.notified().await;
+        assert_eq!(
+            restored
+                .admit_platform_turn("session".into(), "1".into(), job.clone(), job.clone())
+                .await
+                .unwrap()
+                .status,
+            TaskStatus::Running
+        );
+        let local = SpawnTurnRequest::new("local".into(), "codex".into(), Default::default());
+        assert!(restored
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .session_reserved(&local));
+        let binding = restored
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .platform_turns
+            .get(&("session".into(), "1".into()))
+            .cloned()
+            .expect("delivery remains attached until the Shell exits");
+        let mut finished = binding.done.subscribe();
+        job.finish.notify_one();
+        tokio::time::timeout(Duration::from_secs(3), job.awaiting_ack.notified())
+            .await
+            .expect("terminal handed to Socket");
+        assert!(
+            !restored
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .session_reserved(&local),
+            "Socket acknowledgements cannot hold Shell capacity"
+        );
+        job.lose_ack.notify_one();
+        tokio::time::timeout(Duration::from_secs(3), finished.wait_for(|done| *done))
+            .await
+            .expect("Shell settlement releases the reservation")
+            .unwrap();
+        assert!(!restored
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .session_reserved(&local));
+        let mut terminal = Vec::new();
+        while let Ok(event) = subscriber.try_recv() {
+            if event["event"] == "response.completed" {
+                terminal.push(event["payload"].clone());
+            }
+        }
+        assert_eq!(terminal.len(), 1);
+        assert_eq!(terminal[0]["taskId"], "local");
+        assert_eq!(terminal[0]["source"]["task_id"], "11");
+        assert_eq!(terminal[0]["source"]["subtask_id"], "1");
+        assert_eq!(
+            terminal[0]["data"]["response"]["output"][0]["content"][0]["text"],
+            "ok"
+        );
+        let replay = RuntimeWorkRpcHandler::new("device", "unused");
+        let result = replay
+            .admit_platform_turn("session".into(), "1".into(), job.clone(), job.clone())
+            .await
+            .unwrap();
+        let receipts = job.delivered.lock().unwrap().clone();
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(receipts[0], receipts[1]);
+        assert_eq!(result.status, TaskStatus::Completed);
+        assert_eq!(job.starts.load(Ordering::Relaxed), 1);
+    });
+        {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            scheduler.settings = RuntimeSettings::uniform(2);
+            let mut local =
+                SpawnTurnRequest::new("local".into(), "codex".into(), Default::default());
+            local.task_kind = Some(RuntimeTaskKind::Agent);
+            assert!(scheduler.enqueue(local).is_some());
+        }
+        let request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"11","subtask_id":"1","device_id":"device","user_id":7,"backend_url":"https://backend-a.example","bot":[{"shell_type":"Codex"}],
+        "inherited_sessions":[{"agent":"Codex","threadId":"shared-thread"}]
+    })).unwrap();
         assert_eq!(
             handler
                 .bound_local_session(&request, Some("https://backend-a.example"))

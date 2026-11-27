@@ -48,4 +48,17 @@ pub(crate) use wegent_runtime_config::workspace_paths;
 pub use workspace_paths::metadata::migrate as migrate_workspace_metadata;
 
 #[cfg(test)]
-pub(crate) use wegent_executor_test_support as test_env;
+pub(crate) mod test_env {
+    pub(crate) use wegent_executor_test_support::*;
+
+    pub(crate) fn run_with_executor_home(test: impl std::future::Future<Output = ()>) {
+        let _lock = lock();
+        let home = tempfile::tempdir().unwrap();
+        let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(test);
+    }
+}

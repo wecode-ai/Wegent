@@ -17,7 +17,7 @@ pub(super) enum CommandState {
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) enum TerminalDelivery {
-    Pending(crate::emitter::EventEnvelope),
+    Pending(Box<crate::emitter::EventEnvelope>),
     Acknowledged,
 }
 
