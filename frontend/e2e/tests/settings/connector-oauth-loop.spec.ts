@@ -218,7 +218,20 @@ test.describe('Connector app OAuth loop', () => {
         ).toBeVisible({ timeout: 20_000 })
         await Promise.all([
           popup.waitForEvent('close', { timeout: 5_000 }),
-          popup.getByTestId('connector-oauth-close-window').click({ timeout: 5_000 }),
+          popup
+            .getByTestId('connector-oauth-close-window')
+            .click({ timeout: 5_000 })
+            .catch((error: unknown) => {
+              // The popup can close before Playwright acknowledges the click.
+              if (
+                !(error instanceof Error) ||
+                !error.message.startsWith(
+                  'locator.click: Target page, context or browser has been closed'
+                )
+              ) {
+                throw error
+              }
+            }),
         ])
         await expect(
           page.getByTestId('external-connector-authorized'),
