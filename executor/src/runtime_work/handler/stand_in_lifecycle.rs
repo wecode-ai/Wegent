@@ -279,16 +279,12 @@ mod tests {
             ..Default::default()
         });
         let plain = ExecutionRequest::default();
-        assert!(
-            handler
-                .validate_stand_in_lifecycle(&plain, "worker")
-                .is_err()
-        );
-        assert!(
-            handler
-                .validate_stand_in_lifecycle(&plain, "ordinary")
-                .is_ok()
-        );
+        assert!(handler
+            .validate_stand_in_lifecycle(&plain, "worker")
+            .is_err());
+        assert!(handler
+            .validate_stand_in_lifecycle(&plain, "ordinary")
+            .is_ok());
     }
 
     #[tokio::test]
@@ -337,14 +333,12 @@ mod tests {
             .unwrap();
         acknowledgement.await.unwrap();
         assert!(!handler.is_busy_local_task("worker"));
-        assert!(
-            handler
-                .turn_scheduler
-                .lock()
-                .unwrap()
-                .queued_turns
-                .is_empty()
-        );
+        assert!(handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .is_empty());
         assert!(
             super::super::turns::read_runtime_turn_queue(&handler.turn_queue_path)
                 .unwrap()
@@ -369,13 +363,11 @@ mod tests {
         forged.as_object_mut().unwrap().remove("lifecycle");
         forged["primary"]["enabled"] = json!(true);
         assert!(store.save_personal_stand_in(7, "mac", forged).is_err());
-        assert!(
-            handler
-                .personal_stand_in_lifecycle(json!({"userId":7,"operation":"start"}))
-                .await
-                .unwrap()["lifecycle"]
-                .is_null()
-        );
+        assert!(handler
+            .personal_stand_in_lifecycle(json!({"userId":7,"operation":"start"}))
+            .await
+            .unwrap()["lifecycle"]
+            .is_null());
     }
 
     #[tokio::test]
@@ -454,11 +446,9 @@ mod tests {
         let settings = store.personal_stand_in(7, "mac").unwrap();
         assert_eq!(settings["lifecycle"]["status"], "stopping");
         assert_eq!(settings["lifecycle"]["tasks"], json!(["worker"]));
-        assert!(
-            store
-                .transition_personal_stand_in(7, "mac", "start")
-                .is_err()
-        );
+        assert!(store
+            .transition_personal_stand_in(7, "mac", "start")
+            .is_err());
         stopped.send(()).unwrap();
         let result = handler
             .personal_stand_in_lifecycle_with_timeout(payload, Duration::from_millis(20))
