@@ -29,7 +29,6 @@ import {
   updateProjectSource,
   type ProjectSource,
 } from './standInProjects'
-import { ChevronDown } from 'lucide-react'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { ConnectionChoice } from './ConnectionScopeFields'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
@@ -181,15 +180,16 @@ export function StandInConnections({
         extra={
           tagTarget && (
             <>
-              <CollapsibleRoot className="group" defaultOpen={tags.length ? true : undefined}>
+              <CollapsibleRoot defaultOpen={tags.length > 0}>
                 <CollapsibleTrigger
                   className="flex min-h-11 items-center gap-2 rounded-md text-sm text-text-secondary hover:text-text-primary md:min-h-7"
                   data-testid="stand-in-source-tags-toggle"
                 >
                   <span className="min-w-0 flex-1 font-medium">
-                    {t('standIn.workspace.project_range_tags', { name: tagTarget.label })}
+                    {tagTargets.length === 1
+                      ? t('standIn.workspace.project_range_tags', { name: tagTarget.label })
+                      : t('standIn.workspace.project_filter_tags')}
                   </span>
-                  <ChevronDown aria-hidden="true" className="size-4 group-data-[open]:rotate-180" />
                 </CollapsibleTrigger>
                 <CollapsiblePanel>
                   {tagTargets.length > 1 && (

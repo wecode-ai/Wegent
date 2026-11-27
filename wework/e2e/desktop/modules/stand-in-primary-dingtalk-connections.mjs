@@ -157,7 +157,7 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('clickWhenEnabled', secondSelection)
   await control.command('waitFor', `${secondSelection}[aria-checked="true"]`)
   await choose(control, 'stand-in-project-tag-scope', `local:${secondProject.id}`)
-  await control.command('waitFor', id('stand-in-source-tags-toggle'), { text: secondProject.name })
+  await control.command('waitFor', id('stand-in-project-tag-scope'), { text: secondProject.name })
   await control.command('waitFor', id('stand-in-connection-tags-tag-project-qa'), {
     visible: false,
   })
@@ -233,6 +233,17 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   )
 
   await openConnections(control)
+  await enterSource(control, 'projects')
+  await control.command('clickWhenEnabled', id('stand-in-project-open-scope-projects'))
+  await control.command('waitFor', id('stand-in-connection-tags-tag-project-qa'))
+  await choose(control, 'stand-in-project-tag-scope', `local:${secondProject.id}`)
+  await control.command('waitFor', id('stand-in-connection-tags-tag-second-project-qa'))
+  await control.command('waitFor', id('stand-in-connection-tags-tag-project-qa'), {
+    visible: false,
+  })
+  await captureScreenshot(control, 'connection-projects-saved-tag-filter.png', panel)
+  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
+  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
   await enterSource(control, 'dingtalk')
   await control.command('waitFor', dingtalk('open-scope-direct-*'))
   await captureScreenshot(control, 'connection-dingtalk-all-private-messages.png', panel)
