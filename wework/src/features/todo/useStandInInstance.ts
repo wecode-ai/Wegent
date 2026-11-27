@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createStandInInstanceSource } from './standInInstanceSource'
 
-/** An instance has one durable binding; failed cancellation never unlocks rebinding. */
+/** Resolve the account-owned primary assistant device and per-device stop/start state. */
 export function useStandInInstance(
   services: WorkbenchServices,
   userId: number,
@@ -13,7 +14,10 @@ export function useStandInInstance(
   active: boolean,
   backendUrl = '',
   initialDeviceId?: string,
-  entryRequestKey?: number
+  entryRequestKey?: number,
+  account?: PersonalAssistantAccount,
+  publishAccount?: (account: PersonalAssistantAccount) => void,
+  readAccount?: () => PersonalAssistantAccount | undefined
 ) {
   const api = services.standInApi
   const source = useMemo(
@@ -22,8 +26,19 @@ export function useStandInInstance(
   )
   const subscribe = useCallback(
     (listener: () => void) =>
-      source.subscribe({ devices, connected, active, entryRequestKey }, listener),
-    [source, devices, connected, active, entryRequestKey]
+      source.subscribe(
+        {
+          account,
+          publishAccount,
+          readAccount,
+          devices,
+          connected,
+          active,
+          entryRequestKey,
+        },
+        listener
+      ),
+    [source, account, publishAccount, readAccount, devices, connected, active, entryRequestKey]
   )
   const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
   return {

@@ -57,6 +57,7 @@ export function createPersonalStandInSettingsResource({
   let resetRevision: number | undefined
   let saving = false
   let errorOverride: ErrorState | undefined
+  let definitionConflict: { cause: unknown; revision: string | undefined } | undefined
   const resource = createAsyncResource(
     JSON.stringify(['personal-stand-in', userId, deviceId, localDeviceId]),
     async signal => {
@@ -69,10 +70,19 @@ export function createPersonalStandInSettingsResource({
       return { settings, deviceId: target, currentDeviceId: identity.deviceId }
     },
     {
-      success() {
-        if (resetRevision === editRevision) draft = undefined
+      success(data) {
+        if (
+          resetRevision === editRevision &&
+          (!definitionConflict ||
+            data.settings.cloudDefinitionRevision !== definitionConflict.revision)
+        ) {
+          draft = undefined
+          definitionConflict = undefined
+        }
         resetRevision = undefined
-        errorOverride = undefined
+        errorOverride = definitionConflict
+          ? { cause: definitionConflict.cause, operation: 'save_settings_failed' }
+          : undefined
         publish()
       },
       failure(cause) {
@@ -191,6 +201,11 @@ export function createPersonalStandInSettingsResource({
       const loaded = resource.getSnapshot().data
       if (!listeners.size || !api || !value || saving || moving || state.loading || !loaded)
         return null
+      if (definitionConflict) {
+        errorOverride = { cause: definitionConflict.cause, operation: 'save_settings_failed' }
+        publish()
+        return null
+      }
       const submittedRevision = editRevision
       saving = true
       errorOverride = null
@@ -205,9 +220,21 @@ export function createPersonalStandInSettingsResource({
         return receipt
       } catch (cause) {
         reportStandInError('save_settings', cause, loaded.deviceId)
+        if (
+          listeners.size &&
+          cause &&
+          typeof cause === 'object' &&
+          'code' in cause &&
+          cause.code === 'cloud_definition_version_conflict'
+        ) {
+          definitionConflict = { cause, revision: value.cloudDefinitionRevision }
+        }
         if (listeners.size && cause instanceof PersonalAssistantDefinitionSaveError) {
           const edited = draft ?? value
-          draft = { ...edited, version: cause.saved.version }
+          draft = {
+            ...edited,
+            version: cause.saved.version,
+          }
           resource.update(() => ({ ...loaded, settings: cause.saved }))
         }
         if (listeners.size) errorOverride = { cause, operation: 'save_settings_failed' }

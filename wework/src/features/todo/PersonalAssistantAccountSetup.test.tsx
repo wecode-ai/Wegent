@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
@@ -6,6 +6,7 @@ import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStan
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
 import { personalAssistantDeviceSettings } from './personalAssistantDeviceSettings'
+import { usePersonalStandIn } from './usePersonalStandIn'
 
 const account: PersonalAssistantAccount = {
   defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
@@ -189,3 +190,125 @@ test('saving and retrying a new shared role never uploads a device-only profile'
     },
   ])
 })
+
+test.each([false, true])(
+  'retains a conflicting draft until the peer revision is explicitly reloaded (refresh fails: %s)',
+  async refreshFails => {
+    const role = { ...newStandInRole('mac', 'shared'), name: 'Shared role', prompt: 'Handle PRs' }
+    let device = { ...blank, roles: [role] }
+    const originalAccount: PersonalAssistantAccount = {
+      ...account,
+      revision: 'rev-1',
+      definitions: [
+        {
+          roleId: '@primary',
+          bot: { metadata: { ...account.defaultBotRef, displayName: 'Default' } },
+          ghost: { spec: { systemPrompt: 'Default instructions' } },
+        },
+        {
+          roleId: role.id,
+          bot: {
+            metadata: { ...account.defaultBotRef, displayName: role.name },
+            spec: { execution_policy: { mode: 'fixed' as const, environment_id: 'mac' } },
+          },
+          ghost: { spec: { systemPrompt: role.prompt } },
+        },
+      ],
+    }
+    const peerUpdatedAccount: PersonalAssistantAccount = {
+      ...originalAccount,
+      revision: 'rev-2',
+      definitions: [
+        originalAccount.definitions[0],
+        {
+          roleId: role.id,
+          bot: {
+            metadata: { ...account.defaultBotRef, displayName: role.name },
+            spec: { execution_policy: { mode: 'fixed' as const, environment_id: 'cloud-1' } },
+          },
+          ghost: { spec: { systemPrompt: 'Review peer changes' } },
+        },
+      ],
+    }
+    const accepted: PersonalAssistantAccount = {
+      ...peerUpdatedAccount,
+      revision: 'rev-3',
+      definitions: peerUpdatedAccount.definitions.map(definition =>
+        definition.roleId === role.id
+          ? {
+              ...definition,
+              bot: {
+                ...definition.bot,
+                metadata: { ...definition.bot.metadata, displayName: 'My edited name' },
+              },
+            }
+          : definition
+      ),
+    }
+    let latestAccount = originalAccount
+    const get = vi.fn(async () => peerUpdatedAccount)
+    if (refreshFails) get.mockRejectedValueOnce(new Error('Offline'))
+    const updateDefinitions = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('Conflict', 409))
+      .mockResolvedValueOnce(accepted)
+    const personalSave = vi.fn(async (_user: number, settings: PersonalStandInSettings) => {
+      device = { ...settings, version: device.version + 1 }
+      return device
+    })
+    const services = {
+      personalAssistantAccountApi: { updateDefinitions, get },
+      standInApi: {
+        personalGet: async () => device,
+        personalSave,
+      },
+    } as unknown as WorkbenchServices
+    const projectedServices = personalAssistantDeviceSettings(
+      services,
+      () => latestAccount,
+      next => {
+        latestAccount = next
+      }
+    )
+    const { result } = renderHook(() => usePersonalStandIn(projectedServices, 7, 'mac', 'mac'))
+    await waitFor(() => expect(result.current.saved?.cloudDefinitionRevision).toBe('rev-1'))
+    const editName = () =>
+      act(() => result.current.updateRole(role.id, value => ({ ...value, name: 'My edited name' })))
+    const change = { kind: 'update', roleId: role.id } as const
+    editName()
+    await act(async () => expect(await result.current.save(undefined, change)).toBeNull())
+    expect(result.current.draft?.cloudDefinitionRevision).toBe('rev-1')
+    expect(result.current.draft?.roles[0]).toMatchObject({
+      name: 'My edited name',
+      prompt: role.prompt,
+      executionDeviceId: 'mac',
+    })
+    expect(result.current.error).toBeTruthy()
+    await act(async () => expect(await result.current.save(undefined, change)).toBeNull())
+    expect(personalSave).toHaveBeenCalledTimes(1)
+    expect(updateDefinitions).toHaveBeenCalledTimes(1)
+
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.draft?.cloudDefinitionRevision).toBe('rev-2'))
+    expect(result.current.draft?.roles[0]).toMatchObject({
+      name: role.name,
+      prompt: 'Review peer changes',
+      executionDeviceId: 'cloud-1',
+    })
+    editName()
+    await act(async () =>
+      expect(await result.current.save(undefined, change)).toMatchObject({
+        cloudDefinitionRevision: 'rev-3',
+      })
+    )
+    expect(updateDefinitions).toHaveBeenLastCalledWith('rev-2', [
+      { roleId: '@primary', name: 'Default', prompt: 'Default instructions' },
+      {
+        roleId: role.id,
+        name: 'My edited name',
+        prompt: 'Review peer changes',
+        executionDeviceId: 'cloud-1',
+      },
+    ])
+  }
+)

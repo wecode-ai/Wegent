@@ -17,7 +17,10 @@ import type { DownloadTargetPolicy } from './download-target-policy.js'
 import { createNativeContextMenuActions, installContextMenu } from './image-context-actions.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
-import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
+import {
+  BrowserScriptEvaluator,
+  type BrowserScriptEvaluationOptions,
+} from './browser-script-evaluator.js'
 import {
   BrowserDeviceMetricsController,
   type BrowserDeviceMetrics,
@@ -675,35 +678,57 @@ export class EmbeddedBrowserManager {
   async evaluate(
     label: string,
     expression: string,
-    options: { awaitPromise?: boolean } = {}
+    options: BrowserScriptEvaluationOptions = {}
   ): Promise<unknown> {
     // Hidden guests can execute Electron's script while leaving its isolated-world
     // reply Promise pending. Return the main-world result through Chromium instead.
     return this.required(label).scripts.evaluate(expression, options)
   }
 
+  async inspectUploadTarget(
+    label: string,
+    selector: string | null
+  ): Promise<BrowserUploadTargetSnapshot> {
+    const contents = this.required(label).contents
+    return withDebuggerSession(contents, async target => {
+      const resolved = await resolveFileInputTarget(target, selector)
+      return {
+        url: contents.getURL(),
+        selector: resolved.selector,
+        backendNodeId: resolved.backendNodeId,
+      }
+    })
+  }
+
   async uploadFiles(
     label: string,
     selector: string | null,
-    files: string[]
+    files: string[],
+    expectedTarget?: BrowserUploadTargetSnapshot,
+    beforeCommit?: () => Promise<void>
   ): Promise<{ selector: string }> {
     const contents = this.required(label).contents
     return withDebuggerSession(contents, async target => {
-      const effectiveSelector = selector?.trim() || 'input[type="file"]'
-      const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
-        root: { nodeId: number }
-      }
-      const { nodeId } = (await target.sendCommand('DOM.querySelector', {
-        nodeId: root.nodeId,
-        selector: effectiveSelector,
-      })) as { nodeId: number }
-      if (!nodeId) {
-        throw new Error(
-          `No file input element matches selector "${effectiveSelector}" in the embedded browser.`
+      const resolved = await resolveFileInputTarget(target, selector)
+      if (
+        expectedTarget &&
+        (contents.getURL() !== expectedTarget.url ||
+          resolved.selector !== expectedTarget.selector ||
+          resolved.backendNodeId !== expectedTarget.backendNodeId)
+      ) {
+        throw Object.assign(
+          new Error('The upload page or file input changed before approval completed.'),
+          { code: 'approval_target_changed' }
         )
       }
-      await target.sendCommand('DOM.setFileInputFiles', { files, nodeId })
-      return { selector: effectiveSelector }
+      await beforeCommit?.()
+      if (expectedTarget && contents.getURL() !== expectedTarget.url) {
+        throw Object.assign(new Error('The approved upload page changed.'), {
+          code: 'approval_target_changed',
+        })
+      }
+      await target.sendCommand('DOM.setFileInputFiles', { files, nodeId: resolved.nodeId })
+      return { selector: resolved.selector }
     })
   }
 
@@ -1536,6 +1561,60 @@ function validRemoteBrowserUrl(value: string): string {
     throw new Error(`Browser background page URL protocol is not allowed: ${url.protocol}`)
   }
   return url.toString()
+}
+
+export interface BrowserUploadTargetSnapshot {
+  url: string
+  selector: string
+  backendNodeId: number
+}
+
+async function resolveFileInputTarget(
+  target: { sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown> },
+  selector: string | null
+): Promise<{ selector: string; nodeId: number; backendNodeId: number }> {
+  const effectiveSelector = selector?.trim() || 'input[type="file"]'
+  const { root } = (await target.sendCommand('DOM.getDocument', { depth: 1 })) as {
+    root: { nodeId: number }
+  }
+  const { nodeId } = (await target.sendCommand('DOM.querySelector', {
+    nodeId: root.nodeId,
+    selector: effectiveSelector,
+  })) as { nodeId: number }
+  if (!nodeId) {
+    throw new Error(
+      `No file input element matches selector "${effectiveSelector}" in the embedded browser.`
+    )
+  }
+  const { node } = (await target.sendCommand('DOM.describeNode', { nodeId })) as {
+    node?: { backendNodeId?: number; nodeName?: string; attributes?: string[] }
+  }
+  if (
+    node?.nodeName?.toUpperCase() !== 'INPUT' ||
+    !hasFileInputAttribute(node.attributes ?? []) ||
+    typeof node.backendNodeId !== 'number'
+  ) {
+    throw new Error(
+      `Matched element for selector "${effectiveSelector}" is not a file input in the embedded browser.`
+    )
+  }
+  return {
+    selector: effectiveSelector,
+    nodeId,
+    backendNodeId: node.backendNodeId,
+  }
+}
+
+function hasFileInputAttribute(attributes: string[]): boolean {
+  for (let index = 0; index + 1 < attributes.length; index += 2) {
+    if (
+      attributes[index]?.toLowerCase() === 'type' &&
+      attributes[index + 1]?.toLowerCase() === 'file'
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function isBrowserUrl(value: string): boolean {

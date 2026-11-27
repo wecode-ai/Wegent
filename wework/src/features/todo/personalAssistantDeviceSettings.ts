@@ -1,3 +1,4 @@
+import { ApiError } from '@/api/http'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -7,14 +8,15 @@ import { dequal } from 'dequal'
 export class PersonalAssistantSavePreflightError extends Error {}
 
 export class PersonalAssistantDefinitionSaveError extends Error {
-  readonly code = 'cloud_definition_save_unconfirmed'
+  readonly code: 'cloud_definition_save_unconfirmed' | 'cloud_definition_version_conflict'
   readonly saved: PersonalStandInSettings
 
-  constructor(saved: PersonalStandInSettings, cause: unknown) {
+  constructor(saved: PersonalStandInSettings, cause: unknown, conflict = false) {
     super('The device settings were saved but the cloud assistant definition was not confirmed', {
       cause,
     })
     this.saved = saved
+    this.code = conflict ? 'cloud_definition_version_conflict' : 'cloud_definition_save_unconfirmed'
   }
 }
 
@@ -120,13 +122,30 @@ export function personalAssistantDeviceSettings(
   const executor = services.standInApi
   const cloud = services.personalAssistantAccountApi
   if (!executor || !cloud) return services
+  let unresolvedDefinitionRevision: string | undefined
   return {
     ...services,
     standInApi: {
       ...executor,
       async personalGet(userId, deviceId, options) {
         const settings = await executor.personalGet(userId, deviceId)
-        const account = readAccount()
+        let account = readAccount()
+        const unresolved = unresolvedDefinitionRevision
+        if (unresolved !== undefined && !options?.deviceSettingsOnly) {
+          if (account?.revision === unresolved) {
+            const latest = await cloud.get()
+            if (!latest) throw new Error('Cloud assistant definition is unavailable')
+            const current = readAccount()
+            if (current?.revision !== account.revision) account = current
+            else {
+              publish(latest)
+              account = latest
+            }
+          }
+          if (unresolvedDefinitionRevision === unresolved && account?.revision !== unresolved) {
+            unresolvedDefinitionRevision = undefined
+          }
+        }
         if (!account) return settings
         return options?.deviceSettingsOnly
           ? { ...settings, cloudDefinitionRevision: account.revision }
@@ -138,7 +157,10 @@ export function personalAssistantDeviceSettings(
         if (!account || (transferRoleId && !definitionChange)) {
           return executor.personalSave(userId, deviceSettings, deviceId, transferRoleId)
         }
-        if (cloudDefinitionRevision !== account.revision) {
+        if (
+          cloudDefinitionRevision !== account.revision ||
+          unresolvedDefinitionRevision === account.revision
+        ) {
           throw Object.assign(
             new PersonalAssistantSavePreflightError('Cloud assistant definition changed'),
             {
@@ -187,11 +209,21 @@ export function personalAssistantDeviceSettings(
           return applyDefinitions(saved, current)
         } catch (cause) {
           const latest = await cloud.get().catch(() => null)
+          const conflict =
+            (cause instanceof ApiError && cause.status === 409) ||
+            Boolean(latest && latest.revision !== account.revision)
           if (latest) {
             publish(latest)
             if (matchesDefinitions(latest, definitions)) return applyDefinitions(saved, latest)
           }
-          throw new PersonalAssistantDefinitionSaveError(applyDefinitions(saved, account), cause)
+          if (conflict && (!latest || latest.revision === account.revision)) {
+            unresolvedDefinitionRevision = account.revision
+          }
+          throw new PersonalAssistantDefinitionSaveError(
+            applyDefinitions(saved, latest ?? account),
+            cause,
+            conflict
+          )
         }
       },
     },

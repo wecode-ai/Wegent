@@ -14,9 +14,11 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
   const backendUrl = cloud?.apiBaseUrl ?? ''
   const scope = JSON.stringify([userId, backendUrl])
   const api = services.standInApi
+  const connected = Boolean(cloud?.isConnected)
+  const devices = state.devices
   const model = useMemo(
-    () => createAssistantSourcesModel(services, api, userId, scope),
-    [services, api, userId, scope]
+    () => createAssistantSourcesModel(services, api, userId, scope, devices, connected),
+    [services, api, userId, scope, devices, connected]
   )
   const subscribe = useCallback(
     (listener: () => void) => model.subscribe(listener, includeProposals),

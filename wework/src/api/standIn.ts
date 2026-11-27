@@ -33,6 +33,7 @@ export interface StandInInstanceBinding {
   version: number
   status: 'unbound' | 'active' | 'stopping' | 'stopped'
   target: StandInBindingTarget | null
+  stoppingTargets?: string[]
 }
 
 export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
@@ -418,14 +419,15 @@ export interface StandInExecutorApi {
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   binding(
     deviceId: string,
-    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
+    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop' | 'markStopping' | 'clearStopping',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>
   lifecycle(
     userId: number,
     deviceId: string,
-    operation: 'start' | 'stop'
+    operation: 'start' | 'stop',
+    expectedVersion?: number
   ): Promise<PersonalStandInSettings>
   taskCommands: RuntimeTaskCommandsApi
   setTaskPermissions(
@@ -997,10 +999,15 @@ export function createStandInExecutorApi(
     },
     binding: (deviceId, operation = 'get', version, target) =>
       request('runtime.stand_in.binding', { operation, version, target }, deviceId),
-    lifecycle: async (userId, deviceId, operation) => {
+    lifecycle: async (userId, deviceId, operation, expectedVersion) => {
+      if (expectedVersion !== undefined && operation !== 'stop') {
+        throw new Error('Only a stop can have an expected version')
+      }
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.lifecycle',
-        { userId, operation },
+        expectedVersion === undefined
+          ? { userId, operation }
+          : { userId, operation: 'stopIfVersion', expectedVersion },
         deviceId
       )
       publishPersonalStandIn(saved)

@@ -12,7 +12,6 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   bindStoppedStandIn,
   finishStandInOnboarding,
-  readStandInBinding,
   stopBoundStandIn,
 } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -252,7 +251,9 @@ export function createDesktopScenario({
         await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
           requirements: false,
         })
-        const currentDevice = (await readStandInBinding(control, uiTimeoutMs)).target.deviceId
+        const currentDevice = JSON.parse(
+          await control.command('getLocalExecutorStatus', 'body')
+        ).deviceId
         assert.ok(currentDevice)
         assert.notEqual(currentDevice, REMOTE_DOCKER_DEVICE_ID)
         await stopBoundStandIn(control, uiTimeoutMs)
@@ -299,7 +300,8 @@ export function createDesktopScenario({
         await openStandInSettings(control)
         await control.command('clickWhenEnabled', '[data-testid="stand-in-advanced-open"]')
         assert.equal(
-          (await readStandInBinding(control, uiTimeoutMs)).target.deviceId,
+          (await request('/v1/personal-assistant')).assistant.definitions[0].bot.spec
+            .execution_policy.environment_id,
           REMOTE_DOCKER_DEVICE_ID
         )
         assert.equal(

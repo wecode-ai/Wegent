@@ -3,6 +3,24 @@ import { expect, test } from 'vitest'
 import { FakeWebContents } from '../../test-fixtures/embedded-browser.js'
 import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
 
+test('read-only diagnostics use the engine side-effect check and never retry without it', async () => {
+  const contents = new FakeWebContents()
+  contents.debugger.sendCommand.mockResolvedValue({
+    exceptionDetails: { text: 'Read-only evaluation rejected' },
+  })
+  const scripts = new BrowserScriptEvaluator(contents as unknown as WebContents)
+  await expect(scripts.evaluate('fixtureExpression', { readOnly: true })).rejects.toThrow(
+    'Read-only evaluation rejected'
+  )
+  expect(contents.debugger.sendCommand).toHaveBeenCalledExactlyOnceWith('Runtime.evaluate', {
+    expression: 'fixtureExpression',
+    returnByValue: true,
+    awaitPromise: false,
+    userGesture: false,
+    throwOnSideEffect: true,
+  })
+})
+
 test.each([undefined, true, false])(
   'only waits for synchronous actions before navigation: awaitPromise=%s',
   async awaitPromise => {

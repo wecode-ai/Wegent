@@ -1,7 +1,7 @@
 import { StandInCloudConnectionPrompt } from './StandInCloudConnectionPrompt'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
-import { isStandInBindingOwner } from '@/api/standIn'
+import type { StandInBindingTarget } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
@@ -67,12 +67,13 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
         userId={Number(props.user.id)}
         active={props.active}
       >
-        {(account, publishAccount, readAccount) => (
+        {(account, publishAccount, readAccount, reloadAccount) => (
           <AccountStandInWorkspace
             {...props}
             account={account}
             publishAccount={publishAccount}
             readAccount={readAccount}
+            reloadAccount={reloadAccount}
           />
         )}
       </PersonalAssistantAccountSetup>
@@ -97,10 +98,12 @@ function AccountStandInWorkspace({
   account: connectedAccount,
   publishAccount,
   readAccount,
+  reloadAccount,
 }: PersonalStandInWorkspaceProps & {
   account?: PersonalAssistantAccount
   publishAccount?: (account: PersonalAssistantAccount) => void
   readAccount?: () => PersonalAssistantAccount | undefined
+  reloadAccount?: () => void
 }) {
   const { t, i18n } = useTranslation('common')
   const cloud = useContext(CloudConnectionContext)
@@ -129,13 +132,16 @@ function AccountStandInWorkspace({
     active,
     backendUrl,
     initialBindingDevice,
-    refreshKey
+    refreshKey,
+    connectedAccount,
+    publishAccount,
+    readAccount
   )
   const { binding, localDeviceId, busy } = instance
   const target = binding?.target
-  const ownerId = target?.userId ?? Number(user.id)
-  const account = ownerId === userId ? connectedAccount : undefined
-  const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
+  const ownerId = userId
+  const account = connectedAccount
+  const ownerAvailable = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
   const boundDeviceOffline = findWorkbenchDevice(devices, deviceId)?.status === 'offline'
   const cloudAssistantServices = useMemo(
@@ -145,13 +151,10 @@ function AccountStandInWorkspace({
         : services,
     [services, readAccount, publishAccount]
   )
-  const assistantServices = ownerId === userId ? cloudAssistantServices : services
+  const assistantServices = cloudAssistantServices
   const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
-  const ownerAvailable =
-    notificationOwnerMatches &&
-    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target.userId, userId))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
-  const [confirmStop, setConfirmStop] = useState<number | null>(null)
+  const [confirmStopTarget, setConfirmStopTarget] = useState<StandInBindingTarget | null>(null)
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const api = useMemo(
     () =>
@@ -238,8 +241,9 @@ function AccountStandInWorkspace({
       disabled={busy || !ownerAvailable}
       className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:min-h-8"
       onClick={() => {
+        const currentTarget = binding?.target
         const confirm = () => {
-          if (binding) setConfirmStop(binding.version)
+          if (currentTarget) setConfirmStopTarget(currentTarget)
         }
         if (overview.current) overview.current.requestLeave(confirm)
         else confirm()
@@ -248,6 +252,25 @@ function AccountStandInWorkspace({
       {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
     </ControlButton>
   )
+  const deviceChoices = [
+    ...(Number(user.id) === LOCAL_USER.id || !localDeviceId
+      ? []
+      : [
+          {
+            userId: Number(user.id),
+            deviceId: localDeviceId,
+            name: t('standIn.account_local_profile'),
+          },
+        ]),
+    ...(cloud?.isConnected
+      ? availableStandInDevices(devices).map(device => ({
+          userId: Number(user.id),
+          deviceId: device.device_id,
+          name: device.name,
+        }))
+      : []),
+  ]
+  const alternateDevices = deviceChoices.filter(value => value.deviceId !== target?.deviceId)
   const failure = instance.error || error?.message
   const upgradeRequired = requiresStandInUpgrade(
     instance.error ? instance.errorCause : error?.cause
@@ -278,6 +301,7 @@ function AccountStandInWorkspace({
             aria-busy={view.loadingProjects}
             className="min-h-11 px-2 underline md:min-h-8"
             onClick={() => {
+              reloadAccount?.()
               instance.reload()
               workspaceSource.reloadProjects()
             }}
@@ -303,24 +327,7 @@ function AccountStandInWorkspace({
           <h2 className="text-heading-sm font-medium">{t('standIn.instance.stopped')}</h2>
           <p className="text-sm text-text-secondary">{t('standIn.instance.bind_help')}</p>
           <div className="flex flex-wrap gap-2">
-            {[
-              ...(Number(user.id) === LOCAL_USER.id
-                ? []
-                : [
-                    {
-                      userId: Number(user.id),
-                      deviceId: localDeviceId,
-                      name: t('standIn.account_local_profile'),
-                    },
-                  ]),
-              ...(cloud?.isConnected
-                ? availableStandInDevices(devices).map(device => ({
-                    userId: Number(user.id),
-                    deviceId: device.device_id,
-                    name: device.name,
-                  }))
-                : []),
-            ].map(value => (
+            {deviceChoices.map(value => (
               <ControlButton
                 variant="outline"
                 size="sm"
@@ -330,11 +337,13 @@ function AccountStandInWorkspace({
                 disabled={busy}
                 className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
                 onClick={() =>
-                  void instance.bind({
-                    userId: value.userId,
-                    backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
-                    deviceId: value.deviceId,
-                  })
+                  void instance
+                    .bind({
+                      userId: value.userId,
+                      backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
+                      deviceId: value.deviceId,
+                    })
+                    .catch(() => {})
                 }
               >
                 {value.name}
@@ -363,16 +372,39 @@ function AccountStandInWorkspace({
           )}
         </section>
       ) : binding.status === 'stopping' ? (
-        <section className="flex items-center gap-2 p-5" data-testid="stand-in-instance-stopping">
-          <p role="status" className="text-sm">
-            {t('standIn.instance.stopping')}
-          </p>
-          {actions}
-        </section>
-      ) : target?.userId === LOCAL_USER.id ? (
-        <section className="space-y-3 p-5" data-testid="stand-in-legacy-binding">
-          <p>{t('standIn.account.legacy_binding')}</p>
-          {actions}
+        <section className="space-y-4 p-5" data-testid="stand-in-instance-stopping">
+          <div className="flex items-center gap-2">
+            <p role="status" className="text-sm">
+              {t('standIn.instance.stopping')}
+            </p>
+            {actions}
+          </div>
+          {alternateDevices.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {alternateDevices.map(value => (
+                <ControlButton
+                  variant="outline"
+                  size="sm"
+                  key={`${value.userId}:${value.deviceId}`}
+                  type="button"
+                  data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
+                  disabled={busy}
+                  className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
+                  onClick={() =>
+                    void instance
+                      .bind({
+                        userId: value.userId,
+                        backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
+                        deviceId: value.deviceId,
+                      })
+                      .catch(() => {})
+                  }
+                >
+                  {value.name}
+                </ControlButton>
+              ))}
+            </div>
+          )}
         </section>
       ) : target && embedded ? (
         <StandInHomeSetup
@@ -408,25 +440,49 @@ function AccountStandInWorkspace({
             </div>
           )}
           <StandInOverviewPage
-            key={`${ownerId}:${selectedDevice}`}
+            key={String(ownerId)}
             ref={overview}
             headerActions={boundDeviceOffline ? undefined : actions}
             account={account}
             onBindDevice={
               account && publishAccount && services.personalAssistantAccountApi
                 ? async (roleId, device) => {
-                    const definitions = account.definitions.map(entry => ({
+                    if (roleId === '@primary') {
+                      await instance.bind({
+                        userId,
+                        backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
+                        deviceId: device,
+                      })
+                      return
+                    }
+                    const currentAccount = readAccount?.() ?? account
+                    const definitions = currentAccount.definitions.map(entry => ({
                       roleId: entry.roleId,
                       name: entry.bot.metadata.displayName ?? '',
                       prompt: entry.ghost.spec.systemPrompt,
-                      executionDeviceId: entry.roleId === roleId ? device : undefined,
+                      executionDeviceId:
+                        entry.roleId === roleId
+                          ? device
+                          : entry.bot.spec?.execution_policy?.environment_id,
                     }))
-                    publishAccount(
-                      await services.personalAssistantAccountApi!.updateDefinitions(
-                        account.revision,
-                        definitions
+                    const cloudApi = services.personalAssistantAccountApi!
+                    try {
+                      publishAccount(
+                        await cloudApi.updateDefinitions(currentAccount.revision, definitions)
                       )
-                    )
+                    } catch (cause) {
+                      const latest = await cloudApi.get?.().catch(() => null)
+                      if (latest) {
+                        publishAccount(latest)
+                        if (
+                          latest.definitions.find(entry => entry.roleId === roleId)?.bot.spec
+                            ?.execution_policy?.environment_id === device
+                        ) {
+                          return
+                        }
+                      }
+                      throw cause
+                    }
                   }
                 : undefined
             }
@@ -467,7 +523,12 @@ function AccountStandInWorkspace({
         </p>
       )}
       <ConfirmDialog
-        open={active && confirmStop !== null}
+        open={
+          active &&
+          confirmStopTarget !== null &&
+          target?.userId === confirmStopTarget.userId &&
+          target?.deviceId === confirmStopTarget.deviceId
+        }
         title={t('standIn.instance.stop')}
         description={t('standIn.instance.stop_description')}
         cancelLabel={t('standIn.cancel')}
@@ -476,11 +537,11 @@ function AccountStandInWorkspace({
         cancelTestId="stand-in-instance-stop-cancel"
         pending={busy}
         destructive
-        onClose={() => setConfirmStop(null)}
+        onClose={() => setConfirmStopTarget(null)}
         onConfirm={() => {
-          const version = confirmStop
-          setConfirmStop(null)
-          if (version !== null) void instance.stop(version)
+          const stopTarget = confirmStopTarget
+          setConfirmStopTarget(null)
+          if (stopTarget) void instance.stop(stopTarget)
         }}
       />
     </div>

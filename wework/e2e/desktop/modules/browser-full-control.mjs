@@ -5,7 +5,16 @@ const TOGGLE = '[data-testid="browser-full-control-toggle"]'
 const APPROVE = '[data-testid="workspace-browser-agent-approval-approve-button"]'
 const REJECT = '[data-testid="workspace-browser-agent-approval-reject-button"]'
 
-export async function verifyBrowserFullControl(control, bridgeCall, fill, timeoutMs) {
+export async function readEditorFixtureState(control, label, timeoutMs) {
+  const state = await control.command('getEmbeddedBrowserWindowValue', 'body', {
+    value: JSON.stringify({ label, key: '__weworkE2eEditorState' }),
+    timeoutMs,
+  })
+  assert.ok(state, 'The editor fixture must expose its current DOM state')
+  return JSON.parse(state)
+}
+
+export async function verifyBrowserFullControl(control, bridgeCall, fill, label, timeoutMs) {
   const openSettings = async () => {
     await control.command('click', '[data-testid="settings-button"]')
     await control.command('click', '[data-testid="settings-menu-button"]')
@@ -24,15 +33,7 @@ export async function verifyBrowserFullControl(control, bridgeCall, fill, timeou
     )
     await control.command('click', '[data-testid="settings-back-button"]')
   }
-  const readEditor = async () => {
-    const result = await bridgeCall({
-      action: 'evaluate',
-      expression:
-        '({text: document.querySelector("#script-editor").value, edits: Number(document.querySelector("#script-editor").dataset.edits || 0)})',
-    })
-    assert.equal(result.ok, true, JSON.stringify(result))
-    return result.value
-  }
+  const readEditor = () => readEditorFixtureState(control, label, timeoutMs)
   await openSettings()
   await waitForAttribute(
     control,

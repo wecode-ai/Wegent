@@ -252,7 +252,9 @@ export function StandInOverviewPage({
   const conversationRole = shared ? undefined : team ? teamLead : roleId
   const conversationScope = sharedScope ?? teamScope
   const definition = account?.definitions.find(entry => entry.roleId === (roleId ?? '@primary'))
-  const boundDevice = definition?.bot.spec?.execution_policy?.environment_id
+  const boundDevice = roleId
+    ? definition?.bot.spec?.execution_policy?.environment_id
+    : (primaryDeviceId ?? definition?.bot.spec?.execution_policy?.environment_id)
   const conversationDevice = (!conversationScope && boundDevice) || deviceId
   const conversationUser = props.userId
   const [bindingPending, setBindingPending] = useState(false)
@@ -921,7 +923,7 @@ export function StandInOverviewPage({
                     footerLeading={
                       !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
                     }
-                    key={`${state.draft.executionDeviceId}:${calendarRequest}`}
+                    key={String(calendarRequest)}
                     initialCalendar={calendarRequest > 0}
                     settings={state.draft}
                     saving={state.saving || bindingPending}
@@ -960,7 +962,10 @@ export function StandInOverviewPage({
                     }}
                     dingtalkSourceProblem={dingtalkSourceProblem}
                     error={bindingError || state.error}
-                    onReload={state.reload}
+                    onReload={() => {
+                      setBindingError('')
+                      state.reload()
+                    }}
                     api={api}
                     localDeviceId={state.currentDeviceId}
                     projects={props.projects}

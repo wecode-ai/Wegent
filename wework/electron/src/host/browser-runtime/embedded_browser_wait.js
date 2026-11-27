@@ -124,6 +124,9 @@
     if (request.expression && !condition.expression) {
       condition.expression = request.expression
     }
+    if (typeof request.expressionMatched === 'boolean') {
+      condition.expressionMatched = request.expressionMatched
+    }
     if (request.waitUntil && !condition.waitUntil) {
       condition.waitUntil = request.waitUntil
     }
@@ -233,7 +236,12 @@
         reason: 'element_gone',
       })
     }
-    if (currentCondition.expression) {
+    if (typeof currentCondition.expressionMatched === 'boolean') {
+      checks.push({
+        ok: currentCondition.expressionMatched,
+        reason: 'expression',
+      })
+    } else if (currentCondition.expression) {
       checks.push({
         ok: Boolean(safeEvaluateExpression(currentCondition.expression)),
         reason: 'expression',

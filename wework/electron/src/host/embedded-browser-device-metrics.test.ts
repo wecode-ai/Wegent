@@ -136,6 +136,9 @@ test('keeps device metrics when an overlapping file upload finishes', async () =
       return { root: { nodeId: 1 } }
     }
     if (method === 'DOM.querySelector') return { nodeId: 2 }
+    if (method === 'DOM.describeNode') {
+      return { node: { backendNodeId: 3, nodeName: 'INPUT', attributes: ['type', 'file'] } }
+    }
     return command(method, params)
   })
   try {

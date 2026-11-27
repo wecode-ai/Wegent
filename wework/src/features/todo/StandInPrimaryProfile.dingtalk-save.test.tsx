@@ -59,7 +59,7 @@ vi.mock('./StandInConnectionSettings', () => ({
   },
 }))
 
-function renderProfile() {
+function renderProfile(error: string | null = null) {
   const { settings, services } = personalStandInFixture()
   settings.primary = {
     enabled: false,
@@ -72,6 +72,7 @@ function renderProfile() {
     version: next.version + 1,
   }))
   const onClose = vi.fn()
+  const onReload = vi.fn()
   const ref = createRef<StandInSettingsHandle>()
 
   const profile = (settings: PersonalStandInSettings) => (
@@ -80,9 +81,10 @@ function renderProfile() {
         ref={ref}
         settings={settings}
         saving={false}
-        error={null}
+        error={error}
         onSave={onSave}
         onClose={onClose}
+        onReload={onReload}
         localDeviceId={settings.executionDeviceId}
         services={services}
         devices={[]}
@@ -96,6 +98,7 @@ function renderProfile() {
     settings,
     onSave,
     onClose,
+    onReload,
     updateSettings: (saved: PersonalStandInSettings) => view.rerender(profile(saved)),
   }
 }
@@ -150,4 +153,29 @@ test('saving DingTalk scope preserves unsaved primary instructions and preferenc
       connections: saved.primary?.connections,
     },
   })
+})
+
+test('reloading after an error reconciles the primary draft only after discard confirmation', async () => {
+  const { settings, onReload, updateSettings } = renderProfile('Cloud definition changed')
+  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
+    target: { value: 'My unsaved preferences' },
+  })
+  fireEvent.click(screen.getByTestId('stand-in-primary-settings-retry'))
+  await screen.findByTestId('stand-in-primary-discard')
+  expect(onReload).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('stand-in-primary-keep-editing'))
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('My unsaved preferences')
+
+  fireEvent.click(screen.getByTestId('stand-in-primary-settings-retry'))
+  fireEvent.click(await screen.findByTestId('stand-in-primary-discard'))
+  expect(onReload).toHaveBeenCalledOnce()
+  updateSettings({
+    ...settings,
+    version: settings.version + 1,
+    primary: { ...settings.primary!, prompt: 'Peer updated instructions' },
+  })
+  expect(screen.getByTestId('stand-in-primary-ghost-prompt')).toHaveValue(
+    'Peer updated instructions'
+  )
+  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('Saved preferences')
 })

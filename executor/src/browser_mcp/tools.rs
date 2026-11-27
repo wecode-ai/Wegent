@@ -322,7 +322,34 @@ fn tool(name: &str, description: &str, properties: &[&str], required: &[&str]) -
             "properties": properties,
             "required": required,
             "additionalProperties": false
-        }
+        },
+        "annotations": tool_annotations(name)
+    })
+}
+
+fn tool_annotations(name: &str) -> Value {
+    let read_only = matches!(
+        name,
+        "browser_inspect"
+            | "browser_snapshot"
+            | "browser_capabilities"
+            | "browser_native_input_probe"
+            | "browser_ax_probe"
+            | "browser_present_probe"
+    );
+    let destructive = name == "browser_clear_data";
+    let open_world = !matches!(
+        name,
+        "browser_resize"
+            | "browser_capabilities"
+            | "browser_native_input_probe"
+            | "browser_ax_probe"
+            | "browser_present_probe"
+    );
+    json!({
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "openWorldHint": open_world
     })
 }
 

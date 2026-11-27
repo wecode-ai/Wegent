@@ -572,7 +572,12 @@ export function StandInPrimaryProfile({
                     ? {
                         testId: 'stand-in-primary-settings-retry',
                         disabled: blocked,
-                        onClick: onReload,
+                        onClick: () =>
+                          requestLeave(() => {
+                            setDraft(original)
+                            setReceipt(null)
+                            onReload()
+                          }),
                       }
                     : undefined
                 }

@@ -187,10 +187,37 @@ describe('DesktopPreferencesController', () => {
     await expect(controller.update({ performanceRecordingEnabled: 'true' })).rejects.toThrow(
       'boolean'
     )
+    await expect(controller.update({ browserFullControl: 'true' })).rejects.toThrow('boolean')
     expect(store.update).not.toHaveBeenCalled()
-    await expect(controller.update({ language: 'en' })).resolves.toEqual({ language: 'en' })
+    await expect(controller.update({ browserFullControl: true })).resolves.toEqual({
+      browserFullControl: true,
+    })
+    store.update.mockRejectedValueOnce(new Error('disk full'))
+    await expect(controller.update({ browserFullControl: false })).rejects.toThrow('disk full')
+    await expect(store.read()).resolves.toEqual({ browserFullControl: true })
+    store.read.mockClear()
+    await expect(controller.update({ language: 'en' })).resolves.toEqual({
+      browserFullControl: true,
+      language: 'en',
+    })
     expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
     expect(store.read).not.toHaveBeenCalled()
+  })
+
+  test('a failed attempt to enable browser full control leaves the saved policy unchanged', async () => {
+    const { controller, store, effects } = fixture({ browserFullControl: false })
+    const persisting = deferred<Record<string, unknown>>()
+    store.update.mockReturnValueOnce(persisting.promise)
+    const saving = controller.update({ browserFullControl: true })
+    const rejected = expect(saving).rejects.toThrow('disk full')
+    await vi.waitFor(() => expect(store.update).toHaveBeenCalledOnce())
+    await expect(store.read()).resolves.toEqual({ browserFullControl: false })
+    persisting.reject(new Error('disk full'))
+    await rejected
+    await expect(store.read()).resolves.toEqual({ browserFullControl: false })
+    expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
+    expect(effects.configurePopoutShortcut).not.toHaveBeenCalled()
+    expect(effects.configureAppshotsShortcut).not.toHaveBeenCalled()
   })
 
   test('preserves native shortcut defaults and disabled values', () => {

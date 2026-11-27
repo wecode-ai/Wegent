@@ -14,7 +14,7 @@ import {
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { hasSavedStandIn } from './standInInstanceSource'
+import { hasSavedStandIn, normalizeStandInBindingTarget } from './standInInstanceSource'
 
 async function loadSetup(
   services: WorkbenchServices,
@@ -39,7 +39,10 @@ async function loadSetup(
   }
   const device = await services.getLocalRuntimeSidebarIdentity()
   if (!device) throw new Error('Executor identity is unavailable')
-  const { target } = await api.binding(device.deviceId)
+  const rawBinding = await api.binding(device.deviceId)
+  const target = rawBinding.target
+    ? normalizeStandInBindingTarget(rawBinding.target, device.deviceId)
+    : null
   signal.throwIfAborted()
   if (
     target &&
@@ -79,7 +82,8 @@ export function PersonalAssistantAccountSetup({
   children(
     account: PersonalAssistantAccount | undefined,
     publish: (account: PersonalAssistantAccount) => void,
-    readAccount: () => PersonalAssistantAccount | undefined
+    readAccount: () => PersonalAssistantAccount | undefined,
+    reloadAccount?: () => void
   ): ReactNode
 }) {
   const { t } = useTranslation('common')
@@ -92,7 +96,7 @@ export function PersonalAssistantAccountSetup({
       createAsyncResource(JSON.stringify([userId]), load, {
         refreshOnSubscribe: true,
       }),
-    [services, userId, name, load]
+    [userId, load]
   )
   const snapshot = useSyncExternalStore(
     active ? resource.subscribe : subscribeIdleResource,
@@ -113,11 +117,14 @@ export function PersonalAssistantAccountSetup({
     () => resource.getSnapshot().data?.account ?? undefined,
     [resource]
   )
+  const reloadAccount = useCallback(() => {
+    void resource.reload()
+  }, [resource])
   const data = snapshot.data
   if (data?.account && !snapshot.error) {
     return (
       <>
-        {children(data.account, publish, readAccount)}
+        {children(data.account, publish, readAccount, reloadAccount)}
         <TransientNotice
           message={migrationNotice ? t('standIn.account.migration_complete') : null}
           onClear={clearMigrationNotice}

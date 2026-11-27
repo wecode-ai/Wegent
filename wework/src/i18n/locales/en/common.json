@@ -6829,12 +6829,12 @@
     "instance": {
       "stop": "Stop stand-in",
       "retry_stop": "Retry stopping",
-      "stop_description": "Stop the default assistant and assistants you added on the currently bound device and cancel that device's running and queued stand-in work. Assistants on other devices keep running. Change the default assistant binding only after stopping succeeds.",
-      "stopped": "Stand-in stopped",
-      "stopping": "Stopping the entire stand-in and cancelling tasks. Rebinding is unavailable until this completes.",
-      "bind_help": "Choose the default assistant for this Wework instance. Each instance can bind only one default assistant.",
-      "stop_before_rebind": "This instance already has a bound stand-in. Stop it before binding another.",
-      "owner_unavailable": "The current account has a different user ID from the bound stand-in. Sign in to the original account to continue using or stop it."
+      "stop_description": "Stop the default assistant and assistants you added on the current execution device and cancel that device's running and queued stand-in work. Assistants on other devices keep running.",
+      "stopped": "Stand-in stopped on this device",
+      "stopping": "Stopping the stand-in on this device and cancelling tasks.",
+      "bind_help": "Choose an execution device to resume or switch the default assistant.",
+      "stop_before_rebind": "Stop the stand-in on this device before continuing.",
+      "owner_unavailable": "The current account has a different user ID from the requested assistant. Sign in to that account to continue."
     },
     "migration": {
       "offer": "The old stand-in has stopped. Migrate the selected profile's responsibilities and memories to another device and bind the new stand-in.",

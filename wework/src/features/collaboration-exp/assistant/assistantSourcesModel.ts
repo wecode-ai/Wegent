@@ -1,6 +1,9 @@
+import { LOCAL_USER } from '@/api/local/localSession'
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import { isStandInBindingOwner, type StandInExecutorApi, type StandInProposal } from '@/api/standIn'
+import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
+import { resolvePrimaryStandInDevice } from '@/features/todo/standInInstanceSource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { DeviceInfo } from '@/types/api'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 
 export interface AssistantSourceData {
@@ -26,7 +29,9 @@ export function createAssistantSourcesModel(
   services: WorkbenchServices,
   api: StandInExecutorApi | undefined,
   userId: number,
-  scope: string
+  scope: string,
+  devices: DeviceInfo[] = [],
+  connected = false
 ) {
   let snapshot: SourceSnapshot = {}
   const listeners = new Set<() => void>()
@@ -96,14 +101,24 @@ export function createAssistantSourcesModel(
         throw Object.assign(new Error(), { code: 'executor_unavailable' })
       }
       if (snapshot.source && snapshot.source.localDeviceId !== identity.deviceId) clearSource()
-      const binding = await api.binding(identity.deviceId)
+      const account =
+        services.personalAssistantAccountApi && userId !== LOCAL_USER.id
+          ? ((await services.personalAssistantAccountApi.get()) ?? undefined)
+          : undefined
       if (!current()) return
-      const target = binding.target
-      if (target && !isStandInBindingOwner(target.userId, userId)) {
-        throw Object.assign(new Error(), { code: 'permission_denied' })
-      }
-      const ownerId = target?.userId ?? userId
-      const deviceId = target?.deviceId ?? identity.deviceId
+      const ownerId = userId
+      const deviceId =
+        services.personalAssistantAccountApi && userId !== LOCAL_USER.id
+          ? await resolvePrimaryStandInDevice({
+              api,
+              account,
+              userId,
+              localDeviceId: identity.deviceId,
+              devices,
+              connected,
+            })
+          : identity.deviceId
+      if (!current()) return
       if (
         snapshot.source &&
         (snapshot.source.ownerId !== ownerId || snapshot.source.deviceId !== deviceId)

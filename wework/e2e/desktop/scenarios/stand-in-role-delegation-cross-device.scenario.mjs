@@ -242,18 +242,9 @@ export function createDesktopScenario({
         toggle = `${card} ${testId('stand-in-delegated-work-toggle')}`
         row = `${card} ${testId('stand-in-delegated-work-open')}`
       }
-      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
       await waitForLogPattern(join(resultDir, 'executor.log'), /local backend registered /, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      const { deviceId } = await rpc('runtime.stand_in.device_identity', {})
-      const active = await rpc('runtime.stand_in.binding', {
-        operation: 'bind',
-        version: binding.version,
-        target: { userId, deviceId, backendUrl: `${cloud.backendUrl}/api` },
-      })
-      assert.equal(active.status, 'active')
-      assert.equal(active.target.deviceId, deviceId)
       await rpc('runtime.stand_in.onboarding.complete', {
         userId,
         weeklyReview: false,
@@ -274,9 +265,13 @@ export function createDesktopScenario({
       })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', { value: '/stand-in' })
-      await control.command('clickWhenEnabled', testId('personal-assistant-account-migrate-confirm'), {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'clickWhenEnabled',
+        testId('personal-assistant-account-migrate-confirm'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('waitFor', CHAT)
       const language = await control.command('getAttribute', 'html', { value: 'lang' })
       const english = language?.startsWith('en')

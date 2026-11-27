@@ -5,7 +5,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { verifyBrowserFullControl } from '../modules/browser-full-control.mjs'
+import {
+  readEditorFixtureState,
+  verifyBrowserFullControl,
+} from '../modules/browser-full-control.mjs'
 import { createSetupRenderingEvidence } from '../modules/setup-rendering-evidence.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
@@ -131,6 +134,12 @@ function fixtureHtml() {
     <script>
       const input = document.getElementById('agent-name');
       const result = document.getElementById('agent-result');
+      Object.defineProperty(globalThis, '__weworkE2eEditorState', {
+        get() {
+          const editor = document.getElementById('script-editor');
+          return JSON.stringify({ text: editor.value, edits: Number(editor.dataset.edits || 0) });
+        }
+      });
       input.addEventListener('input', () => {
         result.textContent = 'filled: ' + input.value;
       });
@@ -175,10 +184,26 @@ function browserDataCookieFixtureHtml() {
   <head><meta charset="utf-8" /><title>Browser data Cookie fixture</title></head>
   <body>
     <h1>Browser data Cookie fixture</h1>
+    <input id="approval-upload-fixture" type="file" />
     <script>
       if (new URLSearchParams(location.search).get('set') === '1') {
         document.cookie = 'wework_browser_data_e2e=present; Path=/';
       }
+      let uploadInputRevision = 0;
+      Object.defineProperty(globalThis, '__weworkE2eUploadInputRevision', {
+        get: () => String(uploadInputRevision)
+      });
+      Object.defineProperty(globalThis, '__weworkE2eReplaceUploadInput', {
+        set(value) {
+          if (value !== 'replace') return;
+          const old = document.getElementById('approval-upload-fixture');
+          const next = document.createElement('input');
+          next.id = old.id;
+          next.type = 'file';
+          old.replaceWith(next);
+          uploadInputRevision += 1;
+        }
+      });
     </script>
   </body>
 </html>`
@@ -390,15 +415,7 @@ async function beginEditorApproval(invoke, control, text, timeoutMs, previousId 
 async function verifyEditorApprovalPersistence(bridgeCall, control, label, timeoutMs, mcpFill) {
   const editText = 'pipeline regression fixture'
   const first = await beginEditorApproval(mcpFill, control, editText, timeoutMs)
-  const readEditor = async () => {
-    const result = await bridgeCall({
-      action: 'evaluate',
-      expression:
-        '({ text: document.querySelector("#script-editor").value, edits: Number(document.querySelector("#script-editor").dataset.edits || 0) })',
-    })
-    assert.equal(result.ok, true, JSON.stringify(result))
-    return result.value
-  }
+  const readEditor = () => readEditorFixtureState(control, label, timeoutMs)
   assert.deepEqual(await readEditor(), { text: '', edits: 0 })
   const inspected = await bridgeCall({ action: 'inspect' })
   assert.ok(inspected.inspectText.includes('Code editor'))
@@ -1448,6 +1465,164 @@ export function createDesktopScenario({
         `Cookie fixture evaluation failed: ${JSON.stringify(cookieBeforeClear)}`
       )
       assert.equal(cookieBeforeClear.value, true, 'Cookie fixture did not set its test cookie')
+
+      const uploadApprovalFixture = join(resultDir, 'browser-approval-upload.txt')
+      await writeFile(uploadApprovalFixture, 'Browser approval test fixture', 'utf8')
+      const readProtectedPageState = async () => {
+        const state = await bridgeCall({
+          action: 'evaluate',
+          expression:
+            '({cookiePresent: document.cookie.includes("wework_browser_data_e2e=present"), fileCount: document.querySelector("#approval-upload-fixture").files.length})',
+        })
+        assert.equal(state.ok, true, JSON.stringify(state))
+        return state.value
+      }
+      const originalPageState = { cookiePresent: true, fileCount: 0 }
+      const uploadAction = {
+        action: 'uploadFile',
+        path: uploadApprovalFixture,
+        selector: '#approval-upload-fixture',
+      }
+      const clearAction = { action: 'clearData', kinds: ['cookies'] }
+      const settleProtectedAction = async (action, approved, before, after) => {
+        const pending = bridgeCall(action)
+        await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, { timeoutMs: uiTimeoutMs })
+        let allow = false
+        try {
+          assert.deepEqual(await readProtectedPageState(), before)
+          allow = approved
+        } finally {
+          await control.command(
+            'click',
+            allow ? BROWSER_AGENT_APPROVE_SELECTOR : BROWSER_AGENT_REJECT_SELECTOR
+          )
+        }
+        const result = await pending
+        if (approved) assert.equal(result.ok, true, JSON.stringify(result))
+        else assert.equal(result.error?.code, 'approval_rejected', JSON.stringify(result))
+        assert.deepEqual(await readProtectedPageState(), after)
+        await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
+      }
+      await settleProtectedAction(uploadAction, false, originalPageState, originalPageState)
+      await settleProtectedAction(clearAction, false, originalPageState, originalPageState)
+      const uploadedPageState = { cookiePresent: true, fileCount: 1 }
+      await settleProtectedAction(uploadAction, true, originalPageState, uploadedPageState)
+      await settleProtectedAction(clearAction, true, uploadedPageState, {
+        cookiePresent: false,
+        fileCount: 1,
+      })
+      const resetCookie = await bridgeCall({
+        action: 'open',
+        url: `${cookieFixtureUrl}&reset=1`,
+        timeoutMs: 8_000,
+      })
+      assert.equal(resetCookie.ok, true, JSON.stringify(resetCookie))
+      assert.deepEqual(await readProtectedPageState(), originalPageState)
+
+      // Navigation cancels the pending approval; replacing the input is checked at approval time.
+      const navMismatchPending = bridgeCall(uploadAction)
+      await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      let navigationCompleted = false
+      try {
+        const navigated = await bridgeCall({
+          action: 'open',
+          url: cookieVerificationUrl,
+          timeoutMs: 8_000,
+        })
+        assert.equal(navigated.ok, true, JSON.stringify(navigated))
+        navigationCompleted = true
+      } finally {
+        if (
+          !navigationCompleted &&
+          (await control.command('getElementCount', BROWSER_AGENT_REJECT_SELECTOR)) !== '0'
+        ) {
+          await control.command('click', BROWSER_AGENT_REJECT_SELECTOR)
+        }
+      }
+      const navMismatchResult = await navMismatchPending
+      assert.equal(
+        navMismatchResult.error?.code,
+        'approval_cancelled',
+        JSON.stringify(navMismatchResult)
+      )
+      assert.deepEqual(await readProtectedPageState(), originalPageState)
+      await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await bridgeCall({ action: 'open', url: `${cookieFixtureUrl}&reset=2`, timeoutMs: 8_000 })
+      assert.deepEqual(await readProtectedPageState(), originalPageState)
+      const readUploadInputRevision = () =>
+        control.command('getEmbeddedBrowserWindowValue', 'body', {
+          value: JSON.stringify({ label: browserLabel, key: '__weworkE2eUploadInputRevision' }),
+          timeoutMs: uiTimeoutMs,
+        })
+      const rejectedDiagnostic = await bridgeCall({
+        action: 'evaluate',
+        expression: 'globalThis.__weworkE2eReplaceUploadInput = "replace"',
+      })
+      assert.equal(
+        rejectedDiagnostic.error?.code,
+        'read_only_expression_rejected',
+        JSON.stringify(rejectedDiagnostic)
+      )
+      const rejectedWait = await bridgeCall({
+        action: 'waitFor',
+        options: {
+          condition: { expression: 'globalThis.__weworkE2eReplaceUploadInput = "replace"' },
+        },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        rejectedWait.error?.code,
+        'read_only_expression_rejected',
+        JSON.stringify(rejectedWait)
+      )
+      assert.equal(
+        await readUploadInputRevision(),
+        '0',
+        'Read-only diagnostics must not change the fixture'
+      )
+      const domMismatchPending = bridgeCall(uploadAction)
+      await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      let inputReplaced = false
+      try {
+        await control.command('setEmbeddedBrowserWindowValue', 'body', {
+          value: JSON.stringify({
+            label: browserLabel,
+            key: '__weworkE2eReplaceUploadInput',
+            value: 'replace',
+          }),
+          timeoutMs: uiTimeoutMs,
+        })
+        assert.equal(
+          await readUploadInputRevision(),
+          '1',
+          'The file input replacement must succeed'
+        )
+        inputReplaced = true
+      } finally {
+        await control.command(
+          'click',
+          inputReplaced ? BROWSER_AGENT_APPROVE_SELECTOR : BROWSER_AGENT_REJECT_SELECTOR
+        )
+      }
+      const domMismatchResult = await domMismatchPending
+      assert.equal(
+        domMismatchResult.error?.code,
+        'approval_target_changed',
+        JSON.stringify(domMismatchResult)
+      )
+      assert.deepEqual(await readProtectedPageState(), originalPageState)
+      await control.command('waitFor', BROWSER_AGENT_REJECT_SELECTOR, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
       await control.command('waitFor', BROWSER_CLEAR_DATA_SELECTOR, {
         enabled: true,
@@ -1859,6 +2034,7 @@ export function createDesktopScenario({
           control,
           bridgeCall,
           async request => parseToolJson(await callTool('browser_fill', request)),
+          browserLabel,
           uiTimeoutMs
         )
       })

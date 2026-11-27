@@ -85,6 +85,48 @@ impl LocalTaskStore {
         if operation == "get" {
             return Ok(binding);
         }
+        if matches!(operation, "markStopping" | "clearStopping") {
+            let (Some(user_id), Some(device_id)) = (
+                target["userId"].as_i64().filter(|id| *id >= 0),
+                target["deviceId"].as_str().filter(|id| !id.is_empty()),
+            ) else {
+                return Err(TaskRuntimeError::Invalid("Invalid stand-in binding".into()));
+            };
+            let stop_key = format!("{user_id}:{device_id}");
+            let mut stopping = binding["stoppingTargets"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if operation == "markStopping" {
+                if !stopping.iter().any(|item| item.as_str() == Some(&stop_key)) {
+                    stopping.push(json!(stop_key));
+                }
+            } else {
+                stopping.retain(|item| item.as_str() != Some(&stop_key));
+                // Clearing a verified stop must retire the pre-upgrade stop state too.
+                // Keep its target and advance the legacy CAS version only if changed.
+                if binding["status"] == "stopping"
+                    && binding["target"]["userId"].as_i64() == Some(user_id)
+                    && binding["target"]["deviceId"].as_str() == Some(device_id)
+                {
+                    binding["status"] = json!("stopped");
+                    binding["version"] = json!(binding["version"].as_i64().unwrap_or(0) + 1);
+                }
+            }
+            if stopping.is_empty() {
+                if let Some(object) = binding.as_object_mut() {
+                    object.remove("stoppingTargets");
+                }
+            } else {
+                binding["stoppingTargets"] = json!(stopping);
+            }
+            transaction.execute(
+                "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_binding',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",
+                params![BINDING_KEY, binding.to_string(), now()],
+            )?;
+            transaction.commit()?;
+            return Ok(binding);
+        }
         if binding["version"] != expected_version {
             return Err(TaskRuntimeError::VersionConflict);
         }
@@ -130,10 +172,23 @@ impl LocalTaskStore {
         device: &str,
         operation: &str,
     ) -> Result<Value, TaskRuntimeError> {
+        self.transition_personal_stand_in_with_version(user, device, operation, None)
+    }
+
+    pub fn transition_personal_stand_in_with_version(
+        &self,
+        user: i64,
+        device: &str,
+        operation: &str,
+        expected_version: Option<i64>,
+    ) -> Result<Value, TaskRuntimeError> {
         self.personal_stand_in(user, device)?;
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let previous = read_personal(&transaction, user, device)?;
+        if expected_version.is_some_and(|version| previous["version"] != version) {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
         let mut settings = previous.clone();
         match operation {
             "stop" => {
@@ -265,6 +320,63 @@ mod tests {
         let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         assert_eq!(
             reopened.stand_in_binding("get", 0, Value::Null).unwrap(),
+            binding
+        );
+    }
+
+    #[test]
+    fn stopping_targets_persist_across_reopen_without_mutating_legacy_binding_version() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let cloud = json!({"userId":7,"deviceId":"cloud-1"});
+        let other = json!({"userId":8,"deviceId":"cloud-2"});
+        let marked = store
+            .stand_in_binding("markStopping", -1, cloud.clone())
+            .unwrap();
+        assert_eq!(marked["version"], 0);
+        assert_eq!(marked["stoppingTargets"], json!(["7:cloud-1"]));
+        store
+            .stand_in_binding("markStopping", -1, other.clone())
+            .unwrap();
+        let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        assert_eq!(
+            reopened.stand_in_binding("get", 0, Value::Null).unwrap()["stoppingTargets"],
+            json!(["7:cloud-1", "8:cloud-2"])
+        );
+        let cleared = reopened
+            .stand_in_binding("clearStopping", -1, cloud)
+            .unwrap();
+        assert_eq!(cleared["stoppingTargets"], json!(["8:cloud-2"]));
+        let all_cleared = reopened
+            .stand_in_binding("clearStopping", -1, other)
+            .unwrap();
+        assert!(all_cleared.get("stoppingTargets").is_none());
+    }
+
+    #[test]
+    fn clearing_a_verified_stop_retires_only_matching_legacy_state() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let cloud = json!({"userId":7,"deviceId":"cloud-1"});
+        let other = json!({"userId":7,"deviceId":"cloud-2"});
+        let store = LocalTaskStore::open(&path).unwrap();
+        store.stand_in_binding("bind", 0, cloud.clone()).unwrap();
+        store.stand_in_binding("beginStop", 1, Value::Null).unwrap();
+        let unrelated = store.stand_in_binding("clearStopping", -1, other).unwrap();
+        assert_eq!(unrelated["status"], "stopping");
+        assert_eq!(unrelated["version"], 2);
+        store
+            .stand_in_binding("clearStopping", -1, cloud.clone())
+            .unwrap();
+        let reopened = LocalTaskStore::open(&path).unwrap();
+        let binding = reopened.stand_in_binding("get", 0, Value::Null).unwrap();
+        assert_eq!(binding["status"], "stopped");
+        assert_eq!(binding["target"], cloud);
+        assert_eq!(binding["version"], 3);
+        assert_eq!(
+            reopened
+                .stand_in_binding("clearStopping", -1, cloud)
+                .unwrap(),
             binding
         );
     }

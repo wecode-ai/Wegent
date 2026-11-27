@@ -69,13 +69,34 @@ impl RuntimeWorkRpcHandler {
         stop_timeout: Duration,
     ) -> Result<Value, AppIpcError> {
         let user = super::runtime_owner::runtime_user(&payload)?;
-        let operation = payload["operation"].as_str().unwrap_or_default();
-        if !matches!(operation, "start" | "stop") {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Unknown lifecycle operation",
-            ));
-        }
+        let requested_operation = payload["operation"].as_str().unwrap_or_default();
+        let (operation, expected_version) = match requested_operation {
+            // A separate operation makes older Executors reject a conditional
+            // stop rather than ignore its version and stop a newer instance.
+            "stopIfVersion" => (
+                "stop",
+                Some(
+                    payload["expectedVersion"]
+                        .as_i64()
+                        .filter(|version| *version >= 0)
+                        .ok_or_else(|| {
+                            AppIpcError::new(
+                                "bad_request",
+                                "expectedVersion must be a nonnegative integer for stopIfVersion",
+                            )
+                        })?,
+                ),
+            ),
+            "start" | "stop" if payload.get("expectedVersion").is_none() => {
+                (requested_operation, None)
+            }
+            _ => {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "Unknown or invalid lifecycle operation",
+                ));
+            }
+        };
         let lifecycle = self.task_send_gate(&format!("stand-in-lifecycle:{user}"));
         let _lifecycle = lifecycle.lock().await;
         let processing = self.task_send_gate(&format!("stand-in-processing:{user}"));
@@ -87,7 +108,12 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("stand-in lifecycle gate poisoned");
             let settings = store
-                .transition_personal_stand_in(user, &self.device_id, operation)
+                .transition_personal_stand_in_with_version(
+                    user,
+                    &self.device_id,
+                    operation,
+                    expected_version,
+                )
                 .map_err(settings_error)?;
             if operation == "start" || settings["lifecycle"]["status"] == "stopped" {
                 return Ok(settings);
@@ -339,6 +365,50 @@ mod tests {
             .await
             .unwrap()["lifecycle"]
             .is_null());
+    }
+
+    #[tokio::test]
+    async fn stale_stop_version_cannot_stop_restarted_assistant() {
+        let root = tempfile::tempdir().unwrap();
+        let (handler, store) = fixture(root.path());
+        let initial = store.personal_stand_in(7, "mac").unwrap();
+        let stop =
+            json!({"userId":7,"operation":"stopIfVersion","expectedVersion":initial["version"]});
+        let stopped = handler
+            .personal_stand_in_lifecycle(stop.clone())
+            .await
+            .unwrap();
+        assert_eq!(stopped["lifecycle"]["status"], "stopped");
+        let restarted = handler
+            .personal_stand_in_lifecycle(json!({"userId":7,"operation":"start"}))
+            .await
+            .unwrap();
+        assert!(restarted["lifecycle"].is_null());
+        assert_eq!(
+            handler
+                .personal_stand_in_lifecycle(stop)
+                .await
+                .unwrap_err()
+                .code,
+            "version_conflict"
+        );
+        for payload in [
+            json!({"userId":7,"operation":"stopIfVersion"}),
+            json!({"userId":7,"operation":"stopIfVersion","expectedVersion":-1}),
+            json!({"userId":7,"operation":"stopIfVersion","expectedVersion":"1"}),
+            json!({"userId":7,"operation":"stop","expectedVersion":0}),
+            json!({"userId":7,"operation":"start","expectedVersion":0}),
+        ] {
+            assert_eq!(
+                handler
+                    .personal_stand_in_lifecycle(payload)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "bad_request"
+            );
+        }
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), restarted);
     }
 
     #[tokio::test]
