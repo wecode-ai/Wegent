@@ -625,7 +625,6 @@ test.describe('Connector app OAuth loop', () => {
         await expect(disconnect).toBeDisabled({ timeout: 5_000 })
       } finally {
         releaseCatalog()
-        await page.unroute(catalogPath)
       }
 
       await expect(row.getByText(/^(Authorized|已授权)$/)).toBeVisible({ timeout: 10_000 })
