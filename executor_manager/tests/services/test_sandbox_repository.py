@@ -44,6 +44,18 @@ def _create_repository(mocker, mock_redis_client) -> SandboxRepository:
     return SandboxRepository()
 
 
+@pytest.mark.parametrize("ttl", ["0", "-1"])
+def test_repository_rejects_non_positive_binding_ttl(
+    monkeypatch, mocker, mock_redis_client, ttl
+):
+    monkeypatch.setenv("SANDBOX_EXECUTOR_BINDING_TTL", ttl)
+
+    with pytest.raises(
+        ValueError, match="SANDBOX_EXECUTOR_BINDING_TTL must be positive"
+    ):
+        _create_repository(mocker, mock_redis_client)
+
+
 def test_manager_scope_prefers_explicit_configuration(
     monkeypatch, mocker, mock_redis_client
 ):

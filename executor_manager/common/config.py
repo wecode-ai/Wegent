@@ -185,6 +185,10 @@ class ExecutorConfig:
         default_factory=lambda: os.getenv("DOCKER_HOST_ADDR", "localhost")
     )
 
+    def __post_init__(self) -> None:
+        if self.executor_binding_ttl <= 0:
+            raise ValueError("SANDBOX_EXECUTOR_BINDING_TTL must be positive")
+
 
 @dataclass(frozen=True)
 class SandboxConfig:
