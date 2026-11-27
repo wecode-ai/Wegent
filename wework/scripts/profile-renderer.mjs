@@ -34,6 +34,10 @@ import {
   stopPerformanceRecording,
   writeDiagnosticFile,
 } from './ai-verify-devtools.mjs'
+import {
+  readRendererCatalogActivity,
+  sanitizeRendererCpuProfile,
+} from './renderer-profile-diagnostics.mjs'
 
 const run = promisify(execFile)
 const prompt = 'WEWORK_CPU_BENCHMARK_SINGLE_TASK'
@@ -96,9 +100,9 @@ const rendererTimingMarkers = new Set([
 const rendererThreadName =
   /^(?:CrRendererMain|Compositor|CompositorTileWorker\d*|ThreadPool(?:Foreground|Background)Worker|V8Worker|DedicatedWorker thread|ServiceWorkerThread|Chrome_ChildIOThread)$/
 
-// Export only renderer timing data. The source trace and CDP events can
+// Export only renderer timing and static asset locations. The source trace and CDP events can
 // contain request headers, application data, and arbitrary script arguments.
-export function formatRendererThreadTiming(trace, rendererPids) {
+export function formatRendererThreadTiming(trace, rendererPids, profile, rendererOrigin) {
   const rendererEvents = trace.traceEvents.filter(({ pid }) => rendererPids.includes(pid))
   const markers = rendererEvents.filter(
     ({ name, ph, ts }) => ph === 'I' && rendererTimingMarkers.has(name) && Number.isFinite(ts)
@@ -140,7 +144,43 @@ export function formatRendererThreadTiming(trace, rendererPids) {
       },
     ]
   })
-  return { singleTaskWindowUs: { start: start ?? null, end: end ?? null }, traceEvents }
+  return {
+    singleTaskWindowUs: { start: start ?? null, end: end ?? null },
+    traceEvents,
+    ...(profile && { cpuProfile: sanitizeRendererCpuProfile(profile, rendererOrigin) }),
+  }
+}
+
+async function readStartupMaintenance(control, readCatalogActivity) {
+  const { marketplace, states } = JSON.parse(
+    await control.command('getBundledPluginUpdates', 'body', { timeoutMs: 10_000 })
+  )
+  const plugins = (marketplace?.defaultPluginNames ?? []).map(name => ({
+    name,
+    status: ['ready', 'updating', 'deferred', 'failed'].includes(states?.[name]?.status)
+      ? states[name].status
+      : 'missing',
+  }))
+  return {
+    atUnixMs: Date.now(),
+    initialized: Boolean(marketplace),
+    plugins,
+    catalog: await readCatalogActivity(),
+  }
+}
+
+async function waitForBundledStartup(control, readCatalogActivity) {
+  const startedAtUnixMs = Date.now()
+  const result = await waitForValue(
+    () => readStartupMaintenance(control, readCatalogActivity),
+    state =>
+      state.initialized &&
+      state.plugins.every(plugin => plugin.status === 'ready') &&
+      state.catalog.pending === 0,
+    'Renderer idle startup maintenance did not settle',
+    10_000
+  )
+  return { ...result, startedAtUnixMs, settledAtUnixMs: Date.now() }
 }
 
 export function installTurnUpdateProbe() {
@@ -225,12 +265,14 @@ export function installTurnUpdateProbe() {
             }),
             ...(frame && {
               frame: {
+                startMs: frame.startTime,
                 durationMs: frame.duration,
                 scripts: frame.scripts
                   .map(script => ({
                     source: script.sourceURL,
                     functionName: script.sourceFunctionName,
                     position: script.sourceCharPosition,
+                    startMs: script.startTime,
                     durationMs: script.duration,
                     forcedLayoutMs: script.forcedStyleAndLayoutDuration,
                   }))
@@ -271,7 +313,7 @@ async function cpuSnapshot(pids) {
     })
   }
   const [seconds, userSeconds, systemSeconds] = totals
-  return { seconds, userSeconds, systemSeconds, time: performance.now() }
+  return { seconds, userSeconds, systemSeconds, time: performance.now(), atUnixMs: Date.now() }
 }
 
 function cpuPercent(before, after) {
@@ -549,6 +591,7 @@ async function measureConcurrentTasks({
       pendingIssues: cpuPercent(pendingSamples[0], pendingEnd),
       pendingPeakTenSecondCpu: peakTenSecondCpu(pendingSamples),
     },
+    concurrentCpuSamples: { foreground: foregroundSamples, pending: pendingSamples },
     foregroundWindow: { before: foregroundBefore, after: foregroundAfter },
   }
 }
@@ -827,13 +870,15 @@ export function createDesktopScenario({
       const textTimeoutMs = uiTimeoutMs + concurrentStreamPieces * streamIntervalMs
       const client = await createDevtoolsClient(resultDir, textTimeoutMs + 5000)
       const targets = await client({ action: 'targets' })
-      const target = targets.find(
+      const rendererTarget = targets.find(
         entry =>
           entry.type === 'window' &&
           !entry.url.startsWith('devtools:') &&
           !entry.url.includes('startup-splash')
-      )?.id
+      )
+      const target = rendererTarget?.id
       assert.ok(target, 'The isolated main renderer was not found')
+      const rendererOrigin = new URL(rendererTarget.url).origin
       const evaluate = async expression => {
         const { result, exceptionDetails } = await client({
           action: 'command',
@@ -871,7 +916,9 @@ export function createDesktopScenario({
           resultDir,
           target,
           reportPath,
-          threadTiming ? trace => formatRendererThreadTiming(trace, pids) : undefined
+          threadTiming
+            ? (trace, profile) => formatRendererThreadTiming(trace, pids, profile, rendererOrigin)
+            : undefined
         )
       const sampleProcesses = async phase => {
         const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
@@ -944,8 +991,6 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
-        const before = await windowState()
-        assert.equal(before.activity, 'foreground', 'Measure the foreground presentation path')
         const running = await requestExecutor(
           control,
           'runtime.tasks.running_count',
@@ -953,6 +998,11 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(running.runningCount, 0, 'The idle profile requires zero running tasks')
+        // Startup cache upgrades run independently of task admission and window availability.
+        const readCatalogActivity = () => evaluate(`(${readRendererCatalogActivity.toString()})()`)
+        const startupMaintenance = await waitForBundledStartup(control, readCatalogActivity)
+        const before = await windowState()
+        assert.equal(before.activity, 'foreground', 'Measure the foreground presentation path')
         if (capture) {
           await startPerformanceRecording(client, resultDir, target, {
             samplingIntervalUs: threadTiming ? 2000 : 100,
@@ -968,6 +1018,7 @@ export function createDesktopScenario({
         }
         const idleEnd = await cpuSnapshot(pids)
         await mark('idle-end')
+        const idleMaintenanceEnd = await readStartupMaintenance(control, readCatalogActivity)
         if (measureProcesses) await sampleProcesses('idle')
         assert.ok(
           await evaluate("PerformanceObserver.supportedEntryTypes.includes('longtask')"),
@@ -1076,21 +1127,22 @@ export function createDesktopScenario({
         )
         await sampleHeap('settled')
         if (measureProcesses) await sampleProcesses('settled')
-        const { concurrentCpuPercent, foregroundWindow } = await measureConcurrentTasks({
-          control,
-          workspacePath,
-          uiTimeoutMs,
-          modelResponseTimeoutMs,
-          observeForegroundText: text => observeText(client, target, text, textTimeoutMs),
-          mark,
-          windowState,
-          pids,
-          concurrentResponses,
-          getForegroundToolsSent: () => foregroundToolsSent,
-          startConcurrent,
-          finishConcurrent,
-          streamMilestones,
-        })
+        const { concurrentCpuPercent, concurrentCpuSamples, foregroundWindow } =
+          await measureConcurrentTasks({
+            control,
+            workspacePath,
+            uiTimeoutMs,
+            modelResponseTimeoutMs,
+            observeForegroundText: text => observeText(client, target, text, textTimeoutMs),
+            mark,
+            windowState,
+            pids,
+            concurrentResponses,
+            getForegroundToolsSent: () => foregroundToolsSent,
+            startConcurrent,
+            finishConcurrent,
+            streamMilestones,
+          })
         await sampleHeap('ten-tasks')
         const measuredToolsSent = [...measuredBatches.values()].reduce(
           (sum, count) => sum + count * measuredToolBatch,
@@ -1121,11 +1173,15 @@ export function createDesktopScenario({
         ].every(state => state.activity === 'foreground')
         const report = {
           measurements,
+          startupMaintenance,
+          idleMaintenanceEnd,
+          idleCpuWindow: { start: idleStart, end: idleEnd },
           singleTaskWindow: {
             start: { ...start, ...singleTaskStartMetrics },
             end: { ...end, ...endMetrics },
           },
           concurrentCpuPercent,
+          concurrentCpuSamples,
           turnUpdates,
           heapSamples: samples,
           processSamples,

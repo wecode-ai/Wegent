@@ -6,6 +6,7 @@ import {
   installTurnUpdateProbe,
   peakTenSecondCpu,
 } from './profile-renderer.mjs'
+import { readRendererCatalogActivity } from './renderer-profile-diagnostics.mjs'
 
 test('exports only allowlisted renderer trace timing and preserves missing thread duration', () => {
   const primary = { pid: 10, tid: 2 }
@@ -42,6 +43,99 @@ test('exports only allowlisted renderer trace timing and preserves missing threa
       { ...primary, ph: 'I', name: 'wework-profile:turn-settled', ts: 30, s: 't' },
     ],
   })
+})
+
+test('retains CPU counters and only packaged renderer asset locations', () => {
+  const origin = 'http://127.0.0.1:4100'
+  const frame = (url, functionName = 'private-dynamic-name') => ({
+    url,
+    functionName,
+    lineNumber: 12,
+    columnNumber: 34,
+    scriptId: 'private-script',
+  })
+  const urls = [
+    `${origin}/wework/app/assets/Workload-A1b2C3d4.js?token=private-token#private-fragment`,
+    'https://private-external.test/wework/app/assets/Workload-A1b2C3d4.js',
+    'http://127.0.0.1:4101/wework/app/assets/Workload-A1b2C3d4.js',
+    `${origin}/wework/app/assets/private-without-hash.js`,
+    'file:///Users/private-user/secret.js',
+    'data:text/javascript,private-source',
+  ]
+  const profile = {
+    startTime: 100,
+    endTime: 200,
+    nodes: [
+      { id: 1, callFrame: frame('', '(root)'), children: [2], hitCount: 0 },
+      ...urls.map((url, index) => ({
+        id: index + 2,
+        callFrame: frame(url),
+        hitCount: 1,
+        args: { authorization: 'private-authorization' },
+      })),
+    ],
+    samples: [2, 3],
+    timeDeltas: [10, 20],
+    privateField: 'private-profile',
+  }
+
+  const result = formatRendererThreadTiming({ traceEvents: [] }, [10], profile, origin)
+
+  expect(result.cpuProfile).toEqual({
+    startTime: 100,
+    endTime: 200,
+    nodes: [
+      { id: 1, callFrame: { category: 'root' }, children: [2], hitCount: 0 },
+      {
+        id: 2,
+        callFrame: {
+          category: 'application',
+          asset: 'Workload-A1b2C3d4.js',
+          lineNumber: 12,
+          columnNumber: 34,
+        },
+        children: [],
+        hitCount: 1,
+      },
+      ...urls.slice(1).map((_, index) => ({
+        id: index + 3,
+        callFrame: { category: 'non-application' },
+        children: [],
+        hitCount: 1,
+      })),
+    ],
+    samples: [2, 3],
+    timeDeltas: [10, 20],
+  })
+  expect(JSON.stringify(result)).not.toContain('private')
+  expect(JSON.stringify(result)).not.toContain('127.0.0.1')
+})
+
+test('keeps concurrent catalog reads pending when start timestamps collide', () => {
+  const namespace = 'wework:plugin-local-catalog'
+  const refresh = 'wework:plugin-composer-refresh'
+  const entries = {
+    started: [
+      { name: `${namespace}:started`, startTime: 5 },
+      { name: `${namespace}:started`, startTime: 5 },
+      { name: `${refresh}:started`, startTime: 5 },
+    ],
+    completed: [{ name: `${namespace}:completed`, detail: 5 }],
+    failed: [],
+  }
+  const read = () =>
+    runInNewContext(`(${readRendererCatalogActivity.toString()})()`, {
+      performance: {
+        getEntriesByName: name =>
+          entries[name.split(':').at(-1)].filter(entry => entry.name === name),
+      },
+    })
+
+  expect(read()).toEqual({ started: 3, completed: 1, failed: 0, pending: 2 })
+  entries.failed.push({ name: `${namespace}:failed`, detail: 5 })
+  expect(read()).toEqual({ started: 3, completed: 1, failed: 1, pending: 1 })
+  entries.completed.push({ name: `${refresh}:completed`, detail: 5 })
+  expect(read()).toEqual({ started: 3, completed: 2, failed: 1, pending: 0 })
 })
 
 test('uses full ten-second windows to measure the concurrent CPU peak', () => {

@@ -41,6 +41,7 @@ import {
 import { selectComposerPluginApps } from '@/features/plugins/pluginInventory'
 import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
 import { consumeWorkbenchNewChatRequest } from '@/lib/workbenchComposerFocus'
+import { beginPluginRefreshDiagnostics } from '@/lib/plugin-refresh-diagnostics'
 import type { LocalDeviceApp, UnifiedModel } from '@/types/api'
 
 export interface WorkbenchSessionInput extends WorkbenchStreamInput {
@@ -393,12 +394,18 @@ export function createWorkbenchSession(
       if (!resources.localAppsRequestedRef.current) return
       if (resources.localAppsRefreshTimerRef.current !== null)
         window.clearTimeout(resources.localAppsRefreshTimerRef.current)
+      resources.localAppsRefreshObservationRef.current?.()
+      const finishRefresh = beginPluginRefreshDiagnostics('refresh')
+      resources.localAppsRefreshObservationRef.current = finishRefresh ?? null
       resources.localAppsRefreshTimerRef.current = window.setTimeout(() => {
         resources.localAppsRefreshTimerRef.current = null
+        resources.localAppsRefreshObservationRef.current = null
         if (isHeld())
           void inputs()
             .listLocalApps({ supersedeInstalledRequest: true })
             .catch(error => console.error('[Wework] Failed to refresh composer plugins.', error))
+            .finally(finishRefresh)
+        else finishRefresh?.()
       }, 250)
     },
     observe(next: WorkbenchSessionInput) {

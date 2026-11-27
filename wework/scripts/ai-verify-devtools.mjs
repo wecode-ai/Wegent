@@ -388,7 +388,7 @@ async function finishPerformanceRecording(
   const trace = JSON.parse(await readProtocolStream(command, complete.params.stream))
   if (formatTrace) {
     const report = {
-      ...formatTrace(trace),
+      ...formatTrace(trace, profile),
       traceDataLoss: complete.params.dataLossOccurred ?? false,
     }
     await writeDiagnosticFile(outputPath, report)

@@ -159,6 +159,7 @@ export function createWorkbenchSessionState(
     localAppsInflightRef: { current: null as Promise<LocalDeviceApp[]> | null },
     localAppsLoadGenerationRef: { current: 0 },
     localAppsRefreshTimerRef: { current: null as number | null },
+    localAppsRefreshObservationRef: { current: null as (() => void) | null },
     localAppsRequestedRef: { current: false },
     activeProjectWorkPreferenceKeyRef: {
       get current() {
@@ -243,6 +244,8 @@ export function createWorkbenchSessionState(
       if (resources.localAppsRefreshTimerRef.current !== null)
         window.clearTimeout(resources.localAppsRefreshTimerRef.current)
       resources.localAppsRefreshTimerRef.current = null
+      resources.localAppsRefreshObservationRef.current?.()
+      resources.localAppsRefreshObservationRef.current = null
     },
   }
 }

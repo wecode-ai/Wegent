@@ -26,6 +26,7 @@ import {
   type PluginMarketplaceCacheSnapshot,
 } from '@/features/plugins/pluginMarketplaceCache'
 import type { LocalDeviceApp } from '@/types/api'
+import { beginPluginRefreshDiagnostics } from '@/lib/plugin-refresh-diagnostics'
 import {
   isWegentManagedStorePlugin,
   localMatchesCloudPlugin,
@@ -117,94 +118,122 @@ export function useListLocalApps({
 
         // Enrich the same domain cache asynchronously. Remote catalogs must not
         // block locally installed plugins or overwrite a newer installation.
+        const finishEnrichment = beginPluginRefreshDiagnostics('enrichment')
         window.setTimeout(() => {
-          if (!isCurrent()) return
-          const installedAtStart = snapshot.installedPlugins
-          if (!hasFreshInventory)
-            void Promise.all([
-              localPluginApi.listInstalledPlugins({
-                requireComplete: true,
-              }),
-              cloudInstalled,
-            ])
-              .then(([local, cloud]) => {
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const current = getPluginMarketplaceCache(cacheKey)
-                if (!current || current.deviceId !== deviceId) return
-                if (!sameLocalPluginSources(current, snapshot)) return
-                if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
-                return loadPluginInventory({
-                  cacheKey,
-                  deviceId,
-                  readLocalInstalledPlugins: async () => local,
-                  listCloudInstalledPlugins: async () => cloud,
-                  isCurrent,
-                  cloudMembershipAuthoritative: cloudConnection.isConnected,
-                })
-              })
-              .catch(error => {
-                if (isCurrent())
-                  console.warn('[Wework] Failed to refresh complete plugin inventory.', error)
-              })
-
-          void hydratePluginInventoryLogos(
-            cacheKey,
-            snapshot,
-            plugin => {
-              const labels = plugin.metadata.labels
-              const id =
-                labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
-              return localPluginApi.readInstalledPluginForTrial(
-                typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
+          if (!isCurrent()) {
+            finishEnrichment?.()
+            return
+          }
+          let pending = 0
+          const observe = (task: Promise<unknown>) => {
+            if (!finishEnrichment) return
+            pending += 1
+            void task.finally(() => {
+              pending -= 1
+              if (pending === 0) finishEnrichment()
+            })
+          }
+          try {
+            const installedAtStart = snapshot.installedPlugins
+            if (!hasFreshInventory)
+              observe(
+                Promise.all([
+                  localPluginApi.listInstalledPlugins({
+                    requireComplete: true,
+                  }),
+                  cloudInstalled,
+                ])
+                  .then(([local, cloud]) => {
+                    if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                    const current = getPluginMarketplaceCache(cacheKey)
+                    if (!current || current.deviceId !== deviceId) return
+                    if (!sameLocalPluginSources(current, snapshot)) return
+                    if (!samePluginInstallations(current.installedPlugins, installedAtStart)) return
+                    return loadPluginInventory({
+                      cacheKey,
+                      deviceId,
+                      readLocalInstalledPlugins: async () => local,
+                      listCloudInstalledPlugins: async () => cloud,
+                      isCurrent,
+                      cloudMembershipAuthoritative: cloudConnection.isConnected,
+                    })
+                  })
+                  .catch(error => {
+                    if (isCurrent())
+                      console.warn('[Wework] Failed to refresh complete plugin inventory.', error)
+                  })
               )
-            },
-            isCurrent
-          ).catch(error => {
-            if (isCurrent()) console.warn('[Wework] Failed to enrich composer plugin logos.', error)
-          })
 
-          if (
-            cloudConnection.isConnected &&
-            cloudConnection.apiBaseUrl &&
-            cloudConnection.token &&
-            (options?.supersedeInstalledRequest ||
-              !snapshot.connectorAppsFetchedAt ||
-              snapshot.connectorAppsFetchedAt + LOCAL_SKILLS_CACHE_TTL_MS <= Date.now())
-          ) {
-            void listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token)
-              .then(async installedConnectors => {
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const connected = installedConnectors.apps.filter(
-                  app => app.enabled && app.callable
-                )
-                // Inventory reads must not mutate the runtime connector surface.
-                // The cloud bridge owns revisioned synchronization and consent.
-                const runtime = await requestLocalExecutor<{
-                  apps: Array<{ slug: string; skillPath: string }>
-                }>('runtime.connectors.status')
-                if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const paths = new Map(runtime.apps.map(app => [app.slug, app.skillPath]))
-                if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
-                writePluginInventory(cacheKey, deviceId, {
-                  connectorApps: connected
-                    .filter(app => !isSystemApplicationConnectorSlug(app.slug))
-                    .map(app => ({
-                      id: `wegent:${app.slug}`,
-                      name: app.runtime_name ?? app.slug,
-                      description: app.description ?? '',
-                      logoUrl: app.icon_url ?? null,
-                      isAccessible: true,
-                      isEnabled: true,
-                      pluginDisplayNames: ['Wegent Cloud'],
-                      source: 'wegent-connector',
-                      skillPath: paths.get(app.slug) ?? null,
-                    })),
-                })
-              })
-              .catch(error => {
+            observe(
+              hydratePluginInventoryLogos(
+                cacheKey,
+                snapshot,
+                plugin => {
+                  const labels = plugin.metadata.labels
+                  const id =
+                    labels && typeof labels === 'object'
+                      ? (labels as Record<string, unknown>).id
+                      : null
+                  return localPluginApi.readInstalledPluginForTrial(
+                    typeof id === 'string' || typeof id === 'number'
+                      ? id
+                      : String(plugin.metadata.name)
+                  )
+                },
+                isCurrent
+              ).catch(error => {
                 if (isCurrent())
-                  console.warn('[Wework] Failed to load Wegent connector apps.', error)
+                  console.warn('[Wework] Failed to enrich composer plugin logos.', error)
               })
+            )
+
+            if (
+              cloudConnection.isConnected &&
+              cloudConnection.apiBaseUrl &&
+              cloudConnection.token &&
+              (options?.supersedeInstalledRequest ||
+                !snapshot.connectorAppsFetchedAt ||
+                snapshot.connectorAppsFetchedAt + LOCAL_SKILLS_CACHE_TTL_MS <= Date.now())
+            ) {
+              observe(
+                listWegentInstalledConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token)
+                  .then(async installedConnectors => {
+                    if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                    const connected = installedConnectors.apps.filter(
+                      app => app.enabled && app.callable
+                    )
+                    // Inventory reads must not mutate the runtime connector surface.
+                    // The cloud bridge owns revisioned synchronization and consent.
+                    const runtime = await requestLocalExecutor<{
+                      apps: Array<{ slug: string; skillPath: string }>
+                    }>('runtime.connectors.status')
+                    if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
+                    const paths = new Map(runtime.apps.map(app => [app.slug, app.skillPath]))
+                    if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
+                    writePluginInventory(cacheKey, deviceId, {
+                      connectorApps: connected
+                        .filter(app => !isSystemApplicationConnectorSlug(app.slug))
+                        .map(app => ({
+                          id: `wegent:${app.slug}`,
+                          name: app.runtime_name ?? app.slug,
+                          description: app.description ?? '',
+                          logoUrl: app.icon_url ?? null,
+                          isAccessible: true,
+                          isEnabled: true,
+                          pluginDisplayNames: ['Wegent Cloud'],
+                          source: 'wegent-connector',
+                          skillPath: paths.get(app.slug) ?? null,
+                        })),
+                    })
+                  })
+                  .catch(error => {
+                    if (isCurrent())
+                      console.warn('[Wework] Failed to load Wegent connector apps.', error)
+                  })
+              )
+            }
+          } finally {
+            if (pending === 0) finishEnrichment?.()
           }
         }, 0)
         return apps
