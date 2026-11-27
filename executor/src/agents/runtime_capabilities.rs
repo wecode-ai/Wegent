@@ -2548,6 +2548,20 @@ mod tests {
         }));
         assert!(coordinate_roles(&request, "Codex").is_ok());
         assert!(coordinate_roles(&request, "ClaudeCode").is_ok());
+
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+        let manager = crate::agents::manager_tools::ManagerTools::new(&request).unwrap();
+        assert!(!manager.specs().as_array().unwrap().is_empty());
+        request.extra.insert("enable_tools".into(), json!(false));
+        let manager = crate::agents::manager_tools::ManagerTools::new(&request).unwrap();
+        assert_eq!(manager.specs(), json!([]));
+        use wegent_claude_harness::process::ManagerOperations;
+        assert_eq!(
+            manager.schema()["properties"]["operation"]["enum"],
+            json!(["finish"])
+        );
     }
 
     #[test]

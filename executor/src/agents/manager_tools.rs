@@ -23,7 +23,12 @@ impl ManagerTools {
         let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
         let mut context = mcp::project_space_request_context(request)?;
         mcp_http::bind_runtime_services(&mut context);
-        let tools = mcp::visible_tools(&runtime, &context)
+        let visible = if request.extra.get("enable_tools") == Some(&Value::Bool(false)) {
+            Vec::new()
+        } else {
+            mcp::visible_tools(&runtime, &context)
+        };
+        let tools = visible
             .into_iter()
             .map(|tool| {
                 (
@@ -43,6 +48,9 @@ impl ManagerTools {
     }
 
     pub(crate) fn specs(&self) -> Value {
+        if self.tools.is_empty() {
+            return json!([]);
+        }
         let tools = self
             .tools
             .values()
