@@ -723,12 +723,52 @@ def test_server_round_replays_human_receipt_and_rejects_changed_list(
             )
         )
     assert bad_stage.value.status_code == 422
+    old_trigger = ProjectChatMessage(
+        message_id="preceding-round-comment",
+        project_id=str(scenario.project.id),
+        task_id=scenario.parent.id,
+        sender_type="user",
+    )
+    test_db.add(old_trigger)
+    test_db.flush()
     receipt = submit(values)
     # A device manager reuses its session while each resumed turn has a distinct ID.
     next_id = hashlib.sha256(b'["dispatch-1","round:1"]').hexdigest()
+    trigger = ProjectChatMessage(
+        message_id="manager-owner-reply",
+        project_id=str(scenario.project.id),
+        task_id=scenario.parent.id,
+        sender_type="user",
+    )
+    reply = LoopItemExecution(
+        cloud_project_id=trigger.project_id,
+        loop_item_id=trigger.task_id,
+        agent_id=leader.id,
+        status="claimed",
+        executor_owner_user_id=scenario.execution.executor_owner_user_id,
+        runtime_task_id=values.manager_runtime_task_id,
+        execution_payload=json.dumps(
+            {
+                "origin_context": {
+                    "dispatch_role": "manager",
+                    "dispatch_id": values.dispatch_id,
+                    "collaboration_dispatch_execution_id": scenario.execution.id,
+                    "comment_trigger_message_id": trigger.message_id,
+                }
+            }
+        ),
+    )
+    test_db.add_all([trigger, reply])
+    test_db.flush()
+    reply_turn = f"{reply.runtime_task_id}-execution-{reply.id}"
     for turn_id, detail in [
         ("initial-turn", "Manager turn does not follow the current round"),
         (next_id, "Assigned work is still pending"),
+        (reply_turn, "Assigned work is still pending"),
+        (
+            f"wrong-session-execution-{reply.id}",
+            "Manager turn does not follow the current round",
+        ),
     ]:
         with pytest.raises(HTTPException) as gated:
             submit(
@@ -737,6 +777,16 @@ def test_server_round_replays_human_receipt_and_rejects_changed_list(
                 )
             )
         assert gated.value.detail == detail
+    intent = reply.execution_intent
+    intent["origin_context"]["comment_trigger_message_id"] = old_trigger.message_id
+    reply.execution_payload = json.dumps(intent)
+    with pytest.raises(HTTPException) as stale:
+        submit(
+            values.model_copy(
+                update={"round_id": "round:2", "manager_turn_id": reply_turn}
+            )
+        )
+    assert stale.value.detail == "Manager turn does not follow the current round"
     execution_id = receipt["agent_assignments"][0]["execution_id"]
     assert test_db.get(LoopItemExecution, execution_id).agent_id == worker.id
     assert submit(values) == receipt

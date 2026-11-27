@@ -253,7 +253,9 @@ def apply_collaboration_manager_decision(
             and manager_runtime_task_id == root.metadata_json.get("last_manager_run")
         ):
             raise HTTPException(409, "Manager turn already submitted assignments")
-        require_finished_batch(db, root, item, None if turn_scope else manager_turn_id)
+        require_finished_batch(
+            db, root, item, None if turn_scope else manager_turn_id, dispatch
+        )
     if not manager:
         require_open_round(db, root, item, round_id)
     existing_comment = (

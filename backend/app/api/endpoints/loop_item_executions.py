@@ -555,7 +555,11 @@ def admit_collaboration_batch(
         ):
             raise HTTPException(409, "Manager turn is closed")
         require_finished_batch(
-            db, root, item, None if turn_scope else values.manager_turn_id
+            db,
+            root,
+            item,
+            None if turn_scope else values.manager_turn_id,
+            manager_execution,
         )
     elif root is not None:
         require_open_round(db, root, item, values.round_id)

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -210,11 +211,56 @@ def require_open_round(
     require_finished_batch(db, root, item)
 
 
+def _is_current_manager_reply(
+    db: Session, activity: ProjectChatMessage, dispatch: LoopItemExecution, turn: str
+) -> bool:
+    """A device reply has a queue execution ID and an admitted Issue comment."""
+    from app.services.loop_item_executions.runtime_identity import (
+        execution_runtime_turn_id,
+    )
+
+    suffix = re.search(r"-execution-([1-9][0-9]{0,18})\Z", turn)
+    if not suffix or (execution_id := int(suffix[1])) >= 2**63:
+        return False
+    reply = db.get(LoopItemExecution, execution_id)
+    if (
+        reply is None
+        or reply.cloud_project_id != activity.project_id
+        or reply.loop_item_id != activity.task_id
+        or reply.agent_id != activity.agent_id
+        or reply.executor_owner_user_id != dispatch.executor_owner_user_id
+        or reply.status not in {"claimed", "running"}
+        or execution_runtime_turn_id(reply) != turn
+    ):
+        return False
+    origin = reply.runtime_origin_context
+    if (
+        origin.get("dispatch_role") != "manager"
+        or origin.get("collaboration_dispatch_execution_id") != dispatch.id
+        or origin.get("dispatch_id") != activity.metadata_json["dispatch_id"]
+        or not origin.get("comment_trigger_message_id")
+    ):
+        return False
+    return (
+        db.query(ProjectChatMessage.id)
+        .filter_by(
+            project_id=activity.project_id,
+            task_id=activity.task_id,
+            message_id=origin["comment_trigger_message_id"],
+            sender_type="user",
+        )
+        .filter(ProjectChatMessage.id > activity.id)
+        .scalar()
+        is not None
+    )
+
+
 def require_finished_batch(
     db: Session,
     root: ProjectChatMessage,
     item: LoopItem,
     device_turn: str | None = None,
+    dispatch: LoopItemExecution | None = None,
 ) -> None:
     last_batch = root.metadata_json.get("last_batch")
     if last_batch:
@@ -229,7 +275,10 @@ def require_finished_batch(
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
-            if hashlib.sha256(identity.encode()).hexdigest() != device_turn:
+            if hashlib.sha256(identity.encode()).hexdigest() != device_turn and not (
+                dispatch
+                and _is_current_manager_reply(db, activity, dispatch, device_turn)
+            ):
                 raise HTTPException(
                     409, "Manager turn does not follow the current round"
                 )

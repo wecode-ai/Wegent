@@ -1491,7 +1491,8 @@ impl RuntimeWorkRpcHandler {
             && was_busy
             && !start_new_session
             && existing_link.as_ref().is_some_and(|link| {
-                is_codex_runtime(&link.runtime) && stand_in_guidance_during_interaction(link)
+                is_codex_runtime(&link.runtime)
+                    && stand_in_guidance_during_interaction(link, owner_input)
             });
         let automatic_stand_in_waiting = payload["automaticStandIn"] == true
             && existing_link.as_ref().is_some_and(|link| {
@@ -2551,7 +2552,7 @@ impl RuntimeWorkRpcHandler {
         }
         if preserve_interaction
             && self.store.read_task(&local_task_id, |link| {
-                !stand_in_guidance_during_interaction(link)
+                !stand_in_guidance_during_interaction(link, owner_input)
             }) == Some(true)
         {
             return Ok(json!({"accepted":false,"code":"user_input_pending"}));
@@ -2645,7 +2646,7 @@ impl RuntimeWorkRpcHandler {
                 }
                 if preserve_interaction
                     && self.store.read_task(&local_task_id, |link| {
-                        !stand_in_guidance_during_interaction(link)
+                        !stand_in_guidance_during_interaction(link, owner_input)
                     }) == Some(true)
                 {
                     return Ok(json!({"accepted":false,"code":"user_input_pending"}));
@@ -3892,11 +3893,14 @@ fn stand_in_waiting_for_user() -> Value {
     json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"})
 }
 
-fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink) -> bool {
-    matches!(
-        link.interaction_status.as_deref(),
-        None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
-    )
+fn stand_in_guidance_during_interaction(link: &RuntimeTaskLink, owner_input: bool) -> bool {
+    // A result turn acts for its originating delegation. Queue a new owner
+    // message with its own command identity so it can start independent work.
+    !(owner_input && link.runtime_handle["executionRequest"]["standInRoleResultRoot"].is_string())
+        && matches!(
+            link.interaction_status.as_deref(),
+            None | Some(INTERACTION_WAITING_FOR_USER_INPUT)
+        )
 }
 
 #[cfg(test)]
