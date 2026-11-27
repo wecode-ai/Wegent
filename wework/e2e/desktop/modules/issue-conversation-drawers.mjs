@@ -257,6 +257,16 @@ async function verifyWorkspaceTabSwitchPreservesIssueDraft(control, scope, timeo
     JSON.stringify({ boardTab, draft, originalTitle, taskTab }, null, 2)
   )
 
+  if (
+    Number(
+      await control.command('getElementCount', `${description}[contenteditable="true"]`, {
+        visible: true,
+      })
+    ) === 0
+  ) {
+    await control.command('click', editDescription)
+    await control.command('waitFor', `${description}[contenteditable="true"]`, { visible: true })
+  }
   await control.command('selectText', description, { value: draft })
   await control.command('pasteText', description, { value: originalDescription })
   await control.command('waitFor', save, { visible: false, timeoutMs })
