@@ -3,7 +3,7 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
     project_role, role_project_matches, role_receives_participating_issues, stand_in_connection,
-    stand_in_identities, DINGTALK_PROVIDER,
+    stand_in_identities, VerifiedPersonalSettings, DINGTALK_PROVIDER,
 };
 
 fn active_dingtalk_delegation(primary: &Value) -> bool {
@@ -607,6 +607,22 @@ impl RuntimeWorkRpcHandler {
                         json!({"roleId":id,"definition":definition});
                 }
             }
+            let owned_team = payload.get("ownedTeam");
+            if owned_team.is_some() {
+                self.verify_local_stand_in_owner(user)?;
+                if user != 0 && !workspace_owner {
+                    return Err(AppIpcError::new(
+                        "permission_denied",
+                        "Connect the Team owner account to configure local grants",
+                    ));
+                }
+                if payload.get("transferRoleId").is_some() {
+                    return Err(AppIpcError::new(
+                        "bad_request",
+                        "Configure local grants after the Team transfer",
+                    ));
+                }
+            }
             let normalized = store
                 .validate_personal_settings_for_device_owner(
                     user,
@@ -628,8 +644,11 @@ impl RuntimeWorkRpcHandler {
                     &self.device_id,
                     connection.as_ref().map(|entry| entry.backend_url.as_str()),
                     settings,
-                    verified_account.as_ref(),
-                    workspace_owner,
+                    VerifiedPersonalSettings {
+                        account: verified_account.as_ref(),
+                        workspace_owner,
+                        owned_team,
+                    },
                 )
                 .map_err(settings_error)?;
             Ok(saved)

@@ -2,7 +2,7 @@
 use super::stand_in::settings_error;
 use super::*;
 
-fn stand_in_owner(origin: &Value) -> Option<i64> {
+pub(super) fn stand_in_owner(origin: &Value) -> Option<i64> {
     (origin["initiatedBy"] == "stand_in"
         || matches!(
             origin["type"].as_str(),

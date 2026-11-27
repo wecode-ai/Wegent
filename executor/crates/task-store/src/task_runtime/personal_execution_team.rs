@@ -199,6 +199,76 @@ fn portable(value: &Value) -> Result<Value, TaskRuntimeError> {
     Ok(definition)
 }
 
+pub(super) fn owned_role_reference(
+    user: i64,
+    device: &str,
+    settings: &Value,
+    role_id: &str,
+) -> Result<String, TaskRuntimeError> {
+    let unavailable =
+        || TaskRuntimeError::Invalid("Personal Team unavailable for this role and device".into());
+    let role = stand_in_identities(settings)
+        .into_iter()
+        .find(|role| role["id"] == role_id && role["executionDeviceId"] == device)
+        .ok_or_else(unavailable)?;
+    let reference = identity_ref(user, role_id, &role);
+    if role["teamRef"] != reference {
+        return Err(unavailable());
+    }
+    Ok(reference)
+}
+
+/// Configure grants only on the selected owner's device-local role Team.
+pub(super) fn replace_bot_grants(
+    connection: &Connection,
+    user: i64,
+    reference: &str,
+    input: &Value,
+) -> Result<(), TaskRuntimeError> {
+    let invalid =
+        || TaskRuntimeError::Invalid("Invalid personal Bot grants or Team identity".into());
+    let mut definition = definition(connection, user, reference)?;
+    let bots = definition["bot"].as_array_mut().ok_or_else(invalid)?;
+    let grants = input["botGrants"].as_array().ok_or_else(invalid)?;
+    let mut entries = std::collections::HashMap::new();
+    for grant in grants {
+        let id = grant.get("id").ok_or_else(invalid)?.to_string();
+        if entries.insert(id, grant).is_some()
+            || !grant
+                .as_object()
+                .ok_or_else(invalid)?
+                .iter()
+                .all(|(key, v)| match key.as_str() {
+                    "id" => v.is_string() || v.is_i64(),
+                    "skills" => v.as_array().is_some_and(|v| v.iter().all(Value::is_string)),
+                    "skill_refs" | "mcp_servers" => v.is_object(),
+                    _ => false,
+                })
+        {
+            return Err(invalid());
+        }
+    }
+    let mut used = HashSet::new();
+    for bot in bots {
+        used.insert(bot["id"].to_string());
+        let grant = entries.get(&bot["id"].to_string()).ok_or_else(invalid)?;
+        let fields = bot.as_object_mut().ok_or_else(invalid)?;
+        for key in ["skills", "skill_refs", "mcp_servers"] {
+            if let Some(v) = grant.get(key) {
+                fields.insert(key.into(), v.clone());
+            } else {
+                fields.remove(key);
+            }
+        }
+        fields.insert("native_capability_scope".into(), json!("bot"));
+    }
+    if used.len() != entries.len() {
+        return Err(invalid());
+    }
+    definition["imported"] = json!(true);
+    write_definition(connection, user, reference, &definition)
+}
+
 pub(super) fn import_transfer(
     connection: &Connection,
     user: i64,
@@ -319,6 +389,18 @@ impl LocalTaskStore {
         Ok(reference)
     }
 
+    pub fn owned_personal_role_team(
+        &self,
+        user: i64,
+        device: &str,
+        role_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let settings = read_personal(&connection, user, device)?;
+        let reference = owned_role_reference(user, device, &settings, role_id)?;
+        definition(&connection, user, &reference)
+    }
+
     pub fn personal_execution_team(
         &self,
         user: i64,
@@ -395,6 +477,48 @@ mod tests {
             reopened.personal_execution_team(7, &reference).unwrap()["bot"][0]["id"],
             "review"
         );
+    }
+
+    #[test]
+    fn owner_grants_commit_atomically_and_cannot_be_transferred() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "target").unwrap();
+        settings["roles"] = json!([empty_role("review", "target")]);
+        let saved = store.save_personal_stand_in(7, "target", settings).unwrap();
+        let reference = saved["roles"][0]["teamRef"].as_str().unwrap();
+        let id = store.personal_execution_team(7, reference).unwrap()["bot"][0]["id"].clone();
+        let grant = json!({"id":id,"skills":["check"],"skill_refs":{"check":{"skill_id":12}},
+            "mcp_servers":{"check":{"url":"https://example.invalid/mcp","headers":{"X-Test":"private"}}}});
+        let save = |value: Value, grants: Value| {
+            store.save_verified_personal_settings(
+                7,
+                "target",
+                None,
+                value,
+                VerifiedPersonalSettings {
+                    workspace_owner: true,
+                    owned_team: Some(&json!({"roleId":"review","botGrants":grants})),
+                    ..Default::default()
+                },
+            )
+        };
+        for invalid in [json!([grant, grant]), json!([{"id":"missing"}])] {
+            assert!(save(saved.clone(), invalid).is_err());
+            assert_eq!(
+                store.personal_stand_in(7, "target").unwrap()["version"],
+                saved["version"]
+            );
+        }
+        let current = save(saved, json!([grant])).unwrap();
+        let reference = current["roles"][0]["teamRef"].as_str().unwrap();
+        assert_eq!(
+            store.personal_execution_team(7, reference).unwrap()["bot"][0]["skill_refs"]["check"]
+                ["skill_id"],
+            12
+        );
+        assert!(store.personal_execution_team(8, reference).is_err());
+        assert!(store.portable_personal_team(7, "target", "review").is_err());
     }
 
     #[test]

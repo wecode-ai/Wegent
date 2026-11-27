@@ -5,6 +5,16 @@ use wegent_protocol::pipeline::handoff_text;
 
 const STATE: &str = "personalPipeline";
 
+pub(super) fn strip_personal_bot_mcp(bots: &mut Value) {
+    for bot in bots.as_array_mut().into_iter().flatten() {
+        if bot["native_capability_scope"] == "bot" {
+            if let Some(fields) = bot.as_object_mut() {
+                fields.remove("mcp_servers");
+            }
+        }
+    }
+}
+
 fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String, AppIpcError> {
     let invalid = || AppIpcError::new("invalid_team_stage", "Personal Team stage is unavailable");
     let stage = state["stage"].as_u64().ok_or_else(invalid)? as usize;
@@ -56,6 +66,67 @@ fn stage_request(request: &mut ExecutionRequest, state: &Value) -> Result<String
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn restore_personal_bot_grants(
+        &self,
+        task: &str,
+        request: &mut ExecutionRequest,
+    ) -> Result<(), AppIpcError> {
+        if request.bot[0]["native_capability_scope"] != "bot"
+            || !request
+                .extra
+                .get("team_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.starts_with("stand-in-team-"))
+        {
+            return Ok(());
+        }
+        let denied =
+            || AppIpcError::new("permission_denied", "Personal Team binding is unavailable");
+        let link = self.local_task_link(task).ok_or_else(denied)?;
+        let origin = &link.runtime_handle["origin"];
+        let user = super::stand_in_lifecycle::stand_in_owner(origin).ok_or_else(denied)?;
+        if request.extra.get("user_id").and_then(Value::as_i64) != Some(user) {
+            return Err(denied());
+        }
+        self.verify_local_stand_in_owner(user)?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref())
+            .map_err(super::stand_in::settings_error)?;
+        let role = origin["standInId"].as_str().unwrap_or("@primary");
+        let current = store
+            .owned_personal_role_team(user, &self.device_id, role)
+            .map_err(super::stand_in::settings_error)?;
+        if request.extra.get("team_ref") != current.get("id") {
+            return Err(denied());
+        }
+        let current_bots = current["bot"].as_array().ok_or_else(denied)?;
+        let stage = if let Some(marker) = request.extra.get("personalPipelineTurn") {
+            let saved = &link.runtime_handle[STATE];
+            if *marker != json!([saved["root"], saved["stage"]]) {
+                return Err(denied());
+            }
+            Some(marker[1].as_u64().ok_or_else(denied)? as usize)
+        } else {
+            None
+        };
+        let bots = request.bot.as_array_mut().ok_or_else(denied)?;
+        if bots.len() != stage.map_or(current_bots.len(), |_| 1) {
+            return Err(denied());
+        }
+        for (index, target) in bots.iter_mut().enumerate() {
+            let bot = current_bots
+                .get(stage.unwrap_or(index))
+                .filter(|bot| bot["id"] == target["id"])
+                .ok_or_else(denied)?;
+            for key in ["skills", "skill_refs", "mcp_servers"] {
+                target.as_object_mut().expect("validated Bot").remove(key);
+                if let Some(value) = bot.get(key) {
+                    target[key] = value.clone();
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn begin_personal_pipeline(
         &self,
         turn: &mut SpawnTurnRequest,
@@ -113,6 +184,12 @@ impl RuntimeWorkRpcHandler {
         turn.resume_thread_id = None;
         turn.direct_thread_id = None;
         let mut members = request.bot.clone();
+        if request.extra["team_ref"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("stand-in-team-"))
+        {
+            strip_personal_bot_mcp(&mut members);
+        }
         redact_execution_profile_secrets(&mut members);
         let state = json!({"root":request.subtask_id,"stage":0,"phase":"active","members":members,"original":request.prompt,"instructions":request.system_prompt});
         let mut state = state;
@@ -376,6 +453,23 @@ mod tests {
             .save_personal_stand_in(7, "device-1", settings)
             .unwrap();
         let reference = saved["roles"][0]["teamRef"].as_str().unwrap();
+        let grants = json!({"roleId":"copied","botGrants":[
+            {"id":"a","mcp_servers":{"probe":{"headers":{"X-Test-Token":"first"}}}},
+            {"id":"b","mcp_servers":{"probe":{"headers":{"X-Test-Token":"second"}}}}
+        ]});
+        store
+            .save_verified_personal_settings(
+                7,
+                "device-1",
+                None,
+                saved.clone(),
+                crate::task_runtime::personal_stand_in::VerifiedPersonalSettings {
+                    workspace_owner: true,
+                    owned_team: Some(&grants),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         let team = store.personal_execution_team(7, reference).unwrap();
         let origin = json!({"type":"stand_in_identity","deviceId":"device-1","userId":7,"standInId":"copied"});
         let request:ExecutionRequest = serde_json::from_value(json!({
@@ -401,6 +495,19 @@ mod tests {
         first.bind_task_kind(&handler.store);
         handler.begin_personal_pipeline(&mut first).unwrap();
         assert_eq!(first.request.bot.as_array().unwrap().len(), 1);
+        handler
+            .restore_personal_bot_grants("personal", &mut first.request)
+            .unwrap();
+        assert_eq!(
+            first.request.bot[0]["mcp_servers"]["probe"]["headers"]["X-Test-Token"],
+            "first"
+        );
+        assert!(!handler
+            .local_task_link("personal")
+            .unwrap()
+            .runtime_handle
+            .to_string()
+            .contains("X-Test-Token"));
         assert!(handler.settle_personal_pipeline(
             "personal",
             &first.request,
@@ -425,7 +532,7 @@ mod tests {
                 .is_err());
             handler.send_message_from_owner(json!({"taskId":"personal","action":"pipeline:confirm","expectedStage":["root",0]}),true).await.unwrap();
         }
-        let next = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        let mut next = tokio::time::timeout(std::time::Duration::from_secs(3), async {
             loop {
                 if let Some(turn) = handler
                     .turn_scheduler
@@ -448,6 +555,13 @@ mod tests {
         assert!(next.request.new_session);
         assert_eq!(next.request.prompt, "Previous stage output:\nfinding");
         assert_eq!(next.request.bot[0]["id"], "b");
+        handler
+            .restore_personal_bot_grants("personal", &mut next.request)
+            .unwrap();
+        assert_eq!(
+            next.request.bot[0]["mcp_servers"]["probe"]["headers"]["X-Test-Token"],
+            "second"
+        );
         assert_eq!(next.request.system_prompt, "review");
         assert!(!handler.settle_personal_pipeline(
             "personal",

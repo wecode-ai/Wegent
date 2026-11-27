@@ -594,6 +594,13 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
         .unwrap_or_else(|| json!({"automatic":role["enabled"] == true,"askBeforeAct":false}))
 }
 
+#[derive(Default)]
+pub struct VerifiedPersonalSettings<'a> {
+    pub account: Option<&'a Value>,
+    pub workspace_owner: bool,
+    pub owned_team: Option<&'a Value>,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct StandInSaveOptions<'a> {
     pub(super) direct_save: bool,
@@ -716,7 +723,16 @@ impl LocalTaskStore {
         value: Value,
         verified_account: Option<&Value>,
     ) -> Result<Value, TaskRuntimeError> {
-        self.save_verified_personal_settings(user, device, backend, value, verified_account, false)
+        self.save_verified_personal_settings(
+            user,
+            device,
+            backend,
+            value,
+            VerifiedPersonalSettings {
+                account: verified_account,
+                ..Default::default()
+            },
+        )
     }
 
     pub fn save_verified_personal_settings(
@@ -725,16 +741,28 @@ impl LocalTaskStore {
         device: &str,
         backend: Option<&str>,
         value: Value,
-        verified_account: Option<&Value>,
-        workspace_owner: bool,
+        verified: VerifiedPersonalSettings<'_>,
     ) -> Result<Value, TaskRuntimeError> {
-        if value["primary"]["delegation"]["action"] == "prepare" && verified_account.is_none() {
+        if value["primary"]["delegation"]["action"] == "prepare" && verified.account.is_none() {
             return Err(TaskRuntimeError::Invalid(
                 "Verify the selected DingTalk account before preparing delegation".into(),
             ));
         }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(team) = verified.owned_team {
+            let role_id = team["roleId"].as_str().ok_or_else(|| {
+                TaskRuntimeError::Invalid("Missing personal role identity".into())
+            })?;
+            let previous = read_personal(&connection, user, device)?;
+            let reference = execution_team::owned_role_reference(user, device, &previous, role_id)?;
+            if reference != execution_team::owned_role_reference(user, device, &value, role_id)? {
+                return Err(TaskRuntimeError::Invalid(
+                    "Configure grants on the currently bound Team".into(),
+                ));
+            }
+            execution_team::replace_bot_grants(&connection, user, &reference, team)?;
+        }
         let saved = self.save_personal_stand_in_on(
             &connection,
             user,
@@ -742,8 +770,8 @@ impl LocalTaskStore {
             value,
             StandInSaveOptions {
                 direct_save: true,
-                workspace_owner,
-                verified_account,
+                workspace_owner: verified.workspace_owner,
+                verified_account: verified.account,
                 backend,
             },
         )?;

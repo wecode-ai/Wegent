@@ -543,6 +543,11 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
     persisted.auth_token = None;
     persisted.runtime_auth_token = None;
     persisted.skill_identity_token = None;
+    if persisted.extra.get("team_ref").and_then(Value::as_str)
+        .is_some_and(|id| id.starts_with("stand-in-team-"))
+    {
+        personal_pipeline::strip_personal_bot_mcp(&mut persisted.bot);
+    }
     redact_execution_profile_secrets(&mut persisted.bot);
     redact_execution_profile_secrets(&mut persisted.model_config);
     for server in &mut persisted.mcp_servers {

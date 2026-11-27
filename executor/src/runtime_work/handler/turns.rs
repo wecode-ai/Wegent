@@ -1776,7 +1776,10 @@ impl RuntimeWorkRpcHandler {
         {
             turn.request.runtime_auth_token = None;
         }
-        if let Err(error) = self.validate_stand_in_lifecycle(&turn.request, &turn.local_task_id) {
+        if let Err(error) = self
+            .validate_stand_in_lifecycle(&turn.request, &turn.local_task_id)
+            .and_then(|()| self.restore_personal_bot_grants(&turn.local_task_id, &mut turn.request))
+        {
             self.retain_failed_runtime_task(&turn.local_task_id, &error);
             let handler = self.clone();
             tokio::spawn(async move {
