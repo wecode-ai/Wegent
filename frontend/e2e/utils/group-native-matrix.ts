@@ -144,6 +144,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
                     arguments: {
                       subagent_type: type,
                       description: 'Review',
+                      run_in_background: true,
                       prompt: 'Inspect the release notes.',
                     },
                   }
@@ -159,7 +160,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
             ],
           },
           ...(claude
-            ? []
+            ? [{ responseContent: 'Waiting for the delegated review.' }]
             : [{ toolCalls: [{ toolName: 'wait_agent', arguments: { timeout_ms: 10000 } }] }]),
           { responseContent: final },
         ])
