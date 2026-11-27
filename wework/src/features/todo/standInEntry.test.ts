@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { renderHook, waitFor } from '@testing-library/react'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { parseStandInEntry, resolveStandInEntry } from './standInEntry'
+import { useStandInEntry } from './useStandInEntry'
 
 const binding = { userId: 7, deviceId: 'primary', backendUrl: 'https://wework.example' }
 
@@ -30,6 +32,30 @@ function resolve(query: string, api = fixture(), devices = ['remote']) {
 }
 
 describe('stand-in entry links', () => {
+  it('keeps the verified settings target mounted while returning to the same tab', async () => {
+    const api = fixture()
+    const devices = new Set(['remote'])
+    const route = '/stand-in?deviceId=remote&profileId=reviewer&settingsRequest=1'
+    const { result, rerender } = renderHook(
+      ({ active, request }) =>
+        useStandInEntry(route, api, { ...binding }, devices, active, request),
+      { initialProps: { active: true, request: 1 } }
+    )
+    const authorized = { kind: 'ready', deviceId: 'remote', profileId: 'reviewer' }
+    await waitFor(() => expect(result.current.result).toEqual(authorized))
+    api.personalGet.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('Permission revoked'), { code: 'permission_denied' })
+    })
+
+    rerender({ active: false, request: 1 })
+    rerender({ active: true, request: 2 })
+
+    expect(result.current.result).toEqual(authorized)
+    await waitFor(() =>
+      expect(result.current.result).toEqual({ kind: 'error', error: 'forbidden' })
+    )
+  })
+
   it('keeps an assistant settings request and a conversation target distinct', () => {
     expect(parseStandInEntry('/stand-in?view=messages')).toEqual({ kind: 'home', scheduled: false })
     expect(

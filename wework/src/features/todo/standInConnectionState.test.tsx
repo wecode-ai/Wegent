@@ -47,16 +47,9 @@ it.each([true, false])(
         ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
     } as unknown as WorkbenchServices
     const { result } = renderHook(() =>
-      useStandInInstance(
-        services,
-        account.userId,
-        devices,
-        true,
-        true,
-        account.backendUrl,
-        undefined,
-        requireSetupConfirmation
-      )
+      useStandInInstance(services, account.userId, devices, true, true, account.backendUrl, {
+        requireSetupConfirmation,
+      })
     )
 
     if (requireSetupConfirmation) {
@@ -71,6 +64,50 @@ it.each([true, false])(
     expect(lifecycle).toHaveBeenCalledExactlyOnceWith(account.userId, 'local', 'start')
   }
 )
+
+it.each([
+  ['local', 'local'],
+  ['unknown', 'cloud'],
+])('initializes a legacy device-only entry for %s on %s', async (requested, expected) => {
+  const settings: PersonalStandInSettings = {
+    version: 0,
+    executionDeviceId: 'local',
+    userId: account.userId,
+    roles: [],
+  }
+  const binding = vi
+    .fn<StandInExecutorApi['binding']>()
+    .mockResolvedValueOnce({ status: 'unbound', version: 0, target: null })
+    .mockImplementationOnce(async (_id, _action, _version, target) => ({
+      status: 'active',
+      version: 1,
+      target: target ?? null,
+    }))
+  const services = {
+    standInApi: { binding, lifecycle: async () => settings, personalGet: async () => settings },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const cloudDevices: DeviceInfo[] = [
+    {
+      id: 2,
+      device_id: 'cloud',
+      name: 'Cloud',
+      device_type: 'cloud',
+      bind_shell: 'claudecode',
+      status: 'online',
+      is_default: true,
+    },
+  ]
+  const { result } = renderHook(() =>
+    useStandInInstance(services, account.userId, cloudDevices, true, true, account.backendUrl, {
+      requireSetupConfirmation: false,
+      legacyEntryDeviceId: requested,
+    })
+  )
+
+  await waitFor(() => expect(result.current.binding?.status).toBe('active'))
+  expect(result.current.binding?.target).toEqual({ ...account, deviceId: expected })
+})
 
 it('keeps old inbox items hidden while the same owner and device load on a new connection', async () => {
   const item: StandInInboxWork = {

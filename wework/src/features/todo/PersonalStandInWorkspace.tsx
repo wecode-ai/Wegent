@@ -155,8 +155,12 @@ function AccountStandInWorkspace({
     !!cloud?.isConnected,
     active,
     backendUrl,
-    refreshKey,
-    experienceEnabled
+    {
+      entryRequestKey: refreshKey,
+      requireSetupConfirmation: experienceEnabled,
+      legacyEntryDeviceId:
+        !experienceEnabled && query.size === 1 ? (query.get('deviceId') ?? undefined) : undefined,
+    }
   )
   const { binding, setupTarget, localDeviceId, busy } = instance
   const target = binding?.target

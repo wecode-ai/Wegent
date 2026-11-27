@@ -12,8 +12,15 @@ export function useStandInInstance(
   connected: boolean,
   active: boolean,
   backendUrl = '',
-  entryRequestKey?: number,
-  requireSetupConfirmation = true
+  {
+    entryRequestKey,
+    requireSetupConfirmation = true,
+    legacyEntryDeviceId,
+  }: {
+    entryRequestKey?: number
+    requireSetupConfirmation?: boolean
+    legacyEntryDeviceId?: string
+  } = {}
 ) {
   const api = services.standInApi
   const source = useMemo(
@@ -23,8 +30,11 @@ export function useStandInInstance(
   )
   const subscribe = useCallback(
     (listener: () => void) =>
-      source.subscribe({ devices, connected, active, entryRequestKey }, listener),
-    [source, devices, connected, active, entryRequestKey]
+      source.subscribe(
+        { devices, connected, active, entryRequestKey, legacyEntryDeviceId },
+        listener
+      ),
+    [source, devices, connected, active, entryRequestKey, legacyEntryDeviceId]
   )
   const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
   return {

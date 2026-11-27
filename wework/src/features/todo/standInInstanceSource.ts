@@ -24,6 +24,7 @@ interface InstanceObservation {
   connected: boolean
   active: boolean
   entryRequestKey?: number
+  legacyEntryDeviceId?: string
 }
 export const hasSavedStandIn = (settings: PersonalStandInSettings) =>
   Boolean(
@@ -90,7 +91,11 @@ export function createStandInInstanceSource({
     const target = {
       userId,
       backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
-      deviceId: hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId),
+      deviceId:
+        hasSavedStandIn(owned) ||
+        (!requireSetupConfirmation && owner.legacyEntryDeviceId === deviceId)
+          ? deviceId
+          : (preferred?.device_id ?? deviceId),
     }
     return target
   }
@@ -289,6 +294,7 @@ export function createStandInInstanceSource({
         previous.active !== owner.active ||
         previous.connected !== owner.connected ||
         previous.devices !== owner.devices ||
+        previous.legacyEntryDeviceId !== owner.legacyEntryDeviceId ||
         previous.entryRequestKey !== owner.entryRequestKey
       if (!previous || previous.active !== owner.active) activation++
       if (changed) {
