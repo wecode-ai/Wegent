@@ -116,10 +116,16 @@ async fn result(
     packet(stream, sequence, &[0xfe, 0, 0, status, 0]).await;
 }
 
-async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<String>>>) {
+async fn connection(
+    mut stream: TcpStream,
+    rows: Rows,
+    queries: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<super::Query>>>,
+) {
     stream.set_nodelay(true).unwrap();
     handshake(&mut stream).await;
     let mut statements = HashMap::new();
+    let mut bound_types = HashMap::<u32, Vec<u8>>::new();
     let mut status = 2;
     while let Some(request) = read_packet(&mut stream).await {
         match request[0] {
@@ -149,6 +155,14 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
                 let id = u32::from_le_bytes(request[1..5].try_into().unwrap());
                 let query = &statements[&id];
                 queries.lock().unwrap().push(query.clone());
+                let parameters = query.bytes().filter(|byte| *byte == b'?').count();
+                let first_integer =
+                    first_bound_integer(&request, parameters, bound_types.entry(id).or_default());
+                requests.lock().unwrap().push(super::Query {
+                    sql: query.clone(),
+                    args: parameters,
+                    first_integer,
+                });
                 let (columns, results) = rows(query);
                 if columns.is_empty() && query.starts_with("UPDATE ") {
                     packet(&mut stream, 1, &[0, 1, 0, status, 0, 0, 0]).await;
@@ -159,6 +173,11 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
             0x19 => {}
             0x03 => {
                 let sql = String::from_utf8_lossy(&request[1..]);
+                requests.lock().unwrap().push(super::Query {
+                    sql: sql.to_string(),
+                    args: 0,
+                    first_integer: None,
+                });
                 if is_text_read(&sql) {
                     queries.lock().unwrap().push(sql.to_string());
                     let (columns, results) = rows(&sql);
@@ -185,6 +204,7 @@ pub struct MysqlRows {
     pub url: String,
     server: tokio::task::JoinHandle<()>,
     queries: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<super::Query>>>,
 }
 
 impl MysqlRows {
@@ -205,12 +225,16 @@ impl MysqlRows {
         let rows: Rows = Arc::new(rows);
         let queries = Arc::new(Mutex::new(Vec::new()));
         let captured = queries.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = requests.clone();
         let server = tokio::spawn(async move {
             let mut connections = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     accepted = listener.accept() => {
-                        connections.spawn(connection(accepted.unwrap().0, rows.clone(), captured.clone()));
+                        connections.spawn(connection(
+                            accepted.unwrap().0, rows.clone(), captured.clone(), captured_requests.clone(),
+                        ));
                     }
                     completed = connections.join_next(), if !connections.is_empty() => {
                         completed.unwrap().unwrap();
@@ -223,11 +247,68 @@ impl MysqlRows {
             url,
             server,
             queries,
+            requests,
         }
     }
 
     pub fn queries(&self) -> Vec<String> {
         self.queries.lock().unwrap().clone()
+    }
+
+    pub fn requests(&self) -> Vec<super::Query> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+/// COM_STMT_EXECUTE's first parameter when integer and non-null, including cached types.
+fn first_bound_integer(request: &[u8], parameters: usize, types: &mut Vec<u8>) -> Option<i64> {
+    if parameters == 0 {
+        return None;
+    }
+    let bitmap = parameters.div_ceil(8);
+    let mut value = 10 + bitmap + 1;
+    if *request.get(10 + bitmap)? == 1 {
+        *types = request.get(value..value + 2 * parameters)?.to_vec();
+        value += 2 * parameters;
+    }
+    if request.get(10)? & 1 != 0 {
+        return None;
+    }
+    let unsigned = types.get(1)? & 0x80 != 0;
+    match types.first()? {
+        8 => {
+            let bytes = request.get(value..value + 8)?.try_into().ok()?;
+            if unsigned {
+                u64::from_le_bytes(bytes).try_into().ok()
+            } else {
+                Some(i64::from_le_bytes(bytes))
+            }
+        }
+        3 => {
+            let bytes = request.get(value..value + 4)?.try_into().ok()?;
+            Some(if unsigned {
+                u32::from_le_bytes(bytes).into()
+            } else {
+                i32::from_le_bytes(bytes).into()
+            })
+        }
+        2 => {
+            let bytes = request.get(value..value + 2)?.try_into().ok()?;
+            Some(if unsigned {
+                u16::from_le_bytes(bytes).into()
+            } else {
+                i16::from_le_bytes(bytes).into()
+            })
+        }
+        1 => {
+            let byte = *request.get(value)?;
+            Some(if unsigned {
+                byte.into()
+            } else {
+                i8::from_le_bytes([byte]).into()
+            })
+        }
+        _ => None,
     }
 }
 

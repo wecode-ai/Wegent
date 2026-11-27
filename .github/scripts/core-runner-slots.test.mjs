@@ -142,11 +142,18 @@ for (const [platform, balance, script, args] of [
     }
     for (const id of ["core-9", "core-10"]) {
       const originalShard = original.include.find((entry) => entry.id === id);
+      const actual = result.include.find((entry) => entry.id === id);
+      if (platform === "Linux" && id === "core-9") {
+        assert.equal(actual.segments.split(",")[0], "human-interactions-hidden");
+        assert.equal(isResourceExclusiveCheckpoint("human-interactions-hidden", true), true);
+        assert.ok(actual.segments.includes(","), "Core 9 should receive parallel work after its prefix");
+        continue;
+      }
       const expected = platform === "Linux"
         ? { ...originalShard, segments: originalShard.segments.split(",")[0] }
         : originalShard;
       assert.deepEqual(
-        result.include.find((entry) => entry.id === id),
+        actual,
         expected,
       );
     }

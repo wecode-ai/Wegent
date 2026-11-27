@@ -123,7 +123,8 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "build_wegent_cargo_in_target --manifest-path \"$EXECUTOR_DIR/Cargo.toml\" --bin wegent-executor"
     ));
     let cargo_cache = fs::read_to_string("../scripts/lib/cargo-cache.sh").unwrap();
-    assert!(cargo_cache.contains("env -u CARGO_TARGET_DIR cargo build --target-dir"));
+    assert!(cargo_cache
+        .contains("env -u CARGO_TARGET_DIR cargo build --target-dir \"$CARGO_TARGET_DIR\" \"$@\""));
     assert!(
         dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor-dev\"")
     );

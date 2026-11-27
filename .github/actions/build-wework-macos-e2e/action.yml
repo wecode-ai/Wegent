@@ -26,6 +26,9 @@ outputs:
   executor-bin:
     description: Shared macOS build result.
     value: ${{ steps.configure.outputs.executor-bin }}
+  executor-built-during-packaging:
+    description: Whether packaging compiled an Executor instead of using a restored binary.
+    value: ${{ steps.package.outputs.executor-built }}
   backend-rs-bin:
     description: Shared macOS build result.
     value: ${{ steps.configure.outputs.backend-rs-bin }}
@@ -144,7 +147,11 @@ runs:
         runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
         executor_references=("$EXECUTOR_SOURCE_REF" "$EXECUTOR_HEAD_REF")
         if [[ -n "$CACHE_PR_NUMBER" ]]; then
-          executor_references+=("$EXECUTOR_SOURCE_REF-pr-$CACHE_PR_NUMBER")
+          if [[ "$INCLUDE_BACKEND" == "true" ]]; then
+            executor_references+=("$EXECUTOR_SOURCE_REF-pr-$CACHE_PR_NUMBER")
+          else
+            executor_references+=("$EXECUTOR_SOURCE_REF-opt0-pr-$CACHE_PR_NUMBER")
+          fi
         fi
         .github/scripts/restore-macos-e2e-runtime-oci.sh \
           "$runtime_root/wegent-executor" \
@@ -191,17 +198,21 @@ runs:
         key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
 
     - name: Build Wework Electron E2E application
+      id: package
       shell: bash
       if: steps.macos-build.outputs.cache-hit != 'true'
       env:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         WEWORK_EXECUTOR_PROFILE: release
+        CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ inputs.include-backend == 'true' && '3' || '0' }}
         WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
       run: |
         runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
         executor_runtime="$runtime_root/wegent-executor"
         if [[ -x "$executor_runtime" ]]; then
           export WEWORK_E2E_PREBUILT_EXECUTOR_PATH="$executor_runtime"
+        else
+          echo 'executor-built=true' >> "$GITHUB_OUTPUT"
         fi
 
         CARGO_BUILD_TARGET=aarch64-apple-darwin pnpm --filter wework ai:verify:electron:build

@@ -510,16 +510,13 @@ jobs:
         env:
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
-          pnpm --dir wework prepare:electron
-          pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
+          node wework/scripts/prepare-electron.mjs
+          electron_bin="$(node -p "require('./wework/electron/node_modules/electron')")"
+          test -f "$electron_bin" && test -x "$electron_bin"
 
       - name: Set up real object storage for collaboration E2E
         if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
         uses: ./.github/actions/setup-minio-e2e
-
-      - name: Verify Electron for native startup checkpoints
-        if: contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'workbench-mode')
-        run: pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Run Wework desktop Core shard E2E
         id: core-e2e
@@ -543,9 +540,6 @@ jobs:
         run: |
           WEWORK_E2E_SEGMENTS="$(node .github/scripts/order-wework-linux-e2e.mjs)"
           echo "checkpoints=$WEWORK_E2E_SEGMENTS" >> "$GITHUB_OUTPUT"
-          if [[ "$WEWORK_E2E_SEGMENTS" == *"native-window-startup"* || "$WEWORK_E2E_SEGMENTS" == *"workbench-mode"* ]]; then
-            pnpm --dir wework/electron exec node -e "const fs=require('node:fs');const electron=require('electron');const stats=fs.statSync(electron);if(!stats.isFile()||!(stats.mode&0o111))throw new Error('Electron is not an executable regular file: '+electron)"
-          fi
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
@@ -879,7 +873,7 @@ jobs:
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
-        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli') || contains(matrix.segments, 'stand-in-self-learning') || contains(matrix.segments, 'stand-in-dingtalk-delegation')
+        if: contains(matrix.segments, 'stand-in-identities') || contains(matrix.segments, 'stand-in-connections') || contains(matrix.segments, 'stand-in-cli') || contains(matrix.segments, 'stand-in-self-learning')
         shell: pwsh
         env:
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
@@ -891,13 +885,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk protocol fixture" }
           "WEWORK_E2E_DWS_FIXTURE_BIN=$binary" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-dingtalk-delegation') {
-            $delegationBinary = Join-Path $directory "delegation-dws.exe"
-            rustc wework/e2e/desktop/fixtures/delegation-dingtalk-cli.rs --edition 2021 -o $delegationBinary
-            if ($LASTEXITCODE -ne 0) { throw "Failed to compile the DingTalk delegation protocol fixture" }
-            "WEWORK_E2E_DWS_DELEGATION_FIXTURE_BIN=$delegationBinary" |
-              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          }
           if (($env:WEWORK_E2E_SEGMENTS -split ',') -contains 'stand-in-cli') {
             $replyBinary = Join-Path $directory "source-story-dws.exe"
             rustc wework/e2e/desktop/fixtures/source-story-dingtalk-cli.rs --edition 2021 -o $replyBinary
@@ -1511,15 +1498,16 @@ jobs:
             --parallel-segments "$segments"
 
       - name: Publish verified PR macOS Executor runtime
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true' && (env.MACOS_COMPLETE_BUILD == 'true' || steps.macos-build.outputs.executor-built-during-packaging == 'true')
         env:
           CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXECUTOR_CACHE_VARIANT: ${{ env.MACOS_COMPLETE_BUILD == 'true' && 'pr' || 'opt0-pr' }}
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
           .github/scripts/publish-macos-e2e-runtime-oci.sh \
             "$WEWORK_E2E_EXECUTOR_BIN" \
-            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-pr-$CACHE_PR_NUMBER"
+            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-$EXECUTOR_CACHE_VARIANT-$CACHE_PR_NUMBER"
 
       - name: Upload macOS Inspector failure evidence before cleanup
         if: always() && failure()

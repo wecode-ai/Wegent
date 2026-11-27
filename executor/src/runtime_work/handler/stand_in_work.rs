@@ -4,8 +4,8 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::runtime_work::response::local_task_json;
 use crate::task_runtime::personal_stand_in::{
-    is_primary_dingtalk, matches_delegation_account, requires_dingtalk_delegation, source_provider,
-    stand_in_collection_connection, stand_in_connection, stand_in_identities, DINGTALK_PROVIDER,
+    is_primary_dingtalk, matches_delegation_account, requires_dingtalk_delegation,
+    stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
 use crate::task_runtime::stand_in_projection::{
     message_visible_to_account, project_visible_work, sanitize_task_summary, visible_messages,
@@ -47,22 +47,6 @@ impl RuntimeWorkRpcHandler {
         let current = store.stand_in_work(user, &id).map_err(settings_error)?;
         if current["status"] != "sending" {
             *work = current;
-            return Ok(());
-        }
-        if work["source"]["delegated"] == true {
-            for message in visible.messages {
-                if message["delegationResult"]["status"] == "submitting" {
-                    store
-                        .finish_delegated_submission(
-                            user,
-                            &id,
-                            message["recordId"].as_str().unwrap_or_default(),
-                            &json!({"status":"unknown","attemptId":message["delegationResult"]["attemptId"]}),
-                        )
-                        .map_err(settings_error)?;
-                }
-            }
-            *work = store.stand_in_work(user, &id).map_err(settings_error)?;
             return Ok(());
         }
         let ids = visible
@@ -521,14 +505,6 @@ impl RuntimeWorkRpcHandler {
             ));
         };
         let work = visible.work;
-        if work["roleId"] == "@primary"
-            && source_provider(&work["source"]) == DINGTALK_PROVIDER
-            && work["source"]["delegated"] == true
-        {
-            return self
-                .dispatch_delegated_dingtalk(&store, user, &work, selected_records)
-                .await;
-        }
         if !manual && work["status"] == "failed" {
             return Err(AppIpcError::new(
                 "stand_in_dispatch_failed",
@@ -560,8 +536,8 @@ impl RuntimeWorkRpcHandler {
             })?;
             if !manual && requires_dingtalk_delegation(&role, source) {
                 return Err(AppIpcError::new(
-                    "stand_in_delegation_required",
-                    "Enable delegation for the selected DingTalk conversation",
+                    "stand_in_confirmation_required",
+                    "Save the DingTalk connection with confirmation before sending",
                 ));
             }
             if !manual && (role["enabled"] != true || source["policy"]["automatic"] != true) {
@@ -937,7 +913,7 @@ mod tests {
             "roleId": "@primary",
             "text": "old-account content",
             "source": {
-                "providerId": DINGTALK_PROVIDER,
+                "providerId": crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
                 "profile": "current",
                 "accountId": "account-old",
                 "kind": "direct",

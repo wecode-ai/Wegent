@@ -73,7 +73,7 @@ fn update_available_matches_source_semantics() {
 
 #[test]
 fn item_json_matches_device_info_shape() {
-    let item = DeviceItem {
+    let mut item = DeviceItem {
         id: 268602,
         execution_target_id: None,
         device_id: "local-device".to_string(),
@@ -91,6 +91,7 @@ fn item_json_matches_device_info_shape() {
         executor_version: Some("1.8.5".to_string()),
         latest_version: Some("2.0.16".to_string()),
         update_available: true,
+        cloud_upgrade_reminder: None,
         client_ip: Some(raw_json(&json!("127.0.0.1"))),
         runtime_transfer_host: None,
         runtime_instance_id: None,
@@ -101,7 +102,7 @@ fn item_json_matches_device_info_shape() {
         remote_config: None,
         bind_shell: "claudecode".to_string(),
     };
-    let value = wegent_backend_test_support::serialized(item).unwrap();
+    let value = wegent_backend_test_support::serialized(&item).unwrap();
     wegent_backend_test_support::assert_fixture("device", &value);
     assert_eq!(value["device_type"], "app");
     assert_eq!(value["running_tasks"], json!([]));
@@ -109,6 +110,17 @@ fn item_json_matches_device_info_shape() {
     assert_eq!(value["cloud_config"], Value::Null);
     assert_eq!(value["remote_config"], Value::Null);
     assert_eq!(value["bind_shell"], "claudecode");
+    assert!(value.get("cloud_upgrade_reminder").is_none());
+
+    item.device_type = DeviceType::Cloud;
+    item.cloud_upgrade_reminder = Some(CloudUpgradeReminder {
+        target_version: "2.0.4".to_string(),
+    });
+    let cloud = wegent_backend_test_support::serialized(item).unwrap();
+    assert_eq!(
+        cloud["cloud_upgrade_reminder"],
+        json!({"target_version": "2.0.4"})
+    );
 }
 
 #[test]

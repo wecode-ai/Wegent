@@ -2,10 +2,7 @@
   "order": 56000,
   "scenario": "./scenarios/stand-in-notifications.scenario.mjs",
   "scenarioOnly": true,
-  "paths": [
-    "wework/e2e/desktop/modules/stand-in-im-connections.mjs",
-    "wework/e2e/desktop/modules/stand-in-im-channel-layout.mjs"
-  ],
+  "paths": ["wework/e2e/desktop/modules/stand-in-im-connections.mjs"],
   "resources": ["macos-inspector-foreground"],
   "ci": {
     "core": {

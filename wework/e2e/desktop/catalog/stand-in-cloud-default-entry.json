@@ -1,0 +1,8 @@
+{
+  "order": 43690,
+  "scenario": "./scenarios/stand-in-cloud-default-entry.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": { "order": 43490, "shard": 4, "position": 7990 }
+  }
+}

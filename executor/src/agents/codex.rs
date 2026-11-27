@@ -727,9 +727,15 @@ impl CodexAppServerClient {
 
     pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
         let mut state = self.state.lock().await;
-        let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
-            None => 0,
+        let pending_methods = match state.process.as_ref() {
+            Some(process) => process
+                .pending
+                .lock()
+                .await
+                .values()
+                .map(|request| request.method.clone())
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
         };
         // A retained app owns its MCP connection between individual RPCs.
         let mut active_threads = state.active_threads_snapshot();
@@ -738,8 +744,15 @@ impl CodexAppServerClient {
         }
         let active_task_count =
             active_threads.values().sum::<usize>() + state.preparing_turns.count();
-        if active_task_count > 0 || pending_request_count > 0 {
-            return Err((active_task_count, pending_request_count));
+        if active_task_count > 0 || !pending_methods.is_empty() {
+            log_executor_event(
+                "codex idle restart deferred",
+                &[
+                    ("active_task_count", active_task_count.to_string()),
+                    ("pending_methods", pending_methods.join(",")),
+                ],
+            );
+            return Err((active_task_count, pending_methods.len()));
         }
         stop_codex_app_server_process(&mut state, None).await;
         Ok(())

@@ -129,7 +129,7 @@ function applyDefinitions(
         bindingDevice ?? settings.executionDeviceId,
         isKnownDevice
       ),
-      name: definition.bot.metadata.displayName ?? existing.name,
+      name: definition.team.metadata.displayName ?? existing.name,
       prompt: definition.ghost.spec.systemPrompt,
     })
   }
@@ -156,7 +156,7 @@ function definitionInputs(account: PersonalAssistantAccount) {
       {
         roleId: definition.roleId,
         executionDeviceId: definition.bot.spec?.execution_policy?.environment_id,
-        name: definition.bot.metadata.displayName ?? '',
+        name: definition.team.metadata.displayName ?? '',
         prompt: definition.ghost.spec.systemPrompt,
       },
     ])

@@ -21,7 +21,7 @@ from shared.telemetry.decorators import trace_async
 
 GUIDANCE = (
     "当前为 Wework 助理模式。发送 /chat 返回 Wegent 聊天。"
-    "连接或切换助理，请打开 Wework“我的助理”的“助理详情”浮层，点击对应的 IM 渠道。"
+    "未指定助理的私聊使用账号默认执行设备上的默认助理。"
 )
 RETIRED_TASK_GUIDANCE = (
     "任务模式已移除。发送 /standin 进入 Wework 助理模式，或 /chat 返回 Wegent 聊天。"

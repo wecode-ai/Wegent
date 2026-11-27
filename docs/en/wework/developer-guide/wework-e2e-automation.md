@@ -78,20 +78,6 @@ pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
 
 This checkpoint uses real Electron, executor, and Codex processes, with an isolated model subscription service simulating enterprise cloud-config bundle failures. It covers existing-thread continuation, new threads, configuration and model reads, Goal recovery after restart, official subscription authentication recovery, and concurrent authentication protection while a cloud-model turn runs. Assertions include the final reply, native transcripts, and task state after reload. The fixture creates its own account and directories. Existing desktop CI Core shards run this checkpoint.
 
-### DingTalk delegated reply development smoke
-
-Run the existing Core checkpoint on the same candidate revision that includes DingTalk onboarding, delegation, and reliable delivery:
-
-```bash
-pnpm --filter wework e2e:desktop -- --segment stand-in-dingtalk-delegation
-```
-
-The checkpoint runs real Electron, executor, and local storage with a DingTalk CLI protocol test double and scripted model decisions. It exercises the three first-week templates in both direct chats and mentions in selected groups. It checks same-conversation evidence, the reply destination, AI attribution, the submission count, and the 120-second window. Boundary cases exercise escalation, out-of-scope sources, changed evidence, disconnection recovery, and executor restart. Protocol and storage integration tests exercise deterministic failures such as mismatched receipts, revoked authority before submission, and recovery-window limits. `dingtalk-delegation-evidence.json` in the result directory records the checkpoint outcomes.
-
-To investigate a display issue, use an isolated `ai:verify` session to inspect delivery status, takeover, receipt verification, and receipt content on the work detail. The desktop checkpoint drives the clicks and assertions on the same record. An `ai:verify` session starts empty. To inspect existing fixture records, pass the isolated test executor directory and preserve its device ID. The desktop checkpoint audits channel submission and receipt evidence separately from display inspection.
-
-On the release candidate, use an approved test account and test conversations to verify the message and AI attribution visible to real DingTalk recipients, actual receipt verification support, and elapsed time. Evaluate the real model's judgment on ambiguous, out-of-date, and sensitive evidence with the agreed model and acceptance samples. Either run can drive the UI with automation. Record the actual channel and model used so the protocol fixture and scripted model results are reported as development evidence.
-
 Run only the cloud-project desktop E2E:
 
 ```bash

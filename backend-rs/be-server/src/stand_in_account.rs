@@ -13,7 +13,7 @@ use crate::{
 const NAMESPACE: &str = "personal-assistant";
 const ACCOUNT_KIND: &str = "PersonalAssistantSettings";
 const DEFAULT_NAME: &str = "primary";
-const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Bot','Ghost','Team') AND is_active=true";
+const SELECT: &str = "SELECT kind,name,json AS document FROM kinds WHERE user_id=? AND namespace=? AND kind IN ('PersonalAssistantSettings','Team','Bot','Ghost') AND is_active=true";
 
 #[derive(FromMysqlRow)]
 struct Row {
@@ -99,8 +99,6 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
                 resources.get(&(kind, reference["name"].as_str().ok_or(MysqlError::RowNotFound)?))
                     .copied().ok_or(MysqlError::RowNotFound)
             };
-            let bot = resolve("Bot",&identity["botRef"])?;
-            let ghost = resolve("Ghost",&bot["spec"]["ghostRef"])?;
             let team = resolve("Team", &identity["teamRef"])?;
             let mut members = Vec::new();
             for member in team["spec"]["members"].as_array().ok_or(MysqlError::RowNotFound)? {
@@ -108,6 +106,9 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
                 let ghost = resolve("Ghost", &bot["spec"]["ghostRef"])?;
                 members.push(json!({"member":member,"bot":bot,"ghost":ghost}));
             }
+            let primary = members.iter().find(|entry| entry["member"]["role"] == "leader").or_else(|| members.first()).ok_or(MysqlError::RowNotFound)?;
+            let bot = &primary["bot"];
+            let ghost = &primary["ghost"];
             Ok(json!({"roleId":identity["roleId"],"bot":bot,"ghost":ghost,"team":team,"members":members}))
         })
         .collect::<MysqlResult<Vec<_>>>()?;
@@ -117,7 +118,7 @@ fn view(rows: &[Row]) -> MysqlResult<Value> {
         .unwrap_or_default();
     let revision = crate::hex_sha256(json!([definitions, retired]).to_string().as_bytes());
     Ok(
-        json!({"assistant":{"defaultBotRef":spec["defaultBotRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}}),
+        json!({"assistant":{"defaultTeamRef":spec["defaultTeamRef"],"revision":revision,"definitions":definitions,"retiredRoleIds":retired}}),
     )
 }
 
@@ -136,11 +137,11 @@ fn solo_team(bot: &Value, reference: &Value) -> Value {
         "Team",
         reference["name"].as_str().unwrap(),
         bot["metadata"]["displayName"].as_str().unwrap_or_default(),
-        json!({"collaborationModel":"solo","members":[{"botRef":reference,"role":"leader"}]}),
+        json!({"collaborationModel":"solo","members":[{"botRef":reference,"role":"leader"}],"bind_mode":["task"]}),
     )
 }
 
-fn definition_documents(definition: Definition) -> (Value, Value, Value, Value) {
+fn definition_documents(definition: Definition) -> (Value, [Value; 3]) {
     let name = if definition.role_id == "@primary" {
         DEFAULT_NAME.to_string()
     } else {
@@ -166,11 +167,10 @@ fn definition_documents(definition: Definition) -> (Value, Value, Value, Value) 
     if let Some(device) = definition.execution_device_id {
         bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
     }
+    let team = solo_team(&bot, &reference);
     (
-        json!({"roleId":definition.role_id,"botRef":reference,"teamRef":reference}),
-        solo_team(&bot, &reference),
-        bot,
-        ghost,
+        json!({"roleId":definition.role_id,"teamRef":reference}),
+        [ghost, bot, team],
     )
 }
 
@@ -182,8 +182,8 @@ async fn create_definitions(
     let mut identities = Vec::with_capacity(request.definitions.len());
     let mut records = Vec::with_capacity(3 * request.definitions.len() + 1);
     for definition in request.definitions {
-        let (identity, team, bot, ghost) = definition_documents(definition);
-        records.extend([ghost, bot, team]);
+        let (identity, documents) = definition_documents(definition);
+        records.extend(documents);
         identities.push(identity);
     }
     let account = resource(
@@ -191,7 +191,7 @@ async fn create_definitions(
         DEFAULT_NAME,
         "",
         json!({
-            "defaultBotRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
+            "defaultTeamRef":{"name":DEFAULT_NAME,"namespace":NAMESPACE},
             "identities":identities
         }),
     );
@@ -284,9 +284,10 @@ fn needs_migration(rows: &[Row]) -> bool {
     rows.iter()
         .filter(|row| row.kind == ACCOUNT_KIND)
         .any(|row| {
-            row.document.0["spec"]["identities"]
-                .as_array()
-                .is_some_and(|ids| ids.iter().any(|id| id.get("teamRef").is_none()))
+            row.document.0["spec"].get("defaultTeamRef").is_none()
+                || row.document.0["spec"]["identities"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id.get("teamRef").is_none()))
         })
 }
 
@@ -325,7 +326,10 @@ async fn account_rows(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<
         teams.push(solo_team(bot, &reference));
         id["teamRef"] = reference;
     }
-    insert_documents(tx, user, teams).await?;
+    account["spec"]["defaultTeamRef"] = json!({"name":DEFAULT_NAME,"namespace":NAMESPACE});
+    if !teams.is_empty() {
+        insert_documents(tx, user, teams).await?;
+    }
     update_document(tx, user, &account).await?;
     tx.fetch_all(SELECT, (user, NAMESPACE)).await
 }
@@ -396,17 +400,19 @@ async fn replace_definitions(
         for desired in body.desired.definitions {
             retired.remove(&desired.role_id);
             if let Some(entry) = previous.remove(desired.role_id.as_str()) {
+                let mut team = entry["team"].clone();
                 let mut bot = entry["bot"].clone();
                 let mut ghost = entry["ghost"].clone();
                 if let Some(device) = desired.execution_device_id {
                     bot["spec"]["execution_policy"] = json!({"mode":"fixed","environment_id":device});
                 }
-                bot["metadata"]["displayName"] = json!(desired.name);
+                team["metadata"]["displayName"] = json!(desired.name);
+                bot["metadata"]["displayName"] = team["metadata"]["displayName"].clone();
                 ghost["metadata"]["displayName"] = bot["metadata"]["displayName"].clone();
                 ghost["spec"]["systemPrompt"] = json!(desired.prompt);
-                let mut team = entry["team"].clone();
-                team["metadata"]["displayName"] = bot["metadata"]["displayName"].clone();
-                if team != entry["team"] {update_document(tx,user,&team).await?;}
+                if team != entry["team"] {
+                    update_document(tx, user, &team).await?;
+                }
                 if bot != entry["bot"] {
                     update_document(tx, user, &bot).await?;
                 }
@@ -415,13 +421,12 @@ async fn replace_definitions(
                 }
                 identities.push(json!({
                     "roleId":desired.role_id,
-                    "teamRef":{"name":entry["team"]["metadata"]["name"],"namespace":NAMESPACE},
-                    "botRef":{"name":bot["metadata"]["name"],"namespace":NAMESPACE}
+                    "teamRef":{"name":team["metadata"]["name"],"namespace":NAMESPACE}
                 }));
             } else {
-                let (identity, team, bot, ghost) = definition_documents(desired);
+                let (identity, documents) = definition_documents(desired);
                 identities.push(identity);
-                additions.extend([ghost, bot, team]);
+                additions.extend(documents);
             }
         }
         let retired_teams: HashSet<_> = previous.values().filter_map(|entry|entry["team"]["metadata"]["name"].as_str()).collect();
@@ -510,6 +515,20 @@ pub(crate) async fn verify_concurrent_initialization(
     );
     let rows: Vec<Row> = mysql.fetch_all(SELECT, (user, NAMESPACE)).await?;
     assert_eq!(rows.len(), 7);
+    let assistant = &first["assistant"];
+    for definition in assistant["definitions"].as_array().unwrap() {
+        assert_eq!(definition["team"]["spec"]["collaborationModel"], "solo");
+        let members = definition["team"]["spec"]["members"].as_array().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(
+            members[0]["botRef"]["name"],
+            definition["bot"]["metadata"]["name"]
+        );
+    }
+    assert_eq!(
+        assistant["defaultTeamRef"]["name"],
+        assistant["definitions"][0]["team"]["metadata"]["name"]
+    );
     assert_eq!(view(&rows)?, first);
     // Recreate the pre-Team account shape and race two upgrades on its owner row.
     mysql
@@ -518,7 +537,7 @@ pub(crate) async fn verify_concurrent_initialization(
             (user, NAMESPACE),
         )
         .await?;
-    mysql.execute("UPDATE kinds SET json=JSON_REMOVE(json,'$.spec.identities[0].teamRef','$.spec.identities[1].teamRef') WHERE user_id=? AND namespace=? AND kind='PersonalAssistantSettings'", (user,NAMESPACE)).await?;
+    mysql.execute("UPDATE kinds SET json=JSON_REMOVE(JSON_SET(json,'$.spec.identities[0].botRef',JSON_EXTRACT(json,'$.spec.identities[0].teamRef'),'$.spec.identities[1].botRef',JSON_EXTRACT(json,'$.spec.identities[1].teamRef')),'$.spec.identities[0].teamRef','$.spec.identities[1].teamRef','$.spec.defaultTeamRef') WHERE user_id=? AND namespace=? AND kind='PersonalAssistantSettings'", (user,NAMESPACE)).await?;
     let (migrated, concurrent) = tokio::try_join!(
         initialize_for(mysql, user, request("unused")),
         initialize_for(mysql, user, request("unused"))

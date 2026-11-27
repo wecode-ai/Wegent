@@ -765,6 +765,9 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     setEnvironmentInfoOpen: paneLayout.setEnvironmentInfoOpen,
     effectiveRightPanelTabs: paneLayout.effectiveRightPanelTabs,
     workspacePanelTarget: workspaceTargets.workspacePanelTarget,
+    workspacePanelPrefersLocalTerminal:
+      workspaceTargets.activeBottomPanelContext.preferLocalTerminal ?? false,
+    bottomPanelOpen: workspaceTargets.bottomPanelOpen,
     bottomPanelWorkspaceKey: workspaceTargets.bottomPanelWorkspaceKey,
     rememberActiveBottomPanelContext,
     paneMessages,

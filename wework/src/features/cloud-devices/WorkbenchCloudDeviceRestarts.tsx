@@ -5,6 +5,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import type { DeviceInfo } from '@/types/api'
 import { CloudDeviceRestartDialog } from './CloudDeviceRestartDialog'
 import { CloudDeviceRestartNotice } from './CloudDeviceRestartNotice'
+import { busyCloudSandboxIds } from './cloudDeviceUpgradeReminder'
 import { createCloudDeviceRestartSource } from './cloudDeviceRestartSource'
 import {
   CloudDeviceRestartContext,
@@ -23,28 +24,38 @@ export function WorkbenchCloudDeviceRestarts({
 }) {
   const connection = useOptionalCloudConnection()
   const { apiBaseUrl, user } = connection
+  const userId = user?.id
+  const reminderScope = apiBaseUrl && userId != null ? JSON.stringify([apiBaseUrl, userId]) : null
   const [owner, setOwner] = useState(() => ({
     apiBaseUrl,
-    userId: user?.id,
+    userId,
     source: createCloudDeviceRestartSource(),
   }))
-  if (owner.apiBaseUrl !== apiBaseUrl || owner.userId !== user?.id)
-    setOwner({ apiBaseUrl, userId: user?.id, source: createCloudDeviceRestartSource() })
+  if (owner.apiBaseUrl !== apiBaseUrl || owner.userId !== userId)
+    setOwner({ apiBaseUrl, userId, source: createCloudDeviceRestartSource() })
   const source = owner.source
   const subscribe = useCallback(
     (listener: () => void) =>
       source.subscribe(listener, {
         devices,
+        reminderScope,
         refreshDevices,
-        restart: deviceId => createSettingsDeviceApi(connection).restartCloudDevice(deviceId),
+        restart: (deviceId, forceStopTasks) =>
+          createSettingsDeviceApi(connection).restartCloudDevice(deviceId, forceStopTasks),
       }),
-    [source, devices, refreshDevices, connection]
+    [source, devices, refreshDevices, connection, reminderScope]
   )
-  const { confirmation, progress } = useSyncExternalStore(subscribe, source.getSnapshot)
+  const { confirmation, progress, upgrade } = useSyncExternalStore(subscribe, source.getSnapshot)
+  const busySandboxes = useMemo(
+    () => (upgrade ? busyCloudSandboxIds(devices) : null),
+    [upgrade, devices]
+  )
+  const sandboxId = confirmation[0]?.cloud_config?.sandboxId
   const requestRestart = source.requestRestart
   const actions = useMemo(
     () => ({
       requestRestart,
+      remindOnUse: source.remindOnUse,
       progress,
       isConfirming: confirmation.length > 0,
       isRestarting: (device: DeviceInfo) =>
@@ -52,14 +63,22 @@ export function WorkbenchCloudDeviceRestarts({
           progress[cloudDeviceRestartKey(device)]?.phase ?? 'idle'
         ),
     }),
-    [requestRestart, progress, confirmation.length]
+    [source, requestRestart, progress, confirmation.length]
   )
 
   return (
     <CloudDeviceRestartContext.Provider value={actions}>
       {children}
       <CloudDeviceRestartDialog
-        devices={confirmation}
+        devices={confirmation.map(target => {
+          if (!upgrade) return target
+          const current = devices.find(device => device.device_id === target.device_id)
+          return current
+            ? { ...current, cloud_upgrade_reminder: target.cloud_upgrade_reminder }
+            : { ...target, status: 'offline' }
+        })}
+        upgrade={upgrade}
+        sandboxBusy={Boolean(sandboxId && busySandboxes?.has(sandboxId))}
         overlayClassName="z-[10001]"
         onCancel={source.cancel}
         onConfirm={source.confirm}
@@ -84,8 +103,9 @@ export function CloudDeviceRestartProgress({
       deviceId={device.device_id}
       phase={progress.phase}
       error={progress.error}
+      upgrade={progress.upgrade}
       compact={compact}
-      onRetry={() => actions?.requestRestart([device])}
+      onRetry={() => actions?.requestRestart([progress.device], progress.upgrade)}
       onRefresh={progress.onRefresh}
     />
   )

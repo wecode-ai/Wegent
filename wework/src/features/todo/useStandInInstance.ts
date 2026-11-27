@@ -19,18 +19,27 @@ export function useStandInInstance(
     requireSetupConfirmation = true,
     entry,
     entryApi,
+    legacyOnly = false,
   }: {
     entryRequestKey?: number
     requireSetupConfirmation?: boolean
     entry?: StandInEntry
+    legacyOnly?: boolean
     entryApi?: Pick<StandInExecutorApi, 'personalGet'>
   } = {}
 ) {
   const api = services.standInApi
   const source = useMemo(
     () =>
-      createStandInInstanceSource({ services, api, userId, backendUrl, requireSetupConfirmation }),
-    [services, api, userId, backendUrl, requireSetupConfirmation]
+      createStandInInstanceSource({
+        services,
+        api,
+        userId,
+        backendUrl,
+        requireSetupConfirmation,
+        legacyOnly,
+      }),
+    [services, api, userId, backendUrl, requireSetupConfirmation, legacyOnly]
   )
   const subscribe = useCallback(
     (listener: () => void) =>

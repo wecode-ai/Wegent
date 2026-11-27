@@ -20,10 +20,12 @@ Usage:
     event_bus.subscribe(TaskCompletedEvent, handler.on_task_completed)
 """
 
+import dataclasses
 import logging
 from itertools import chain
 from typing import Any, Dict, Optional
 
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.orm import Session
 
 from app.core.events import TaskCompletedEvent
@@ -47,7 +49,6 @@ from app.services.subscription.notification_dispatcher import (
 )
 from app.services.subscription.state_machine import is_terminal_state
 from app.stores.tasks import subtask_store, task_store
-from app.stores.tasks.runtime_reads import RUNTIME_READ_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,13 @@ class SubscriptionTaskCompletionHandler:
                         f"[TaskCompletionHandler] Execution {execution.id} already in "
                         f"terminal state {current_status.value}, skipping update"
                     )
+                    # cancel_execution marks the execution CANCELLED before the
+                    # executor reports the end of the run, so this event is the
+                    # first chance to release the container.
+                    if event.status in {"COMPLETED", "FAILED", "CANCELLED"}:
+                        await self._cleanup_finished_subscription_executor(
+                            db, execution, event.task_id
+                        )
                     return
 
                 # Extract result summary from event
@@ -127,14 +135,13 @@ class SubscriptionTaskCompletionHandler:
                     f"is_silent_exit={is_silent_exit}"
                 )
 
-                self.execution_manager.update_execution_status(
-                    db,
-                    execution_id=execution.id,
-                    status=status,
-                    result_summary=stored_result_summary,
-                    error_message=event.error,
-                    skip_notifications=True,  # We'll handle notifications separately
+                updated, status, event, is_silent_exit = self._save_completion_status(
+                    db, execution, event, status, stored_result_summary, is_silent_exit
                 )
+
+                if not updated:
+                    await self._cleanup_after_status_noop(db, execution, event)
+                    return
 
                 # Write back result to inbox message if this is an inbox-triggered execution
                 # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
@@ -163,18 +170,12 @@ class SubscriptionTaskCompletionHandler:
                 if status in (
                     BackgroundExecutionStatus.COMPLETED,
                     BackgroundExecutionStatus.COMPLETED_SILENT,
+                    BackgroundExecutionStatus.FAILED,
+                    BackgroundExecutionStatus.CANCELLED,
                 ):
-                    try:
-                        await self._cleanup_completed_managed_subscription_executor(
-                            db, execution, event.task_id
-                        )
-                    except Exception as cleanup_error:
-                        db.rollback()
-                        logger.error(
-                            f"[TaskCompletionHandler] Failed to clean runtime for "
-                            f"task_id={event.task_id}: {cleanup_error}",
-                            exc_info=True,
-                        )
+                    await self._cleanup_finished_subscription_executor(
+                        db, execution, event.task_id
+                    )
 
                 # Skip notifications for silent exits
                 if is_silent_exit:
@@ -199,6 +200,114 @@ class SubscriptionTaskCompletionHandler:
                 f"task_id={event.task_id}, error={e}",
                 exc_info=True,
             )
+
+    def _attempt_status_update(
+        self, db: Session, **values: Any
+    ) -> tuple[bool, bool, Optional[Exception]]:
+        """Distinguish this attempt's acknowledged commit from a competing writer."""
+        committed = False
+
+        def record_commit(_session: Session) -> None:
+            nonlocal committed
+            committed = True
+
+        sqlalchemy_event.listen(db, "after_commit", record_commit)
+        try:
+            updated = self.execution_manager.update_execution_status(db, **values)
+            return bool(updated), committed, None
+        except Exception as exc:
+            return False, committed, exc
+        finally:
+            sqlalchemy_event.remove(db, "after_commit", record_commit)
+
+    def _save_completion_status(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        event: TaskCompletedEvent,
+        status: BackgroundExecutionStatus,
+        result_summary: Optional[str],
+        is_silent_exit: bool,
+    ) -> tuple[bool, BackgroundExecutionStatus, TaskCompletedEvent, bool]:
+        """Reconcile durable writes without repeating counters or another delivery."""
+        execution_id = execution.id
+        version = getattr(execution, "version", None)
+        values = dict(
+            execution_id=execution_id,
+            expected_version=version,
+            status=status,
+            result_summary=result_summary,
+            error_message=event.error,
+            skip_notifications=True,
+        )
+        updated, committed, exc = self._attempt_status_update(db, **values)
+        if exc is None:
+            return updated, status, event, is_silent_exit
+
+        db.rollback()
+        db.refresh(execution)
+        current = BackgroundExecutionStatus(execution.status)
+        current_version = getattr(execution, "version", None)
+        expected_next = version + 1 if version is not None else None
+        if committed:
+            if current == status and current_version == expected_next:
+                event = dataclasses.replace(
+                    event,
+                    error=getattr(execution, "error_message", None) or event.error,
+                )
+                return True, status, event, is_silent_exit
+            return False, status, event, is_silent_exit
+        if is_terminal_state(current) or current_version != version:
+            return False, status, event, is_silent_exit
+
+        logger.error(
+            "[TaskCompletionHandler] Could not save the result of execution %s "
+            "(result_summary_length=%s)",
+            execution_id,
+            len(result_summary or ""),
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        cause = getattr(exc, "orig", None) or exc
+        error = (
+            "The run finished but its result could not be saved: "
+            f"{type(cause).__name__}: {str(cause)[:300]}"
+        )
+        updated, committed, fallback_error = self._attempt_status_update(
+            db,
+            execution_id=execution_id,
+            expected_version=version,
+            status=BackgroundExecutionStatus.FAILED,
+            error_message=error,
+            skip_notifications=True,
+        )
+        if fallback_error is not None:
+            db.rollback()
+            db.refresh(execution)
+            updated = (
+                committed
+                and execution.status == BackgroundExecutionStatus.FAILED.value
+                and getattr(execution, "version", None) == expected_next
+                and execution.error_message == error
+            )
+            if not updated:
+                logger.error(
+                    "[TaskCompletionHandler] Failure status could not be saved for %s",
+                    execution_id,
+                    exc_info=(
+                        type(fallback_error),
+                        fallback_error,
+                        fallback_error.__traceback__,
+                    ),
+                )
+        if not updated:
+            return False, status, event, is_silent_exit
+        execution.status = BackgroundExecutionStatus.FAILED.value
+        return (
+            True,
+            BackgroundExecutionStatus.FAILED,
+            dataclasses.replace(event, status="FAILED", error=error),
+            False,
+        )
 
     @staticmethod
     def _is_code_wiki_scheduled_update(
@@ -351,13 +460,57 @@ class SubscriptionTaskCompletionHandler:
             "auto-delete task",
         )
 
-    async def _cleanup_completed_managed_subscription_executor(
+    async def _cleanup_after_status_noop(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        event: TaskCompletedEvent,
+    ) -> None:
+        """Leave a competing active run unchanged and clean only a committed terminal run."""
+        # End the failed write's REPEATABLE READ snapshot before refreshing.
+        db.rollback()
+        db.refresh(execution)
+        if is_terminal_state(
+            BackgroundExecutionStatus(execution.status)
+        ) and event.status in {
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+        }:
+            await self._cleanup_finished_subscription_executor(
+                db, execution, event.task_id
+            )
+
+    async def _cleanup_finished_subscription_executor(
         self,
         db: Session,
         execution: BackgroundExecution,
         task_id: int,
     ) -> None:
-        """Delete executors immediately for completed subscription tasks."""
+        """Isolate runtime cleanup failures from required result delivery."""
+        try:
+            await self._delete_finished_subscription_executor(db, execution, task_id)
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "[TaskCompletionHandler] Subscription runtime cleanup failed "
+                "for task_id=%s; continuing completion handling",
+                task_id,
+            )
+
+    async def _delete_finished_subscription_executor(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        task_id: int,
+    ) -> None:
+        """Delete the executors as soon as a subscription run ends.
+
+        The cleanup applies whatever the outcome was: a finished run never
+        reuses its container (each run gets a new task), so keeping it only
+        holds a node slot. Cleanup is idempotent: once the subtasks are marked
+        executor_deleted_at, the runtime lookup finds nothing and returns.
+        """
         subscription = (
             db.query(Kind)
             .filter(
@@ -388,6 +541,10 @@ class SubscriptionTaskCompletionHandler:
             task_id,
             f"subscription {execution.subscription_id}",
         )
+
+    _cleanup_completed_managed_subscription_executor = (
+        _cleanup_finished_subscription_executor
+    )
 
     async def _cleanup_task_runtime(
         self,
@@ -423,13 +580,20 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        executor_subtasks = chain([first], subtasks)
+        owner_user_id = task.user_id
+        prepared_bindings = {
+            subtask.id: (subtask.executor_namespace, subtask.executor_name)
+            for subtask in chain([first], subtasks)
+        }
         successful_keys = set()
         unique_executors = {
-            ((subtask.executor_namespace or ""), subtask.executor_name)
-            for subtask in executor_subtasks
-            if subtask.executor_name
+            ((namespace or ""), name)
+            for namespace, name in prepared_bindings.values()
+            if name
         }
+
+        # All HTTP inputs are scalars; no ORM reload may reacquire this connection.
+        db.commit()
 
         runtime_client = get_executor_runtime_client()
         sandbox_payload, sandbox_lookup_error = await runtime_client.get_sandbox(
@@ -505,21 +669,17 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        for index, subtask in enumerate(
-            subtask_store.iter_runtime_cleanup_rows(
-                db, task_id=task_id, owner_user_id=task.user_id
-            ),
-            start=1,
-        ):
-            executor_key = ((subtask.executor_namespace or ""), subtask.executor_name)
-            if sandbox_deleted or executor_key in successful_keys:
-                subtask_store.update_fields(
-                    db,
-                    subtask=subtask,
-                    executor_deleted_at=True,
-                )
-            if index % RUNTIME_READ_BATCH_SIZE == 0:
-                db.flush()
+        successful_bindings = {
+            subtask_id: (namespace, name)
+            for subtask_id, (namespace, name) in prepared_bindings.items()
+            if sandbox_deleted or ((namespace or ""), name) in successful_keys
+        }
+        subtask_store.mark_runtime_cleanup_deleted(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+            bindings=successful_bindings,
+        )
 
         db.commit()
         logger.info(

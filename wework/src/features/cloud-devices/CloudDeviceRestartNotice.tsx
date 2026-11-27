@@ -7,6 +7,7 @@ import type { DeviceLifecyclePhase } from './useDeviceOfflineLifecycleAction'
 export function CloudDeviceRestartNotice({
   deviceId,
   error,
+  upgrade,
   phase,
   compact = false,
   onRefresh,
@@ -14,6 +15,7 @@ export function CloudDeviceRestartNotice({
 }: {
   deviceId: string
   error: string | null
+  upgrade?: boolean
   phase: DeviceLifecyclePhase
   compact?: boolean
   onRefresh: () => void
@@ -36,7 +38,7 @@ export function CloudDeviceRestartNotice({
           : isRecovered
             ? t(`${keyPrefix}_recovered`)
             : isTimeout
-              ? t(`${keyPrefix}_timeout`)
+              ? t(upgrade ? 'workbench.cloud_upgrade_timeout' : `${keyPrefix}_timeout`)
               : t(`${keyPrefix}_failed`, { error: error ?? '' })
 
   return (

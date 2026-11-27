@@ -283,7 +283,7 @@ test("independent runtime and delivery jobs retain their deadlines and required 
   assert.ok(builds[0].with["cache-from"].includes("format('type=registry,ref={0}', env.DELIVERY_PR_CACHE)"));
   assert.equal(
     builds[0].with["cache-to"],
-    "${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}",
+    "${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,compression=zstd,compression-level=1,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}",
   );
   const verify = delivery.steps.find(
     (step) => step.name === "Verify Backend delivery image",

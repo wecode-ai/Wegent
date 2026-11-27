@@ -679,7 +679,13 @@ async fn executor_transport_error_retains_its_connection_cause_without_binding_c
     let url = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
     let error = send_executor(
-        &HttpClient::builder().build().unwrap(),
+        // Windows can take two seconds to report a refused loopback connection;
+        // the SDK's 400 ms default would mask the cause with a timeout.
+        &HttpClient::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .read_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap(),
         &url,
         &crate::executor_binding::DispatchRequest {
             body: json!({}),
@@ -691,6 +697,128 @@ async fn executor_transport_error_retains_its_connection_cause_without_binding_c
     assert!(error.contains("source:"), "{error}");
     assert!(error.contains("ConnectionRefused"), "{error}");
     assert!(!error.contains("private-binding-token"));
+}
+
+#[tokio::test]
+async fn held_cleanup_does_not_block_executor_launch_admission() {
+    let dispatch = spawn::<RecordingMysql, RecordingRedis>();
+    let cleanup_rows = crate::sql_test_support::mysql_rows::MysqlRows::start_results(|sql| {
+        if sql.starts_with("SELECT ") {
+            return (
+                vec![("id", crate::sql_test_support::mysql_rows::Value::I64(0))],
+                Vec::new(),
+            );
+        }
+        (Vec::new(), Vec::new())
+    })
+    .await;
+    // The structured capture used below must also observe unprepared reads.
+    let _: Vec<brz_mysql::MysqlRow> = cleanup_rows
+        .mysql
+        .fetch_all("SELECT id FROM fixture_capture", ())
+        .await
+        .unwrap();
+    let reads = cleanup_rows.requests();
+    let text_read = reads
+        .iter()
+        .find(|read| read.sql == "SELECT id FROM fixture_capture")
+        .expect("the fixture captures text reads before returning rows");
+    assert_eq!(text_read.args, 0);
+    assert_eq!(text_read.first_integer, None);
+    let mut held = Vec::new();
+    let mut cleanup_servers = Vec::new();
+    // Occupy every cleanup permit. A ninth cleanup exercises the receiver's
+    // permit wait as well, so a shared FIFO cannot hide behind spare capacity.
+    for _ in 0..8 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let manager = ExecutorManager::new(format!("http://{}", listener.local_addr().unwrap()))
+            .unwrap()
+            .with_http_client(
+                HttpClient::builder()
+                    .read_timeout(Duration::from_secs(10))
+                    .build()
+                    .unwrap(),
+            );
+        let (started, deleting) = oneshot::channel();
+        let (release, wait_release) = oneshot::channel();
+        cleanup_servers.push(tokio::spawn(async move {
+            let (mut get, _) = listener.accept().await.unwrap();
+            assert!(read_http_request(&mut get).await);
+            get.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            let (mut delete, _) = listener.accept().await.unwrap();
+            assert!(read_http_request(&mut delete).await);
+            started.send(()).unwrap();
+            let _ = wait_release.await;
+            delete.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 16\r\nConnection: close\r\n\r\n{\"success\":true}").await.unwrap();
+        }));
+        assert!(dispatch.submit(DispatchJob::SubscriptionCleanup(Box::new(
+            crate::internal_callback::completion::SubscriptionCleanupJob::test_job(
+                cleanup_rows.mysql.clone(),
+                tables(),
+                manager,
+                TASK_ID,
+            ),
+        ))));
+        tokio::time::timeout(Duration::from_secs(2), deleting)
+            .await
+            .expect("cleanup occupies a permit with DELETE held")
+            .unwrap();
+        held.push(release);
+    }
+    assert!(dispatch.submit(DispatchJob::SubscriptionCleanup(Box::new(
+        crate::internal_callback::completion::SubscriptionCleanupJob::test_job(
+            cleanup_rows.mysql.clone(),
+            tables(),
+            ExecutorManager::new("http://127.0.0.1:1").unwrap(),
+            TASK_ID,
+        ),
+    ))));
+    let server = spawn_server(200, Vec::new(), Vec::new()).await;
+    let (accepted, acknowledgement) = oneshot::channel();
+    let job = DispatchJob::Executor {
+        url: server.url,
+        body: ExecutorDispatchBody::Prepared(Ok(crate::executor_binding::DispatchRequest {
+            body: json!({}),
+            binding_token: "test-binding".into(),
+        })),
+        start: None,
+        consumer: Box::new(consumer(
+            RecordingMysql::default(),
+            RecordingRedis::default(),
+        )),
+        task_id: TASK_ID,
+        subtask_id: SUBTASK_ID,
+        user_id: TASK_OWNER_ID,
+        message_id: None,
+    };
+    assert!(dispatch.submit(DispatchJob::Pipeline(Box::new(job), accepted)));
+    tokio::time::timeout(Duration::from_secs(2), acknowledgement)
+        .await
+        .expect("executor launch must progress while cleanup is held and queued")
+        .unwrap()
+        .expect("executor accepts the launch");
+    for release in held {
+        release.send(()).unwrap();
+    }
+    for cleanup in cleanup_servers {
+        cleanup.await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if cleanup_rows
+                .requests()
+                .iter()
+                .filter(|q| q.sql.eq_ignore_ascii_case("COMMIT"))
+                .count()
+                == 8
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("successful held cleanups commit their runtime flags");
 }
 
 #[tokio::test]

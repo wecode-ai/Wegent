@@ -37,6 +37,14 @@ const PERSONAL_TASK_METHODS: [&str; 25] = [
     "runtime.archived_conversations.unarchive",
     "runtime.archived_conversations.delete",
 ];
+pub(super) const STAND_IN_OWNER_METHODS: [&str; 6] = [
+    "runtime.stand_in.personal.get",
+    "runtime.stand_in.proposal.get",
+    "runtime.stand_in.work.list",
+    "runtime.stand_in.conversation",
+    "runtime.stand_in.device_identity",
+    "runtime.tasks.get",
+];
 const PROJECT_READ_METHODS: [&str; 2] = [
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
@@ -59,6 +67,7 @@ pub(super) enum TaskGrant {
     ProjectRead,
     StandInRole,
     AssistantShareDefinition,
+    StandInOwner,
 }
 
 pub(super) fn authorize(route: &Route, method: &str, project_read: bool) -> Option<TaskGrant> {
@@ -79,11 +88,13 @@ pub(super) fn authorize(route: &Route, method: &str, project_read: bool) -> Opti
         .get("runtime_features")
         .and_then(|features| features.get("remoteTaskAccess"))
         .unwrap_or(&Value::Null);
-    if PERSONAL_TASK_METHODS.contains(&method)
-        && access["version"].as_i64() == Some(1)
-        && access["enabled"] == Value::Bool(true)
-    {
-        return Some(TaskGrant::Unscoped);
+    if access["version"].as_i64() == Some(1) && access["enabled"] == Value::Bool(true) {
+        if STAND_IN_OWNER_METHODS.contains(&method) {
+            return Some(TaskGrant::StandInOwner);
+        }
+        if PERSONAL_TASK_METHODS.contains(&method) || method == "runtime.runner.catalog" {
+            return Some(TaskGrant::Unscoped);
+        }
     }
     None
 }
@@ -156,6 +167,28 @@ mod tests {
             "runtime.worktrees.delete",
         ] {
             assert!(authorize(&target, method, false).is_none());
+        }
+    }
+
+    #[test]
+    fn assistant_access_requires_target_consent_and_excludes_settings_writes() {
+        let denied = route(Value::Null);
+        let allowed = route(json!({"version": 1, "enabled": true}));
+        for method in STAND_IN_OWNER_METHODS {
+            assert_eq!(authorize(&denied, method, false), None);
+            assert_eq!(
+                authorize(&allowed, method, false),
+                Some(TaskGrant::StandInOwner)
+            );
+        }
+        for method in [
+            "runtime.stand_in.personal.save",
+            "runtime.stand_in.proposal.resolve",
+            "runtime.stand_in.binding",
+            "runtime.stand_in.personal.lifecycle",
+            "runtime.stand_in.onboarding.complete",
+        ] {
+            assert_eq!(authorize(&allowed, method, false), None);
         }
     }
 

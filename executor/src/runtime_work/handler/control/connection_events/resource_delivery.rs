@@ -64,21 +64,23 @@ impl RuntimeWorkRpcHandler {
         &self,
         task: &str,
         request: &mut ExecutionRequest,
-    ) -> Result<(), AppIpcError> {
+    ) -> Result<Option<Value>, AppIpcError> {
         let Some(keys) = request
             .extra
             .get("resource_event_keys")
             .and_then(Value::as_array)
         else {
-            return Ok(());
+            return Ok(None);
         };
         let keys: Vec<_> = keys
             .iter()
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect();
+        let requested: HashSet<_> = keys.iter().map(String::as_str).collect();
         let mut owned = HashSet::new();
-        let receipts = (|| -> Result<(), AppIpcError> {
+        let mut receipt = None;
+        {
             let commands = self
                 .command_journal
                 .lock()
@@ -87,57 +89,71 @@ impl RuntimeWorkRpcHandler {
                 command.turn.local_task_id == task
                     && command.turn.request.extra.get("user_id") == request.extra.get("user_id")
             }) {
-                if keys
+                let matching: Vec<_> = command
+                    .resource_event_keys
                     .iter()
-                    .any(|key| command.resource_event_keys.contains(key))
-                {
+                    .filter(|key| requested.contains(key.as_str()))
+                    .collect();
+                if !matching.is_empty() {
                     command.require_confirmed_delivery()?;
+                    receipt.get_or_insert_with(|| command.receipt());
+                    owned.extend(matching.into_iter().cloned());
                 }
-                owned.extend(command.resource_event_keys.iter().cloned());
             }
-            Ok(())
-        })();
-        let mut distinct = HashSet::new();
-        let guided = receipts.and_then(|()| {
-            event_store::read(
-                &self.event_subscription_path(),
-                event_store::Scope::Task(task),
-                |state| {
-                    Ok(state["operations"]
-                        .as_object()
+        }
+        event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| {
+                for record in state["operations"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|records| records.values())
+                {
+                    let Some(guidance @ ("requested" | "accepted")) =
+                        record["native_guidance"].as_str()
+                    else {
+                        continue;
+                    };
+                    let matching: Vec<_> = record
+                        .get("guided_event_keys")
+                        .unwrap_or(&record["resource_event_keys"])
+                        .as_array()
                         .into_iter()
-                        .flat_map(|records| records.values())
-                        .filter(|record| {
-                            matches!(
-                                record["native_guidance"].as_str(),
-                                Some("requested" | "accepted")
-                            )
-                        })
-                        .flat_map(|record| {
-                            record["resource_event_keys"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                        })
+                        .flatten()
                         .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect::<HashSet<_>>())
-                },
-            )
-        });
-        let mut facts = self.load_resource_event_facts(task, &keys)?;
-        owned.extend(guided?);
+                        .filter(|key| requested.contains(key))
+                        .collect();
+                    if matching.is_empty() {
+                        continue;
+                    }
+                    if guidance == "requested" {
+                        return Err(AppIpcError::new(
+                            "guidance_receipt_unknown",
+                            "The original event guidance has no confirmed receipt",
+                        ));
+                    }
+                    let operation = record["operation_id"].as_str().ok_or_else(|| {
+                        invalid("Accepted event guidance has no operation identity")
+                    })?;
+                    receipt.get_or_insert_with(|| json!({"success":true,"accepted":true,"taskId":task,"commandId":operation,"guided":true}));
+                    owned.extend(matching.into_iter().map(str::to_owned));
+                }
+                Ok(())
+            },
+        )?;
+        let mut distinct = HashSet::new();
         let fresh: Vec<_> = keys
             .iter()
             .filter(|key| !owned.contains(*key) && distinct.insert((*key).clone()))
             .cloned()
             .collect();
         if fresh.is_empty() {
-            return Err(AppIpcError::new(
-                "resource_events_already_accepted",
-                "Resolve the existing event delivery receipt instead of starting another execution",
-            ));
+            return receipt
+                .map(Some)
+                .ok_or_else(|| invalid("Missing resource event identities"));
         }
+        let mut facts = self.load_resource_event_facts(task, &fresh)?;
         let (events, sources): (Vec<_>, Vec<_>) = fresh
             .iter()
             .map(|key| {
@@ -162,6 +178,6 @@ impl RuntimeWorkRpcHandler {
         request
             .extra
             .insert("resource_event_keys".into(), json!(fresh));
-        Ok(())
+        Ok(None)
     }
 }

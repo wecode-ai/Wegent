@@ -21,7 +21,6 @@ const preparationGroups = {
     'stand-in-identities',
     'stand-in-connections',
     'stand-in-cli',
-    'stand-in-dingtalk-delegation',
     'stand-in-self-learning',
   ],
 }

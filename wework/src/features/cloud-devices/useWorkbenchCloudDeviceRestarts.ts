@@ -4,13 +4,15 @@ import type { DeviceLifecyclePhase } from './useDeviceOfflineLifecycleAction'
 
 export interface DeviceRestartProgress {
   device: DeviceInfo
+  upgrade: boolean
   phase: DeviceLifecyclePhase
   error: string | null
   onRefresh: () => void
 }
 
 interface RestartActions {
-  requestRestart: (devices: DeviceInfo[]) => void
+  requestRestart: (devices: DeviceInfo[], upgrade?: boolean) => void
+  remindOnUse: (deviceId: string | null | undefined) => void
   progress: Record<string, DeviceRestartProgress>
   isConfirming: boolean
   isRestarting: (device: DeviceInfo) => boolean
