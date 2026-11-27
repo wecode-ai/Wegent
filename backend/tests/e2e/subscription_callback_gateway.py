@@ -283,6 +283,102 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         )
         self.assertEqual(after["error_message"], self.marker)
 
+    def test_task_queue_terminal_failure_reaches_backend(self) -> None:
+        """Verify a queue-consumer failure through the real callback endpoint."""
+        from executor_manager.clients import callback_client as callback_client_module
+        from executor_manager.executors.dispatcher import ExecutorDispatcher
+        from executor_manager.services.task_queue_consumer import TaskQueueConsumer
+        from executor_manager.services.task_queue_service import (
+            PENDING_INDEX_KEY,
+            PENDING_KEY_TEMPLATE,
+            TaskQueueService,
+        )
+
+        previous_api_domain = os.environ.get("TASK_API_DOMAIN")
+        previous_dequeue_timeout = os.environ.get("TASK_QUEUE_DEQUEUE_TIMEOUT")
+        os.environ["TASK_API_DOMAIN"] = os.environ["E2E_API_URL"].rstrip("/")
+        os.environ["TASK_QUEUE_DEQUEUE_TIMEOUT"] = "1"
+        callback_client_module._callback_client = None
+
+        service_pool = f"e2e-terminal-{uuid.uuid4().hex}"
+        service = TaskQueueService(service_pool=service_pool, queue_type="online")
+        consumer = TaskQueueConsumer(
+            service_pool=service_pool,
+            queue_type="online",
+        )
+        consumer._backpressure_wait = 0.01
+        original_executors = ExecutorDispatcher._executors
+        ExecutorDispatcher._executors = {"custom": object()}
+        task = {
+            "metadata": {
+                "task_id": self.task_id,
+                "subtask_id": self.subtask_id,
+                "executor_type": "docker",
+            }
+        }
+
+        try:
+            assert service.enqueue_task(task)
+            consumer.start()
+            deadline = time.monotonic() + 10
+            while True:
+                after = self._snapshot()
+                if after["subtask_status"] != "RUNNING":
+                    break
+                self.assertLess(time.monotonic(), deadline, after)
+                time.sleep(0.1)
+
+            self.assertEqual(after["execution_status"], "FAILED", after)
+            self.assertEqual(after["task_status"], "FAILED", after)
+            self.assertEqual(after["subtask_status"], "FAILED", after)
+            self.assertEqual(
+                after["error_message"],
+                "Default 'docker' executor not found",
+                after,
+            )
+            redis_client = service.redis_client
+            assert redis_client is not None
+            deadline = time.monotonic() + 10
+            while True:
+                queue_empty = redis_client.llen(service.queue_key) == 0
+                pending_removed = (
+                    not redis_client.exists(
+                        PENDING_KEY_TEMPLATE.format(task_id=self.task_id)
+                    )
+                    and redis_client.zscore(PENDING_INDEX_KEY, str(self.task_id))
+                    is None
+                )
+                if queue_empty and pending_removed:
+                    break
+                self.assertLess(time.monotonic(), deadline, after)
+                time.sleep(0.1)
+
+            self.assertEqual(redis_client.llen(service.queue_key), 0)
+            self.assertEqual(
+                redis_client.exists(PENDING_KEY_TEMPLATE.format(task_id=self.task_id)),
+                0,
+            )
+            self.assertIsNone(redis_client.zscore(PENDING_INDEX_KEY, str(self.task_id)))
+        finally:
+            consumer.stop()
+            redis_client = service.redis_client
+            if redis_client is not None:
+                redis_client.delete(
+                    service.queue_key,
+                    PENDING_KEY_TEMPLATE.format(task_id=self.task_id),
+                )
+                redis_client.zrem(PENDING_INDEX_KEY, str(self.task_id))
+            ExecutorDispatcher._executors = original_executors
+            callback_client_module._callback_client = None
+            if previous_api_domain is None:
+                os.environ.pop("TASK_API_DOMAIN", None)
+            else:
+                os.environ["TASK_API_DOMAIN"] = previous_api_domain
+            if previous_dequeue_timeout is None:
+                os.environ.pop("TASK_QUEUE_DEQUEUE_TIMEOUT", None)
+            else:
+                os.environ["TASK_QUEUE_DEQUEUE_TIMEOUT"] = previous_dequeue_timeout
+
     def test_cancelled_callback_persists_subscription_cancellation(self) -> None:
         self._callback("response.incomplete", {}, "CANCELLED")
 
@@ -569,7 +665,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 4
+        and result.testsRun == 5
         and not result.skipped,
     }
     (report_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")
