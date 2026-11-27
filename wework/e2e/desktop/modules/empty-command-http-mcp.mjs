@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { writeFile } from 'node:fs/promises'
 
 import { readRequestBody } from './response-protocol.mjs'
 
-export async function startEmptyCommandHttpMcp(probePath) {
+export async function startEmptyCommandHttpMcp(probePath, { recordReceipts = false } = {}) {
+  const receipts = []
   let failure
   let calls = 0
   const failures = { unauthorized: 0, startup: 0, invocation: 0 }
@@ -65,7 +67,7 @@ export async function startEmptyCommandHttpMcp(probePath) {
             ],
           }
           break
-        case 'tools/call':
+        case 'tools/call': {
           if (failedCall) {
             assert.equal(message.params.name, 'fail_operation')
             failures.invocation++
@@ -78,8 +80,15 @@ export async function startEmptyCommandHttpMcp(probePath) {
           assert.equal(message.params.name, 'probe_environment')
           await writeFile(probePath, JSON.stringify({ token, pid: process.pid }), { mode: 0o600 })
           calls++
-          result = { content: [{ type: 'text', text: `MCP_CONTEXT:${token}` }] }
+          let text = `MCP_CONTEXT:${token}`
+          if (recordReceipts) {
+            const receipt = randomUUID()
+            receipts.push({ token, receipt })
+            text += `\nMCP_RECEIPT:${receipt}`
+          }
+          result = { content: [{ type: 'text', text }] }
           break
+        }
         case 'resources/list':
           result = { resources: [] }
           break
@@ -112,6 +121,7 @@ export async function startEmptyCommandHttpMcp(probePath) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${server.address().port}`
   return {
+    receipts,
     failureConfigs: {
       unauthorized: { url: `${base}/unauthorized`, required: true },
       startup: { url: `${base}/startup-error`, required: true },
