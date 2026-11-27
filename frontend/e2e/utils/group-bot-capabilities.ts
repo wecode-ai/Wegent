@@ -140,12 +140,13 @@ export function verifyGroupBotProbe(bodies: Record<string, unknown>[], grant: Gr
       Array.isArray(message.content) ? [...message.content, message] : [message]
     )
   )
-  const fullName = `mcp__${grant.serverId}__${grant.tool}`
+  const scopedName = `${grant.serverId}__${grant.tool}`
+  const directNames = new Set([`mcp__${scopedName}`, scopedName, grant.tool])
   const calls = new Set(
     records
       .filter(block => {
         if (!['tool_use', 'function_call', 'custom_tool_call'].includes(block.type)) return false
-        if (block.name === fullName || block.name === grant.tool) return true
+        if (directNames.has(block.name)) return true
         return (
           ['functions.exec', 'functions__exec', 'exec'].includes(block.name) &&
           JSON.stringify(block.input ?? block.arguments).includes(grant.tool)
