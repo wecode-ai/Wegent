@@ -413,6 +413,54 @@ impl LocalTaskStore {
         .collect()
     }
 
+    /// Read the identity of each direct assignment, including work routed to another device.
+    pub fn direct_role_request_page(
+        &self,
+        user: i64,
+        device: &str,
+        conversation: &str,
+        before: Option<(&str, &str)>,
+    ) -> Result<Value, TaskRuntimeError> {
+        const PAGE: usize = 20;
+        let range = if before.is_some() {
+            "AND (created_at,id)<(?5,?6)"
+        } else {
+            ""
+        };
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(&format!(
+            "SELECT id,created_at,json_extract(metadata,'$.intent.roleId'),json_extract(metadata,'$.intent.title'),
+                    CASE WHEN json_extract(metadata,'$.resultReceipt') IS NOT NULL
+                         THEN json_extract(metadata,'$.resultStatus') END
+             FROM loop_items WHERE resource_type='stand_in_role_request' AND json_valid(metadata)
+               AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.intent.sourceDevice')=?2
+               AND json_extract(metadata,'$.intent.sourceTaskId')=?3
+               AND json_extract(metadata,'$.intent.roleDelegation.ancestors[0]')=?3
+               {range} ORDER BY created_at DESC,id DESC LIMIT ?4"
+        ))?;
+        let mut rows = if let Some((created, id)) = before {
+            statement.query(params![user, device, conversation, PAGE + 1, created, id])?
+        } else {
+            statement.query(params![user, device, conversation, PAGE + 1])?
+        };
+        let mut tasks = Vec::new();
+        let mut next_cursor = None;
+        while let Some(row) = rows.next()? {
+            if tasks.len() == PAGE {
+                let last: &Value = &tasks[PAGE - 1];
+                next_cursor = Some(json!([last["createdAt"], last["taskId"]]).to_string());
+                break;
+            }
+            let mut task = json!({"taskId":row.get::<_, String>(0)?, "createdAt":row.get::<_, String>(1)?,
+                "roleId":row.get::<_, String>(2)?, "title":row.get::<_, Option<String>>(3)?});
+            if let Some(status) = row.get::<_, Option<String>>(4)? {
+                task["recordedResultStatus"] = json!(status);
+            }
+            tasks.push(task);
+        }
+        Ok(json!({"tasks":tasks,"nextCursor":next_cursor}))
+    }
+
     pub fn due_remote_stand_in_role_results(
         &self,
         user: i64,
@@ -557,7 +605,7 @@ mod tests {
     fn branch_cancellation_survives_reopen_and_excludes_other_branches_and_owners() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tasks.sqlite");
-        let backend = "https://example.test";
+        let backend = "https://192.0.2.1";
         let store = LocalTaskStore::open(&path).unwrap();
         for (id, owner, root, ancestors) in [
             ("engineering", 7, "root", json!(["conversation"])),
@@ -666,10 +714,84 @@ mod tests {
     }
 
     #[test]
+    fn direct_role_history_pages_across_groups_within_the_original_conversation() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let save = |id: &str, user, device, parent, ancestors| {
+            let intent = json!({"sourceTaskId":parent,"sourceDevice":device,"roleId":"writer",
+                "title":id,"roleDelegation":{"root":id,"ancestors":ancestors}});
+            store
+                .reserve_stand_in_role_request(id, user, id, &intent, 1)
+                .unwrap();
+        };
+        for index in 0..21 {
+            save(
+                &format!("draft-{index:02}"),
+                7,
+                "mac",
+                "assistant",
+                json!(["assistant"]),
+            );
+        }
+        save("other-user", 8, "mac", "assistant", json!(["assistant"]));
+        save(
+            "other-device",
+            7,
+            "cloud",
+            "assistant",
+            json!(["assistant"]),
+        );
+        save("other-parent", 7, "mac", "teammate", json!(["teammate"]));
+        save(
+            "nested",
+            7,
+            "mac",
+            "draft-00",
+            json!(["assistant", "draft-00"]),
+        );
+        store
+            .record_remote_stand_in_role_result("draft-20", 7, 0, "cancelled", Some("receipt"))
+            .unwrap();
+        store
+            .record_remote_stand_in_role_result("draft-19", 7, 0, "done", None)
+            .unwrap();
+        // A timestamp tie must not lose the last branch on the next page.
+        store.connection().unwrap().execute(
+            "UPDATE loop_items SET created_at='2026-01-01' WHERE resource_type='stand_in_role_request'", [],
+        ).unwrap();
+        let first = store
+            .direct_role_request_page(7, "mac", "assistant", None)
+            .unwrap();
+        let tasks = first["tasks"].as_array().unwrap();
+        assert_eq!(tasks[0]["recordedResultStatus"], "cancelled");
+        assert!(tasks[1].get("recordedResultStatus").is_none());
+        let ids: Vec<_> = tasks
+            .iter()
+            .map(|item| item["taskId"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            (1..=20)
+                .rev()
+                .map(|i| format!("draft-{i:02}"))
+                .collect::<Vec<_>>()
+        );
+        let cursor: (String, String) =
+            serde_json::from_str(first["nextCursor"].as_str().unwrap()).unwrap();
+        let last = store
+            .direct_role_request_page(7, "mac", "assistant", Some((&cursor.0, &cursor.1)))
+            .unwrap();
+        assert_eq!(
+            last,
+            json!({"tasks":[{"createdAt":"2026-01-01","taskId":"draft-00","title":"draft-00","roleId":"writer"}],"nextCursor":null})
+        );
+    }
+
+    #[test]
     fn reconnect_recovers_only_the_scoped_unacknowledged_dispatches() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tasks.sqlite");
-        let backend = "https://example.test";
+        let backend = "https://192.0.2.1";
         let intent = json!({"sourceDevice":"desktop","sourceRoute":"desktop-route",
             "targetDevice":"cloud","backendUrl":backend,
             "roleDelegation":{"ancestors":["original-conversation","source-task"]}});
@@ -750,7 +872,7 @@ mod tests {
     fn remote_result_is_immutable_until_delivered_and_receipt_survives_reopen() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tasks.sqlite");
-        let backend = "https://example.test";
+        let backend = "https://192.0.2.1";
         let intent = json!({"sourceDevice":"desktop","sourceRoute":"desktop-route",
             "targetDevice":"cloud","backendUrl":backend});
         let store = LocalTaskStore::open(&path).unwrap();

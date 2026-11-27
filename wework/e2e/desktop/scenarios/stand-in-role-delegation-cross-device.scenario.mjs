@@ -33,17 +33,16 @@ const TOGGLE = `${CARD} [data-testid="stand-in-delegated-work-toggle"]`
 const ROW = `${CARD} ${testId('stand-in-delegated-work-open')}`
 const CANCEL_REQUEST = '请交给跨设备发布工程，核对下周一的发布窗口。'
 const CANCEL_BRIEF = '核对下周一的独立排期。'
-const DEPENDENCY_REQUEST =
-  '先请发布工程验证周四窗口，再据此拟定值班时间，最后让验证窗口的原任务补齐交接说明。'
+const DEPENDENCY_REQUEST = '先准备一份记录，再复核其内容，并将复核意见交回原任务。'
 const DEPENDENCY_WORK = [
-  { title: '验证周四窗口', message: '查证周四窗口开放时间。' },
-  { title: '拟定周四值班时间', message: '依据实际窗口结果拟定值班时间。' },
+  { title: '准备记录', message: '整理一份记录供复核。' },
+  { title: '复核记录', message: '使用已有记录核对所缺内容。' },
 ]
-const VERIFIED_WINDOW = '周四 14:00 开放窗口。'
-const DEPENDENCY_FINAL = '值班从周四 14:00 开始。'
-const REWORK_BRIEF = '把值班结果补入原窗口核验记录，注明交接时间。'
-const REWORK_RESULT = '已在窗口核验记录中确认周四 14:00 交接。'
-const REWORK_FINAL = '发布工程已在原任务中补齐周四交接说明。'
+const PREREQUISITE_RESULT = '记录已就绪。'
+const DEPENDENCY_FINAL = '复核完成，请补充结论。'
+const REWORK_BRIEF = '请在原任务中补齐结论。'
+const REWORK_RESULT = '结论已写入原记录。'
+const REWORK_FINAL = '原任务已按复核意见完成。'
 
 export function createDesktopScenario({
   captureScreenshot,
@@ -96,7 +95,7 @@ export function createDesktopScenario({
         if (latest.includes(DEPENDENCY_WORK[1].title)) {
           assert.ok(latest.includes(DEPENDENCY_FINAL))
           assert.ok(latest.includes(dependencies[1]), 'The remote review must identify its task')
-          const id = 'remote-window-rework'
+          const id = 'remote-record-rework'
           if (!requestContainsToolOutput(body, id)) {
             const { events } = mcpToolRequestEvents(body, {
               toolName: 'delegate_role_task',
@@ -170,10 +169,10 @@ export function createDesktopScenario({
             ])
           )
         } else if (index === 0) {
-          reply(response, [assistantMessage(VERIFIED_WINDOW)])
+          reply(response, [assistantMessage(PREREQUISITE_RESULT)])
         } else {
           assert.ok(
-            latest.includes(VERIFIED_WINDOW),
+            latest.includes(PREREQUISITE_RESULT),
             'The remote dependent needs the actual recorded result'
           )
           await releaseReview.promise
@@ -206,7 +205,7 @@ export function createDesktopScenario({
           if (index) assert.equal(dispatch.status, 'waiting_for_dependencies')
           dependencies[index] = dispatch.taskId
         }
-        reply(response, [assistantMessage('已安排验证窗口与拟定值班时间。')])
+        reply(response, [assistantMessage('已安排准备与复核。')])
         return true
       }
       const cancellationStory = latest.includes(CANCEL_REQUEST)
@@ -460,6 +459,7 @@ export function createDesktopScenario({
         (await remote('runtime.tasks.get', { taskId: originalId })).task
       const writePermission = { permissionMode: 'workspace-write' }
       let beforeRework
+      let reworkLogOffset
       try {
         const { items } = await storyUntil(
           readBranches,
@@ -482,6 +482,7 @@ export function createDesktopScenario({
           taskPermissions: writePermission,
         })
         assert.deepEqual(changed.taskPermissions, writePermission)
+        reworkLogOffset = (await readFile(cloud.remoteExecutorRuntimeLogPath, 'utf8')).length
       } finally {
         releaseReview.resolve()
       }
@@ -512,15 +513,20 @@ export function createDesktopScenario({
       assert.deepEqual(resumed.runtimeHandle.taskPermissions, writePermission)
       const sandboxLog = await readFile(cloud.remoteExecutorRuntimeLogPath, 'utf8')
       const applied = sandboxLog
+        .slice(reworkLogOffset)
         .split('\n')
-        .filter(line => line.includes(`codex source sandbox applied task_id=${originalId} `))
+        .findLast(
+          line =>
+            line.includes('codex source sandbox applied ') &&
+            line.includes(` thread_id=${resumed.threadId} `)
+        )
       assert.ok(
-        applied.at(-1)?.includes(String.raw`\"id\":\":workspace\"`),
+        applied?.includes(String.raw`\"id\":\":workspace\"`) && applied.includes('workspaceWrite'),
         'The resumed cloud Codex turn must use the owner-granted workspace-write profile'
       )
       const { messages } = await remote('runtime.tasks.transcript', { taskId: originalId })
       const answers = messages.filter(item => item.role === 'assistant').map(item => item.content)
-      assert.ok(answers.includes(VERIFIED_WINDOW))
+      assert.ok(answers.includes(PREREQUISITE_RESULT))
       assert.ok(answers.includes(REWORK_RESULT))
       await expandDelegation()
       await captureScreenshot(control, '08-cross-device-prerequisite-retry-result.png', ROOT)

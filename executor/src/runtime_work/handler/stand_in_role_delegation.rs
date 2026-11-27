@@ -111,6 +111,7 @@ impl RuntimeWorkRpcHandler {
         identity: &StandInMcpIdentity,
         name: &str,
         args: &Value,
+        caller_command: Option<&str>,
     ) -> Result<Value, AppIpcError> {
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
@@ -120,6 +121,7 @@ impl RuntimeWorkRpcHandler {
         if identity.device != self.device_id
             || !owned_role_task(&actor, identity.user, &self.device_id)
             || matches!(actor.status.as_str(), "archived" | "cancelled")
+            || !continuation::matches_delegation_command(&actor, caller_command, false)
             || identity.work.is_some()
             || identity.role.as_deref() != origin["standInId"].as_str()
             || !(identity_conversation
@@ -135,7 +137,28 @@ impl RuntimeWorkRpcHandler {
             return Err(denied());
         }
         if name == "list_role_tasks" {
-            return self.role_task_status(identity, &delegation_root(&actor)?);
+            let optional = |key: &str| args.get(key).filter(|value| !value.is_null());
+            return match (optional("scope"), optional("cursor")) {
+                (None, None) => {
+                    let mut group = self.role_task_status(identity, &delegation_root(&actor)?)?;
+                    if group["tasks"].as_array().is_some_and(Vec::is_empty)
+                        && continuation::matches_delegation_command(&actor, caller_command, true)
+                    {
+                        group["previousAssignments"] = self
+                            .direct_role_task_history(&actor, identity, caller_command, None)
+                            .await?;
+                    }
+                    Ok(group)
+                }
+                (Some(scope), cursor) if scope == "conversation" => {
+                    self.direct_role_task_history(&actor, identity, caller_command, cursor)
+                        .await
+                }
+                _ => Err(AppIpcError::new(
+                    "bad_request",
+                    "Invalid role task list scope",
+                )),
+            };
         }
         if identity_conversation && !self.has_current_stand_in_owner_request(&actor) {
             return Err(denied());
@@ -208,7 +231,6 @@ impl RuntimeWorkRpcHandler {
         let metadata = delegation_metadata(&actor, actor_role, role_id)?;
         let root = metadata["root"].as_str().ok_or_else(denied)?;
         let request = super::stand_in_tasks::required(args, "requestId")?;
-        let id = role_task_id(root, &identity.task_id, request);
         let brief = super::stand_in_tasks::required(args, "message")?;
         let message = role["teamDuty"]
             .as_str()
@@ -226,12 +248,13 @@ impl RuntimeWorkRpcHandler {
         if !dependencies.is_null() {
             intent["dependsOn"] = dependencies;
         }
-        if args.get("taskId").is_some() {
-            let id = super::stand_in_tasks::required(args, "taskId")?;
+        if let Some(task_id) = args.get("taskId") {
+            intent["taskId"] = task_id.clone();
             return self
-                .continue_role_task(&store, identity, &actor, id, &mut role, intent)
+                .continue_role_task(&store, identity, &actor, &mut role, intent, caller_command)
                 .await;
         }
+        let id = role_task_id(root, &identity.task_id, request);
         let target = role["executionDeviceId"].as_str().ok_or_else(denied)?;
         let connection = if target == self.device_id {
             None
@@ -251,9 +274,17 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .map(|connection| &connection.backend_url));
         intent["title"] = json!(super::stand_in_tasks::required(args, "title")?);
-        let reservation = store
-            .reserve_stand_in_role_request(&id, identity.user, root, &intent, MAX_ROLE_TASKS)
-            .map_err(reservation_error)?;
+        let reservation = self
+            .with_current_delegation_command(&actor, caller_command, false, || {
+                store.reserve_stand_in_role_request(
+                    &id,
+                    identity.user,
+                    root,
+                    &intent,
+                    MAX_ROLE_TASKS,
+                )
+            })
+            .await?;
         let intent = &reservation["intent"];
         if reservation["alreadyAccepted"] == true
             && reservation["cancelRequested"] != true
@@ -317,6 +348,37 @@ impl RuntimeWorkRpcHandler {
         }
         .map_err(super::stand_in::settings_error)?;
         result
+    }
+
+    async fn direct_role_task_history(
+        &self,
+        actor: &RuntimeTaskLink,
+        identity: &StandInMcpIdentity,
+        caller_command: Option<&str>,
+        cursor: Option<&Value>,
+    ) -> Result<Value, AppIpcError> {
+        let before: Option<(String, String)> = cursor
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|key| key.len() <= 1024)
+                    .and_then(|key| serde_json::from_str(key).ok())
+                    .ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Invalid role task history cursor")
+                    })
+            })
+            .transpose()?;
+        self.with_current_delegation_command(actor, caller_command, true, || {
+            LocalTaskStore::open(self.task_store_path.as_ref())?.direct_role_request_page(
+                identity.user,
+                &identity.device,
+                &identity.task_id,
+                before
+                    .as_ref()
+                    .map(|(date, id)| (date.as_str(), id.as_str())),
+            )
+        })
+        .await
     }
 
     fn role_task_status(

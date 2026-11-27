@@ -200,7 +200,13 @@ impl RuntimeWorkRpcHandler {
                 self.send_message_from_owner(prepared, true).await?
             }
         } else {
-            self.create_task_with_activity(prepared, activity).await?
+            self.create_task_with_initial_permissions(
+                prepared,
+                super::tasks::TaskStartInput::from_message(activity, true),
+                None,
+                None,
+            )
+            .await?
         };
         super::stand_in_execution::accepted_stand_in_result(result)
     }

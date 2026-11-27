@@ -45,6 +45,8 @@ fn check_cancellation(
     Ok(())
 }
 
+/// Each bound is the minimum prerequisite attempt for this turn. Until evidence
+/// is captured, a newer attempt supersedes the earlier result, including on failure.
 fn dependency_bounds(
     rows: &HashMap<String, Value>,
     id: &str,
@@ -104,28 +106,61 @@ fn effective_intent(intent: &Value) -> Value {
     effective
 }
 
+fn branch_root(intent: &Value) -> Result<&str, TaskRuntimeError> {
+    intent["roleDelegation"]["root"]
+        .as_str()
+        .ok_or(TaskRuntimeError::VersionConflict)
+}
+
+fn replayed_followup(
+    tx: &Transaction<'_>,
+    rows: &HashMap<String, Value>,
+    id: &str,
+    user: i64,
+    request_root: &str,
+    intent: &Value,
+) -> Result<bool, TaskRuntimeError> {
+    let root = branch_root(intent)?;
+    check_cancellation(rows, id, intent)?;
+    let accepted = ledger::replayed(tx, rows, id, user, root, intent, true)?;
+    if root != request_root {
+        let current_rows = delegation_rows(tx, user, request_root)?;
+        check_cancellation(&current_rows, id, intent)?;
+        let recorded = ledger::replayed(tx, &current_rows, id, user, request_root, intent, true)?;
+        if accepted && !recorded {
+            ledger::bind_followup_to_request(tx, id, user, root, request_root, intent)?;
+        } else if recorded && !accepted {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+    }
+    Ok(accepted)
+}
+
 impl LocalTaskStore {
     /// Avoid preparing a native turn for an already recorded request. Admission
     /// repeats the check inside its write transaction after any asynchronous work.
-    pub fn replayed_stand_in_role_request(
+    pub fn replayed_stand_in_role_followup(
         &self,
         id: &str,
         user: i64,
-        root: &str,
+        request_root: &str,
         intent: &Value,
-        followup: bool,
     ) -> Result<Option<Value>, TaskRuntimeError> {
         let mut connection = self.connection()?;
-        let tx = connection.transaction()?;
+        let root = branch_root(intent)?;
+        let behavior = if root != request_root {
+            TransactionBehavior::Immediate
+        } else {
+            TransactionBehavior::Deferred
+        };
+        let tx = connection.transaction_with_behavior(behavior)?;
         let mut rows = delegation_rows(&tx, user, root)?;
-        if followup {
-            check_cancellation(&rows, id, intent)?;
-        }
-        if !ledger::replayed(&tx, &rows, id, user, root, intent, followup)? {
+        if !replayed_followup(&tx, &rows, id, user, request_root, intent)? {
             return Ok(None);
         }
         let mut result = rows.remove(id).ok_or(TaskRuntimeError::TaskNotFound)?;
         result["alreadyAccepted"] = json!(true);
+        tx.commit()?;
         Ok(Some(result))
     }
 
@@ -165,18 +200,17 @@ impl LocalTaskStore {
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let rows = delegation_rows(&tx, user, root)?;
-        if let Some(saved) = rows.get(id) {
-            if let Some(attempt) = replica_attempt {
-                let row =
-                    replica::verified_request(&tx, id, user, root, intent, attempt, saved.clone())?;
-                tx.commit()?;
-                return Ok(row);
-            }
+        let effective = effective_intent(intent);
+        if let (Some(saved), Some(attempt)) = (rows.get(id), replica_attempt) {
+            let row =
+                replica::verified_request(&tx, id, user, root, &effective, attempt, saved.clone())?;
+            tx.commit()?;
+            return Ok(row);
         }
         if replica_attempt.is_none() {
             let replay = ledger::replayed(&tx, &rows, id, user, root, intent, false)?;
             if let Some(saved) = rows.get(id) {
-                if replay || (intent["requestId"].is_null() && saved["intent"] == *intent) {
+                if replay || (intent["requestId"].is_null() && saved["intent"] == effective) {
                     let mut result = saved.clone();
                     result["alreadyAccepted"] = json!(true);
                     return Ok(result);
@@ -188,7 +222,7 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::StandInRoleRequestLimit);
         }
         check_cancellation(&rows, id, intent)?;
-        let mut row = json!({"userId":user, "root":root,"intent":effective_intent(intent)});
+        let mut row = json!({"userId":user, "root":root,"intent":effective});
         if let Some(attempt) = replica_attempt {
             row["attempt"] = json!(attempt);
         } else if intent.get("dependsOn").is_some() {
@@ -259,12 +293,13 @@ impl LocalTaskStore {
         &self,
         id: &str,
         user: i64,
-        root: &str,
+        request_root: &str,
         intent: &Value,
         expected_attempt: Option<u64>,
     ) -> Result<(Value, bool), TaskRuntimeError> {
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let root = branch_root(intent)?;
         let rows = delegation_rows(&tx, user, root)?;
         let mut row = rows
             .get(id)
@@ -289,8 +324,8 @@ impl LocalTaskStore {
         {
             return Err(TaskRuntimeError::VersionConflict);
         }
-        check_cancellation(&rows, id, intent)?;
-        if ledger::replayed(&tx, &rows, id, user, root, intent, true)? {
+        if replayed_followup(&tx, &rows, id, user, request_root, intent)? {
+            tx.commit()?;
             return Ok((row, true));
         }
         let attempt = row["attempt"].as_u64().unwrap_or(0);
@@ -344,6 +379,9 @@ impl LocalTaskStore {
             params![id, row.to_string(), now()],
         )?;
         ledger::record(&tx, id, &row, intent, true, false)?;
+        if request_root != root {
+            ledger::bind_followup_to_request(&tx, id, user, root, request_root, intent)?;
+        }
         tx.commit()?;
         Ok((row, false))
     }
@@ -459,6 +497,78 @@ mod tests {
         child["followupRequestId"] = json!("revise");
         assert!(matches!(
             store.continue_stand_in_role_request("child", 7, "root", &child, Some(0)),
+            Err(TaskRuntimeError::StandInRoleRequestCancelled)
+        ));
+    }
+
+    #[test]
+    fn later_message_shares_receipts_and_honors_cancellation_in_both_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(dir.path().join("tasks.sqlite")).unwrap();
+        let mut author = intent("writer", "draft");
+        store
+            .reserve_stand_in_role_request("A", 7, "root", &author, 16)
+            .unwrap();
+        store
+            .record_stand_in_role_task_address("A", 7, 0, "mac")
+            .unwrap();
+        let mut other = intent("writer", "independent");
+        other["roleDelegation"]["root"] = json!("later");
+        store
+            .reserve_stand_in_role_request("B", 7, "later", &other, 16)
+            .unwrap();
+
+        // A create in the later message already owns this request ID.
+        author["followupRequestId"] = json!("independent");
+        assert!(matches!(
+            store.continue_stand_in_role_request("A", 7, "later", &author, Some(0)),
+            Err(TaskRuntimeError::VersionConflict)
+        ));
+        author["followupRequestId"] = json!("revise");
+        let (row, replay) = store
+            .continue_stand_in_role_request("A", 7, "later", &author, Some(0))
+            .unwrap();
+        assert!(!replay);
+        assert_eq!(row["root"], "root");
+        assert_eq!(row["attempt"], 1);
+
+        // A matching replay from another message binds its ID there as well.
+        for root in ["root", "later", "third"] {
+            let replay = store
+                .replayed_stand_in_role_followup("A", 7, root, &author)
+                .unwrap()
+                .unwrap();
+            assert_eq!(replay["attempt"], 1);
+            other["requestId"] = json!("revise");
+            other["roleDelegation"]["root"] = json!(root);
+            assert!(matches!(
+                store.reserve_stand_in_role_request("C", 7, root, &other, 16),
+                Err(TaskRuntimeError::VersionConflict)
+            ));
+        }
+
+        store
+            .record_stand_in_role_task_address("A", 7, 1, "mac")
+            .unwrap();
+        assert_eq!(
+            store
+                .request_stand_in_role_cancellation(7, "mac", "lead", "later", None)
+                .unwrap(),
+            ["B"]
+        );
+        author["followupRequestId"] = json!("new-turn");
+        assert!(matches!(
+            store.continue_stand_in_role_request("A", 7, "later", &author, Some(1)),
+            Err(TaskRuntimeError::StandInRoleRequestCancelled)
+        ));
+        assert_eq!(
+            store
+                .request_stand_in_role_cancellation(7, "mac", "lead", "root", Some("A"))
+                .unwrap(),
+            ["A"]
+        );
+        assert!(matches!(
+            store.continue_stand_in_role_request("A", 7, "third", &author, Some(1)),
             Err(TaskRuntimeError::StandInRoleRequestCancelled)
         ));
     }

@@ -63,14 +63,17 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         let first = json!({"sourceDevice":"desktop","targetDevice":"cloud","roleId":"writer",
-            "sourceTaskId":"parent","title":"Original","requestId":"initial","message":"draft"});
+            "sourceTaskId":"parent","title":"Original","requestId":"initial","message":"draft","requestBrief":"draft"});
         let mut next = first.clone();
         next["message"] = json!("revise");
+        next["requestBrief"] = json!("revise");
         next["followupRequestId"] = json!("second");
         let reserve = |intent: &Value, attempt| {
             store.reserve_verified_stand_in_role_request("task", 7, "root", intent, 16, attempt)
         };
-        reserve(&first, 0).unwrap();
+        let initial = reserve(&first, 0).unwrap();
+        assert!(initial["intent"].get("requestBrief").is_none());
+        assert_eq!(reserve(&first, 0).unwrap(), initial);
         store
             .record_stand_in_role_task_address("task", 7, 0, "cloud")
             .unwrap();
@@ -79,6 +82,7 @@ mod tests {
             .stage_remote_stand_in_role_result("task", 7, 0, &outcome)
             .unwrap());
         let second = reserve(&next, 1).unwrap();
+        assert!(second["intent"].get("requestBrief").is_none());
         assert!(second["taskAddress"].is_null() && second["pendingResult"].is_null());
         assert_eq!(second["attempt"], 1);
         assert_eq!(reserve(&next, 1).unwrap(), second);

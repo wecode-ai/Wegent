@@ -1,5 +1,6 @@
 //! Admit a new turn on the exact branch previously dispatched by this actor.
 use super::super::stand_in::settings_error;
+use super::super::stand_in_proposal_continuations::OWNER;
 use super::super::stand_in_role_results::role_result_receipt;
 use super::*;
 
@@ -23,25 +24,83 @@ pub(super) fn role_dependencies(args: &Value) -> Result<Value, AppIpcError> {
     })
 }
 
+pub(super) fn matches_delegation_command(
+    actor: &RuntimeTaskLink,
+    caller_command: Option<&str>,
+    requires_owner_message: bool,
+) -> bool {
+    let Some(command) = caller_command else {
+        return !requires_owner_message;
+    };
+    let request = &actor.runtime_handle["executionRequest"];
+    request["runtime_command_id"] == command
+        && (!requires_owner_message
+            || (supports_role_delegation(&actor.runtime_handle["origin"])
+                && request[OWNER]["commandId"] == command
+                && request["standInRoleResultRoot"].is_null()))
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn with_current_delegation_command<T>(
+        &self,
+        actor: &RuntimeTaskLink,
+        caller_command: Option<&str>,
+        requires_owner_message: bool,
+        operation: impl FnOnce() -> Result<T, TaskRuntimeError>,
+    ) -> Result<T, AppIpcError> {
+        let owner = supports_role_delegation(&actor.runtime_handle["origin"]);
+        let _queue = if owner {
+            Some(self.turn_queue_operation.lock().await)
+        } else {
+            None
+        };
+        let _lifecycle = owner.then(|| {
+            self.stand_in_lifecycle_gate
+                .lock()
+                .expect("stand-in lifecycle gate poisoned")
+        });
+        if owner && !self.has_current_stand_in_owner_request(actor) {
+            return Err(denied());
+        }
+        if (caller_command.is_some() || requires_owner_message)
+            && !self
+                .store
+                .read_task(&actor.local_task_id, |link| {
+                    matches_delegation_command(link, caller_command, requires_owner_message)
+                })
+                .unwrap_or(false)
+        {
+            return Err(denied());
+        }
+        operation().map_err(reservation_error)
+    }
+
     pub(super) async fn continue_role_task(
         &self,
         store: &LocalTaskStore,
         identity: &StandInMcpIdentity,
         actor: &RuntimeTaskLink,
-        id: &str,
         role: &mut Value,
-        input: Value,
+        mut input: Value,
+        caller_command: Option<&str>,
     ) -> Result<Value, AppIpcError> {
-        let branch = &input["roleDelegation"];
-        let root = branch["root"].as_str().ok_or_else(denied)?;
+        let mut branch = input["roleDelegation"].take();
+        let request_root = branch["root"].as_str().ok_or_else(denied)?.to_owned();
+        let id = super::super::stand_in_tasks::required(&input, "taskId")?;
         let saved = store
             .stand_in_role_request(id, identity.user)
             .map_err(settings_error)?
             .ok_or_else(denied)?;
         let mut intent = saved["intent"].clone();
-        if saved["root"] != root
-            || intent["roleDelegation"] != *branch
+        // An explicit owner message may select an older task. The task's original
+        // group still owns its ancestry, dependencies, cancellation and routing.
+        let task_root = saved["root"].as_str().ok_or_else(denied)?;
+        let later_message = task_root != request_root;
+        if !matches_delegation_command(actor, caller_command, later_message) {
+            return Err(denied());
+        }
+        branch["root"] = json!(task_root);
+        if intent["roleDelegation"] != branch
             || intent["sourceTaskId"] != identity.task_id
             || intent["sourceDevice"] != self.device_id
             || intent["roleId"] != role["id"]
@@ -75,10 +134,16 @@ impl RuntimeWorkRpcHandler {
                 return Err(denied());
             }
         }
-        if let Some(previous) = store
-            .replayed_stand_in_role_request(id, identity.user, root, &intent, true)
-            .map_err(reservation_error)?
-        {
+        let lookup =
+            || store.replayed_stand_in_role_followup(id, identity.user, &request_root, &intent);
+        // A cross-request replay can bind the old receipt to this new request.
+        let replay = if later_message {
+            self.with_current_delegation_command(actor, caller_command, later_message, lookup)
+                .await?
+        } else {
+            lookup().map_err(reservation_error)?
+        };
+        if let Some(previous) = replay {
             return Ok(self.role_submission_response(identity.user, id, &previous, true));
         }
         let attempt = saved["attempt"].as_u64().unwrap_or(0);
@@ -98,8 +163,9 @@ impl RuntimeWorkRpcHandler {
             // The parent queue can accept the result before the relay records its receipt.
             let receipt = role_result_receipt(&saved["pendingResult"])?;
             if self
-                .parent_accepted_role_result(&identity.task_id, identity.user, receipt)
+                .parent_role_result_receipt(&identity.task_id, identity.user, receipt)
                 .await?
+                .is_some()
             {
                 store
                     .record_remote_stand_in_role_result(
@@ -127,27 +193,18 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let (row, replayed) = {
-            // A durable reservation is the admission point. Dispatch (including recovery
-            // after restart) occurs after these guards drop, through the same scheduler.
-            let owner = supports_role_delegation(&actor.runtime_handle["origin"]);
-            let _queue = if owner {
-                Some(self.turn_queue_operation.lock().await)
-            } else {
-                None
-            };
-            let _lifecycle = owner.then(|| {
-                self.stand_in_lifecycle_gate
-                    .lock()
-                    .expect("stand-in lifecycle gate poisoned")
-            });
-            if owner && !self.has_current_stand_in_owner_request(actor) {
-                return Err(denied());
-            }
-            store
-                .continue_stand_in_role_request(id, identity.user, root, &intent, Some(attempt))
-                .map_err(reservation_error)?
-        };
+        // Finish durable admission and release its guards before entering the scheduler.
+        let (row, replayed) = self
+            .with_current_delegation_command(actor, caller_command, later_message, || {
+                store.continue_stand_in_role_request(
+                    id,
+                    identity.user,
+                    &request_root,
+                    &intent,
+                    Some(attempt),
+                )
+            })
+            .await?;
         if let Some(payload) = prepared.filter(|_| !replayed) {
             match self
                 .send_prepared_role_attempt(&row["intent"], payload, next)
@@ -191,6 +248,10 @@ impl RuntimeWorkRpcHandler {
         let mut response = json!({"accepted":true,"alreadyAccepted":replayed,"taskId":id,
             "deviceId":row["intent"]["targetDevice"], "status":status,
             "attempt":row["attempt"].as_u64().unwrap_or(0)});
+        if let Some(error) = row["terminalError"].as_str() {
+            response["accepted"] = json!(false);
+            response["errorCode"] = json!(error);
+        }
         if replayed && local.is_some() {
             response["alreadyExists"] = json!(true);
         }

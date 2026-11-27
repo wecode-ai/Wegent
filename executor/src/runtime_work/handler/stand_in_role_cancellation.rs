@@ -103,9 +103,38 @@ impl RuntimeWorkRpcHandler {
             return Ok(true);
         }
         let result = self
-            .cancel_task_with_stop_policy(json!({"taskId":id}), Duration::from_secs(10), true)
+            .cancel_task_with_stop_policy(
+                json!({"taskId":id}),
+                Duration::from_secs(10),
+                true,
+                Some(attempt),
+            )
             .await?;
         Ok(result["cleanupPending"] != true && !self.is_busy_local_task(id))
+    }
+
+    pub(super) fn check_role_stop_attempt(
+        &self,
+        id: &str,
+        expected: Option<u64>,
+    ) -> Result<(), AppIpcError> {
+        if let Some(attempt) = expected {
+            let link = self
+                .store
+                .read_loaded_task(id, Clone::clone)
+                .ok_or_else(denied)?;
+            let owner = link.runtime_handle["origin"]["userId"]
+                .as_i64()
+                .ok_or_else(denied)?;
+            if role_attempt(&link) > attempt
+                || attempt
+                    .checked_add(1)
+                    .is_some_and(|next| self.role_attempt_is_admitted(&link, owner, next))
+            {
+                return Err(denied());
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn accept_remote_role_cancellation(

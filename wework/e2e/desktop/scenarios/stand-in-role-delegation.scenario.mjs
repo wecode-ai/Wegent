@@ -12,6 +12,10 @@ import {
   shellCommandResponse,
 } from '../modules/shell-command-response.mjs'
 import { createRoleReworkStory } from '../modules/stand-in-role-rework.mjs'
+import {
+  createOwnerFollowupStory,
+  ownerFollowupRoles,
+} from '../modules/stand-in-role-owner-followup.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import {
@@ -127,6 +131,7 @@ export function createDesktopScenario({
     uiTimeoutMs,
     modelResponseTimeoutMs,
   })
+  const ownerFollowup = createOwnerFollowupStory({ reply, tool })
 
   function delegate(body, index) {
     const role = roles[index]
@@ -265,6 +270,7 @@ export function createDesktopScenario({
         return true
       }
       if (rework.handleRequest(body, response, latest)) return true
+      if (ownerFollowup.handleRequest(body, response, latest)) return true
       for (const [index, item] of RETRY_WORK.entries()) {
         if (!latest.includes(item.message)) continue
         retryRuns[index] += 1
@@ -402,15 +408,16 @@ export function createDesktopScenario({
       const catalog = await rpc('runtime.runner.catalog', {})
       const selected = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(selected, 'A real Codex execution route is required')
+      const configuredRoles = [...roles, ...ownerFollowupRoles]
       const workspaces = await Promise.all(
-        roles.map(async role => {
+        configuredRoles.map(async role => {
           const path = join(workspacePath, role.id)
           await mkdir(path, { recursive: true })
           return realpath(path)
         })
       )
       writingWorkspace = workspaces[1]
-      for (const [index, role] of roles.entries()) {
+      for (const [index, role] of configuredRoles.entries()) {
         await control.command('seedLocalProject', 'body', {
           value: JSON.stringify({
             projectKey: role.id,
@@ -435,7 +442,7 @@ export function createDesktopScenario({
             preferences: before.primary?.preferences ?? '',
             model,
           },
-          roles: roles.map((role, index) => ({
+          roles: configuredRoles.map((role, index) => ({
             ...role,
             enabled: true,
             version: 0,
@@ -528,6 +535,7 @@ export function createDesktopScenario({
         })
         assert.equal(ordinaryTask.accepted, true)
         const send = async text => {
+          await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
           await control.command('fill', EDITOR, { value: text })
           await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
         }
@@ -861,7 +869,7 @@ export function createDesktopScenario({
           'waitFor',
           `${earlierCard} [data-testid="stand-in-delegated-work-open"]`,
           {
-            text: '起草维护通知',
+            text: '评审初稿',
             visible: true,
             timeoutMs: uiTimeoutMs,
           }
@@ -940,6 +948,8 @@ export function createDesktopScenario({
           'workspace-write',
           'Changing one task must leave its role default intact'
         )
+        await control.command('navigate', 'body', { value: '/stand-in' })
+        await ownerFollowup.verify({ control, rpc, send, waitForReply, userId: USER, uiTimeoutMs })
       } finally {
         rework.close()
         for (const { response } of waitingModels.values()) {

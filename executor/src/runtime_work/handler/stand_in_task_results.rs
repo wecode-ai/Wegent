@@ -322,7 +322,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| json!({"user_id":user}));
         let message = if role_task {
             request["standInRoleResultRoot"] = role_branch["root"].clone();
-            format!("{message}\nCheck list_role_tasks for related specialist branches. For revisions to this completed branch in the same request, pass its taskId and roleId={} to delegate_role_task. If any required branch is still pending, continue coordination and wait before presenting the final result. Describe work using task titles and role names. Keep internal identifiers out of the user response. A cancelled branch needs a new owner request before restarting.", origin["standInId"])
+            format!("{message}\nCheck list_role_tasks for related specialist branches. For revisions to this completed branch, pass its taskId and roleId={} to delegate_role_task. Use this same pair when the owner later asks in this conversation to continue this work. If any required branch is still pending, continue coordination and wait before presenting the final result. Describe work using task titles and role names. Keep internal identifiers out of the user response. A cancelled branch needs a new owner request before restarting.", origin["standInId"])
         } else if source_parent {
             format!("{message}\nThis result belongs to the owner self-channel request with immutable recordId={}. Use current scoped provider assistance and the original source reply operation to report the verified outcome there under unchanged native approvals. A private Wework response alone is not a source reply. Do not repeat a reply already sent or retry an uncertain send.", saved["standInDelegation"]["sourceMessageId"].as_str()?)
         } else {
@@ -342,12 +342,16 @@ impl RuntimeWorkRpcHandler {
         &self,
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
-        if link.runtime_handle["standInResult"].is_null() {
-            // Legacy completed tasks did not persist a result outbox.
-            return Ok(());
-        }
         let pending = || AppIpcError::new("conflict", "The previous specialist result is pending");
-        let (status, completed) = stand_in_result_completion(link).ok_or_else(pending)?;
+        let Some((status, completed)) = stand_in_result_completion(link) else {
+            // Old tasks without a terminal timestamp have no identifiable result to deliver.
+            return if link.runtime_handle["standInResult"].is_null() && link.completed_at.is_none()
+            {
+                Ok(())
+            } else {
+                Err(pending())
+            };
+        };
         let command = stand_in_result_command(link, completed, status);
         if link.runtime_handle["standInResultReceipt"] == command {
             return Ok(());
@@ -558,8 +562,8 @@ mod tests {
             link.runtime_handle["executionRequest"]["standInDelegation"] =
                 json!({"userId":7,"sourceTaskId":parent,"roleDelegation":branch});
         });
-        handler.record_stand_in_completion_outbox("child", "done");
         let completed = handler.local_task_link("child").unwrap();
+        assert!(completed.runtime_handle["standInResult"].is_null());
         let command = handler.stand_in_result_delivery(&completed).unwrap()["commandId"].clone();
         let (cancel, _cancelled) = oneshot::channel();
         let (_stopped, stopped) = oneshot::channel();
@@ -574,6 +578,22 @@ mod tests {
             .ensure_role_result_delivered_before_continuation(&delivered)
             .await
             .unwrap();
+        // Only the parent receipt survived. Recover it with the parent's new model.
+        handler.store.update_task("child", |child| {
+            child.runtime_handle["standInResultReceipt"] = Value::Null;
+        });
+        handler.store.update_task(parent, |link| {
+            link.runtime_handle["executionRequest"]["model_id"] = json!("model-2");
+        });
+        let child = handler.local_task_link("child").unwrap();
+        handler
+            .ensure_role_result_delivered_before_continuation(&child)
+            .await
+            .unwrap();
+        assert_eq!(
+            handler.local_task_link("child").unwrap().runtime_handle["standInResultReceipt"],
+            command
+        );
         let queued = handler.turn_scheduler.lock().unwrap().queued_turns.clone();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].local_task_id, parent);
@@ -639,7 +659,7 @@ mod tests {
         };
         let read_row = || async {
             let result = handler
-                .role_delegation_operation(&identity, "list_role_tasks", &json!({}))
+                .role_delegation_operation(&identity, "list_role_tasks", &json!({}), None)
                 .await
                 .unwrap();
             let tasks = result["tasks"].as_array().unwrap();

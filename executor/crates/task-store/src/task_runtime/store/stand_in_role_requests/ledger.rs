@@ -128,3 +128,28 @@ pub(super) fn replayed(
     }
     Ok(false)
 }
+
+/// Bind an accepted follow-up to the message that submitted it, preserving the
+/// original fingerprint and attempt even when replaying a historical turn.
+pub(super) fn bind_followup_to_request(
+    tx: &Transaction<'_>,
+    id: &str,
+    user: i64,
+    branch_root: &str,
+    request_root: &str,
+    intent: &Value,
+) -> Result<(), TaskRuntimeError> {
+    let request = request_id(intent, true).ok_or(TaskRuntimeError::VersionConflict)?;
+    let source = receipt_key(user, branch_root, intent, request);
+    let target = receipt_key(user, request_root, intent, request);
+    let count = tx.execute(
+        "INSERT INTO loop_items(id,resource_type,parent_id,metadata,created_at,updated_at)
+         SELECT ?1,resource_type,parent_id,metadata,?2,?2 FROM loop_items
+         WHERE id=?3 AND resource_type='stand_in_role_turn' AND parent_id=?4",
+        params![target, now(), source, id],
+    )?;
+    if count != 1 {
+        return Err(TaskRuntimeError::VersionConflict);
+    }
+    Ok(())
+}

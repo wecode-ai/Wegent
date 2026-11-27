@@ -7,17 +7,17 @@ import { assistantMessage, requestContainsToolOutput } from './response-protocol
 import { shellCommandPollResponse, shellCommandResponse } from './shell-command-response.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 
-const REQUEST = '先核对维护窗口，再写一条使用核验结果的通知。请核验人按编辑意见完善记录。'
-const PREREQUISITE_BRIEF = '核对维护窗口的确切时间。'
-const DEPENDENT_BRIEF = '依据已核验的维护窗口起草通知。'
-const PREREQUISITE_RESULT = '维护窗口为周二 15:30 至 16:00。'
-const REVIEW_RESULT = '通知草稿已写入周二的准确维护时间。请补充窗口结束后的复核记录。'
-const REWORK_BRIEF = '请按公告编辑的意见更新维护记录。'
-const REWORK_RESULT = '原维护记录已补充窗口结束后的复核安排。'
-const FINAL = '已根据核验结果起草周二维护通知，并完成复核记录。'
-const REWORK_CALL = 'maintenance-follow-up'
-const WRITE_CALL = 'maintenance-follow-up-write'
-const FILE = 'maintenance-follow-up.txt'
+const REQUEST = '先创建初稿，再请另一个助理评审，并把意见交回原任务。'
+const PREREQUISITE_BRIEF = '生成初稿供评审。'
+const DEPENDENT_BRIEF = '读取初稿并给出评审意见。'
+const PREREQUISITE_RESULT = '初稿内容已记录。'
+const REVIEW_RESULT = '初稿缺少结论，请补充。'
+const REWORK_BRIEF = '按评审意见修订初稿。'
+const REWORK_RESULT = '原稿已补充结论。'
+const FINAL = '初稿已按评审意见修订完成。'
+const REWORK_CALL = 'draft-revision'
+const WRITE_CALL = 'draft-revision-write'
+const FILE = 'draft-revision.txt'
 
 export function createRoleReworkStory({
   roles,
@@ -76,8 +76,8 @@ export function createRoleReworkStory({
         }
       } else if (latest.includes(REQUEST)) {
         for (const [index, item] of [
-          { title: '核对维护时间', message: PREREQUISITE_BRIEF },
-          { title: '起草维护通知', message: DEPENDENT_BRIEF },
+          { title: '准备初稿', message: PREREQUISITE_BRIEF },
+          { title: '评审初稿', message: DEPENDENT_BRIEF },
         ].entries()) {
           const id = `dependency-delegation-${index}`
           if (!requestContainsToolOutput(body, id)) {
@@ -97,7 +97,7 @@ export function createRoleReworkStory({
           if (index === 1) assert.equal(result.status, 'waiting_for_dependencies')
           tasks.set(index, result.taskId)
         }
-        reply(response, [assistantMessage('已分派核对和起草，通知会等待核验结果。')])
+        reply(response, [assistantMessage('已安排初稿准备和评审。')])
       } else {
         return false
       }
@@ -158,7 +158,7 @@ export function createRoleReworkStory({
     }) {
       workspace = roleWorkspace
       await send(REQUEST)
-      await waitForReply('通知会等待核验结果。')
+      await waitForReply('已安排初稿准备和评审。')
       const taskId = tasks.get(0)
       const { card, row, toggle } = await openCard(taskId)
       await control.command('waitFor', row, {
@@ -167,7 +167,7 @@ export function createRoleReworkStory({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', `${card} li`, {
-        text: '依赖 核对维护时间',
+        text: '依赖 准备初稿',
         visible: true,
         timeoutMs: uiTimeoutMs,
       })

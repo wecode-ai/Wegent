@@ -34,28 +34,47 @@ pub(super) fn role_attempt_command(id: &str, attempt: u64) -> String {
 impl RuntimeWorkRpcHandler {
     pub(super) fn register_stand_in_task_dispatcher(&self) {
         let handler = self.clone();
-        stand_in_tasks::register(Arc::new(move |identity, name, args| {
+        stand_in_tasks::register(Arc::new(move |identity, name, args, caller_command| {
             let handler = handler.clone();
             Box::pin(async move {
                 handler
-                    .stand_in_task_operation(identity, &name, args)
+                    .stand_in_task_operation_from_command(
+                        identity,
+                        &name,
+                        args,
+                        caller_command.as_deref(),
+                    )
                     .await
                     .map_err(|error| format!("{}: {}", error.code, error.message))
             })
         }));
     }
 
+    #[cfg(test)]
     pub(super) async fn stand_in_task_operation(
         &self,
         identity: StandInMcpIdentity,
         name: &str,
         args: Value,
     ) -> Result<Value, AppIpcError> {
+        self.stand_in_task_operation_from_command(identity, name, args, None)
+            .await
+    }
+
+    async fn stand_in_task_operation_from_command(
+        &self,
+        identity: StandInMcpIdentity,
+        name: &str,
+        args: Value,
+        caller_command: Option<&str>,
+    ) -> Result<Value, AppIpcError> {
         if matches!(
             name,
             "list_delegate_roles" | "delegate_role_task" | "list_role_tasks"
         ) {
-            return self.role_delegation_operation(&identity, name, &args).await;
+            return self
+                .role_delegation_operation(&identity, name, &args, caller_command)
+                .await;
         }
         if matches!(
             name,
@@ -377,7 +396,7 @@ impl RuntimeWorkRpcHandler {
         }
         Box::pin(self.create_task_with_initial_permissions(
             payload,
-            false,
+            super::tasks::TaskStartInput::Other,
             initial_permissions,
             owner_request,
         ))
@@ -581,13 +600,17 @@ mod operation_tests {
                 let initial = json!({"requestId":"first","sourceTaskId":"primary","sourceDevice":"mac","targetDevice":"mac",
                     "roleDelegation":branch,"roleId":"review","title":"Work","message":"Initial work"});
                 let original = store.reserve_stand_in_role_request("specialist",7,"request",&initial,16).unwrap();
-                handler.upsert_local_task(RuntimeTaskLink {
+                let mut completed = RuntimeTaskLink {
                     local_task_id: "specialist".into(), thread_id: Some("original-thread".into()),
                     status:"done".into(), completed_at:Some(1),
                     runtime_handle: json!({"origin":{"type":"stand_in_task","userId":7,"deviceId":"mac",
                         "sourceTaskId":"primary","standInId":"review","roleDelegation":branch},
                         "executionRequest":{"user_id":7}}), ..Default::default()
-                });
+                };
+                completed.runtime_handle["standInResultReceipt"] = json!(
+                    super::super::stand_in_task_results::stand_in_result_command(&completed, 1, "done")
+                );
+                handler.upsert_local_task(completed);
                 for cancelled in [false, true] {
                     handler.store.update_task("primary", |link| {
                         link.runtime_handle["standInOwnerRequest"] = owner.clone();
@@ -598,7 +621,8 @@ mod operation_tests {
                         "taskId":"specialist","requestId":"rework","roleId":"review","message":"Revise the draft"
                     }));
                     tokio::pin!(followup);
-                    assert!(futures_util::poll!(followup.as_mut()).is_pending());
+                    let admission = futures_util::poll!(followup.as_mut());
+                    assert!(admission.is_pending(), "Expected to wait for admission, got {admission:?}");
                     if cancelled {
                         handler.cancel_stand_in_owner_request("primary", &owner).unwrap();
                     } else {
