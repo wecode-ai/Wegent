@@ -55,6 +55,7 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/45970098321"
   ],
   "coreShard5ContentionObservation": "https://github.com/wecode-ai/Wegent/actions/runs/45981366618/job/140446724236",
+  "coreTaskFlowExclusiveObservation": "https://github.com/wecode-ai/Wegent/actions/runs/45990351870/job/140477294442",
   "scopes": {
     "core": {
       "application-menu": 61,
@@ -131,7 +132,7 @@
       "coordination-history": 78,
       "coordination-runtime": 137,
       "core-dsh-plugin-management": 98,
-      "core-task-flow": 499,
+      "core-task-flow": 241,
       "desktop-device-identity": 418,
       "device-artifact-declaration": 118,
       "dots-closed-loops": 479,

@@ -136,10 +136,7 @@ for (const [platform, balance, script, args] of [
     if (platform === "Linux") {
       const runner = (checkpoint) =>
         result.include.find((entry) => entry.segments.split(",").includes(checkpoint))?.id;
-      assert.equal(
-        result.include.find(({ id }) => id === runner("core-task-flow"))?.segments,
-        "core-task-flow",
-      );
+      assert.ok(runner("core-task-flow"));
       assert.ok(runner("stand-in-notifications"));
       assert.notEqual(runner("core-task-flow"), runner("stand-in-notifications"));
     }

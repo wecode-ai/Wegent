@@ -43,7 +43,6 @@ export function balanceLinuxCoreMatrix(
     if (scope !== 'core') return undefined
     if (entry === history) return LINUX_CORE_HISTORY_CHECKPOINT
     if (['core-9', 'core-10'].includes(entry.id)) return checkpoints(entry)[0]
-    if (runnerScale > 1 && checkpoints(entry).includes('core-task-flow')) return 'core-task-flow'
     return undefined
   }
   const taskCount = include.reduce(
@@ -51,7 +50,7 @@ export function balanceLinuxCoreMatrix(
     0,
   )
   include.push(...coreRunnerSlots(include, taskCount, runnerScale, scope))
-  // Keep latency benchmarks and the longest checkpoints on their original runners.
+  // Keep the dedicated latency benchmarks on their original runners.
   const receivers = include.filter((entry) => !pinnedCheckpoint(entry))
   if (!receivers.length)
     return { ...matrix, include }

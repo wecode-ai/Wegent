@@ -366,7 +366,7 @@ test('balancing distributes the four-worker tail across existing Core runners', 
       {
         id: 'core-1',
         segments:
-          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
+          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,archived-fork-cleanup',
       },
       { id: 'core-2', segments: 'codex-native-catalog' },
       { id: 'core-6', segments: 'running-conversation-history' },

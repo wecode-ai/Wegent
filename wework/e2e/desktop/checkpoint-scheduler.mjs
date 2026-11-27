@@ -18,6 +18,8 @@ export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
 
 const LINUX_CORE_EXCLUSIVE_CHECKPOINTS = new Set([
   LINUX_CORE_HISTORY_CHECKPOINT,
+  // The real task flow took 241s alone and 548s alongside other Electron sessions.
+  'core-task-flow',
   // Concurrent desktop sessions inflate these CPU samples on four-vCPU runners.
   'idle-executor-requests',
   'executor-stream-recovery',
