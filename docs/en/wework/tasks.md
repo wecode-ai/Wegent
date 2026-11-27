@@ -281,7 +281,7 @@ While a start request remains unconfirmed, a previous completion snapshot cannot
 | Steer the response      | `Command/Ctrl + Enter`         | Adjust the current direction            |
 | Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
-While a local Codex task is running, you can attach files in the composer and choose **Steer the response**, with or without a text message.
+While a local Codex task is running, you can steer it with text, images, and files, or send attachments alone. If an attachment is unavailable, the message stays in the queue so you can edit it and retry.
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 If a command's exit result arrives after the response stops, its tool entry still updates to show the outcome and any output received.

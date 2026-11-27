@@ -680,6 +680,27 @@ export function appendOptimisticRuntimeConversationGuidance(
   )
 }
 
+export function replaceRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  guidance: WorkbenchMessage & { role: 'user'; runtimeGuidance: true }
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.map(turn => {
+      if (turn.id !== (guidance.turnId ?? guidance.subtaskId)) return turn
+      return {
+        ...turn,
+        // Native item identity and position belong to the transcript. The
+        // workbench edits the user message by its client identity.
+        items: turn.items.map(item =>
+          item.type === 'user_message' && item.message.id === guidance.id
+            ? { ...item, message: guidance }
+            : item
+        ),
+      }
+    })
+  )
+}
+
 export function removeOptimisticRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   clientGuidanceId: string

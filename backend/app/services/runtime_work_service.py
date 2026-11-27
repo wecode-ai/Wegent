@@ -795,6 +795,10 @@ async def send_runtime_message(
     if request.resource_event_keys is not None:
         payload["resourceEventKeys"] = request.resource_event_keys
     _apply_runtime_user_message_identity(payload, request)
+    if request.guidance_correction is not None:
+        payload["guidanceCorrection"] = request.guidance_correction.model_dump(
+            by_alias=True
+        )
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
         payload["attachments"] = attachments
@@ -963,8 +967,29 @@ async def send_runtime_guidance(
         "message": request.message,
     }
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    if set(request.attachment_ids) - {attachment["id"] for attachment in attachments}:
+        return RuntimeGuidanceResponse(
+            success=False,
+            accepted=False,
+            taskId=address.local_task_id,
+            code="guidance_attachment_unavailable",
+            error="One or more attachments are unavailable",
+        )
     if attachments:
+        from app.services.auth import create_task_token
+
+        user = _get_user(db, user_id)
         payload["attachments"] = attachments
+        payload["attachmentDownload"] = {
+            "backendUrl": settings.BACKEND_INTERNAL_URL,
+            "authToken": create_task_token(
+                task_id=0,
+                subtask_id=0,
+                user_id=user.id,
+                user_name=user.user_name,
+                expires_delta_minutes=15,
+            ),
+        }
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
     if request.conversation_context is not None:

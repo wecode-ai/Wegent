@@ -1,8 +1,9 @@
-import type { ProcessOwnerRef, ProcessRecord } from '@wegent/process-explorer'
+import type { ProcessOwnerRef } from '@wegent/process-explorer'
+import { isExited, type ProcessRow } from './processTree'
 
 export interface ProcessGroup {
   owner: ProcessOwnerRef
-  processes: ProcessRecord[]
+  processes: ProcessRow[]
   cpuPercent: number
   memoryBytes: number
 }
@@ -22,8 +23,8 @@ const OWNER_ORDER: Readonly<Record<string, number>> = {
  * infers ownership from display names, so a new runtime only needs a host
  * descriptor.
  */
-export function groupProcesses(processes: readonly ProcessRecord[]): ProcessGroup[] {
-  const groups = new Map<string, { owner: ProcessOwnerRef; processes: ProcessRecord[] }>()
+export function groupProcesses(processes: readonly ProcessRow[]): ProcessGroup[] {
+  const groups = new Map<string, { owner: ProcessOwnerRef; processes: ProcessRow[] }>()
   for (const record of processes) {
     const existing = groups.get(record.owner.id)
     if (existing) existing.processes.push(record)
@@ -38,8 +39,13 @@ export function groupProcesses(processes: readonly ProcessRecord[]): ProcessGrou
     .map(group => ({
       owner: group.owner,
       processes: group.processes,
-      cpuPercent: sum(group.processes.map(record => record.cpuPercent)),
-      memoryBytes: sum(group.processes.map(record => record.memoryBytes)),
+      // Exited processes keep their last measurement for display only.
+      cpuPercent: sum(
+        group.processes.filter(record => !isExited(record)).map(record => record.cpuPercent)
+      ),
+      memoryBytes: sum(
+        group.processes.filter(record => !isExited(record)).map(record => record.memoryBytes)
+      ),
     }))
 }
 

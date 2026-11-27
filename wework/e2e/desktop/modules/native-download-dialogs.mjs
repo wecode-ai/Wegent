@@ -250,11 +250,19 @@ export async function releaseLinuxPointer(button = 1) {
   })
 }
 
-export async function clickLinuxPointer(button = 1) {
-  await execute('xdotool', ['click', '--clearmodifiers', String(button)], {
-    encoding: 'utf8',
-    timeout: 3_000,
-  })
+export async function clickLinuxPointer(button = 1, waitForPress) {
+  const options = { encoding: 'utf8', timeout: 3_000 }
+  const number = String(button)
+  if (!waitForPress) {
+    await execute('xdotool', ['click', '--clearmodifiers', number], options)
+    return
+  }
+  try {
+    await execute('xdotool', ['mousedown', number], options)
+    await waitForPress()
+  } finally {
+    await execute('xdotool', ['mouseup', number], options)
+  }
 }
 
 async function captureNativeDiagnostics(pid, resultDir, stepName, targetWindowId = null) {

@@ -42,6 +42,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 创建项目并选择协作者            | 协作 → 个人分组或业务分组 → 新建项目 → 项目协作者 → 添加协作者                             | 云端项目可搜索已有用户，创建后加入项目；见[项目与工作区](./projects.md#workspace-resource-controls)                                                                                                                                                             |
 | 新建任务 / 新对话               | 左侧栏 → 新建任务                                                                          | [快速开始](./getting-started.md)                                                                                                                                                                                                                                |
 | 搜索历史任务                    | 左侧栏上方 → 放大镜                                                                        | 左侧栏展开后查找搜索图标                                                                                                                                                                                                                                        |
+| 修正已发送的引导 | 会话 → 回复结束后悬停最后一条引导 → 修改后继续 | [消息操作](./workbench.md#message-actions) |
 | 按编号打开 Issue | 协作 → 左侧栏顶部「协作」标题旁的放大镜（搜索 Issue），或 ⌘K / Ctrl+K | 输入编号后回车，见[按编号打开 Issue](./projects.md#open-issue-by-reference) |
 | 显示更多 / 收起历史任务         | 左侧栏 → 展开项目 → 任务列表底部 → 显示更多 / 收起                                         | **显示更多** 仅在仍有未能显示的任务时出现，每次最多再显示 10 条；**收起** 在主动扩展列表后出现，并返回默认展示数量。运行中和排队任务可能位于最初 5 条中，但超出上限时仍会继续显示；置顶任务同样始终显示；见[左侧栏任务管理](./tasks.md#sidebar-task-management) |
 | 查看后台记忆整理任务            | 我的助理 → 默认助理 → 助理详情 → 管理助理 → 连接 → 日历 → 助理记忆整理 → 运行记录                                    | 默认不显示在左侧任务栏；见[记忆操作](./personal-stand-in.md#stand-in-memory-controls)                                                                                                                                                                           |
@@ -152,7 +153,7 @@ Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也�
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
 | 文件路径菜单、IDE、终端、消息操作、Diff 审核、标签页                                | [工作台操作](./workbench.md#workspace-controls)                     |
 
-插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)；设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
+插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)。**插件 → 管理插件 → Codex 插件 → 插件名称** 与插件市场打开同一详情页。设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
 
 下表的内部路由仅用于版本维护和自动校验，不是网页网址。用户操作时按“点击路径”进入。
 
