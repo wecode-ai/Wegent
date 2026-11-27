@@ -1842,6 +1842,58 @@ class TestSandboxManager:
             save.assert_called_once_with(sample_execution)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("completed_before_retry", [False, True])
+    async def test_failed_execution_status_write_rechecks_before_retry(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        sample_execution,
+        mocker,
+        completed_before_retry,
+    ):
+        from executor_manager.models.sandbox import ExecutionStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.expires_at = None
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        stored = copy.copy(sample_execution)
+        fail_terminal_write = True
+
+        def save_execution(state):
+            nonlocal stored, fail_terminal_write
+            if state.status == ExecutionStatus.FAILED and fail_terminal_write:
+                fail_terminal_write = False
+                if completed_before_retry:
+                    stored.set_completed("Done")
+                return False
+            stored = copy.copy(state)
+            return True
+
+        mocker.patch.object(
+            manager._repository, "load_execution", side_effect=lambda *_: stored
+        )
+        mocker.patch.object(
+            manager._repository, "save_execution", side_effect=save_execution
+        )
+        send = mocker.patch.object(
+            manager._execution_runner,
+            "send_execution_request",
+            return_value=(False, "Connection closed"),
+        )
+
+        await manager._run_execution(sample_sandbox, sample_execution, 30)
+
+        send.assert_awaited_once()
+        if completed_before_retry:
+            assert stored.status == ExecutionStatus.COMPLETED
+            assert stored.result == "Done"
+        else:
+            assert stored.status == ExecutionStatus.FAILED
+            assert stored.error_message == "Connection closed"
+
+    @pytest.mark.asyncio
     async def test_lifecycle_lease_uses_canonical_numeric_task_id(
         self, sandbox_manager_with_mock_redis, mocker
     ):

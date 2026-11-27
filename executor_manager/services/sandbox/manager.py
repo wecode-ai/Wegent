@@ -1486,22 +1486,36 @@ class SandboxManager(metaclass=SingletonMeta):
         """
 
         async def persist_status(state: Execution) -> bool:
-            async with self._lock_current_sandbox(sandbox) as (current, _):
-                if current is None:
-                    return False
-                if state.status == ExecutionStatus.RUNNING and not current.is_active():
-                    return False
-                stored = self._repository.load_execution(
-                    int(current.sandbox_id), state.metadata["subtask_id"]
-                )
-                if (
-                    stored is None
-                    or stored.execution_id != state.execution_id
-                    or stored.status
-                    not in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING)
-                ):
-                    return False
-                return self._repository.save_execution(state)
+            # Retry terminal writes after storage failures. Recheck under the
+            # lifecycle lease each time so a retry cannot overwrite a newer result.
+            attempts = 2 if state.status == ExecutionStatus.FAILED else 1
+            for _ in range(attempts):
+                async with self._lock_current_sandbox(sandbox) as (current, _):
+                    if current is None:
+                        return False
+                    if (
+                        state.status == ExecutionStatus.RUNNING
+                        and not current.is_active()
+                    ):
+                        return False
+                    stored = self._repository.load_execution(
+                        int(current.sandbox_id), state.metadata["subtask_id"]
+                    )
+                    if (
+                        stored is None
+                        or stored.execution_id != state.execution_id
+                        or stored.status
+                        not in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING)
+                    ):
+                        return False
+                    if self._repository.save_execution(state):
+                        return True
+            logger.warning(
+                "Could not persist sandbox execution %s status %s",
+                state.execution_id,
+                state.status.value,
+            )
+            return False
 
         success = await self._execution_runner.run_with_timeout(
             sandbox=sandbox,
