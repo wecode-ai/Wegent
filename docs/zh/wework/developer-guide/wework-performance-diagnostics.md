@@ -209,7 +209,7 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # 开启 runtime work cache/emit mapping �
 
 ## 流式消息渲染
 
-桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 把每次发布的最新前缀直接交给 Streamdown，终态和交互操作即时发布。
+桌面会话缓存实时接收并保留 executor 的正文，集中合并高频增量通知。共享 Markdown 将追加的正文合并为一批再交给 Streamdown，终态和交互操作即时发布。内联可视化回调仅在渲染函数或文件变更摘要更新时重建，避免正文增量触发额外的 Markdown 渲染。
 
 过程文本、thinking 和 plan block 的实时更新只传输 `content_delta`，不能在每个 delta 或完成节点重复发送从开头累计的完整 `content`。完成节点通常只携带 `status: done`；若 provider 的完成快照仅比已流式内容多一个尾部，则只补发该尾部增量。Wework 在运行时事件层按 16 ms 窗口合并同一 block 的连续增量，避免长程任务形成二次方级别的 IPC 复制和渲染压力。流式 block 更新属于可丢弃的 bulk 事件；发生 app IPC 背压时，终态事件仍保持优先，并由 transcript 对账恢复权威内容。Electron 主进程不得为每个 `response.*` 增量写 stdout；终端或父进程未及时消费输出时，同步 console 写入会阻塞 Browser 主线程和全部窗口输入。
 

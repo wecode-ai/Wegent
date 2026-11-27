@@ -211,7 +211,7 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping de
 
 ## Streaming Message Rendering
 
-The desktop conversation cache keeps the full executor text as deltas arrive and coalesces high-frequency presentation notifications. Shared Markdown passes each published prefix directly to Streamdown. Terminal and interactive updates publish immediately.
+The desktop conversation cache keeps the full executor text as deltas arrive and coalesces high-frequency presentation notifications. Shared Markdown batches appended text before passing it to Streamdown. Terminal and interactive updates publish immediately. The inline visualization callback changes only when its renderer or file-change summary changes, so text deltas do not cause extra Markdown renders.
 
 Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block in a 16 ms window at the runtime event boundary, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
 

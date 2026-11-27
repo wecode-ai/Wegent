@@ -21,6 +21,46 @@ import {
 } from './ai-verify-devtools.mjs'
 
 describe('DevTools evidence analysis', () => {
+  test('writes a formatted trace without retaining raw recording evidence', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'devtools-formatted-trace-'))
+    const path = join(directory, 'report.json')
+    try {
+      await writeFile(join(directory, 'performance-1.json'), JSON.stringify({ after: 0 }))
+      const client = async input => {
+        if (input.action === 'events') {
+          return {
+            events: [
+              { sequence: 1, method: 'Tracing.tracingComplete', params: { stream: 'trace' } },
+            ],
+            next: 1,
+            latest: 1,
+            lost: 0,
+            attached: true,
+          }
+        }
+        if (input.method === 'IO.read') {
+          return {
+            data: JSON.stringify({ traceEvents: [{ name: 'RunTask', args: { secret: 'test' } }] }),
+            eof: true,
+          }
+        }
+        return {}
+      }
+      await stopPerformanceRecording(client, directory, 1, path, trace => ({
+        timingEvents: trace.traceEvents.length,
+      }))
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        timingEvents: 1,
+        traceDataLoss: false,
+      })
+      await expect(readFile(path + '.evidence.json', 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('retains replayed source maps when stream events evict script metadata', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'devtools-script-replay-'))
     const map = {

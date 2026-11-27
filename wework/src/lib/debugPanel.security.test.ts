@@ -85,4 +85,42 @@ describe('device debug snapshot security', () => {
     expect(devices?.[0]).not.toHaveProperty('cloud_config')
     expect(devices?.[0]).not.toHaveProperty('remote_config')
   })
+
+  it('reuses sanitized workspace diagnostics until the work list replaces the workspace', () => {
+    const address = { deviceId: 'device-1', taskId: 'task-1' }
+    const task = {
+      taskId: address.taskId,
+      workspacePath: '/workspace',
+      runtime: 'codex' as const,
+      title: 'Original',
+      runtimeHandle: { opaque: 'private-runtime-value' },
+    }
+    const workspace = {
+      deviceId: address.deviceId,
+      workspacePath: task.workspacePath,
+      available: true,
+      tasks: [task],
+    }
+    const lifecycle = new RuntimeTaskLifecycleStore('workspace-debug-test').getSnapshot()
+    const publish = (activeWorkspace: typeof workspace) => {
+      updateWorkbenchDebugSnapshot({
+        state: {
+          ...initialWorkbenchState,
+          currentRuntimeTask: address,
+          runtimeWork: { projects: [], chats: [activeWorkspace], totalTasks: 1 },
+        },
+        lifecycle,
+        taskReminders: { unreadCount: 0 },
+        cloudWorkStatus: EMPTY_CLOUD_WORK_STATUS,
+      })
+      return getWorkbenchDebugSnapshot().workbench?.activeWorkspace
+    }
+    const first = publish(workspace)
+    expect(first?.tasks[0]?.title).toBe('Original')
+    expect(JSON.stringify(first)).not.toContain('private-runtime-value')
+    expect(publish(workspace)).toBe(first)
+    expect(
+      publish({ ...workspace, tasks: [{ ...task, title: 'Refreshed' }] })?.tasks[0]?.title
+    ).toBe('Refreshed')
+  })
 })

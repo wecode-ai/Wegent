@@ -158,6 +158,7 @@ try {
   )
   const evidence = JSON.parse(stdout)
   assert.equal(evidence.completeContentPublishedWhileOccupied, true)
+  assert.equal(evidence.runtimePublishedWhileOccupied, true)
   await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
   return evidence
 }
