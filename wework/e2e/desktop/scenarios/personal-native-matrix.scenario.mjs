@@ -1,12 +1,6 @@
 import { personalNativeMatrix } from '../modules/personal-native-matrix.mjs'
-import { localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
-import {
-  CLAUDE_BINARY,
-  configureClaude,
-  writeText,
-  writeToolCall,
-} from './claude-runtime.scenario.mjs'
+import { CLAUDE_BINARY, writeText, writeToolCall } from './claude-runtime.scenario.mjs'
 
 export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   const matrix = personalNativeMatrix({
@@ -38,12 +32,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       return true
     },
     async verify(control) {
-      await configureClaude(
-        control,
-        CLAUDE_BINARY,
-        await localHarnessCliVersion(CLAUDE_BINARY),
-        uiTimeoutMs
-      )
+      await control.command('setLocalHarnessExecutablePaths', 'body', {
+        value: JSON.stringify({ claude_code: CLAUDE_BINARY }),
+      })
       active = true
       await matrix.verify(control, cloud)
     },
