@@ -305,7 +305,7 @@ fn read_personal_state(
 pub(super) fn write_personal(
     connection: &Connection,
     value: &Value,
-) -> Result<(), TaskRuntimeError> {
+) -> Result<Value, TaskRuntimeError> {
     let user = value["userId"].as_i64().unwrap();
     let mut value = value.clone();
     execution_team::bind(&mut value, user)?;
@@ -315,7 +315,7 @@ pub(super) fn write_personal(
     )?;
     execution_team::persist(connection, &value)?;
     connection.execute("DELETE FROM loop_items WHERE resource_type='stand_in_settings' AND json_extract(metadata,'$.userId')=?1", params![user])?;
-    Ok(())
+    Ok(value)
 }
 
 /// Check effective project intake grants after legacy references have been normalized.
