@@ -4876,9 +4876,6 @@ fn build_codex_launch_config_with_route_scope(
             .env
             .insert(CODEX_HOME_ENV.to_owned(), home.display().to_string());
     }
-    launch_config
-        .config_overrides
-        .push(shell_path_config_override());
     if request.extra.get("origin").is_some_and(|origin| {
         matches!(
             origin["initiatedBy"].as_str(),
@@ -5155,13 +5152,6 @@ fn apply_git_cli_environment(
             ));
         }
     }
-}
-
-fn shell_path_config_override() -> String {
-    let path = process_environment::normalized_process_path(
-        env::var("PATH").ok().as_deref().unwrap_or_default(),
-    );
-    format!("shell_environment_policy.set.PATH={}", toml_value(&path))
 }
 
 #[cfg(test)]

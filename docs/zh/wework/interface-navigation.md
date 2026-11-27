@@ -77,6 +77,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 跳过助理连接引导                | 左侧栏 → 我的助理 → 首次引导 → 选择模型 → 先聊天，稍后连接                                            | 仅首次使用时显示；保存模型，放弃连接草稿，见[首次使用助理](./personal-stand-in.md#assistant-first-use)                                                                                                                                                                  |
 | 查看助理工作来源 | 我的助理 → 助理详情 → 管理助理 → 连接 | 为你添加的助理配置连接时，行内会显示接收状态，点击该行可调整接收范围。见[首次使用助理](./personal-stand-in.md#assistant-first-use)。 |
 | 接收我参与的事项 | 我的助理 → 助理详情 → 管理助理 → 连接 → 协作项目 → 我参与的事项 | 保存后，接收参与人名单中有自己的事项发来的分配或 @。见[助理连接](./personal-stand-in.md)。 |
+| 查看代管消息 | 左侧栏 → 我的助理 → 消息处理中心 | 完成首次引导后可打开。查看钉钉处理记录、暂停或修改设置，见[消息处理中心](./personal-stand-in.md#stand-in-message-center)。 |
 | 个人助理                        | 左侧栏 → 我的助理                                                                          | Beta 功能。首次使用时显示默认助理，可从顶部点击 **添加助理**。版本不兼容时可从错误提示前往云端工作查看设备情况，见[个人助理](./personal-stand-in.md)                                                                                                                                                               |
 | 查看助理任务和委派 | 我的助理 → 选择助理 → 右上角任务与委派 | 在右侧查看任务和委派记录。通过助理详情浮层可查看进行中的委派。见[个人助理](./personal-stand-in.md#assistant-role-delegation)。 |
 | 助理团队                        | 左侧栏 → 我的助理 → 团队                                                    | 创建、编辑或打开个人助理团队，见[组建助理团队](./personal-stand-in.md#assistant-teams)。                                                                                                                                                                        |
@@ -152,7 +153,7 @@ Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也�
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
 | 文件路径菜单、IDE、终端、消息操作、Diff 审核、标签页                                | [工作台操作](./workbench.md#workspace-controls)                     |
 
-插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)；设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
+插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)。**插件 → 管理插件 → Codex 插件 → 插件名称** 与插件市场打开同一详情页。设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
 
 下表的内部路由仅用于版本维护和自动校验，不是网页网址。用户操作时按“点击路径”进入。
 

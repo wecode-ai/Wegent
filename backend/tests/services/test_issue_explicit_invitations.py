@@ -3,13 +3,16 @@
 
 """Explicit Issue invitations never grant access to the containing project."""
 
+import asyncio
 import hashlib
 import uuid
+from threading import Event
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
@@ -23,6 +26,7 @@ from app.models.delivery import (
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.schemas.delivery import LoopItemUpdate
 from app.services.auth.task_token import create_task_token
 from app.services.cloud_projects.access import IssueAction, require_cloud_project_role
 from app.services.delivery.service import delivery_service
@@ -205,6 +209,50 @@ def test_cp14_unlinked_issue_uses_standard_detail_response(
     }
     revoke_invitation_fixture(test_db, item.id, outsider.id)
     assert read(guest).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_unlinked_issue_update_allows_pending_transaction_cleanup(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = LoopItem(
+        title="Close this Issue",
+        status="pending",
+        priority="medium",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(item)
+    test_db.commit()
+    token = create_access_token(data={"sub": test_user.user_name})
+    loop = asyncio.get_running_loop()
+    lock_released = Event()
+    update = loop_item_service.update_unlinked_issue
+
+    def update_after_cleanup(
+        db: Session, item_id: str, user_id: int, values: LoopItemUpdate
+    ) -> tuple[LoopItem, set[int]]:
+        # Simulate a row lock held until a concurrent request can resume cleanup.
+        loop.call_soon_threadsafe(lock_released.set)
+        assert lock_released.wait(timeout=5), "Issue update blocked request cleanup"
+        return update(db, item_id, user_id, values)
+
+    monkeypatch.setattr(
+        loop_item_service, "update_unlinked_issue", update_after_cleanup
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=test_client.app), base_url="http://testserver"
+    ) as client:
+        response = await client.patch(
+            f"/api/v1/loop-items/{item.id}",
+            json={"version": item.version, "status": "completed"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 200, response.text
+    test_db.refresh(item)
+    assert item.status == "completed"
 
 
 def test_cp14_collaborator_list_for_issue_without_project(

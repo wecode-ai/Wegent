@@ -898,8 +898,10 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         };
-        self.prepare_stand_in_execution_with_agent(payload, config, agent)
-            .await
+        super::dispatch::boxed_rpc(|| {
+            self.prepare_stand_in_execution_with_agent(payload, config, agent)
+        })
+        .await
     }
 
     pub(super) async fn prepare_stand_in_execution_with_agent(

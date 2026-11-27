@@ -16,7 +16,6 @@ import {
   formatAppUpdateVersion,
 } from '@/features/app-update/app-update-format'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
-import { AppUpdateErrorDetailsDialog } from '@/features/app-update/AppUpdateErrorDetailsDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
@@ -43,6 +42,7 @@ interface DesktopSettingsMenuProps {
   onOpenSettings: () => void
   onOpenAbout: () => void
   onLogout: () => void
+  onShowUpdateError: (error: AppUpdateError, retry: () => Promise<void>) => void
   onLogin?: () => void
   showLogout?: boolean
 }
@@ -51,6 +51,7 @@ export function DesktopSettingsMenu({
   onOpenSettings,
   onOpenAbout,
   onLogout,
+  onShowUpdateError,
   onLogin,
   showLogout,
 }: DesktopSettingsMenuProps) {
@@ -82,7 +83,6 @@ export function DesktopSettingsMenu({
       : null
   const [codexQuotaLoading, setCodexQuotaLoading] = useState(false)
   const [codexQuotaError, setCodexQuotaError] = useState<string | null>(null)
-  const [selectedUpdateError, setSelectedUpdateError] = useState<AppUpdateError | null>(null)
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
@@ -255,7 +255,7 @@ export function DesktopSettingsMenu({
                 variant="unstyled"
                 type="button"
                 data-testid="app-update-error-details-button"
-                onClick={() => setSelectedUpdateError(updateError)}
+                onClick={() => onShowUpdateError(updateError, handleUpdateClick)}
                 className="shrink-0 rounded-sm text-focus underline-offset-2 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:text-blue-600 wework:dark:text-blue-300"
               >
                 {t('workbench.app_update_error_details', '查看错误详情')}
@@ -376,18 +376,6 @@ export function DesktopSettingsMenu({
           icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
           label={t('workbench.logout', '退出登录')}
           onClick={onLogout}
-        />
-      ) : null}
-      {selectedUpdateError ? (
-        <AppUpdateErrorDetailsDialog
-          key={`${selectedUpdateError.code}:${selectedUpdateError.occurredAt}`}
-          open
-          error={selectedUpdateError}
-          onClose={() => setSelectedUpdateError(null)}
-          onRetry={async () => {
-            setSelectedUpdateError(null)
-            await handleUpdateClick()
-          }}
         />
       ) : null}
     </div>

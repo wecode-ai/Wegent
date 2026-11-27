@@ -73,6 +73,7 @@ interface TemporaryChatSendContext extends Pick<
     'attachments' | 'resetAttachments' | 'addExistingAttachment'
   >
   selectedModelFields: ReturnType<typeof selectedModelExecutionFields>
+  temporaryExecutionModel?: ReturnType<typeof selectedModelExecutionFields>
   runtimeContext: TemporaryChatPanelProps['runtimeContext']
   sendQueuedMessageAsGuidance(
     message: RuntimePaneQueuedMessage,
@@ -123,6 +124,7 @@ export async function sendTemporaryChatMessage(
     instanceId,
     sideChatProjectChat,
     selectedModelFields,
+    temporaryExecutionModel,
     runtimeContext,
     sendQueuedMessageAsGuidance,
     sendRuntimePaneMessage,
@@ -299,6 +301,7 @@ export async function sendTemporaryChatMessage(
       : await createTemporaryRuntimeTask(message, {
           project: currentProject,
           source,
+          executionModel: temporaryExecutionModel,
           attachments: messageAttachments,
           optimisticUserMessage,
           onError: handleError,

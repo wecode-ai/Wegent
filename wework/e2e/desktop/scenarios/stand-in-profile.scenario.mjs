@@ -132,6 +132,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       await control.command('waitFor', PANEL)
       const duty = '[data-testid="stand-in-primary-ghost-prompt"]'
@@ -234,6 +235,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await control.command('waitFor', '[data-testid="stand-in-details-open"]')
       await openStandInMemory(control)
       await control.command('waitFor', '[data-testid="stand-in-memory-item"]', {

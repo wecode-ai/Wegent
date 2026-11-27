@@ -22,14 +22,21 @@ test('the negative revenue fixture emits a standalone success marker only after 
     const analyze = join(directory, 'analyze.mjs')
     writeFileSync(report, 'existing-report-must-survive')
     writeFileSync(analyze, "throw new Error('Invalid amount: not-a-number')")
-    const encoded = Buffer.from(revenueProgram(root, 3)).toString('base64')
-    const result = spawnSync(
-      process.execPath,
-      ['-e', `eval(Buffer.from('${encoded}','base64').toString('utf8'))`],
-      { encoding: 'utf8' }
-    )
+    const runReadOnly = () =>
+      spawnSync(
+        process.execPath,
+        [
+          '--permission',
+          '--allow-fs-read=*',
+          '--allow-child-process',
+          '-e',
+          revenueProgram(root, 3),
+        ],
+        { encoding: 'utf8' }
+      )
+    const result = runReadOnly()
     assert.equal(result.status, 0, result.stderr)
-    assert.match(result.stdout, /Invalid amount: not-a-number/)
+    assert.match(result.stderr, /^Error: Invalid amount: not-a-number\r?$/m)
     assertDotsCommandSucceeded(
       `Process exited with code ${result.status}\n${result.stdout}`,
       'negative-revenue',
@@ -37,11 +44,7 @@ test('the negative revenue fixture emits a standalone success marker only after 
     )
     assert.equal(readFileSync(report, 'utf8'), 'existing-report-must-survive')
     writeFileSync(analyze, "console.log('unexpected child success')")
-    const unexpected = spawnSync(
-      process.execPath,
-      ['-e', `eval(Buffer.from('${encoded}','base64').toString('utf8'))`],
-      { encoding: 'utf8' }
-    )
+    const unexpected = runReadOnly()
     assert.equal(unexpected.status, 1)
     assert.throws(() =>
       assertDotsCommandSucceeded(

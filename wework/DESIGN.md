@@ -2260,10 +2260,24 @@ implementation and WCAG conflict.
 - 进程浏览器关闭时，进行中的 DOM 快照读取必须随原生窗口或渲染器销毁立即结算，
   返回既有的窗口不存在状态；活窗口的读取错误仍须上抛。执行脚本前注册生命周期
   监听，并在所有结算路径移除监听，不得以超时、重试或等待渲染器响应代替关闭事件。
+- 进程查看器窗口可见时每秒采样，窗口不可见时停止采样（最小化，macOS 上也包括被完全遮挡），回到窗口立即补采；
+  置顶但失焦时继续刷新，便于边操作边观察。
+- 退出的进程变灰并在原父进程下保留 5 秒，运行时长停在退出时刻，不计入分组和顶部汇总；
+  采集失败或采样间隔超过保留时长时不得把进程误报为已退出。
+- 子进程的每一级缩进处画一条贯穿行高的竖向引导线，层级关系不只依赖缩进。
 - Process Explorer snapshots must settle when their native window closes or its
   renderer is destroyed, preserving the existing absent-window result. Register
   lifecycle listeners before executing renderer code, remove them after every
   settlement, and propagate failures from a live window.
+- Sample the process explorer every second while its window is visible, stop
+  sampling while the window is not visible (minimized, and on macOS also fully
+  covered), and read once on return. A
+  pinned window keeps refreshing without focus so it can be watched while working.
+- An exited process fades to grey and stays under its parent for 5 seconds with
+  uptime frozen at exit, excluded from group and header totals. Failed reads and
+  sampling gaps longer than the linger window must not report exits.
+- Draw one full-height vertical guide at every indentation level of a child
+  process, so the hierarchy does not rely on indentation alone.
 
   ```mermaid
   sequenceDiagram

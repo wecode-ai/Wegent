@@ -487,8 +487,13 @@ impl Context<'_> {
                 self.receipt(plan, status),
             )
             .await?;
-        assert_eq!(response.status().as_u16(), 200);
-        Ok(response.json().await?)
+        let status = response.status().as_u16();
+        let body: Value = response.json().await?;
+        anyhow::ensure!(
+            status == 200,
+            "Plugin sync receipt returned HTTP {status}: {body}"
+        );
+        Ok(body)
     }
 
     async fn set_intent(&self, revision: i64, active: bool) -> anyhow::Result<()> {

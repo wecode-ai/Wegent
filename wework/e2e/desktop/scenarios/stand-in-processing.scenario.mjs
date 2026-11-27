@@ -12,6 +12,7 @@ import { waitForTaskRowByText } from '../modules/task-state-flows.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { isDetachedResponsesContext } from '../modules/model-tool-output.mjs'
 import { createMeetingUserStory } from '../modules/stand-in-meeting-user-story.mjs'
+import { openStoryPrimary } from '../modules/stand-in-source-story-evidence.mjs'
 import {
   ONBOARDING_FIRST_MESSAGE,
   ONBOARDING_FOLLOWUP,
@@ -518,7 +519,7 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await openStoryPrimary(control)
         const history = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
         assert.ok(history.actions.some(action => action.status === 'succeeded'))
         await control.command('waitFor', '[data-testid="stand-in-details-open"]:not(:disabled)')

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createCatalogScenario } from './stand-in-model-catalog.scenario.mjs'
+import { openStoryPrimary, STORY_CHAT as CHAT } from '../modules/stand-in-source-story-evidence.mjs'
 import { requestExecutor, writeCodexModelConfig } from '../modules/executor-rpc.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { waitForDeliveredCloudCatalog } from '../modules/stand-in-catalog-delivery.mjs'
@@ -32,8 +33,6 @@ import {
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
 const PROFILE_MODEL = `${PANEL} [data-testid="model-selector-button"]`
-const CHAT =
-  '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
 const marker = `STAND_IN_MODEL_EXECUTION_${process.pid}`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
 const CLOUD_MODEL = 'catalog-kimi-public'
@@ -432,8 +431,7 @@ export function createDesktopScenario(options) {
           )
           retryMessageIds[role === 'user' ? 'request' : 'progress'] = message.id
         }
-        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await control.command('waitFor', CHAT)
+        await openStoryPrimary(control)
         const { task: resolved } = await until(
           () => rpc('runtime.tasks.get', { taskId: primaryTaskId, resolveActiveProvider: true }),
           result => result.task?.runtimeHandle.activeModelProvider?.threadId === primaryThreadId,
@@ -712,8 +710,7 @@ export function createDesktopScenario(options) {
               await control.command('getText', `${ORDINARY} [data-testid="chat-message-input"]`),
               ordinary.draft
             )
-            await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-            await control.command('waitFor', CHAT)
+            await openStoryPrimary(control)
           } else if (primaryThreadId) {
             assert.equal(
               primary.threadId,

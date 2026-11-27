@@ -667,7 +667,7 @@ export async function verifyBrowserDownloadHistory({
     uiTimeoutMs,
     'direct embedded-browser download clip.mp4'
   )
-  await assertNoNativeSaveDialog(control.applicationProcessId)
+  await assertNoNativeSaveDialog(control)
   const download = await verifyDownloadList(control, downloadsPath, 'clip.mp4', 'SINGLE_CLIP_BYTES')
 
   const db = new DatabaseSync(join(electronUserDataDirectory, 'browser-download-history.sqlite'))
@@ -772,8 +772,7 @@ export async function verifyBrowserDownloadPolicy({
       electronUserDataDirectory,
       uiTimeoutMs,
     })
-    const pid = control.applicationProcessId
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
 
     // 2. Concurrent duplicate downloads write distinct collision-free files.
     await clickDownloadLink(bridgeCall, '#download-concurrent-1')
@@ -831,7 +830,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'main window direct download main-video.mp4'
     )
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
 
     // 4. Real link right-click menu ("Save Link As...") with HTTP 302 redirect:
     //    cancel once, save to user-chosen location, then verify subsequent direct save recovers.
@@ -847,6 +846,7 @@ export async function verifyBrowserDownloadPolicy({
           bridgeCall,
           control,
           downCount: LINK_SAVE_AS_MENU_DOWN_COUNT,
+          windowsMenuLabels: ['Save Link As...', '链接存储为...'],
           resultDir,
           stepName: 'link-save-as-cancel',
           targetSelector: '#save-as-link',
@@ -865,6 +865,7 @@ export async function verifyBrowserDownloadPolicy({
           bridgeCall,
           control,
           downCount: LINK_SAVE_AS_MENU_DOWN_COUNT,
+          windowsMenuLabels: ['Save Link As...', '链接存储为...'],
           resultDir,
           stepName: 'link-save-as-choose',
           targetSelector: '#save-as-link',
@@ -893,7 +894,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'direct download recovery after Save Link As'
     )
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
 
     // 5. Real image right-click menu ("Save Image As..."):
     //    cancel once, save to user-chosen location, then verify subsequent direct save recovers.
@@ -905,6 +906,7 @@ export async function verifyBrowserDownloadPolicy({
           bridgeCall,
           control,
           downCount: IMAGE_SAVE_AS_MENU_DOWN_COUNT,
+          windowsMenuLabels: ['Save Image As...', '图片存储为...'],
           resultDir,
           stepName: 'image-save-as-cancel',
           targetSelector: '#save-as-image',
@@ -923,6 +925,7 @@ export async function verifyBrowserDownloadPolicy({
           bridgeCall,
           control,
           downCount: IMAGE_SAVE_AS_MENU_DOWN_COUNT,
+          windowsMenuLabels: ['Save Image As...', '图片存储为...'],
           resultDir,
           stepName: 'image-save-as-choose',
           targetSelector: '#save-as-image',
@@ -951,7 +954,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'direct download recovery after Save Image As'
     )
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
 
     // 6. Custom directory saves directly; runtime deletion opens real Save As (cancel + choose) without silent fallback.
     await mkdir(customDownloadsDir, { recursive: true })
@@ -968,7 +971,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'custom directory download custom.mp4'
     )
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
 
     await rm(customDownloadsDir, { recursive: true, force: true })
     await withNativeSaveDialog(
@@ -1048,7 +1051,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'direct download recovery after clearing unwritable custom directory'
     )
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
 
     // 8. Ask-before-download opens real Save As (cancel + choose), then recovers to direct save when disabled.
     await control.command('setAppPreferences', 'body', {
@@ -1094,7 +1097,7 @@ export async function verifyBrowserDownloadPolicy({
       uiTimeoutMs,
       'direct download recovery after disabling browserAskBeforeDownload'
     )
-    await assertNoNativeSaveDialog(pid)
+    await assertNoNativeSaveDialog(control)
   } finally {
     await control.command('setAppPreferences', 'body', {
       value: JSON.stringify({
