@@ -2,10 +2,16 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 
-import { createWorker } from '../../../../packages/wework-worker/index.js'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
+
+const clientBundle = process.env.WEWORK_E2E_SOCKET_IO_CLIENT
+const { createWorker } = clientBundle
+  ? createRequire(import.meta.url)(join(dirname(clientBundle), 'wework-worker.cjs'))
+  : await import('../../../../packages/wework-worker/index.js')
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = `${CONTENT} [data-testid="cloud-task-activity-composer"]`

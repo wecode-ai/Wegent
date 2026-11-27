@@ -90,6 +90,8 @@ test('the shared build loads plugin scenarios and decodes inventory without node
     assert.throws(() => createRequire(pathToFileURL(process.argv[2])).resolve('lz-string'), { code: 'MODULE_NOT_FOUND' })
     const scene = await import(pathToFileURL(process.argv[1]))
     assert.equal(typeof scene.createDesktopScenario, 'function')
+    const externalAgents = await import(new URL('./collaboration-external-agents.scenario.mjs', pathToFileURL(process.argv[1])))
+    assert.equal(typeof externalAgents.createDesktopScenario, 'function')
     const { decodeInventory } = await import(pathToFileURL(process.argv[2]))
     assert.deepEqual(decodeInventory(process.argv[3]), JSON.parse(process.argv[4]))
     assert.equal(typeof createRequire(import.meta.url)(process.env.WEWORK_E2E_SOCKET_IO_CLIENT).io, 'function')

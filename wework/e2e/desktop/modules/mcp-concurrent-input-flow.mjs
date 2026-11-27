@@ -33,6 +33,7 @@ import {
   reloadMainWindow,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
+import { waitForRestoredTranscript } from './transcript-restoration.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
@@ -182,6 +183,7 @@ async function verifyConcurrentCases(control) {
       // Read the restored state after reload so this step proves persistence
       // without spending the MCP form deadline on duplicate pre-reload checks.
       await reloadMainWindow(control, 'Reload failed while both native questions were pending')
+      await waitForRestoredTranscript(control, taskId, WORKBENCH_READY_TIMEOUT_MS)
       await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
       await assertWaiting(control, taskId, true)
       const interactions = await readMcpInteractions(control, taskId)
