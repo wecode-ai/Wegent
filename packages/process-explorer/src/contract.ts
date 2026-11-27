@@ -56,6 +56,12 @@ export interface ProcessRecord {
   startedAt: number | null
 }
 
+/** A process that exited and is kept visible for a short time after exit. */
+export interface ExitedProcessRecord extends ProcessRecord {
+  /** When collection first observed the process missing, in epoch milliseconds. */
+  exitedAt: number
+}
+
 export interface ProcessDegradation {
   code:
     | 'system-process-table-unavailable'
@@ -72,6 +78,8 @@ export interface ProcessSnapshot {
   platform: string
   applicationPid: number
   processes: ProcessRecord[]
+  /** Processes that exited within the host's linger window, newest exit last. */
+  recentlyExited: ExitedProcessRecord[]
   /** Non-fatal collection gaps, for example a failed system process table. */
   degraded: ProcessDegradation[]
 }

@@ -69,7 +69,6 @@ interface SourceOptions {
 }
 type PluginVersionHint = { current: string; version: string }
 interface PluginManagementState {
-  selectedPluginId: string | number | null
   pendingUninstall: { id: string | number; name: string; scope: PluginUninstallScope } | null
   uninstallingPluginIds: Set<string | number>
   pluginOperationNotice: PluginOperationNoticeState | null
@@ -86,9 +85,7 @@ interface SettingsOverlay {
   token: symbol
   id: string
   rollback?: boolean
-  enabled?: boolean
-  componentKey?: string
-  value?: boolean
+  enabled: boolean
 }
 export function findGitMarketplaceVersionHint(
   plugin: InstalledPlugin,
@@ -158,7 +155,6 @@ export function createPluginManagementSource({
   let inventory = knownDeviceId && cached?.deviceId !== knownDeviceId ? null : cached
   let loading = !hasLoadedPluginInventory(inventory)
   let state: PluginManagementState = {
-    selectedPluginId: null,
     pendingUninstall: null,
     uninstallingPluginIds: new Set(),
     pluginOperationNotice: null,
@@ -208,14 +204,7 @@ export function createPluginManagementSource({
         let plugin = raw
         for (const overlay of overlays.values()) {
           if (overlay.id !== String(baseItem.id)) continue
-          if (overlay.enabled !== undefined)
-            plugin = { ...plugin, spec: { ...plugin.spec, enabled: overlay.enabled } }
-          if (overlay.componentKey !== undefined) {
-            const componentStates = { ...plugin.spec.componentStates }
-            if (overlay.value === undefined) delete componentStates[overlay.componentKey]
-            else componentStates[overlay.componentKey] = overlay.value
-            plugin = { ...plugin, spec: { ...plugin.spec, componentStates } }
-          }
+          plugin = { ...plugin, spec: { ...plugin.spec, enabled: overlay.enabled } }
         }
         return plugin === raw ? baseItem : toInstalledPluginItem(plugin)
       })
@@ -322,13 +311,12 @@ export function createPluginManagementSource({
       }
     }
   }
-  function updateSettings(id: string | number, enabled: boolean, componentKey?: string) {
+  function updateSettings(id: string | number, enabled: boolean) {
     if (!observed() || !profileIsCurrent()) return
     const snapshot = getSnapshot()
     const plugin = snapshot.installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) return
-    const request: PluginSettingsUpdate =
-      componentKey === undefined ? { enabled } : { componentStates: { [componentKey]: enabled } }
+    const request: PluginSettingsUpdate = { enabled }
     const scope = capturePluginMarketplaceScope(cacheKey, snapshot.currentDeviceId)
     const operation = beginPluginSettingsRequest(
       JSON.stringify([cacheKey, snapshot.currentDeviceId]),
@@ -341,11 +329,8 @@ export function createPluginManagementSource({
       return
     }
     const token = Symbol('plugin-management-settings')
-    const field = JSON.stringify([String(id), componentKey ?? null])
-    const overlay: SettingsOverlay =
-      componentKey === undefined
-        ? { token, id: String(id), enabled }
-        : { token, id: String(id), componentKey, value: enabled }
+    const field = String(id)
+    const overlay: SettingsOverlay = { token, id: field, enabled }
     overlays.set(field, overlay)
     overlayRevision += 1
     publish()
@@ -356,10 +341,10 @@ export function createPluginManagementSource({
       .then(updated => {
         if (!operation.isCurrent()) return
         updatePluginInventoryInstallation(cacheKey, id, updated, operation.currentUpdate())
-        if (componentKey === undefined) notifyLocalPluginSkillsChanged()
+        notifyLocalPluginSkillsChanged()
         track('plugin_enabled_changed', {
           enabled,
-          scope: componentKey === undefined ? 'plugin' : 'component',
+          scope: 'plugin',
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
           ...installedPluginTelemetryIdentity(plugin.raw),
         })
@@ -368,18 +353,7 @@ export function createPluginManagementSource({
         if (!operation.isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
         if (overlays.get(field)?.token === token) {
           // Restore the field seen before this action; a later inventory event supplies canonical state.
-          overlays.set(
-            field,
-            componentKey === undefined
-              ? { token, id: String(id), rollback: true, enabled: plugin.enabled }
-              : {
-                  token,
-                  id: String(id),
-                  rollback: true,
-                  componentKey,
-                  value: plugin.raw.spec.componentStates?.[componentKey],
-                }
-          )
+          overlays.set(field, { token, id: field, rollback: true, enabled: plugin.enabled })
           overlayRevision += 1
           publish()
         }
@@ -443,7 +417,6 @@ export function createPluginManagementSource({
             pluginName,
           ],
         })
-        set('selectedPluginId', current => (String(current) === String(id) ? null : current))
         notifyLocalPluginSkillsChanged()
         const warningDetails = pluginUninstallWarningDetails(outcome)
         set('pluginOperationNotice', {
@@ -514,7 +487,7 @@ export function createPluginManagementSource({
       if (!profileIsCurrent() || !inventoryCurrent()) return
       commitPluginInventoryInstallation(cacheKey, deviceId, installed)
       notifyLocalPluginSkillsChanged()
-      if (isCurrent()) set('selectedPluginId', toInstalledPluginItem(installed).id)
+      if (isCurrent()) return toInstalledPluginItem(installed)
     } catch (error) {
       if (!isCurrent() || error instanceof ExpiredPluginSettingsRequest) return
       set('pluginOperationNotice', {
@@ -740,8 +713,6 @@ export function createPluginManagementSource({
     updatePublishedPlugin,
     checkGitMarketplace,
     reconcileGitMarketplaceSources,
-    setSelectedPluginId: (value: SetStateAction<PluginManagementState['selectedPluginId']>) =>
-      set('selectedPluginId', value),
     setPendingUninstall: (value: SetStateAction<PluginManagementState['pendingUninstall']>) => {
       pendingUninstallOwner = null
       set('pendingUninstall', value)
@@ -796,8 +767,6 @@ export function createPluginManagementSource({
       const plugin = getSnapshot().installedPlugins.find(item => String(item.id) === String(id))
       if (plugin) updateSettings(id, !plugin.enabled)
     },
-    togglePluginComponent: (id: string | number, key: string, enabled: boolean) =>
-      updateSettings(id, enabled, key),
     requestUninstallPlugin: (id: string | number, name: string) => {
       const plugin = getSnapshot().installedPlugins.find(item => String(item.id) === String(id))
       if (!observed() || !profileIsCurrent()) return
@@ -829,7 +798,6 @@ export function createPluginManagementSource({
                 overlayRevision += 1
                 state = {
                   ...state,
-                  selectedPluginId: null,
                   pendingUninstall: null,
                   pluginOperationNotice: null,
                   uninstallingPluginIds: new Set(),
@@ -850,7 +818,6 @@ export function createPluginManagementSource({
                 overlayRevision += 1
                 state = {
                   ...state,
-                  selectedPluginId: null,
                   pendingUninstall: null,
                   pluginOperationNotice: null,
                   uninstallingPluginIds: new Set(),

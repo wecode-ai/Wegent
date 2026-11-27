@@ -98,6 +98,7 @@ export interface ComponentPaths {
   executor: string
   codex: string
   dws: string
+  dwsSource: 'bundled' | 'managed'
   contentSha256: Record<ManagedComponentId, string>
 }
 
@@ -105,6 +106,7 @@ interface ResolvedComponent {
   id: ManagedComponentId
   path: string
   contentSha256: string
+  source: ComponentPaths['dwsSource']
 }
 
 export interface ComponentUpdateManagerOptions {
@@ -489,9 +491,11 @@ export class ComponentUpdateManager {
     const resolved = await this.resolveComponents(packaged, current)
     const paths = {} as Record<ManagedComponentId, string>
     const fingerprints = {} as Record<ManagedComponentId, string>
+    const sources = {} as Record<ManagedComponentId, ResolvedComponent['source']>
     for (const entry of resolved) {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
+      sources[entry.id] = entry.source
     }
     this.reportPreparation?.('compose-core-plugins', 'started')
     const composedCorePlugins = await this.composeCorePlugins(
@@ -513,6 +517,7 @@ export class ComponentUpdateManager {
       executor: paths.executor,
       codex: await this.resolveCodexBinary(paths.codex),
       dws: paths.dws,
+      dwsSource: sources.dws,
       contentSha256: fingerprints,
     }
   }
@@ -554,6 +559,7 @@ export class ComponentUpdateManager {
         const active = current?.components[id]
         const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
         let path: string
+        let source: ResolvedComponent['source'] = 'bundled'
         if (!active) {
           path = await this.packagedComponentPath(id, packagedComponent)
         } else {
@@ -561,13 +567,14 @@ export class ComponentUpdateManager {
           const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
           if (await componentMatches(managedPath, active.contentSha256)) {
             path = managedPath
+            source = 'managed'
           } else if (active.contentSha256 === packagedComponent.sha256) {
             path = await this.packagedComponentPath(id, packagedComponent)
           } else {
             throw new Error(`Managed component checksum mismatch: ${id}`)
           }
         }
-        return { id, path, contentSha256 }
+        return { id, path, contentSha256, source }
       })
     )
   }

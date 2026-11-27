@@ -3,6 +3,7 @@ import {
   verifyStandInProfileNavigation,
 } from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
+import { verifyPrimaryDingTalkConnections } from '../modules/stand-in-primary-dingtalk-connections.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -12,7 +13,7 @@ import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-c
 import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { verifyStandInSessionSettings } from '../modules/stand-in-session-settings.mjs'
 import { verifyStandInGroupMessageScope } from '../modules/stand-in-group-message-scope.mjs'
-import { verifyStandInDelegationVisual } from '../modules/stand-in-delegation-visual.mjs'
+import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
@@ -78,9 +79,42 @@ export function createDesktopScenario(options) {
           'ready',
           'Codex restart lost the installed DingTalk dependency'
         )
+        await ensureExperimentalFeaturesEnabled(control)
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        const projectName = '本次接收的项目'
+        const secondProjectName = '另一个接收项目'
+        for (const name of [projectName, secondProjectName]) {
+          await createLocalCollaborationProject(
+            control,
+            '[data-workspace-tab-content][aria-hidden="false"]',
+            name
+          )
+        }
+        const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+        const project = projects.find(row => row.name === projectName)
+        const secondProject = projects.find(row => row.name === secondProjectName)
+        assert.ok(project && secondProject, 'The source editor needs two real projects')
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await verifyPrimaryDingTalkConnections(control, USER, fixture, {
+          ...options,
+          project,
+          secondProject,
+        })
+        const afterConnections = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.get',
+          { userId: USER },
+          uiTimeoutMs
+        )
+        const currentDingTalk = afterConnections.primary.connections.find(
+          row => row.providerId === DINGTALK && row.kind === 'group'
+        )
+        assert.ok(currentDingTalk, 'The authenticated fixture must expose its DingTalk profile')
         const source = {
           id: 'connection-migration-fixture',
-          profile: 'connection-test-account',
+          profile: currentDingTalk.profile,
           name: '迁移连接',
           kind: 'group',
           policy: { automatic: false, askBeforeAct: true },
@@ -98,7 +132,7 @@ export function createDesktopScenario(options) {
           'runtime.stand_in.personal.save',
           {
             userId: USER,
-            settings: { ...initial, primary },
+            settings: { ...initial, version: afterConnections.version, primary },
           },
           uiTimeoutMs
         )
@@ -112,11 +146,10 @@ export function createDesktopScenario(options) {
           uiTimeoutMs
         )
         assert.deepEqual(loaded.primary.connections, saved.primary.connections)
-        await ensureExperimentalFeaturesEnabled(control)
-        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+        await reloadMainWindow(control, 'The assistant should read the migrated connection')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
         await verifyProjectFieldFocus(control, 'stand-in-primary-open', {
           nextButtonPattern: /^stand-in-(?:overview-role-.+|create-role)$/,
         })
@@ -132,23 +165,6 @@ export function createDesktopScenario(options) {
         )
         await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')
         await verifyStandInConnectionCatalog(control, uiTimeoutMs, options.captureScreenshot)
-        await openConnectionTypePicker(control)
-        await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')
-        await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
-        await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')
-        await control.command('waitFor', '[data-testid="stand-in-delegation-enable"]:disabled')
-        const templates = ['document', 'schedule', 'process'].map(
-          value => `[data-testid="stand-in-delegation-template-${value}"]`
-        )
-        for (const template of templates) {
-          await control.command('waitFor', `${template}[aria-checked="true"]`)
-        }
-        await verifyStandInDelegationVisual(control, options)
-        await control.command('clickWhenEnabled', templates[0])
-        await control.command('waitFor', `${templates[0]}[aria-checked="false"]`)
-        await control.command('waitFor', `${templates[1]}[aria-checked="true"]`)
-        await control.command('waitFor', `${templates[2]}[aria-checked="true"]`)
-        await control.command('clickWhenEnabled', templates[0])
         await control.command('click', '[data-testid="stand-in-primary-cancel"]')
         const current = await requestExecutor(
           control,

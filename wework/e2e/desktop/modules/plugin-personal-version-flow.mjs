@@ -130,14 +130,17 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
     )
   const detailRow = name =>
     `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
-  const startChat = async () =>
-    waitForSnapshot(
+  const startChat = async name => {
+    await control.command('clickIfPresent', testId('plugin-detail-back-button'))
+    await control.command('clickWhenEnabled', detailRow(name))
+    return waitForSnapshot(
       control,
       snapshot =>
         snapshot.testIds.includes('plugin-detail-actions-bar') &&
         snapshot.text.split('\n').some(text => /^(立即对话|Start chat)$/i.test(text)),
       'Installed author source did not expose the existing Start chat action'
     )
+  }
 
   for (const alreadyShared of [false, true]) {
     const name = alreadyShared ? 'author-install-shared-e2e' : 'author-install-private-e2e'
@@ -212,8 +215,7 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       await control.command('waitFor', testId('plugin-import-dialog'), { visible: false })
     }
     if (alreadyShared) {
-      await control.command('clickWhenEnabled', detailRow(name))
-      await startChat()
+      await startChat(name)
     }
 
     let install = await until(
@@ -259,7 +261,7 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       assert.ok(await accountPlugin(cloud, name), 'The old delete preview removed account intent')
       await assertPersonalSourceUnchanged(source)
       await control.command('clickWhenEnabled', testId('plugin-delete-cancel-button'))
-      await startChat()
+      await startChat(name)
     }
     await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
 
@@ -471,6 +473,72 @@ export async function verifyPersonalPluginVersionSubmission({
   await control.command('click', testId(`plugin-marketplace-row-${initialized.pluginId}`))
   await control.command('waitFor', testId('plugin-version-submit-notice'), { text: nextVersion })
   await captureVerificationScreenshot(control, 'personal-plugin-version-pending.png')
+  const marketplaceDetail = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('plugin-detail-capabilities') &&
+      snapshot.testIds.filter(id => id.startsWith('plugin-skill-open-')).length === 2 &&
+      snapshot.testIds.some(id => id.startsWith('plugin-detail-share-')),
+    'The personal marketplace detail did not expose both fixture Skills and sharing',
+    10_000
+  )
+  const skillTestIds = marketplaceDetail.testIds
+    .filter(id => id.startsWith('plugin-skill-open-'))
+    .sort()
+  assert.ok(skillTestIds.some(id => id.endsWith('version-check')))
+  assert.ok(skillTestIds.some(id => id.endsWith('audience-check')))
+  await control.command('click', testId('plugin-detail-back-button'))
+  await control.command('clickWhenEnabled', testId('plugins-manage-button'))
+  const managedSourceRow = `[data-testid^="installed-plugin-row-"] > button[aria-label*="${updatedDisplayName}"]`
+  await control.command('waitFor', managedSourceRow, { timeoutMs: 10_000 })
+  await control.command('clickWhenEnabled', managedSourceRow)
+  const managementDetail = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('plugin-detail-capabilities') &&
+      snapshot.testIds.includes('plugin-version-submit-notice') &&
+      snapshot.testIds.some(id => id.startsWith('plugin-detail-share-')) &&
+      skillTestIds.every(id => snapshot.testIds.includes(id)),
+    'The management entry did not open the complete personal plugin detail',
+    10_000
+  )
+  assert.deepEqual(
+    managementDetail.testIds.filter(id => id.startsWith('plugin-skill-open-')).sort(),
+    skillTestIds,
+    'Management and marketplace details exposed different Skills'
+  )
+  await control.command('waitFor', 'button[data-testid^="plugin-detail-share-"]', {
+    enabled: true,
+    timeoutMs: 10_000,
+  })
+  await control.command('waitFor', testId('plugin-version-submit-notice'), {
+    text: currentVersion,
+    timeoutMs: 10_000,
+  })
+  await control.command('waitFor', testId('plugin-version-submit-notice'), {
+    text: nextVersion,
+    timeoutMs: 10_000,
+  })
+  await control.command('waitFor', testId('plugin-version-submit-open'), {
+    enabled: true,
+    timeoutMs: 10_000,
+  })
+  await control.command('click', testId('plugin-detail-back-button'))
+  await control.command('waitFor', testId('plugin-management-page-content'), {
+    timeoutMs: 10_000,
+  })
+  await control.command('click', testId('plugin-management-back-button'))
+  await control.command('waitFor', testId('plugins-search-input'), { timeoutMs: 10_000 })
+  await control.command('click', testId('plugins-distribution-tab-personal'))
+  await control.command('fill', testId('plugins-search-input'), { value: initialDisplayName })
+  await control.command(
+    'clickWhenEnabled',
+    testId(`plugin-marketplace-row-${initialized.pluginId}`)
+  )
+  await control.command('waitFor', testId('plugin-version-submit-notice'), {
+    text: nextVersion,
+    timeoutMs: 10_000,
+  })
   await control.command('click', testId('plugin-version-submit-open'))
   await control.command('waitFor', testId('plugin-version-submit-drawer'))
   await control.command('waitFor', testId('plugin-version-submit-current'), {

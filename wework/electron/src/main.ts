@@ -126,6 +126,7 @@ import {
   registerApplicationActivation,
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
+import { createProcessExplorerFixture } from './host/process-explorer-fixture.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
@@ -1435,7 +1436,9 @@ async function openProcessExplorerWindow(): Promise<void> {
     backgroundColor: desktopAppearance.current().backgroundColor,
     show: false,
     webPreferences: {
-      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
+      // Keep the default throttling: the explorer pauses sampling while
+      // `document.hidden`, which stays false on macOS and Linux when
+      // background throttling is disabled.
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -2631,6 +2634,7 @@ async function configureDesktopRuntime(): Promise<void> {
       runtimeHost: smartAppRuntimeHost,
     })
   }
+  const processExplorerFixture = createProcessExplorerFixture()
   const processExplorerService = createWeworkProcessExplorerService({
     windowLabel: contentsId => dshWindowLabels.get(contentsId) ?? null,
     embeddedBrowserLabel: contentsId => embeddedBrowser?.labelForContentsId(contentsId) ?? null,
@@ -2827,6 +2831,17 @@ async function configureDesktopRuntime(): Promise<void> {
             const target = processExplorerWindow
             if (target && !target.isDestroyed()) target.close()
           },
+          setProcessExplorerWindowHidden: hidden => {
+            const target = processExplorerWindow
+            if (!target || target.isDestroyed()) return
+            if (hidden) target.hide()
+            else {
+              target.show()
+              target.focus()
+            }
+          },
+          spawnProcessExplorerFixture: () => processExplorerFixture.spawn(),
+          stopProcessExplorerFixture: () => processExplorerFixture.stop(),
           dockVisible: () => dockVisible,
           rendererStartupReady,
           rendererStartupFailed: failure => {
@@ -3481,9 +3496,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       ...(process.env.CODEX_BINARY_PATH?.trim() || !components || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
-      ...(process.env.DWS_BINARY_PATH?.trim() || !components || !existsSync(components.dws)
-        ? {}
-        : { DWS_BINARY_PATH: components.dws }),
+      ...(components && existsSync(components.dws)
+        ? {
+            ...(process.env.DWS_BINARY_PATH?.trim() ? {} : { DWS_BINARY_PATH: components.dws }),
+            WEWORK_COMPONENT_DWS_PATH: components.dws,
+            WEWORK_COMPONENT_DWS_SOURCE: components.dwsSource,
+          }
+        : {}),
     },
     metadata: packageMetadata,
     homeDirectory: app.getPath('home'),

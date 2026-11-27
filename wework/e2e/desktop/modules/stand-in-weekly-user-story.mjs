@@ -138,6 +138,7 @@ export function createWeeklyUserStory(options) {
     async verify(control, openCalendarReviewTemplate, timeZone) {
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openCalendarReviewTemplate(control)
       const prompt = await control.command('getValue', '[data-testid="automation-prompt-input"]')
       await control.command('fill', '[data-testid="automation-name-input"]', {

@@ -1,5 +1,8 @@
 import type { StandInExecutorApi, StandInInboxMessage, StandInInboxWork } from '@/api/standIn'
-import { delegationResultLabel } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+import {
+  delegationResultLabel,
+  isOrdinaryDelegationSkip,
+} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
@@ -11,6 +14,7 @@ import {
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowRight, GripVertical, Split } from 'lucide-react'
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { StandInDelegationReceipt } from './StandInDelegationReceipt'
 import type { StandInWorkDrag } from './useStandInWorkOrganization'
 
 export function StandInWorkMessages({
@@ -27,6 +31,7 @@ export function StandInWorkMessages({
   onDragEnd,
   onChooseTarget,
   onOrganize,
+  onRefresh,
 }: {
   api: StandInExecutorApi
   userId: number
@@ -41,9 +46,11 @@ export function StandInWorkMessages({
   onDragEnd(): void
   onChooseTarget(value: StandInWorkDrag): void
   onOrganize(value: StandInWorkDrag): Promise<void>
+  onRefresh?(): void
 }) {
   const { t } = useTranslation('common')
   const { id: workId, roleId, messageCount, updatedAt } = work
+  const { profile, accountId } = work.source
   const refreshVersion =
     work.refreshVersion ??
     [
@@ -56,10 +63,18 @@ export function StandInWorkMessages({
   const resource = useMemo(
     () =>
       createAsyncResource(
-        JSON.stringify(['stand-in-work-messages', userId, deviceId, roleId, workId]),
+        JSON.stringify([
+          'stand-in-work-messages',
+          userId,
+          deviceId,
+          roleId,
+          workId,
+          profile,
+          accountId,
+        ]),
         () => api.workMessages(userId, deviceId, workId)
       ),
-    [api, userId, deviceId, roleId, workId]
+    [api, userId, deviceId, roleId, workId, profile, accountId]
   )
   const subscribe = useCallback(
     (listener: () => void) => resource.subscribe(listener, refreshVersion),
@@ -68,9 +83,7 @@ export function StandInWorkMessages({
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const messages =
     snapshot.data?.messages.filter(
-      message =>
-        !message.source.delegated ||
-        (message.delegationResult && message.delegationResult.action !== 'skip')
+      message => !message.source.delegated || !isOrdinaryDelegationSkip(message.delegationResult)
     ) ?? []
   const error =
     snapshot.status === 'error' || snapshot.error !== undefined
@@ -145,13 +158,15 @@ export function StandInWorkMessages({
                     {message.source.name} · {new Date(message.at).toLocaleString()}
                   </p>
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm">{message.text}</p>
-                  {message.delegationResult && (
-                    <p className="mt-1 break-words text-xs text-text-secondary">
-                      {t(delegationResultLabel(message.delegationResult) ?? '')}
-                      {' · '}
-                      {message.delegationResult.reason}
-                    </p>
-                  )}
+                  <DelegatedMessageResult
+                    work={work}
+                    message={message}
+                    onVerify={async () => {
+                      await api.verifyWorkDelivery(userId, deviceId, workId, message.recordId)
+                      onRefresh?.()
+                      await resource.reload()
+                    }}
+                  />
                 </div>
               </div>
               {(canSplit || canMove) && (
@@ -189,5 +204,34 @@ export function StandInWorkMessages({
         </div>
       </CollapsiblePanel>
     </CollapsibleRoot>
+  )
+}
+
+function DelegatedMessageResult({
+  work,
+  message,
+  onVerify,
+}: {
+  work: StandInInboxWork
+  message: StandInInboxMessage
+  onVerify(): Promise<void>
+}) {
+  const { t } = useTranslation('common')
+  const result = message.delegationResult
+  const label = delegationResultLabel(result)
+  const takenOver = message.source.delegated && (work.takenOverAt || result?.takenOver)
+  if (!label && !takenOver) return null
+  return (
+    <>
+      <p className="mt-1 break-words text-xs text-text-secondary">
+        {label && t(label)}
+        {label && takenOver && ' · '}
+        {takenOver && t('standIn.dingtalk_delegation.result_taken_over')}
+      </p>
+      {result?.reason && <p className="break-words text-xs text-text-secondary">{result.reason}</p>}
+      {result && work.delegationResult?.recordId !== message.recordId && (
+        <StandInDelegationReceipt result={result} onVerify={onVerify} />
+      )}
+    </>
   )
 }

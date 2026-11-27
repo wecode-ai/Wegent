@@ -2,6 +2,7 @@
 use super::runtime_owner::runtime_user;
 use super::stand_in::settings_error;
 use super::*;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
@@ -545,9 +546,10 @@ impl RuntimeWorkRpcHandler {
             store
                 .save_stand_in_action(user, &action)
                 .map_err(settings_error)?;
-            let result = self
-                .execute_coordinator_action(store, user, settings, &action)
-                .await;
+            let result = super::dispatch::boxed_rpc(|| {
+                self.execute_coordinator_action(store, user, settings, &action)
+            })
+            .await;
             match result {
                 Ok(Some(value)) if value["state"] == "abandoned" && action["kind"] == "assess" => {
                     self.retire_abandoned_assessment(store, user, &mut action, value)?;
@@ -1020,13 +1022,25 @@ impl RuntimeWorkRpcHandler {
             let kind = origin["projectStore"].as_str().unwrap_or_default();
             let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let independent = kind == super::stand_in_personal_issues::INDEPENDENT;
+            let trigger = match origin["trigger"].as_str() {
+                Some("mention") => Some(IssueIntakeTrigger::Mention),
+                Some("assignment") => Some(IssueIntakeTrigger::Assignment),
+                _ => None,
+            };
             let config = if independent {
                 super::stand_in_personal_issues::personal_issue_role(role, user)
             } else {
-                self.issue_intake_roles(std::slice::from_ref(role), user, project, kind, issue_id)
-                    .await?
-                    .into_iter()
-                    .next()
+                self.issue_intake_roles(
+                    std::slice::from_ref(role),
+                    user,
+                    project,
+                    kind,
+                    issue_id,
+                    trigger,
+                )
+                .await?
+                .into_iter()
+                .next()
             }
             .ok_or_else(|| {
                 let message = if independent {
@@ -1055,7 +1069,7 @@ impl RuntimeWorkRpcHandler {
                     "Issue no longer matches this role",
                 ));
             }
-            let mention = origin["trigger"] == "mention";
+            let mention = matches!(trigger, Some(IssueIntakeTrigger::Mention));
             if mention {
                 self.read_stand_in_issue_mention(origin).await?;
             }
@@ -1184,6 +1198,7 @@ impl RuntimeWorkRpcHandler {
                     project,
                     kind,
                     required(event, "issueId")?,
+                    Some(IssueIntakeTrigger::Assignment),
                 )
                 .await?
                 .into_iter()

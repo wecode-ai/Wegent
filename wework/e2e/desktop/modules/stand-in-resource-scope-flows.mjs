@@ -9,6 +9,7 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
   const user = 9001
   const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
   const prefix = `stand-in-connection-${providerId}`
+  const allSources = `[data-testid="${prefix}-scope-all-record"]`
   const open = async () => {
     await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
@@ -18,18 +19,21 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
       `[data-testid="stand-in-add-${providerId}-connection"]`
     )
     await control.command('waitFor', `[data-testid="${prefix}-connections"]`)
-    if (Number(await control.command('getElementCount', `[data-testid="${prefix}-add"]`)) > 0)
-      await control.command('clickWhenEnabled', `[data-testid="${prefix}-add"]`)
-    await control.command('waitFor', `[data-testid="${prefix}-scope-all"]`)
+    await control.command('waitFor', allSources)
   }
   try {
     await ensureExperimentalFeaturesEnabled(control)
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
     await open()
-    await control.command('waitFor', `[data-testid="${prefix}-scope-all"][aria-checked="true"]`)
-    assert.equal(await control.command('getElementCount', `[data-testid="${prefix}-query"]`), '0')
-    await control.command('click', `[data-testid="${prefix}-add-all"]`)
+    await control.command('waitFor', '[data-testid="stand-in-connection-scope-status"]', {
+      text: '尚未配置接收范围',
+    })
+    assert.equal(await control.command('getElementCount', `[data-testid="${prefix}-add-all"]`), '0')
+    await control.command('clickWhenEnabled', allSources)
+    await control.command('waitFor', `${allSources}[aria-checked="true"]`)
+    await control.command('waitFor', `[data-testid="${prefix}-query"]`, { visible: false })
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
     await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', { visible: false })
     const all = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
@@ -40,14 +44,13 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
       [['*', 'all', 'fixture', 'record']]
     )
     await open()
-    await control.command('click', `[data-testid="${prefix}-scope-selected"]`)
+    await control.command('clickWhenEnabled', allSources)
     await control.command('fill', `[data-testid="${prefix}-query"]`, { value: 'batch' })
     await control.command('click', `[data-testid="${prefix}-search"]`)
-    await control.command('waitFor', `[data-testid="${prefix}-result-record-2"]`)
-    await control.command('click', `[data-testid="${prefix}-select-results"]`)
-    const beforeAdd = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
-    assert.equal(beforeAdd.version, all.version, 'Selection is a draft until saved')
-    await control.command('click', `[data-testid="${prefix}-add-selected"]`)
+    for (const resource of ['record-1', 'record-2'])
+      await control.command('clickWhenEnabled', `[data-testid="${prefix}-result-${resource}"]`)
+    const draft = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
+    assert.deepEqual(draft, all, 'Scope changes are a draft until saved')
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
     await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', { visible: false })
     const selected = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
@@ -80,20 +83,19 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await reloadMainWindow(control, 'The restored personal settings did not reload')
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', '[data-testid="stand-in-overview"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
     await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)
     await control.command('click', '[data-testid="stand-in-time-connections"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-processing-settings-toggle"]')
-    await control.command(
-      'waitFor',
-      '[data-testid="stand-in-calendar-policy"][aria-checked="false"]'
-    )
-    await control.command('click', '[data-testid="stand-in-calendar-policy"]')
+    const approval = '[data-testid="stand-in-calendar-policy-ask-before-act"]'
+    await control.command('waitFor', `${approval}[aria-checked="false"]`)
+    await control.command('clickWhenEnabled', approval)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
     await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', { visible: false })
     const policy = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
-    assert.equal(policy.primary.calendar.policy.immediate, true)
+    assert.equal(policy.primary.calendar.policy.automatic, true)
+    assert.equal(policy.primary.calendar.policy.askBeforeAct, true)
     await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
     await openConnectionTypePicker(control)

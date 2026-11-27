@@ -22,6 +22,7 @@ fn application_defaults(
         configuration.job_allowlist.extend([
             super::robot::managed_jobs::SCAN.to_owned(),
             super::robot::managed_jobs::EXECUTE.to_owned(),
+            crate::external_agents::DELIVERY_JOB.to_owned(),
         ]);
     }
     configuration
@@ -47,6 +48,7 @@ mod tests {
                 super::super::device::RETENTION_JOB.to_owned(),
                 super::super::robot::managed_jobs::SCAN.to_owned(),
                 super::super::robot::managed_jobs::EXECUTE.to_owned(),
+                crate::external_agents::DELIVERY_JOB.to_owned(),
             ]
             .into()
         );

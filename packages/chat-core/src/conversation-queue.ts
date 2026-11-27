@@ -32,6 +32,8 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   displayContent?: string
   imageMarkupDraftText?: string
   codeComments?: CodeCommentContext[]
+  appendAcceptedMessage?: boolean
+  guidanceCorrection?: RuntimeSendRequest['guidanceCorrection']
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
@@ -43,6 +45,7 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   cloudProjectId?: RuntimeSendRequest['cloudProjectId']
   origin?: RuntimeSendRequest['origin']
   conversationContext?: RuntimeSendRequest['conversationContext']
+  assistantPrompt?: RuntimeSendRequest['assistantPrompt']
   requestUserInputResponse?: RuntimeSendRequest['requestUserInputResponse']
 }
 

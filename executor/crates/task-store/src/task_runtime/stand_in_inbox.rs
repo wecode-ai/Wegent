@@ -16,7 +16,7 @@ fn stand_in_source_key(user: i64, source: &Value) -> String {
 }
 
 #[path = "stand_in_dots_inbox.rs"]
-mod dots_inbox;
+pub(super) mod dots_inbox;
 
 enum MessageGrouping<'a> {
     Known(Option<&'a str>),
@@ -314,41 +314,46 @@ fn find_event_message(
     .transpose()
 }
 
+fn read_stand_in_messages(
+    connection: &Connection,
+    user: i64,
+    work: &str,
+) -> Result<Vec<Value>, TaskRuntimeError> {
+    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
+    let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
+    rows.map(|raw| {
+        serde_json::from_str(&raw?).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .collect()
+}
+
 fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRuntimeError> {
-    let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at DESC,id DESC")?;
-    let rows = statement.query_map(
-        params![work["userId"].as_i64(), work["id"].as_str()],
-        |row| row.get::<_, String>(0),
+    let messages = read_stand_in_messages(
+        connection,
+        work["userId"].as_i64().unwrap_or_default(),
+        work["id"].as_str().unwrap_or_default(),
     )?;
-    let messages = rows
-        .map(|raw| {
-            serde_json::from_str::<Value>(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     work["messageCount"] = json!(messages.len());
-    work["latestMessage"] = messages.first().cloned().unwrap_or(Value::Null);
+    work["latestMessage"] = messages.last().cloned().unwrap_or(Value::Null);
     if work["source"]["delegated"] == true {
-        let outcomes = messages.iter().map(|row| &row["delegationResult"]);
-        work["delegationResult"] = outcomes
-            .clone()
-            .find(|result| matches!(result["action"].as_str(), Some("reply" | "needs_user")))
-            .or_else(|| {
-                outcomes
-                    .clone()
-                    .all(|result| result["action"] == "skip")
-                    .then(|| outcomes.clone().next())
-                    .flatten()
-            })
-            .cloned()
-            .unwrap_or(Value::Null);
+        work["delegationResult"] = dots_inbox::project_delegation_result(work, &messages);
     }
-    work["status"] = json!(["sending", "needs_grouping", "pending", "failed"]
+    let status = ["sending", "needs_grouping", "pending", "failed"]
         .into_iter()
-        .find(|status| messages
-            .iter()
-            .any(|message| message["dispatchStatus"] == *status))
-        .unwrap_or("sent"));
+        .find(|status| {
+            messages
+                .iter()
+                .any(|message| message["dispatchStatus"] == *status)
+        })
+        .unwrap_or("sent");
+    work["status"] = json!(if work["source"]["delegated"] == true
+        && !work["takenOverAt"].is_null()
+        && status != "sending"
+    {
+        "sent"
+    } else {
+        status
+    });
     work["updatedAt"] = json!(now());
     write_record(
         connection,
@@ -632,13 +637,7 @@ impl LocalTaskStore {
     pub fn stand_in_messages(&self, user: i64, work: &str) -> Result<Vec<Value>, TaskRuntimeError> {
         self.stand_in_work(user, work)?;
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_message' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.workId')=?2 ORDER BY created_at,id")?;
-        let rows = statement.query_map(params![user, work], |row| row.get::<_, String>(0))?;
-        rows.map(|raw| {
-            serde_json::from_str(&raw?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
-        })
-        .collect()
+        read_stand_in_messages(&connection, user, work)
     }
 
     pub fn known_stand_in_message(
@@ -893,6 +892,11 @@ impl LocalTaskStore {
                 message["originalWorkId"] = source["id"].clone();
             }
             message["workId"] = destination["id"].clone();
+            if source["source"]["delegated"] == true && !source["takenOverAt"].is_null() {
+                message["takenOverAt"] = source["takenOverAt"].clone();
+                dots_inbox::mark_delegation_taken_over(&mut message["delegationResult"]);
+                message["dispatchStatus"] = json!("sent");
+            }
             // Organization never authorizes replay of completed effects.
             let failed = message["dispatchStatus"] == "failed";
             let failures = Self::stand_in_dispatch_failure_count(message, failed);

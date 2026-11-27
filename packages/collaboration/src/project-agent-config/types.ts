@@ -57,6 +57,11 @@ export interface ProjectAgentConfigurationHost {
     ownerOptions?: ProjectAgentOwnerOption[];
     workspaceName: string;
   }): ReactNode;
+  renderExternalAgentCreator?(props: {
+    projectId: string
+    onBack(): void
+    onCreated(keepOpen?: boolean): Promise<void>
+  }): ReactNode
   renderLocalAgentCreator?(props: {
     onClose(): void;
     onCreated(): Promise<void>;

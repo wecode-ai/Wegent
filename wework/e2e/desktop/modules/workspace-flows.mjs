@@ -529,15 +529,23 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
     await control.command('click', toggle)
 }
 
-/** Seed an existing offline project through production Native APIs; project-first-navigation covers creation UI. */
-export async function createLocalCollaborationProject(control, contentSelector, projectName) {
+async function prepareLocalProjectRepository(projectName) {
   const workspacePath = join(
     resultDir,
     'local-collaboration-projects',
     projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
   )
   await mkdir(workspacePath, { recursive: true })
+  // The evidence directory lives under the Wegent checkout. Give the imported
+  // folder its own repository boundary so product discovery does not mistake
+  // the parent checkout for the project's configured source repository.
   await runChecked('git', ['init', workspacePath])
+  return workspacePath
+}
+
+/** Seed an existing offline project through production Native APIs; project-first-navigation covers creation UI. */
+export async function createLocalCollaborationProject(control, contentSelector, projectName) {
+  const workspacePath = await prepareLocalProjectRepository(projectName)
   const projectKey = randomUUID()
   await requestExecutor(
     control,
@@ -563,16 +571,7 @@ export async function createLocalCollaborationProject(control, contentSelector, 
 }
 
 export async function completeLocalCollaborationFolderImport(control, projectName) {
-  const workspacePath = join(
-    resultDir,
-    'local-collaboration-projects',
-    projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
-  )
-  await mkdir(workspacePath, { recursive: true })
-  // The evidence directory lives under the Wegent checkout. Give the imported
-  // folder its own repository boundary so product discovery does not mistake
-  // the parent checkout for the project's configured source repository.
-  await runChecked('git', ['init', workspacePath])
+  const workspacePath = await prepareLocalProjectRepository(projectName)
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1515,7 +1514,7 @@ async function verifyExistingTaskBoardAssociation(
     1,
     'Searching for the unique test project must produce exactly one selectable result'
   )
-  await control.command('press', pickerSearch, { key: 'Escape' })
+  await control.command('nativePress', pickerSearch, { key: 'Escape' })
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

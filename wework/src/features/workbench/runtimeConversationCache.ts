@@ -1,3 +1,4 @@
+import { isRuntimeChatStreamDebugEnabled } from '@/stream/runtimeStreamDiagnostics'
 export {
   getConversationScrollSnapshot,
   hasConversationScrollSnapshot,
@@ -14,7 +15,7 @@ import type {
   RuntimeSubagentActivityPayload,
   RuntimeTaskAddress,
 } from '@/types/api'
-import { summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
+import { logRuntimeTaskCreateStage, summarizeRuntimeQueue } from '@/lib/runtime-create-diagnostics'
 import type {
   ProcessingBlock,
   RuntimeConversationTurn,
@@ -438,6 +439,19 @@ export function applyRuntimeConversationAction(
   const nextTurns = superseded?.size
     ? reduced.filter(turn => !turn.id || !superseded.has(turn.id))
     : reduced
+  if (action.type === 'assistant_done' && action.content && isRuntimeChatStreamDebugEnabled()) {
+    const turn = nextTurns.findLast(candidate => candidate.id === action.subtaskId)
+    logRuntimeTaskCreateStage('runtime-terminal-projected', {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      turnId: action.subtaskId,
+      applied: reduced !== currentTurns,
+      status: turn?.status ?? null,
+      hasAssistantText:
+        turn?.items.some(item => item.type === 'assistant_text' && item.content.length > 0) ??
+        false,
+    })
+  }
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action, nextTurns)
 }
@@ -663,6 +677,27 @@ export function appendOptimisticRuntimeConversationGuidance(
       turnId,
       createOptimisticRuntimeGuidanceMessage(guidanceMessage)
     )
+  )
+}
+
+export function replaceRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  guidance: WorkbenchMessage & { role: 'user'; runtimeGuidance: true }
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.map(turn => {
+      if (turn.id !== (guidance.turnId ?? guidance.subtaskId)) return turn
+      return {
+        ...turn,
+        // Native item identity and position belong to the transcript. The
+        // workbench edits the user message by its client identity.
+        items: turn.items.map(item =>
+          item.type === 'user_message' && item.message.id === guidance.id
+            ? { ...item, message: guidance }
+            : item
+        ),
+      }
+    })
   )
 }
 

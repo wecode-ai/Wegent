@@ -816,7 +816,7 @@ export function createHybridWorkbenchServices(
     observeProjectPluginDevices()
     return api
   }
-  const runtimeApiForDevice = async (deviceId?: string | null) => {
+  const runtimeApiForDevice = async (deviceId?: string | null, { refreshOffline = false } = {}) => {
     const normalizedDeviceId = deviceId?.trim()
     if (!normalizedDeviceId) {
       throw new Error('executor-not-found:missing-device-id')
@@ -833,7 +833,7 @@ export function createHybridWorkbenchServices(
       await listLocalDevices()
       device = resolveDevice()
     }
-    if (!device) {
+    if (!device || (refreshOffline && isRemoteTaskDevice(device) && !isUsableDevice(device))) {
       await listCloudDevices()
       device = resolveDevice()
     }
@@ -1136,9 +1136,9 @@ export function createHybridWorkbenchServices(
     },
   }
 
-  const standInApiForDevice = async (deviceId: string) => {
+  const standInApiForDevice = async (deviceId: string, refreshOffline = false) => {
     const api =
-      (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi
+      (await runtimeApiForDevice(deviceId, { refreshOffline })) === localServices.runtimeWorkApi
         ? localServices.standInApi
         : cloudServices.standInApi
     if (!api) throw new Error('Executor settings are unavailable')
@@ -1883,12 +1883,14 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    personalAssistantAccountApi: cloudServices.personalAssistantAccountApi,
     standInApi: {
       async binding(deviceId, operation, version, target) {
         return (await standInApiForDevice(deviceId)).binding(deviceId, operation, version, target)
       },
       async lifecycle(userId, deviceId, operation) {
-        return (await standInApiForDevice(deviceId)).lifecycle(userId, deviceId, operation)
+        const api = await standInApiForDevice(deviceId, operation === 'stop')
+        return api.lifecycle(userId, deviceId, operation)
       },
       taskCommands: {
         async get(deviceId, target) {
@@ -2028,6 +2030,17 @@ export function createHybridWorkbenchServices(
       async workMessages(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
       },
+      async takeOverWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).takeOverWork(userId, deviceId, workId)
+      },
+      async verifyWorkDelivery(userId, deviceId, workId, recordId) {
+        return (await standInApiForDevice(deviceId)).verifyWorkDelivery(
+          userId,
+          deviceId,
+          workId,
+          recordId
+        )
+      },
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },
@@ -2056,6 +2069,14 @@ export function createHybridWorkbenchServices(
       async connectionProviders(deviceId) {
         return (await standInApiForDevice(deviceId)).connectionProviders(deviceId)
       },
+      async connectionReadiness(deviceId, providerId, profile, sources) {
+        return (await standInApiForDevice(deviceId)).connectionReadiness(
+          deviceId,
+          providerId,
+          profile,
+          sources
+        )
+      },
       async installConnectionDependencies(deviceId, providerId, aliases) {
         return (await standInApiForDevice(deviceId)).installConnectionDependencies(
           deviceId,
@@ -2063,14 +2084,15 @@ export function createHybridWorkbenchServices(
           aliases
         )
       },
-      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope) {
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor, scope, profile) {
         return (await standInApiForDevice(deviceId)).searchConnectionResources(
           deviceId,
           providerId,
           kind,
           query,
           cursor,
-          ...(scope ? ([scope] as const) : [])
+          scope,
+          profile
         )
       },
       async conversation(userId, deviceId, message, roleId, options) {

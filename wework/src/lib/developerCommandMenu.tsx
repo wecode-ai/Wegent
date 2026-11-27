@@ -2,7 +2,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
   isRuntimeChatStreamDebugEnabled,
   setRuntimeChatStreamDebugEnabled,
-} from '@/api/runtime/runtimeChatStream'
+} from '@/stream/runtimeStreamDiagnostics'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 import { DebugPanel, DeveloperCommands, type DeveloperCommand } from './developerCommandSurfaces'

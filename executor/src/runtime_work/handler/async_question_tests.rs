@@ -344,6 +344,7 @@ async fn blocking_question_download_race(stop: bool) {
     } else {
         "question-download-duplicate"
     });
+    let _workspace = ScalarEnv::set("WORKSPACE_ROOT", root.join("workspace").to_str().unwrap());
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
         "task".into(),
         root.to_string_lossy().into_owned(),
@@ -481,6 +482,7 @@ fn async_question_attachment_groups_reach_new_turn_prompt() {
 #[cfg(unix)]
 async fn assert_async_question_attachment_groups() {
     let (mut handler, root) = isolated_runtime_work_handler("async-question-file-groups");
+    let _workspace = ScalarEnv::set("WORKSPACE_ROOT", root.join("workspace").to_str().unwrap());
     install_native_history(
         &mut handler,
         &root,

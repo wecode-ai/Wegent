@@ -6,6 +6,7 @@ import {
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
 import { createStandInProposalRegression } from '../modules/stand-in-proposal-regression.mjs'
 import { verifyStandInLocalDeviceRecovery } from '../modules/stand-in-local-device-recovery.mjs'
+import { openStoryPrimary } from '../modules/stand-in-source-story-evidence.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { stat } from 'node:fs/promises'
@@ -100,8 +101,7 @@ export function createDesktopScenario({
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('waitFor', CHAT)
+      await openStoryPrimary(control)
       await verifyStandInLocalDeviceRecovery(control, CHAT)
       const initial = await requestExecutor(
         control,
@@ -215,10 +215,16 @@ export function createDesktopScenario({
         0
       )
         await control.command('click', '[data-testid="stand-in-dingtalk-add"]')
-      await control.command('click', '[data-testid="stand-in-dingtalk-scope-selected"]')
+      await control.command('click', '[data-testid="stand-in-dingtalk-add-scope"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-kind-group"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-choose-selected"]')
       await control.command('waitFor', '[data-testid="stand-in-dingtalk-query"]')
       await captureScreenshot(control, '08-explicit-source-selection.png', ROOT)
-      await control.command('click', '[data-testid="stand-in-cancel"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
+      await control.command('waitFor', '[data-testid="stand-in-dingtalk-add-scope"]')
+      await control.command('waitFor', '[data-testid="stand-in-path-scope"]', { visible: false })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
+      await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', { visible: false })
       await control.command('click', '[data-testid="stand-in-primary-open"]')
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: '已记住这次补充',

@@ -4,6 +4,7 @@ use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
 use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
+use crate::task_runtime::personal_stand_in::IssueIntakeTrigger;
 
 fn scheduler_interval(variable: &str, default: Duration) -> Duration {
     std::env::var(variable)
@@ -163,12 +164,12 @@ impl RuntimeWorkRpcHandler {
             let mut settings = store
                 .stand_in_settings(
                     &project,
+                    project_store,
                     user_id,
                     payload["standInId"].as_str().unwrap_or("default"),
                 )
                 .map_err(settings_error)?;
             settings["executionDeviceId"] = json!(self.device_id);
-            settings["projectStore"] = json!(project_store);
             return Ok(settings);
         }
         let mut settings = payload["settings"].clone();
@@ -242,6 +243,7 @@ impl RuntimeWorkRpcHandler {
         let mut config = store
             .stand_in_settings(
                 &project,
+                kind,
                 user,
                 payload["standInId"]
                     .as_str()
@@ -593,11 +595,16 @@ impl RuntimeWorkRpcHandler {
                         project,
                         "local",
                         participant_ids.contains(&issue.id),
+                        Some(IssueIntakeTrigger::Assignment),
                     )
                 })
                 .filter(|config| {
                     self.stand_in_issue_runs_here(config, &issue_value)
-                        && assignment_after_enable(&json!({"created_at":assignment["at"]}), config)
+                        && issue_after_enable(
+                            &json!({"created_at":assignment["at"]}),
+                            config,
+                            &issue_value,
+                        )
                 })
                 .collect();
             if eligible.is_empty() {
@@ -751,7 +758,7 @@ impl RuntimeWorkRpcHandler {
         };
         let eligible_configs: Vec<Value> = matching
             .into_iter()
-            .filter(|config| assignment_after_enable(assignment, config))
+            .filter(|config| issue_after_enable(assignment, config, issue))
             .cloned()
             .collect();
         let eligible =
@@ -898,8 +905,10 @@ impl RuntimeWorkRpcHandler {
                 "model_policy":{"mode":"user_select"}, "system_prompt":"", "additional_skills":[], "plugins":[], "mcp_servers":{}
             }))
         };
-        self.prepare_stand_in_execution_with_agent(payload, config, agent)
-            .await
+        super::dispatch::boxed_rpc(|| {
+            self.prepare_stand_in_execution_with_agent(payload, config, agent)
+        })
+        .await
     }
 
     pub(super) async fn prepare_stand_in_execution_with_agent(
@@ -1027,16 +1036,35 @@ impl RuntimeWorkRpcHandler {
 }
 
 pub(super) fn assignment_after_enable(assignment: &Value, config: &Value) -> bool {
+    event_after_enable(
+        &assignment["created_at"],
+        &config["enabledAfter"],
+        config["projectStore"] == "cloud",
+    )
+}
+
+pub(super) fn issue_after_enable(event: &Value, config: &Value, issue: &Value) -> bool {
+    match config["issueScopeTags"].as_array() {
+        Some(scopes) => scopes.iter().any(|scope| {
+            super::personal_stand_in::issue_tags_match(scope, issue)
+                && event_after_enable(
+                    &event["created_at"],
+                    &scope["enabledAfter"],
+                    config["projectStore"] == "cloud",
+                )
+        }),
+        None => assignment_after_enable(event, config),
+    }
+}
+
+fn event_after_enable(event: &Value, boundary: &Value, cloud: bool) -> bool {
     let parse = |value: &Value| {
         value
             .as_str()
             .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
     };
-    match (
-        parse(&assignment["created_at"]),
-        parse(&config["enabledAfter"]),
-    ) {
-        (Some(assigned), Some(enabled)) if config["projectStore"] == "cloud" => {
+    match (parse(event), parse(boundary)) {
+        (Some(assigned), Some(enabled)) if cloud => {
             // MySQL assignment records have second precision; compare the same precision.
             assigned.timestamp() >= enabled.timestamp()
         }

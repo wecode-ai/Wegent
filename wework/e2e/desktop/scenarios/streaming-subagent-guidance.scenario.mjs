@@ -15,8 +15,9 @@ export function createDesktopScenario(options) {
     checkpoint: 'streaming-subagent-guidance',
     subagentTextRelease,
     async beforeSubagentOutput(control) {
+      const stopButton = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]:enabled`
       const sendButton = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-      await control.command('waitFor', `${sendButton}:disabled`)
+      await control.command('waitFor', stopButton)
       await control.command('fill', COMPOSER_SELECTOR, { value: GUIDANCE })
       await control.command('waitFor', `${sendButton}:enabled`)
       await control.command(
@@ -27,7 +28,7 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', '[data-testid="user-message-content"]', {
         text: GUIDANCE,
       })
-      await control.command('waitFor', `${sendButton}:disabled`)
+      await control.command('waitFor', stopButton)
       const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const messages = JSON.parse(
         await control.command('getRuntimeConversationMessages', 'body', {

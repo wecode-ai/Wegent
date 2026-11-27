@@ -179,6 +179,9 @@ import {
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   GUIDANCE_SCROLL_MESSAGE,
+  GUIDANCE_ATTACHMENT_CONTENT,
+  GUIDANCE_CORRECTION_PROMPT,
+  GUIDANCE_CORRECTION_COMPLETION,
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
@@ -3141,6 +3144,10 @@ class DesktopE2EServer {
             JSON.stringify(body).includes(GUIDANCE_SCROLL_MESSAGE),
             'The active turn did not apply the queued guidance'
           )
+          assert.ok(
+            JSON.stringify(body).includes(GUIDANCE_ATTACHMENT_CONTENT),
+            'The guidance did not deliver the attached file contents to the model'
+          )
         }
         this.guidanceScrollStage = 'complete'
         this.releaseGuidanceScrollGuidanceArrival()
@@ -3148,6 +3155,19 @@ class DesktopE2EServer {
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.guidanceScrollStage === 'complete') {
+        assert.ok(
+          latestModelInputText(body).includes(GUIDANCE_CORRECTION_PROMPT),
+          'The new turn did not receive the guidance correction'
+        )
+        this.guidanceScrollStage = 'corrected'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GUIDANCE_CORRECTION_COMPLETION),
           responseCompleted(responseId),
         ])
         return

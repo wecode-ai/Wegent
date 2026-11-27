@@ -1,4 +1,5 @@
 import type { UserMessageServices } from './UserMessage'
+import type { RenderMessageVisualization } from './AssistantMessage'
 import { MessageListMessage } from './MessageListMessage'
 import { hideAnsweredQuestionSummaries } from './answeredQuestionPresentation'
 import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
@@ -61,10 +62,7 @@ export interface MessageListProps {
   virtualize?: boolean
   useContentVisibility?: boolean
   onVirtualMeasurement?: (details: VirtualMessageMeasurement) => void
-  renderVisualization?: (
-    part: { file: string; mode?: 'wide'; title?: string },
-    message: WorkbenchMessage
-  ) => ReactNode
+  renderVisualization?: RenderMessageVisualization
   messages: WorkbenchMessage[]
   turns?: RuntimeConversationTurn[]
   scrollElementRef?: RefObject<HTMLDivElement | null>

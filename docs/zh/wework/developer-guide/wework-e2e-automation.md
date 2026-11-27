@@ -12,6 +12,8 @@ Wework E2E 工作流默认设为 `false`，避免共享 CI 运行器的负载阻
 
 macOS 的真实桌面测试在同时启用 `VITE_WEWORK_E2E=true` 和 `WEWORK_E2E_CONTROL_URL` 时允许测试窗口大于显示器，避免可用高度不足 1200 的屏幕截断固定视口。原生尺寸命令仍须观察到请求的实际内容尺寸才返回；既有尺寸断言和时限保持有效。共享 `tray-lifecycle` 检查点在既有 macOS CI 中验证 1280×1200 的原生窗口调整及恢复，不新增 runner 或应用启动。普通启动沿用平台默认行为。
 
+`process-explorer-lifecycle` 检查点在既有核心 CI shard 中运行。它打开真实的进程查看器，启动一个应用自身的子进程，并验证查看器列出且计入汇总；随后隐藏查看器窗口，在一个观察窗口内确认已列出的运行时长保持不变，再显示窗口并确认恢复采样，最后结束该子进程。退出的子进程必须仍以已退出行的形式保留在列表中，同时进程总数回到基线。窗口可见性与行状态均来自既有的查看器窗口快照能力；暂停检查属于否定观察窗口，不能作为某个更新已完成的证明。
+
 重启后控制器连接成功不代表原生启动页已经关闭。测试需要主窗口焦点时，先复用 `waitForClosedStartupSplash` 等待真实启动页关闭，再验证原生焦点；启动期间的激活仍应遵循产品既有的启动页路由，不能通过重复激活或放宽焦点超时绕过时序。
 
 桌面 E2E 共享 fixture 使用 `GPT 5.6 Luna`。真实运行时目录同时存在 `GPT-5.6 Luna` 和 `GPT 5.6 Luna` 两种显示名称，默认模型选择断言接受这两种名称，同时继续核对模型 ID 和供应商。任务恢复断言继续核对 fixture 原有的显示名称。
@@ -79,6 +81,20 @@ pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
 ```
 
 该检查点使用真实 Electron、executor 和 Codex，仅在隔离的模型订阅服务中模拟企业账号的 cloud-config bundle 失败。它覆盖已有线程续聊、新线程、配置和模型读取、Goal 重启恢复、官方订阅认证恢复，以及云模型运行期间的认证并发保护；同时检查最终回复、原生会话记录和重载后的任务状态。测试账号与目录均由 fixture 创建。该检查点通过现有桌面 CI 的 Core 分片执行。
+
+### 钉钉委托回复开发冒烟
+
+在包含钉钉接入、委托授权和可靠投递的同一候选提交上运行现有 Core 检查点：
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment stand-in-dingtalk-delegation
+```
+
+检查点以真实 Electron、执行器和本地存储运行，使用钉钉 CLI 协议替身和固定模型决策。私聊和选中群 `@本人` 各覆盖三种首周模板，检查同会话证据、原会话回复、AI 标识、提交次数和 120 秒窗口。边界用例检查需要本人处理、越权范围、证据变化、断线恢复和执行器重启。协议与存储集成测试覆盖回执不匹配、提交前授权失效和恢复窗口边界等确定性故障。结果目录中的 `dingtalk-delegation-evidence.json` 记录该轮样本结果。
+
+定位桌面显示问题时，可用隔离的 `ai:verify` 会话检查工作详情中的投递状态、接管按钮、回执核查和回执内容。同一条记录的点击和状态断言优先由桌面检查点执行。`ai:verify` 启动空白会话，检查已有记录时需要指定隔离测试夹具的执行器目录，并保留其设备 ID。复用记录只用于核对界面显示，渠道提交和回执仍由检查点审计。
+
+发布候选仍需在获批的测试账号和会话验证真实钉钉接收方可见的消息、AI 标识、回执核查能力和实际耗时。真实模型对歧义、过期或敏感证据的判断需要使用约定模型与验收样本另行验证。两轮可以用自动化操作界面，结果分别记录实际渠道和模型，避免把协议替身及固定模型决策的通过结果计入真实环境验收。
 
 仅运行云端项目桌面 E2E：
 
@@ -223,6 +239,46 @@ Core/Cloud matrix job 提供跨 runner 的套件级并行。Linux Core、Windows
 checkpoint 并发上限保持 4。保留的 Core 性能基准分片以及 Cloud 的独占分片保持隔离，
 共享准备组继续共同调度。共享 runner 池仍可能引入外部排队，扩容也会增加环境准备成本；
 历史耗时回放只预测测试阶段，不能当作新 CI 的实测提速。
+
+### 复用桌面 E2E 基础设施
+
+- 通过检查点 runner 启动桌面应用。场景需要在启动前准备应用配置时使用
+  `prepareApp`，需要重启时用 runner 通过 `setRestartDesktopApp` 提供的函数。
+  该函数会等控制器重新连接并检查设备身份。普通发布包冷启动使用分阶段就绪检查。
+- 在 `e2e/desktop/modules/workspace-flows.mjs` 中复用
+  `createLocalCollaborationProject` 准备已有的本地项目，或用
+  `completeLocalCollaborationFolderImport` 驱动目录导入界面。两个入口共用隔离的 Git 仓库准备。
+  验证云协作项目时，可以用 `workspace-agent-setup.mjs` 的
+  `createWorkspaceAndProject` 完成创建并等到看板就绪。
+- 创建资源后立即记录对应的清理动作。需要逐项释放资源时，从
+  `e2e/desktop/modules/cleanup.mjs` 导入 `collectCleanupErrors`，按依赖顺序传入操作。
+  它会执行全部操作并返回错误，调用方负责记录每个清理失败、保留已有的场景错误，
+  以及在仅清理失败时让检查点失败。场景的 `cleanup` 执行时，控制器、代理和 Backend 仍可用。
+
+#### 模型 fixture
+
+- 普通场景使用 runner 提供的回环模型端点。通过场景的 `handleHttp` 钩子
+  提供场景需要的模型响应，应用、运行时和工具调用仍走真实链路。
+- 从 `e2e/desktop/modules/model-sse.mjs` 导入 `sse(events)` 编码一批事件，
+  或用 `writeSseEvents(response, events)` 逐帧写入。需要复用 Responses 协议的
+  终态输出合并逻辑时，用 `response-protocol.mjs` 中的 `createSse`。
+- 从 `e2e/desktop/modules/model-response-gates.mjs` 导入 `createModelResponseGates()`，
+  每段需要暂停的响应调用一次 `gates.pause()`。模型写出部分响应后等待
+  `gate.promise`，场景观测到目标状态后调用 `gate.resolve()`。在场景清理时调用
+  `gates.cleanup()`，统一释放仍在等待的响应。
+
+#### 等待可观测状态
+
+- 等界面出现、可点击或刷新时，优先使用桌面控制器的 `waitFor`、
+  `clickWhenEnabled` 或已有的 `waitForSnapshot`。
+- 需要重复读取 API 或运行时状态时，从 `e2e/desktop/modules/wait.mjs`
+  导入 `waitForValue(load, predicate, message, timeoutMs)`。条件返回
+  `true` 时得到本次读取的值，也可直接返回匹配项，例如
+  `items => items.find(item => item.id === taskId)`。轮询耗尽时会附上最后一次读取结果，
+  因此只读取可以写入 CI 日志的状态。
+- 等待已注册的事件或已有的异步操作时，使用同一模块的
+  `withTimeout(promise, timeoutMs, message)`。事件监听先于触发动作注册。
+  超时会结束等待，操作的取消和资源清理由场景负责。
 
 ### 测试专用轮询和退避时间
 
@@ -370,7 +426,8 @@ GC；最终内存验证仍使用默认完整采样。超时诊断保留最后一
 权限与审批配置，避免该沙箱无法表达分离可写目录时直接拒绝执行。
 Windows 源项目回归据此验证目录外写入可执行，其他平台继续验证操作系统阻止写入；
 所有平台仍验证显式授权写入、原生审批拒绝私有数据读取及拒绝后无数据泄露。网络探针
-声明文本响应类型，避免 PowerShell 将响应体按字节数组逐项输出。
+声明文本响应类型，避免 PowerShell 将响应体按字节数组逐项输出。角色委派和 Dots 场景在 Windows 的隔离 Codex 配置中启用 unelevated 沙箱。角色委派用实际文件写入验证工作区可写和切换只读后的写入限制。
+Windows 的嵌入浏览器下载检查通过 UI Automation 操作当前 Electron 进程的原生右键菜单和另存为对话框，并继续核对取消和保存的文件结果。Core 3 补录了五个成功检查点的耗时，DingTalk 场景共用一次协议夹具准备。助理任务准备和创建通过已有的 Future 装箱边界运行，避免嵌套在 Windows 工作线程栈上。
 订阅模型服务对所有升级路径统一返回 HTTP 426，并在连接整个生命周期内处理
 `ECONNRESET` 并关闭连接；其他 Socket 错误仍失败。节点回归验证不同路径、重复重置和非预期错误，避免场景通过后
 在清理阶段因未处理的 Socket 错误退出。

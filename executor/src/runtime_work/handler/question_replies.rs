@@ -224,6 +224,50 @@ impl RuntimeWorkRpcHandler {
         self.send_prepared_question_response(task, response, prepared)
     }
 
+    pub(super) async fn respond_to_child_mcp_approval(
+        &self,
+        local_task_id: &str,
+        response: &Value,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let Some((request_id, scope)) = super::super::mcp_elicitation::response_id(response)
+            .zip(response["interactionScope"].as_str())
+        else {
+            return Ok(None);
+        };
+        let Some(turn) = self.active_codex_turn(local_task_id) else {
+            return Ok(None);
+        };
+        if scope == turn.turn_id {
+            return Ok(None);
+        }
+        let accepted = self
+            .codex_app_server
+            .answer_child_mcp_approval(request_id, response, |thread| {
+                if !self.is_local_task_execution_accepting_notifications(
+                    local_task_id,
+                    turn.execution_id,
+                ) {
+                    return None;
+                }
+                let routing = self.thread_event_routing.lock().ok()?;
+                let route = routing.routes.get(thread)?;
+                (route.active
+                    && route.nested
+                    && route.local_task_id == local_task_id
+                    && route.request.subtask_id == turn.turn_id)
+                    .then(|| crate::runtime_work::stand_in_requires_confirmation(&route.request))
+            })
+            .await
+            .map_err(|error| AppIpcError::new("mcp_approval_delivery_failed", error))?;
+        Ok(accepted.map(|accepted| {
+            if accepted {
+                json!({"success":true,"accepted":true,"deviceId":self.device_id,"taskId":local_task_id,"runtime":"codex"})
+            } else {
+                json!({"success":false,"code":"stale_request_user_input","error":"The child approval is no longer pending or the decision is invalid"})
+            }
+        }))
+    }
+
     // Called under the task send gate. No attachment or channel I/O may wait here.
     pub(super) fn send_prepared_question_response(
         &self,

@@ -44,7 +44,7 @@ function message(status: 'submitting' | 'sent', reason: string): StandInInboxMes
 
 it('refreshes an expanded detail when visible message state changes without count or time changes', async () => {
   let response = { messages: [message('submitting', 'Old reply state')] }
-  const workMessages = vi.fn(async () => response)
+  const workMessages = vi.fn<StandInExecutorApi['workMessages']>(async () => response)
   const api = { workMessages } as unknown as StandInExecutorApi
   const onExpandedChange = vi.fn()
   const onDrag = vi.fn()
@@ -74,4 +74,15 @@ it('refreshes an expanded detail when visible message state changes without coun
 
   await waitFor(() => expect(screen.getByText(/Updated reply state/)).toBeInTheDocument())
   expect(workMessages).toHaveBeenCalledTimes(2)
+
+  workMessages.mockImplementationOnce(() => new Promise(() => {}))
+  rerender(
+    <StandInWorkMessages
+      {...props}
+      work={{ ...nextWork, source: { ...source, accountId: 'another-account' } }}
+    />
+  )
+
+  expect(screen.queryByText(/Updated reply state/)).not.toBeInTheDocument()
+  expect(workMessages).toHaveBeenCalledTimes(3)
 })

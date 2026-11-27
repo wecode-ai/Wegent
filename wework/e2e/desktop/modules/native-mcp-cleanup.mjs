@@ -1,10 +1,8 @@
+import { collectCleanupErrors } from './cleanup.mjs'
+
 export async function cleanupNativeMcpResources(cleanups, failure) {
-  for (const cleanup of cleanups) {
-    try {
-      await cleanup()
-    } catch (error) {
-      if (failure === undefined) failure = error
-    }
-  }
+  const errors = await collectCleanupErrors(cleanups)
   if (failure !== undefined) throw failure
+  const firstFailure = errors.find(error => error !== undefined)
+  if (firstFailure !== undefined) throw firstFailure
 }

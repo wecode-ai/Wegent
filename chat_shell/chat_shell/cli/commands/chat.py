@@ -23,7 +23,7 @@ def _infer_model_type(model: str) -> str:
 @click.option(
     "--model",
     "-m",
-    default="claude-3-5-sonnet-20241022",
+    default="claude-sonnet-4-6",
     help="Model to use",
 )
 @click.option(

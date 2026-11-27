@@ -12,18 +12,9 @@ import {
   collaborationProjectViewSelector,
   selectCollaborationProjectView,
 } from './collaboration-project-navigation.mjs'
+import { waitForValue } from './wait.mjs'
 
-export async function waitForValue(load, predicate, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let latest = null
-  while (Date.now() < deadline) {
-    latest = await load()
-    const result = predicate(latest)
-    if (result) return result === true ? latest : result
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}: ${JSON.stringify(latest)}`)
-}
+export { waitForValue }
 
 export async function createWorkspaceAndProject(
   control,

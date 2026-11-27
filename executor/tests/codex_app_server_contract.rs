@@ -991,10 +991,9 @@ async fn codex_app_server_receives_normalized_developer_path() {
     assert!(matches!(outcome, ExecutionOutcome::Completed { .. }));
     let messages = read_json_lines(&log_path);
     let args = messages[0]["args"].as_array().unwrap();
-    assert_config_arg(
-        args,
-        "shell_environment_policy.set.PATH=\"/usr/bin:/bin:/custom/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/Library/Apple/usr/bin\"",
-    );
+    assert!(args.iter().filter_map(Value::as_str).all(|arg| {
+        !arg.starts_with("shell_environment_policy.set.PATH=")
+    }), "the task shell must inherit PATH additions made by Codex at startup");
     let path = messages[0]["env"]["PATH"].as_str().unwrap();
     assert!(path.starts_with("/usr/bin:/bin:/custom/bin:/opt/homebrew/bin"));
     assert_eq!(path.matches("/opt/homebrew/bin").count(), 1);

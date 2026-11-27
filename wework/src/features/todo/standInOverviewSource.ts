@@ -5,8 +5,12 @@ import {
   type StandInSourceConnection,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { MessageCenterSource } from '@/api/standInMessageCenter'
+import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { createContext } from 'react'
+
+export const StandInSourceNavigationContext = createContext<string | undefined>(undefined)
 
 export type StandInOverviewProfile = 'primary' | 'role' | 'create' | 'memory' | null
 interface OverviewObservation {
@@ -25,7 +29,6 @@ interface OverviewObservation {
   requestLeave(action: () => void): void
   reload(): void
   refreshInbox(): void
-  setDraft(value: PersonalStandInSettings): void
   rememberProfileTrigger(): void
   closeReview(): void
   closeDetails(): void
@@ -34,6 +37,7 @@ interface OverviewObservation {
 interface OverviewSnapshot {
   roleId?: string
   profile: StandInOverviewProfile
+  openConnectionSettings: boolean | MessageCenterSource
   calendarRequest: number
   focusRequest: number
   exampleDraft?: { id: number; text: string }
@@ -63,6 +67,7 @@ export function createStandInOverviewSource(initial: {
   let snapshot: OverviewSnapshot = {
     roleId: initial.roleId,
     profile: initial.profile,
+    openConnectionSettings: false,
     calendarRequest: initial.calendarRequest,
     focusRequest: 0,
     proposal: null,
@@ -182,17 +187,25 @@ export function createStandInOverviewSource(initial: {
             proposalError: null,
           })
       } catch (cause) {
-        if (generation === revision && listeners.size)
-          publish({ proposalError: getStandInErrorMessage(cause) })
+        if (generation === revision && listeners.size) {
+          reportStandInError('load_proposal', cause, next.deviceId)
+          publish({
+            proposalError: getStandInErrorMessage(cause, 'load_assistant_proposal_failed'),
+          })
+        }
       } finally {
         if (generation === revision && listeners.size) timer = setTimeout(poll, 3000)
       }
     }
     void poll()
   }
-  const setProfile = (profile: StandInOverviewProfile) =>
+  const setProfile = (
+    profile: StandInOverviewProfile,
+    openConnectionSettings: boolean | MessageCenterSource = false
+  ) =>
     publish({
       profile,
+      openConnectionSettings,
       focusRequest:
         snapshot.focusRequest +
         (observation?.active && snapshot.profile !== null && profile === null ? 1 : 0),
@@ -327,7 +340,6 @@ export function createStandInOverviewSource(initial: {
             value.userId === current.userId &&
             value.executionDeviceId === current.deviceId
           ) {
-            current.setDraft(value)
             current.reload()
           }
         })

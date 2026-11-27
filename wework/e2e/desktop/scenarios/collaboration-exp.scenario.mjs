@@ -10,6 +10,7 @@ import {
 } from '../modules/shared.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { initializeFixtureAssistant } from '../modules/stand-in-onboarding-fixture.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
@@ -160,6 +161,8 @@ export function createDesktopScenario({
       cloud = environment
       await request('/api/admin/setup-complete', {})
       cloudUser = await request('/api/users/me')
+      // Team management opens the cloud account's settings for a device-owned role.
+      await initializeFixtureAssistant(cloud.backendUrl, cloud.authToken)
       const ownerName = `collaboration-exp-owner-${process.pid}`
       const password = 'collaboration-exp-permission-fixture'
       await request('/api/admin/users', {

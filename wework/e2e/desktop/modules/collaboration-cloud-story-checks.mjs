@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { readProjectChatMessages } from './project-chat-snapshot.mjs'
 import { isTranscriptReadAdmissionBusy } from './runtime-read-admission.mjs'
+import { waitForValue, withTimeout } from './wait.mjs'
+
+export { waitForValue }
 
 export async function assertManagerComment(cloud, projectId, issueId, comments, body, leader) {
   const managerComments = comments.filter(comment => comment.body === body)
@@ -46,18 +49,6 @@ export async function requestJson(
     `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
   )
   return text ? JSON.parse(text) : null
-}
-
-export async function waitForValue(load, predicate, message, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let latest = null
-  while (Date.now() < deadline) {
-    latest = await load()
-    const result = predicate(latest)
-    if (result) return result === true ? latest : result
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
 export async function waitForIssueStatus(control, scoped, expected, timeoutMs) {
@@ -110,17 +101,7 @@ export async function waitForCompletedMemberTasks(control, scoped, titles, expec
 }
 
 export async function waitForPromise(promise, timeoutMs, message) {
-  let timer
-  try {
-    await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
-      }),
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
+  await withTimeout(promise, timeoutMs, message)
 }
 
 export async function waitForCondition(read, predicate, timeoutMs, message) {

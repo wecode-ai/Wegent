@@ -213,6 +213,7 @@ pub(crate) use wegent_backend_persistence::sql_support;
 pub(crate) use wegent_backend_test_support as sql_test_support;
 pub(crate) use wegent_socket_events::socketio_emit;
 pub use wegent_socket_events::socketio_rpc;
+mod external_agents;
 mod startup;
 mod state;
 mod stripe_webhook_probe;
@@ -276,6 +277,7 @@ pub use wegent_media::video_result_urls;
 #[cfg(test)]
 mod web_content_route_tests;
 use wegent_identity::wework_auth_tokens;
+mod stand_in_account;
 mod stand_in_issue_events;
 mod wework_runtime_downloads;
 mod work_queues;

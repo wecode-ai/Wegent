@@ -1,10 +1,11 @@
-import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
-import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import {
-  isDingTalkDelegationSource,
-  matchesDingTalkAccount,
-} from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
+  STAND_IN_DINGTALK_PROVIDER,
+  type StandInRole,
+  type StandInSourceConnection,
+} from '@/api/personalStandIn'
+import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { ConnectionScopeRule } from './ConnectionScopeFields'
 export type SourceConnection = Pick<
   StandInSourceConnection,
   | 'id'
@@ -28,16 +29,20 @@ export interface SourceConnectionsInput {
   onChange(role: StandInRole): void
   onReady?(): void
   allResourcesLabel: string
+  allMessagesLabel: string
   cliUnavailableLabel?: string
-  delegatedDingTalk?: boolean
 }
+
+export function hasAllDingTalkMessages(rows: StandInSourceConnection[]) {
+  const complete = rows.filter(row => row.scope === 'all' && !row.excludedResources?.length)
+  return (
+    complete.some(row => row.kind === 'group' && row.collectionKey === 'all-messages') &&
+    complete.some(row => row.kind === 'direct')
+  )
+}
+
 interface State {
-  adding: boolean
-  excluding: Connection | null
-  newPolicy: { automatic: boolean; askBeforeAct: boolean; immediate: boolean }
   kind: string
-  scope: 'selected' | 'all'
-  selection: Connection[]
   query: string
   results: Connection[]
   nextCursor: string | undefined
@@ -50,13 +55,7 @@ interface State {
 export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
   let input = initial
   let state: State = {
-    adding: false,
-    excluding: null,
-    newPolicy: { automatic: true, askBeforeAct: true, immediate: initial.role.id !== '@primary' },
     kind: initial.provider.resourceKinds[0] ?? '',
-    scope:
-      !initial.delegatedDingTalk && initial.provider.allResourceKinds?.length ? 'all' : 'selected',
-    selection: [],
     query: '',
     results: [],
     nextCursor: undefined,
@@ -79,14 +78,6 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     state = { ...state, [key]: next }
     publish()
   }
-  const setAdding = (value: State['adding'] | ((current: State['adding']) => State['adding'])) =>
-    set('adding', value)
-  const setExcluding = (
-    value: State['excluding'] | ((current: State['excluding']) => State['excluding'])
-  ) => set('excluding', value)
-  const setSelection = (
-    value: State['selection'] | ((current: State['selection']) => State['selection'])
-  ) => set('selection', value)
   const setResults = (
     value: State['results'] | ((current: State['results']) => State['results'])
   ) => set('results', value)
@@ -103,12 +94,18 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
   const setAuthOpen = (
     value: State['authOpen'] | ((current: State['authOpen']) => State['authOpen'])
   ) => set('authOpen', value)
-  const rows = () =>
-    (input.role.connections ?? []).filter(row => row.providerId === input.provider.id)
   const isCurrent = (sequence: number) => listeners.size > 0 && sequence === searchSequence
   const invalidateSearch = () => {
     searchSequence += 1
     setBusy(false)
+  }
+  const resetSearch = () => {
+    invalidateSearch()
+    set('query', '')
+    setResults([])
+    setNextCursor(undefined)
+    setSearched(false)
+    setError(null)
   }
   const failSearch = (sequence: number, cause: unknown) => {
     if (!isCurrent(sequence)) return
@@ -129,21 +126,16 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     setError(null)
     setSearched(false)
     try {
-      const result = await input.api.searchConnectionResources(
+      const request = [
         input.deviceId,
         input.provider.id,
         state.kind,
         state.query.trim(),
-        cursor
-      )
+        cursor,
+      ] as const
+      const result = await input.api.searchConnectionResources(...request)
       if (!isCurrent(sequence)) return
-      const items = result.items.filter(row =>
-        input.delegatedDingTalk
-          ? isDingTalkDelegationSource(row) &&
-            matchesDingTalkAccount(input.provider.availability, row)
-          : !state.excluding ||
-            (row.profile === state.excluding.profile && row.kind === state.excluding.kind)
-      )
+      const items = result.items
       setResults(previous => {
         const merged = new Map<string, Connection>()
         for (const row of cursor ? [...previous, ...items] : items) {
@@ -160,170 +152,145 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
       if (isCurrent(sequence)) setBusy(false)
     }
   }
-  const identity = (row: Connection) =>
-    JSON.stringify([
-      row.profile,
-      ...(input.delegatedDingTalk ? [row.accountId] : []),
-      row.kind,
-      row.id,
-    ])
-  const closeExclusionEditor = () => {
-    invalidateSearch()
-    setExcluding(null)
-    setSelection([])
-    setResults([])
-    setNextCursor(undefined)
-    setSearched(false)
-    setError(null)
-  }
-  const isConnected = (row: Connection) => {
-    const excluding = state.excluding
-    return excluding
-      ? rows()
-          .find(value => identity(value) === identity(excluding))
-          ?.excludedResources?.some(value => value.id === row.id) === true
-      : rows().some(
-          value =>
-            identity(value) === identity(row) &&
-            (!input.delegatedDingTalk || isDingTalkDelegationSource(value))
-        )
-  }
-  const add = (items: Connection[]) => {
-    if (!listeners.size) return
-    const current = input
-    if (current.delegatedDingTalk) {
-      const selected = items.filter(
-        row =>
-          isDingTalkDelegationSource(row) &&
-          matchesDingTalkAccount(current.provider.availability, row)
-      )
-      if (!selected.length) return
-      const retained = (current.role.connections ?? []).filter(
-        row =>
-          row.providerId !== current.provider.id ||
-          (isDingTalkDelegationSource(row) &&
-            matchesDingTalkAccount(current.provider.availability, row))
-      )
-      current.onChange({
-        ...current.role,
-        connections: [
-          ...retained,
-          ...selected
-            .filter(row => !retained.some(value => identity(value) === identity(row)))
-            .map(row => ({
-              ...row,
-              policy: { automatic: true, askBeforeAct: false, immediate: true },
-            })),
-        ],
+  const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
+  const update = (connections: StandInSourceConnection[]) => {
+    let ordered = connections
+    if (input.provider.id === STAND_IN_DINGTALK_PROVIDER && initial.role.connections?.length) {
+      const key = (row: StandInSourceConnection) =>
+        JSON.stringify([row.providerId, row.profile, row.kind, row.id])
+      const pending = new Map(connections.map(row => [key(row), row]))
+      ordered = initial.role.connections.flatMap(saved => {
+        const id = key(saved)
+        const row = pending.get(id)
+        pending.delete(id)
+        return row ? [row] : []
       })
-      setSelection([])
-      setAdding(false)
+      ordered.push(...pending.values())
+    }
+    const previous = input.role.connections ?? []
+    if (
+      ordered.length === previous.length &&
+      ordered.every((row, index) => row === previous[index])
+    )
+      return
+    const role = { ...input.role, connections: ordered }
+    input = { ...input, role }
+    input.onChange(role)
+  }
+  const matches = (row: StandInSourceConnection, item: Connection) =>
+    row.providerId === input.provider.id && identity(row) === identity(item)
+  const covers = (row: StandInSourceConnection, item: Connection) =>
+    row.providerId === input.provider.id &&
+    row.scope === 'all' &&
+    row.profile === item.profile &&
+    row.kind === item.kind
+  const select = (item: Connection, checked: boolean) => {
+    if (!listeners.size || state.busy || input.disabled) return
+    const connections = input.role.connections ?? []
+    const exact = connections.find(row => matches(row, item))
+    const all = connections.find(row => covers(row, item))
+    if (all && item.scope !== 'all') {
+      if (input.provider.id !== STAND_IN_DINGTALK_PROVIDER) return
+      const excluded = all.excludedResources ?? []
+      update(
+        connections
+          .filter(row => checked || row !== exact)
+          .map(row =>
+            row === all
+              ? {
+                  ...row,
+                  excludedResources: checked
+                    ? excluded.filter(value => value.id !== item.id)
+                    : [
+                        ...excluded.filter(value => value.id !== item.id),
+                        { id: item.id, name: item.name },
+                      ],
+                }
+              : row
+          )
+      )
       return
     }
-    const excluding = state.excluding
-    if (excluding) {
-      if (
-        !current.role.connections?.some(
+    if (Boolean(exact) === checked) return
+    update(
+      checked
+        ? [
+            ...connections,
+            {
+              ...item,
+              providerId: input.provider.id,
+              policy: {
+                automatic: true,
+                askBeforeAct: true,
+                immediate: input.role.id !== '@primary',
+              },
+            },
+          ]
+        : connections.filter(row => !matches(row, item))
+    )
+  }
+  const selectAll = async (resourceKind: string, checked: boolean) => {
+    if (!listeners.size || state.busy || input.disabled) return
+    if (!checked) {
+      update(
+        (input.role.connections ?? []).filter(
           row =>
-            row.providerId === input.provider.id &&
-            row.scope === 'all' &&
-            identity(row) === identity(excluding)
+            row.providerId !== input.provider.id ||
+            row.kind !== resourceKind ||
+            row.scope !== 'all' ||
+            (input.provider.availability.profile &&
+              row.profile !== input.provider.availability.profile)
         )
-      ) {
-        closeExclusionEditor()
-        return
-      }
-      current.onChange({
-        ...current.role,
-        connections: current.role.connections?.map(row => {
-          if (row.providerId !== input.provider.id || identity(row) !== identity(excluding))
-            return row
-          const excludedResources = [...(row.excludedResources ?? [])]
-          for (const item of items) {
-            if (
-              item.profile === row.profile &&
-              item.kind === row.kind &&
-              !excludedResources.some(value => value.id === item.id)
-            )
-              excludedResources.push({ id: item.id, name: item.name })
-          }
-          return { ...row, excludedResources }
-        }),
-      })
-      closeExclusionEditor()
+      )
       return
     }
-    let connections = [...(current.role.connections ?? [])]
-    if (items.length && items.every(item => item.scope !== 'all')) {
-      const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
-      connections = connections.filter(
-        row =>
-          row.providerId !== input.provider.id ||
-          row.scope !== 'all' ||
-          !covered.has(JSON.stringify([row.profile, row.kind]))
-      )
+    const addAllScope = (item: Connection) => {
+      const connections = input.role.connections ?? []
+      if (connections.some(row => matches(row, item) && row.collectionKey === item.collectionKey))
+        return
+      update([
+        ...connections.filter(
+          row =>
+            row.providerId !== input.provider.id ||
+            row.profile !== item.profile ||
+            row.kind !== resourceKind
+        ),
+        {
+          ...item,
+          name: input.provider.allResourceLabels?.[resourceKind] ?? input.allResourcesLabel,
+          policy: { automatic: true, askBeforeAct: true, immediate: input.role.id !== '@primary' },
+        },
+      ])
     }
-    for (const item of items) {
-      const same = (row: StandInSourceConnection) =>
-        row.providerId === input.provider.id &&
-        row.profile === item.profile &&
-        row.kind === item.kind
-      if (item.scope === 'all') connections = connections.filter(row => !same(row))
-      if (connections.some(row => same(row) && (row.id === item.id || row.scope === 'all')))
-        continue
-      connections.push({
-        ...item,
-        providerId: input.provider.id,
-        policy: { ...state.newPolicy },
-      })
-    }
-    current.onChange({ ...current.role, connections })
-    setSelection([])
-    setAdding(false)
-  }
-  const addAll = async () => {
-    if (!listeners.size || state.busy || input.disabled || input.delegatedDingTalk) return
     const sequence = ++searchSequence
     setBusy(true)
     setError(null)
     try {
-      const kinds = input.provider.allResourceKinds ?? []
-      const pages = await Promise.all(
-        kinds.map(resourceKind =>
-          input.api.searchConnectionResources(
-            input.deviceId,
-            input.provider.id,
-            resourceKind,
-            '',
-            undefined,
-            'all'
-          )
-        )
+      const result = await input.api.searchConnectionResources(
+        input.deviceId,
+        input.provider.id,
+        resourceKind,
+        '',
+        undefined,
+        'all'
       )
       if (!isCurrent(sequence)) return
-      const items = pages.map((page, index) => {
-        const item = page.items[0]
-        if (
-          page.items.length !== 1 ||
-          item?.scope !== 'all' ||
-          item.id !== '*' ||
-          item.kind !== kinds[index] ||
-          !item.profile ||
-          item.providerId !== input.provider.id
-        )
-          throw Object.assign(new Error('Invalid all-resource selection'), {
-            code: 'connection_response_invalid',
-          })
-        return {
-          ...item,
-          name: input.provider.allResourceLabels?.[item.kind] ?? input.allResourcesLabel,
-        }
-      })
-      if (!items.length || new Set(items.map(item => item.profile)).size !== 1)
-        throw Object.assign(new Error('Connection account changed'), {
+      const item = result.items[0]
+      if (
+        result.items.length !== 1 ||
+        item?.scope !== 'all' ||
+        item.id !== '*' ||
+        item.kind !== resourceKind ||
+        !item.profile ||
+        item.providerId !== input.provider.id ||
+        (input.provider.availability.profile &&
+          item.profile !== input.provider.availability.profile)
+      ) {
+        throw Object.assign(new Error('Invalid all-resource selection'), {
           code: 'connection_response_invalid',
         })
-      add(items)
+      }
+      addAllScope(item)
     } catch (cause) {
       failSearch(sequence, cause)
     } finally {
@@ -331,14 +298,90 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     }
   }
 
+  const dingTalkAccount = () => {
+    const { profile, status } = input.provider.availability
+    return listeners.size &&
+      !input.disabled &&
+      profile &&
+      status === 'ready' &&
+      input.provider.id === STAND_IN_DINGTALK_PROVIDER
+      ? profile
+      : undefined
+  }
+  const dingTalkWildcard = (profile: string, kind: string): StandInSourceConnection => ({
+    providerId: input.provider.id,
+    profile,
+    kind,
+    id: '*',
+    scope: 'all',
+    name: input.provider.allResourceLabels?.[kind] ?? input.allResourcesLabel,
+    policy: { automatic: true, askBeforeAct: true, immediate: input.role.id !== '@primary' },
+  })
+  const changeDingTalkRule = (kind: string, rule: ConnectionScopeRule) => {
+    const profile = dingTalkAccount()
+    if (!profile) return
+    resetSearch()
+    const current = input.role.connections ?? []
+    const matchesKind = (row: StandInSourceConnection) =>
+      row.providerId === input.provider.id && row.profile === profile && row.kind === kind
+    const old = current.find(row => matchesKind(row) && row.scope === 'all')
+    const outsideKind = current.filter(row => !matchesKind(row))
+    if (rule === 'off') update(outsideKind)
+    if (rule === 'include') update(current.filter(row => !matchesKind(row) || row.scope !== 'all'))
+    if (rule === 'all' || rule === 'exclude') {
+      const wildcard = { ...(old ?? dingTalkWildcard(profile, kind)) }
+      if (rule === 'all') delete wildcard.excludedResources
+      update([...outsideKind, wildcard])
+    }
+  }
+  const setAllDingTalkMessages = () => {
+    const profile = dingTalkAccount()
+    if (!profile) return
+    resetSearch()
+    const current = input.role.connections ?? []
+    const isAccount = (row: StandInSourceConnection) =>
+      row.providerId === input.provider.id && row.profile === profile
+    const account = current.filter(isAccount)
+    const replaceAccount = (next: StandInSourceConnection[]) => {
+      update([...current.filter(row => !isAccount(row)), ...next])
+    }
+    if (hasAllDingTalkMessages(account)) return
+    const all = ['group', 'direct'].map(kind => {
+      const previous = account.find(row => row.kind === kind && row.scope === 'all')
+      const item: StandInSourceConnection = {
+        ...(previous ?? dingTalkWildcard(profile, kind)),
+        name:
+          kind === 'group'
+            ? input.allMessagesLabel
+            : (input.provider.allResourceLabels?.direct ?? input.allResourcesLabel),
+      }
+      delete item.excludedResources
+      delete item.delegated
+      if (kind === 'group') {
+        item.collectionKey = 'all-messages'
+        delete item.configurationSummary
+      }
+      return item
+    })
+    replaceAccount(all)
+  }
+
   return {
     getSnapshot: () => state,
     set,
     search,
-    add,
-    addAll,
-    closeExclusionEditor,
-    isConnected,
+    select,
+    selectAll,
+    setAllDingTalkMessages,
+    changeDingTalkRule,
+    resetSearch,
+    replaceProviderRows(next: StandInSourceConnection[]) {
+      if (!listeners.size || input.disabled) return
+      update([
+        ...(input.role.connections ?? []).filter(row => row.providerId !== input.provider.id),
+        ...next,
+      ])
+    },
     identity,
     invalidateSearch,
     authorized() {
