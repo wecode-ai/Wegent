@@ -12,8 +12,19 @@ export function mergeIssueChatMessages(
   for (const message of incoming) {
     const previous = byId.get(message.messageId)
     // Runtime sequence distinguishes updates within the same SQL timestamp.
-    if (!previous || acceptsProjectChatMessage(previous, message))
+    if (!previous || acceptsProjectChatMessage(previous, message)) {
+      if (previous?.metadata.workflow_task_title && !message.metadata.workflow_task_title) {
+        console.debug('[Issue activity] Workflow title removed', JSON.stringify({
+          messageId: message.messageId,
+          previousTrace: previous.traceState,
+          nextTrace: message.traceState,
+          sameSource: previous.traceRef === message.traceRef,
+          sequence: message.metadata.runtime_event_sequence,
+          type: message.type,
+        }))
+      }
       byId.set(message.messageId, message)
+    }
   }
   return [...byId.values()].sort((a, b) => a.sequenceNumber - b.sequenceNumber)
 }
