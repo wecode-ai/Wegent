@@ -94,8 +94,12 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
     ),
     name
   )
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-  await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
+  const scope = '[data-testid="stand-in-path-scope"]'
+  const back = '[data-testid="stand-in-connections-back"]'
+  await control.command('waitFor', '[data-testid="stand-in-save"]:disabled')
+  await control.command('clickWhenEnabled', back)
+  await control.command('waitFor', scope, { visible: false })
+  await control.command('clickWhenEnabled', back)
   await control.command('waitFor', row, { text: name })
   const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
   assert.deepEqual(
@@ -106,7 +110,9 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
   await openProjectScopeDetails(control)
   await control.command('click', `[data-testid="stand-in-connect-project-${project.id}"]`)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-  await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
+  await control.command('waitFor', scope, { visible: false })
+  await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+  await control.command('clickWhenEnabled', back)
   await control.command('waitFor', row, { visible: false })
   assert.equal(
     await control.command('getElementCount', '[data-testid^="stand-in-connection-project-"]'),
