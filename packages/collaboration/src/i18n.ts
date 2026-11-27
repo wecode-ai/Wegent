@@ -1596,9 +1596,13 @@ const sharedMessages: Record<
 
 import { issueCommentMessages } from "./issue-detail/issueCommentMessages";
 
+const translators = new Map<CollaborationLocale, CollaborationTranslate>();
+
 export function createCollaborationTranslator(
   locale: CollaborationLocale,
 ): CollaborationTranslate {
+  const cached = translators.get(locale);
+  if (cached) return cached;
   const messages = sharedMessages[locale];
   const pluralRules = new Intl.PluralRules(locale);
   const translate: CollaborationTranslate = (key, fallback, options) => {
@@ -1636,7 +1640,9 @@ export function createCollaborationTranslator(
     }
     return value;
   };
-  return Object.assign(translate, { locale });
+  Object.assign(translate, { locale });
+  translators.set(locale, translate);
+  return translate;
 }
 
 const standardStatusIds = [

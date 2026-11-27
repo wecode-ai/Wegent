@@ -314,41 +314,40 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     [textareaRef, setModelMenuOpen, setModelQuery, setModelSelectedIndex]
   )
 
-  const actionSlashCommands = useMemo<SlashCommand[]>(
-    () =>
-      createComposerActionCommands({
-        translate: (key, fallback) => t(key, fallback ?? key),
+  const showSlashMenu = activeMenu?.kind === 'slash'
+  const slashCommands = useMemo<SlashCommand[]>(() => {
+    if (!showSlashMenu) return []
+    const translate = (key: string, fallback?: string) => t(key, fallback ?? key)
+    return [
+      ...createComposerActionCommands({
+        translate,
         planModeActive,
         onSetPlanMode,
         onSetGoal,
         onOpenModels: canOpenSlashModelMenu ? openSlashModelMenu : undefined,
       }),
-    [canOpenSlashModelMenu, onSetGoal, onSetPlanMode, openSlashModelMenu, planModeActive, t]
-  )
-
-  const skillSlashCommands = useMemo<SlashCommand[]>(
-    () => createSkillSlashCommands(skillCandidates, (key, fallback) => t(key, fallback ?? key)),
-    [skillCandidates, t]
-  )
-  const pluginSlashCommands = useMemo<SlashCommand[]>(
-    () =>
-      createPluginSlashCommands(appCandidates, {
-        translate: (key, fallback) => t(key, fallback ?? key),
+      ...contributedSlashCommands,
+      ...createPluginSlashCommands(appCandidates, {
+        translate,
         resolveLogo: resolveAppLogo,
         onOpenMarketplace,
       }),
-    [appCandidates, resolveAppLogo, onOpenMarketplace, t]
-  )
-
-  const slashCommands = useMemo(
-    () => [
-      ...actionSlashCommands,
-      ...contributedSlashCommands,
-      ...pluginSlashCommands,
-      ...skillSlashCommands,
-    ],
-    [actionSlashCommands, contributedSlashCommands, pluginSlashCommands, skillSlashCommands]
-  )
+      ...createSkillSlashCommands(skillCandidates, translate),
+    ]
+  }, [
+    showSlashMenu,
+    t,
+    planModeActive,
+    onSetPlanMode,
+    onSetGoal,
+    canOpenSlashModelMenu,
+    openSlashModelMenu,
+    contributedSlashCommands,
+    appCandidates,
+    resolveAppLogo,
+    onOpenMarketplace,
+    skillCandidates,
+  ])
 
   const filteredSlashCommands = useMemo(() => {
     if (activeMenu?.kind !== 'slash') return []
@@ -362,7 +361,6 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const showSkillMenu =
     (activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention') &&
     (activeMenu.kind === 'mention' || Boolean(onListLocalSkills) || Boolean(onListLocalApps))
-  const showSlashMenu = activeMenu?.kind === 'slash'
   const mentionMenuRows = useMemo<MentionMenuRow[]>(
     () =>
       mentionScope === 'external'
@@ -418,7 +416,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   const hasMentionCandidates = mentionCandidates.length > 0
   const hasMentionLoadError = !hasMentionCandidates && (loadError || appsLoadError)
   const isMentionLoading = !hasMentionCandidates && (loading || appsLoading)
-  const hasMentionSlashCommands = skillSlashCommands.length + appCandidates.length > 0
+  const hasMentionSlashCommands = skillCandidates.length + appCandidates.length > 0
   const hasSlashMentionLoadError =
     !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loadError) || appsLoadError)
   const isSlashMentionLoading =
