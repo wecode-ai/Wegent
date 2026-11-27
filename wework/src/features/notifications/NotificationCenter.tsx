@@ -37,6 +37,7 @@ import type { NotificationFeedRowProps } from './NotificationFeedRow'
 import { NotificationFeedRow } from './NotificationFeedRow'
 import {
   mergeNotificationPreferences,
+  notificationPreferenceAccountKey,
   OPEN_NOTIFICATION_SETTINGS_EVENT,
 } from './notificationPreferences'
 import type { IssueDispatchPersonalTaskAction } from './NotificationTaskSourceContext'
@@ -261,7 +262,7 @@ function ConnectedNotificationCenter({
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [category, setCategory] = useState<InboxCategory | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const accountKey = `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
+  const accountKey = notificationPreferenceAccountKey(baseUrl, userId)
   const [feed] = useState(() => createNotificationCenterFeed(accountKey))
   const subscribeFeed = useCallback(
     (listener: () => void) =>
@@ -292,8 +293,8 @@ function ConnectedNotificationCenter({
     inboxes.collaboration,
     taskSource,
     accountKey,
-    preferences.collaboration.in_app,
-    preferences.collaboration.system === true,
+    preferences.stand_in.in_app,
+    preferences.stand_in.system === true,
     userId
   )
   const [summary] = useState(createNotificationCenterSummary)

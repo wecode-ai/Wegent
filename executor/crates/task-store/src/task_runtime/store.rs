@@ -101,7 +101,6 @@ mod stand_in_memory_progress;
 mod stand_in_collected_observations;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
-pub use stand_in_inbox::project_dingtalk_delegation_result;
 #[path = "stand_in_rework.rs"]
 mod stand_in_rework;
 #[path = "stand_in_rework_verification.rs"]

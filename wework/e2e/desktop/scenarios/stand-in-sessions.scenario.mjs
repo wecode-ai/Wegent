@@ -17,7 +17,11 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
+import {
+  openStoryPrimary,
+  storyUntil,
+  STORY_CHAT as CHAT,
+} from '../modules/stand-in-source-story-evidence.mjs'
 
 const USER = 9001
 const TASK = `stand-in-chat-${USER}-primary`
@@ -30,7 +34,6 @@ const ASYNC_ANSWER = 'STAND_IN_SESSION_ASYNC_ANSWER'
 const ASYNC_WAITING = 'STAND_IN_SESSION_ASYNC_WAITING'
 const ASYNC_RESULT = 'STAND_IN_SESSION_ASYNC_RESULT'
 const CHILD = 'STAND_IN_SESSION_CHILD_RESULT'
-const CHAT = '[data-testid="stand-in-conversation"]'
 
 export function createDesktopScenario({
   executorHome,
@@ -178,8 +181,7 @@ export function createDesktopScenario({
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-      await control.command('waitFor', CHAT)
+      await openStoryPrimary(control)
       const settings = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -382,20 +384,15 @@ export function createDesktopScenario({
       assert.ok(JSON.stringify(retained.messages).includes('第一段问题已回答'))
       await send(FOLLOWUP, { clientUserMessageId: 'session-followup' })
       assert.equal((await settled(control, () => followupObserved)).threadId, current.threadId)
-      const activeChat = `[data-workspace-tab-content][aria-hidden="false"] ${CHAT}`
-      await control.command(
-        'fill',
-        `${activeChat} [data-testid="chat-message-input"][contenteditable="true"]`,
-        { value: ASYNC_PROMPT }
-      )
-      await control.command('clickWhenEnabled', `${activeChat} [data-testid="send-message-button"]`)
-      const card = `${activeChat} [data-testid="request-user-input-card"]:has([data-testid="request-user-input-custom-question_1"])`
+      await control.command('fill', editor, { value: ASYNC_PROMPT })
+      await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
+      const card = `${CHAT} [data-testid="request-user-input-card"]:has([data-testid="request-user-input-custom-question_1"])`
       await control.command('waitFor', card, {
         text: ASYNC_QUESTION,
         visible: true,
         timeoutMs: modelResponseTimeoutMs,
       })
-      await control.command('waitFor', `${activeChat} [data-testid="message-assistant"]`, {
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: ASYNC_WAITING,
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -416,7 +413,7 @@ export function createDesktopScenario({
         'clickWhenEnabled',
         `${card} [data-testid="request-user-input-submit-button"]`
       )
-      await control.command('waitFor', `${activeChat} [data-testid="message-assistant"]`, {
+      await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: ASYNC_RESULT,
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -468,7 +465,7 @@ export function createDesktopScenario({
       assert.equal(resultDelivered, true)
       assert.equal((await settled(control)).threadId, current.threadId)
       await restartDesktopApp()
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await openStoryPrimary(control)
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
         text: '后续消息仍在第二段',
         timeoutMs: modelResponseTimeoutMs,
@@ -476,7 +473,7 @@ export function createDesktopScenario({
       // Older messages may be virtualized out of the viewport after restart.
       await control.command(
         'scrollToRatioAsUser',
-        `${activeChat} [data-testid="right-workspace-chat-scroll-area"]`,
+        `${CHAT} [data-testid="right-workspace-chat-scroll-area"]`,
         { value: '0' }
       )
       await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {

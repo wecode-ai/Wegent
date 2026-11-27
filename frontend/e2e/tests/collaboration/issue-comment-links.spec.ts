@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createServer } from 'node:http'
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Locator, type Page } from '@playwright/test'
 import { webApi, writeSharedComposer } from '../../utils/collaboration-test-support'
 
 const GITHUB_URL = 'https://github.com/wecode-ai/Wegent/pull/3966'
@@ -19,6 +19,51 @@ interface Resource {
 async function archiveResource(page: Page, path: string): Promise<void> {
   const resource = await webApi<Resource>(page, path)
   await webApi(page, `${path}?version=${resource.version}`, { method: 'DELETE' })
+}
+
+async function expectExternalNavigation(browser: Browser, page: Page, link: Locator, url: string) {
+  const sourceSession = await page.context().newCDPSession(page)
+  const browserSession = await browser.newBrowserCDPSession()
+  try {
+    const { targetInfo: source } = await sourceSession.send('Target.getTargetInfo')
+    const { targetInfos: existing } = await browserSession.send('Target.getTargets')
+    const existingIds = new Set(existing.map(target => target.targetId))
+    const openedTargets = async () => {
+      const { targetInfos } = await browserSession.send('Target.getTargets')
+      return targetInfos.filter(
+        target =>
+          target.type === 'page' &&
+          target.openerId === source.targetId &&
+          target.browserContextId === source.browserContextId &&
+          !existingIds.has(target.targetId)
+      )
+    }
+    try {
+      await sourceSession.send('Page.enable')
+      let opening: { url: string; userGesture: boolean } | undefined
+      sourceSession.on('Page.windowOpen', ({ url, userGesture }) => {
+        opening = { url, userGesture }
+      })
+      const navigation = page
+        .context()
+        .waitForEvent('request', request => request.isNavigationRequest() && request.url() === url)
+      await Promise.all([navigation, link.click()])
+      await expect.poll(() => opening, { timeout: 5_000 }).toEqual({ url, userGesture: true })
+
+      // Chromium creates the destination and isolates its opener before the response arrives.
+      // Playwright's popup event waits for that response, which may never arrive for external URLs.
+      const targets = await openedTargets()
+      expect(targets).toHaveLength(1)
+      expect(targets[0].canAccessOpener).toBe(false)
+    } finally {
+      for (const target of await openedTargets()) {
+        await browserSession.send('Target.closeTarget', { targetId: target.targetId })
+      }
+      await expect.poll(async () => (await openedTargets()).length, { timeout: 5_000 }).toBe(0)
+    }
+  } finally {
+    await Promise.all([sourceSession.detach(), browserSession.detach()])
+  }
 }
 
 async function pasteSharedComposer(composer: Locator, text: string) {
@@ -120,7 +165,7 @@ const commentTest = test.extend<{ commentDocumentUrl: string }>({
 
 commentTest(
   'opens persisted Issue comment chips and Markdown links without leaving the workspace',
-  async ({ page, commentDocumentUrl }) => {
+  async ({ browser, page, commentDocumentUrl }) => {
     await page.goto('/collaboration')
     await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
     const suffix = crypto.randomUUID()
@@ -175,34 +220,33 @@ commentTest(
       ] as const) {
         await expect(link).toHaveAttribute('target', '_blank')
         await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-        const navigationPromise = page
-          .context()
-          .waitForEvent(
-            'request',
-            request => request.isNavigationRequest() && request.url() === url
-          )
-        const popupPromise = page.waitForEvent('popup')
-        await link.click()
-        const popup = await popupPromise
-        try {
-          const navigation = await navigationPromise
-          expect(navigation.frame()).toBe(popup.mainFrame())
-          await expect(popup).toHaveURL(url)
-          expect(await popup.evaluate(() => window.opener === null)).toBe(true)
-          if (documentText) {
+        if (documentText) {
+          const navigationPromise = page
+            .context()
+            .waitForEvent(
+              'request',
+              request => request.isNavigationRequest() && request.url() === url
+            )
+          const popupPromise = page.waitForEvent('popup')
+          await link.click()
+          const popup = await popupPromise
+          try {
+            const navigation = await navigationPromise
+            expect(navigation.frame()).toBe(popup.mainFrame())
+            await expect(popup).toHaveURL(url)
+            expect(await popup.evaluate(() => window.opener === null)).toBe(true)
             await popup.waitForLoadState('load')
             await expect(popup).toHaveTitle('Issue comment document')
             await expect(popup.locator('body')).toHaveText(documentText)
+          } finally {
+            await popup.close()
           }
-          // External content availability is independent of navigation: CI observed
-          // HTTP 529 with the exact GitHub URL and an empty body. The real local
-          // document above verifies page loading and content without that dependency.
-          await expect(page).toHaveURL(issuePath)
-          await expect(page.getByTestId('cloud-todo-detail-title')).toHaveValue(issueTitle)
-          await expect(comment).toContainText(commentMarker)
-        } finally {
-          await popup.close()
+        } else {
+          await expectExternalNavigation(browser, page, link, url)
         }
+        await expect(page).toHaveURL(issuePath)
+        await expect(page.getByTestId('cloud-todo-detail-title')).toHaveValue(issueTitle)
+        await expect(comment).toContainText(commentMarker)
       }
 
       // Exercise the source page after both popups, beyond checking its old DOM.

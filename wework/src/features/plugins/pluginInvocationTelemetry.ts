@@ -36,6 +36,7 @@ const pluginOwnersByDevice = new Map<string, Map<string, PluginOwner | null>>()
 const pluginRootOwnersByDevice = new Map<string, Map<string, PluginOwner | null>>()
 const executorLocations = new Map<string, ExecutorLocation>()
 const taskSurfaces = new Map<string, ExecutionSurface>()
+const taskSurfacesByHandle = new WeakMap<object, ExecutionSurface>()
 const pendingInvocations = new Map<string, PendingInvocation>()
 const completedInvocations = new Set<string>()
 
@@ -190,21 +191,31 @@ export function publishPluginInvocationTask(
   taskId: string,
   task: Pick<RuntimeTaskSummary, 'runtimeHandle'> | null
 ): void {
-  const handle = record(task?.runtimeHandle)
-  const origin = record(handle.origin)
-  const originType = stringField(origin, 'type')
-  const surface: ExecutionSurface =
-    originType === 'project_automation'
-      ? 'automation'
-      : originType === 'board_task' || originType === 'board_comment'
-        ? 'project_task'
-        : handle.cloudProjectId != null || handle.cloud_project_id != null
-          ? 'project_task'
-          : 'task'
-  taskSurfaces.set(`${deviceId}:${taskId}`, surface)
+  const key = `${deviceId}:${taskId}`
+  const surface = taskExecutionSurface(task?.runtimeHandle)
+  if (taskSurfaces.get(key) === surface) return
+  taskSurfaces.set(key, surface)
   if (taskSurfaces.size > MAX_TRACKED_INVOCATIONS) {
     taskSurfaces.delete(taskSurfaces.keys().next().value!)
   }
+}
+
+function taskExecutionSurface(handle: RuntimeTaskSummary['runtimeHandle']): ExecutionSurface {
+  if (!handle || typeof handle !== 'object' || Array.isArray(handle)) return 'task'
+  const known = taskSurfacesByHandle.get(handle)
+  if (known) return known
+  const originType = stringField(record(handle.origin), 'type')
+  const surface =
+    originType === 'project_automation'
+      ? 'automation'
+      : originType === 'board_task' ||
+          originType === 'board_comment' ||
+          handle.cloudProjectId != null ||
+          handle.cloud_project_id != null
+        ? 'project_task'
+        : 'task'
+  taskSurfacesByHandle.set(handle, surface)
+  return surface
 }
 
 function serverNameForTool(deviceId: string, toolName: string): string | null {

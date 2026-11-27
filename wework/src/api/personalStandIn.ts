@@ -79,8 +79,8 @@ export interface StandInIdentity extends Partial<
   selfLearningEnabled?: boolean
   prompt: string
   preferences: string
-  delegation?: StandInDingTalkDelegation
   taskPermissions?: StandInTaskPermissions
+  delegation?: StandInDingTalkDelegation
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']

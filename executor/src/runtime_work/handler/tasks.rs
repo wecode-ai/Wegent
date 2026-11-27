@@ -472,8 +472,15 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        self.create_task_after_local_checks(payload, activity, initial_permissions, owner_request)
-            .await
+        super::dispatch::boxed_rpc(|| {
+            self.create_task_after_local_checks(
+                payload,
+                activity,
+                initial_permissions,
+                owner_request,
+            )
+        })
+        .await
     }
 
     async fn create_task_after_local_checks(
@@ -1247,10 +1254,11 @@ impl RuntimeWorkRpcHandler {
             let mut payload = payload;
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
-            return self
-                .create_task_after_local_checks(payload, false, None, None)
-                .await
-                .map(Some);
+            return super::dispatch::boxed_rpc(|| {
+                self.create_task_after_local_checks(payload, false, None, None)
+            })
+            .await
+            .map(Some);
         }
         self.send_message_after_local_checks(payload, None, None)
             .await

@@ -907,8 +907,10 @@ impl RuntimeWorkRpcHandler {
             agent["execution_policy"] = json!({"mode":"fixed","environment_id":self.device_id});
             agent["model_policy"] = json!({"mode":"user_select"});
         }
-        self.prepare_stand_in_execution_with_agent(payload, config, agent)
-            .await
+        super::dispatch::boxed_rpc(|| {
+            self.prepare_stand_in_execution_with_agent(payload, config, agent)
+        })
+        .await
     }
 
     pub(super) async fn prepare_stand_in_execution_with_agent(

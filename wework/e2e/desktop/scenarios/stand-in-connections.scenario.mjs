@@ -117,6 +117,7 @@ export function createDesktopScenario(options) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
         await verifyProjectFieldFocus(control, 'stand-in-primary-open', {
           nextButtonPattern: /^stand-in-(?:overview-role-.+|create-role)$/,
         })

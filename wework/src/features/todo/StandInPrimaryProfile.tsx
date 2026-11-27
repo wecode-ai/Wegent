@@ -1,6 +1,7 @@
 import type { PersonalStandInSettings, StandInIdentity } from '@/api/personalStandIn'
 import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
+import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   defaultDingTalkDelegation,
@@ -97,6 +98,7 @@ export function StandInPrimaryProfile({
   onSelectDevice,
   deviceReadOnly = false,
   initialCalendar = false,
+  initialConnections = false,
   onCalendarViewChange,
   onReload,
   shortcuts,
@@ -122,6 +124,7 @@ export function StandInPrimaryProfile({
   onSelectDevice(deviceId: string): void
   deviceReadOnly?: boolean
   initialCalendar?: boolean
+  initialConnections?: boolean | MessageCenterSource
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
   shortcuts?: StandInSettingsShortcut[]
@@ -129,6 +132,8 @@ export function StandInPrimaryProfile({
   dingtalkSourceProblem?: string
 }) {
   const { t } = useTranslation('common')
+  const initialSource =
+    initialConnections && typeof initialConnections === 'object' ? initialConnections : undefined
   const experimental = useExperimentalFeaturesEnabled()
   const blocked = saving || loading
   const [receipt, setReceipt] = useState<PersonalStandInSettings | null>(null)
@@ -171,7 +176,7 @@ export function StandInPrimaryProfile({
   }
   const [view, setView] = useState<
     'main' | 'connections' | 'advanced' | StandInSettingsShortcut['id']
-  >(initialCalendar ? 'connections' : 'main')
+  >(initialCalendar || initialConnections ? 'connections' : 'main')
   if (view === 'revision' && !experimental) setView('main')
   const connections = view === 'connections'
   const shortcutPage = shortcuts?.find(shortcut => shortcut.id === view && !shortcut.onClick)
@@ -413,6 +418,7 @@ export function StandInPrimaryProfile({
               calendar: original.calendar,
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
+            initialSource={initialSource}
             onScheduleDirtyChange={setScheduleDirty}
             tagDraft={tagDraft}
             projects={projects}

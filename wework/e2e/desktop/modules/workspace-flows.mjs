@@ -1520,7 +1520,7 @@ async function verifyExistingTaskBoardAssociation(
     1,
     'Searching for the unique test project must produce exactly one selectable result'
   )
-  await control.command('press', pickerSearch, { key: 'Escape' })
+  await control.command('nativePress', pickerSearch, { key: 'Escape' })
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
