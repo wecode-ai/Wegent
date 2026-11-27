@@ -162,7 +162,11 @@ async fn persist(
     labels["source"] = json!("project_automation");
     labels["projectRobotExecutionId"] = json!(row.id.to_string());
     labels["projectAutomationSubtaskId"] = json!(setup.assistant_subtask_id.to_string());
-    if row.context()["dispatch_role"] == "manager" {
+    let context = row.context();
+    if context["dispatch_role"] == "member" {
+        labels["dispatchRole"] = json!("executor");
+    }
+    if context["dispatch_role"] == "manager" {
         labels["projectAutomationManagerSubtaskId"] = json!(setup.assistant_subtask_id.to_string());
     }
     labels["projectAutomationTeamId"] = json!(row.team_id.to_string());
@@ -192,7 +196,7 @@ async fn persist(
         message.runtime_device_id.clear();
         message.runtime_task_id = setup.task_id.to_string();
         message.metadata.0["execution_id"] = json!(row.id);
-        if let Some(role) = row.context()["dispatch_role"].as_str() {
+        if let Some(role) = context["dispatch_role"].as_str() {
             message.metadata.0["dispatch_role"] = json!(role);
         }
         message.metadata.0["backend_task_id"] = json!(setup.task_id);

@@ -329,7 +329,10 @@ pub(crate) async fn request_for_task(
     )
     .await
     .map_err(|error| anyhow::anyhow!("managed project request preparation failed: {error:?}"))?;
-    add_board_capabilities(&mut request);
+    add_board_capabilities(
+        &mut request,
+        task.json.0["metadata"]["labels"]["dispatchRole"] == "executor",
+    );
     if !input.developer_instruction.trim().is_empty() {
         request.system_prompt = [
             request.system_prompt.trim(),
@@ -344,7 +347,20 @@ pub(crate) async fn request_for_task(
     Ok(request)
 }
 
-fn add_board_capabilities(request: &mut ExecutionRequest) {
+fn add_board_capabilities(request: &mut ExecutionRequest, member: bool) {
+    // A delegated Team receives the work and returns its result through the Task.
+    // Its native children share the shell process, so adding a primary-only
+    // board credential here would also authorize the children.
+    if member
+        && request.collaboration_model == "coordinate"
+        && request.bot.as_array().is_some_and(|bots| bots.len() > 1)
+        && matches!(
+            request.bot[0]["shell_type"].as_str(),
+            Some("ClaudeCode" | "Codex")
+        )
+    {
+        return;
+    }
     const GUIDANCE: &str = "<wegent_board_runtime>\nThis execution is bound to a Wework board item. The injected\nwegent-wework-space MCP is the source of truth for the board. Call\nget_current_context before board operations; do not probe Backend routes,\nread authentication files, or guess project/item identifiers. Use the MCP\ntools to read, create, update, assign, comment, attach, and inspect deliveries.\n</wegent_board_runtime>";
     request.system_prompt = format!("{}\n\n{GUIDANCE}", request.system_prompt.trim_end());
     let base = std::env::var("WEGENT_BACKEND_PUBLIC_URL")
@@ -513,7 +529,7 @@ mod tests {
             bot: json!([{"mcp_servers":[{"name":"wegent-wework-space","url":"old"}]}]),
             ..Default::default()
         };
-        add_board_capabilities(&mut request);
+        add_board_capabilities(&mut request, false);
         assert_eq!(request.mcp_servers.len(), 2);
         assert_eq!(
             request.mcp_servers[1]["auth"]["Authorization"],
@@ -524,6 +540,24 @@ mod tests {
             "Bearer task-identity"
         );
         assert!(request.system_prompt.contains("get_current_context"));
+    }
+
+    #[test]
+    fn native_coordinate_members_keep_configured_grants_without_an_ambient_board_token() {
+        for shell in ["ClaudeCode", "Codex"] {
+            let mut request = ExecutionRequest {
+                auth_token: "member-task".into(),
+                collaboration_model: "coordinate".into(),
+                bot: json!([{"shell_type":shell,"mcp_servers":[{"name":"leader-only"}]},
+                            {"shell_type":shell,"mcp_servers":[]}]),
+                ..Default::default()
+            };
+            let original = request.bot.clone();
+            add_board_capabilities(&mut request, true);
+            assert_eq!(request.bot, original);
+            assert!(request.mcp_servers.is_empty());
+            assert!(!request.system_prompt.contains("get_current_context"));
+        }
     }
 
     /// The managed-project builder resolves the same `User` row the source's
