@@ -390,6 +390,36 @@ describe('ConnectorAppConnections', () => {
     expect(mockedAdminApis.createConnectorOAuthSession).not.toHaveBeenCalled()
   })
 
+  it('keeps a refreshed row disabled until the latest catalog read succeeds', async () => {
+    const app = { ...baseApp, connection: { status: 'expired' as const }, can_refresh: true }
+    let resolveOlder!: (apps: (typeof app)[]) => void
+    let rejectLatest!: (error: Error) => void
+    mockedAdminApis.getUserConnectorApps
+      .mockResolvedValueOnce([app])
+      .mockImplementationOnce(() => new Promise(resolve => (resolveOlder = resolve)))
+      .mockImplementationOnce(() => new Promise((_, reject) => (rejectLatest = reject)))
+      .mockResolvedValueOnce([{ ...app, can_refresh: false }])
+    mockedAdminApis.refreshConnectorApp.mockRejectedValue(new Error('Authorization was rejected'))
+
+    render(<ConnectorAppConnections />)
+
+    const refresh = await screen.findByRole('button', {
+      name: 'common:integrations.connector_apps.refresh',
+    })
+    fireEvent.click(refresh)
+    await waitFor(() => expect(mockedAdminApis.getUserConnectorApps).toHaveBeenCalledTimes(2))
+    act(() => window.dispatchEvent(new Event(CONNECTOR_AUTHORIZATION_CHANGED_EVENT)))
+    await act(async () => resolveOlder([app]))
+    expect(refresh).toBeDisabled()
+
+    await act(async () => rejectLatest(new Error('Catalog unavailable')))
+    expect(screen.getByRole('alert')).toHaveTextContent('Catalog unavailable')
+    expect(refresh).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('retry-connector-app-catalog'))
+    expect(await screen.findByTestId('authorize-connector-app-dingtalk-mcp-generic')).toBeEnabled()
+  })
+
   it('completes the OAuth flow and reloads apps', async () => {
     mockedAdminApis.getUserConnectorApps
       .mockResolvedValueOnce([{ ...baseApp, connection: { status: 'disconnected' } }])

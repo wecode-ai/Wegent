@@ -39,6 +39,7 @@ export default function ConnectorAppConnections() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const activeRef = useRef(false)
   const loadGenerationRef = useRef(0)
+  const refreshesAwaitingCatalog = useRef(new Set<string>())
   const [authorizingSlug, setAuthorizingSlug] = useState<string | null>(null)
   const [disconnectingSlug, setDisconnectingSlug] = useState<string | null>(null)
   const [refreshingSlugs, setRefreshingSlugs] = useState<ReadonlySet<string>>(() => new Set())
@@ -54,12 +55,21 @@ export default function ConnectorAppConnections() {
 
   const loadApps = useCallback(async () => {
     const generation = ++loadGenerationRef.current
+    const settledRefreshes = [...refreshesAwaitingCatalog.current]
     setLoading(true)
     setLoadError(null)
     try {
       const fetched = await adminApis.getUserConnectorApps()
       if (generation !== loadGenerationRef.current) return
       setApps(sortConnectorAppsByConnection(fetched))
+      if (settledRefreshes.length > 0) {
+        settledRefreshes.forEach(slug => refreshesAwaitingCatalog.current.delete(slug))
+        setRefreshingSlugs(slugs => {
+          const next = new Set(slugs)
+          settledRefreshes.forEach(slug => next.delete(slug))
+          return next
+        })
+      }
     } catch (error) {
       if (generation !== loadGenerationRef.current) return
       setLoadError(
@@ -80,10 +90,7 @@ export default function ConnectorAppConnections() {
   }, [loadApps])
 
   useEffect(() => {
-    const refresh = (event: Event) => {
-      if (event instanceof CustomEvent && event.detail?.source === loadApps) return
-      void loadApps()
-    }
+    const refresh = () => void loadApps()
     window.addEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, refresh)
     return () => window.removeEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, refresh)
   }, [loadApps])
@@ -156,17 +163,8 @@ export default function ConnectorAppConnections() {
       })
     } finally {
       // A rejected refresh can revoke the stored grant even when the request fails.
-      window.dispatchEvent(
-        new CustomEvent(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, { detail: { source: loadApps } })
-      )
-      if (activeRef.current) await loadApps()
-      if (activeRef.current) {
-        setRefreshingSlugs(slugs => {
-          const next = new Set(slugs)
-          next.delete(app.slug)
-          return next
-        })
-      }
+      if (activeRef.current) refreshesAwaitingCatalog.current.add(app.slug)
+      window.dispatchEvent(new CustomEvent(CONNECTOR_AUTHORIZATION_CHANGED_EVENT))
     }
   }
 
@@ -294,7 +292,7 @@ export default function ConnectorAppConnections() {
                     size="sm"
                     onClick={() => void authorize(app)}
                     className="self-end max-md:h-11 sm:self-auto"
-                    disabled={authorizingSlug === app.slug}
+                    disabled={authorizingSlug === app.slug || refreshing || disconnecting}
                     data-testid={`authorize-connector-app-${app.slug}`}
                   >
                     {authorizingSlug === app.slug ? (
@@ -314,7 +312,7 @@ export default function ConnectorAppConnections() {
                         data-testid={`retry-connector-app-${app.slug}`}
                       >
                         <RefreshCw
-                          className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
+                          className={refreshing && !loadError ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
                           aria-hidden="true"
                         />
                         {t('common:integrations.connector_apps.refresh')}
