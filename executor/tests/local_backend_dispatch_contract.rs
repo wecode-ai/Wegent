@@ -17,6 +17,9 @@ use wegent_executor::{
     server::{RunnerResult, TaskRunner},
 };
 
+#[path = "../src/test_env.rs"]
+mod test_env;
+
 #[path = "support/git_clone_fixture.rs"]
 mod git_clone_fixture;
 
@@ -169,14 +172,12 @@ async fn task_execute_preserves_skill_identity_token() {
     );
 }
 
-#[tokio::test]
-async fn early_cancel_is_recovered_and_only_cancels_the_targeted_dispatch() {
-    let _lock = wegent_executor_test_support::lock();
-    let home = tempfile::tempdir().unwrap();
-    let _home = wegent_executor_test_support::ScalarEnv::set(
-        "WEGENT_EXECUTOR_HOME",
-        home.path().to_str().unwrap(),
-    );
+#[test]
+fn early_cancel_is_recovered_and_only_cancels_the_targeted_dispatch() {
+    test_env::run_with_executor_home(verify_early_cancel());
+}
+
+async fn verify_early_cancel() {
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
