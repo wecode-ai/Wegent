@@ -98,6 +98,42 @@ async function verifyScheduleEditor(control, userId, options) {
     await control.command('clickWhenEnabled', id('stand-in-connections-back'))
     await control.command('waitFor', id('automation-list-pane'), { text: name })
     await control.command('waitFor', id('stand-in-path-scope'), { visible: false })
+
+    const updatedName = 'Review outstanding project work'
+    await control.command('clickWhenEnabled', item)
+    await control.command('fill', id('automation-name-input'), { value: updatedName })
+    await control.command('clickWhenEnabled', id('automation-save-button'))
+    await control.command('waitFor', item, { text: updatedName })
+    const getSchedule = async () =>
+      (await rpc('runtime.automations.get', { automationId: schedule.id })).automation
+    const updated = await getSchedule()
+    assert.equal(updated.name, updatedName)
+    assert.deepEqual(updated.schedule, schedule.schedule)
+    assert.deepEqual(updated.taskRequest.standInOwner, schedule.taskRequest.standInOwner)
+    await options.captureScreenshot(control, 'connection-calendar-updated.png', panel)
+
+    await control.command('clickWhenEnabled', item)
+    const confirmDeletion = async () => {
+      await control.command('clickWhenEnabled', id(`automation-detail-actions-${schedule.id}`))
+      await control.command('clickWhenEnabled', id('automation-detail-delete'))
+      await control.command('waitFor', id('confirmation-request-dialog'), {
+        text: `删除定时安排「${updatedName}」？`,
+      })
+    }
+    await confirmDeletion()
+    await options.captureScreenshot(control, 'connection-calendar-delete-confirmation.png')
+    await control.command('clickWhenEnabled', id('confirmation-request-cancel'))
+    await control.command('waitFor', id('confirmation-request-dialog'), { visible: false })
+    assert.equal((await getSchedule()).name, updatedName)
+    await confirmDeletion()
+    await control.command('clickWhenEnabled', id('confirmation-request-confirm'))
+    await control.command('waitFor', id('automation-detail-panel'), { visible: false })
+    await control.command('waitFor', item, { visible: false })
+    assert.ok(
+      !(await rpc('runtime.automations.list', {})).items.some(row => row.id === schedule.id)
+    )
+    schedule = undefined
+    await options.captureScreenshot(control, 'connection-calendar-deleted.png', panel)
     await control.command('clickWhenEnabled', id('stand-in-primary-cancel'))
   } finally {
     if (schedule) await rpc('runtime.automations.delete', { automationId: schedule.id })

@@ -139,6 +139,7 @@ it.each([
     await user.type(screen.getByTestId('stand-in-git-query'), 'repository')
     await user.click(screen.getByTestId('stand-in-git-search'))
     expect(await screen.findByTestId('stand-in-git-login')).toBeEnabled()
+    expect(screen.getByTestId('stand-in-git-scope-requires-account')).toBeVisible()
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(name)
     expect(screen.getByTestId('stand-in-git-remove-12')).toBeEnabled()
     expect(draft.connections).toEqual([existing])

@@ -230,6 +230,14 @@ function StandInGitConnectionsContent({
         }
         scope={
           <>
+            {accountStatus === 'signed_out' && !invalidInstance && (
+              <p
+                className="text-sm text-text-secondary"
+                data-testid="stand-in-git-scope-requires-account"
+              >
+                {t('standIn.git.scope_requires_account')}
+              </p>
+            )}
             {canSelectScope && !editing && (
               <ConnectionScopeList
                 empty={

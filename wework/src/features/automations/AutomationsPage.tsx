@@ -562,8 +562,10 @@ export function AutomationsPage({
 
   const deleteAutomation = async (automation: Automation) => {
     if (!automationApi) return
-    if (!(await requestConfirmation(t('todo.automation_delete_confirm', '删除这个自动化？'))))
-      return
+    const message = standInOwner
+      ? t('standIn.workspace.connection_schedule_delete', { name: automation.name })
+      : t('todo.automation_delete_confirm', '删除这个自动化？')
+    if (!(await requestConfirmation(message))) return
     const isCurrent = source.capture(true)
     if (!isCurrent()) return
     try {
