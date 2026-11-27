@@ -278,6 +278,9 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       'invalid-journal',
     ])
   }
-  await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`)
+  await writeFile(
+    join(resultDir, 'workbench-schema-compatibility.json'),
+    `${JSON.stringify(evidence, null, 2)}\n`
+  )
   return evidence
 }

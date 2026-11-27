@@ -351,7 +351,7 @@ from the same repository can reuse Linux desktop packages with identical build
 inputs from earlier runs of that PR. The
 macOS desktop checks on ordinary PRs build the local app and Executor. When no
 exact Executor artifact is available, they compile it with the release profile
-at optimization level 1 and cache it per PR. Complete macOS builds use the
+at optimization level 0 and cache it per PR. Complete macOS builds use the
 default optimization level. Use a
 `ci:all` run when you need the complete macOS build or native backend artifact
 from a PR.

@@ -150,7 +150,7 @@ runs:
           if [[ "$INCLUDE_BACKEND" == "true" ]]; then
             executor_references+=("$EXECUTOR_SOURCE_REF-pr-$CACHE_PR_NUMBER")
           else
-            executor_references+=("$EXECUTOR_SOURCE_REF-opt1-pr-$CACHE_PR_NUMBER")
+            executor_references+=("$EXECUTOR_SOURCE_REF-opt0-pr-$CACHE_PR_NUMBER")
           fi
         fi
         .github/scripts/restore-macos-e2e-runtime-oci.sh \
@@ -204,7 +204,7 @@ runs:
       env:
         WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         WEWORK_EXECUTOR_PROFILE: release
-        CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ inputs.include-backend == 'true' && '3' || '1' }}
+        CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ inputs.include-backend == 'true' && '3' || '0' }}
         WEWORK_EXECUTOR_TARGET_DIR: ${{ github.workspace }}/executor/target
       run: |
         runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"

@@ -1498,7 +1498,7 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true' && (env.MACOS_COMPLETE_BUILD == 'true' || steps.macos-build.outputs.executor-built-during-packaging == 'true')
         env:
           CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXECUTOR_CACHE_VARIANT: ${{ env.MACOS_COMPLETE_BUILD == 'true' && 'pr' || 'opt1-pr' }}
+          EXECUTOR_CACHE_VARIANT: ${{ env.MACOS_COMPLETE_BUILD == 'true' && 'pr' || 'opt0-pr' }}
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"

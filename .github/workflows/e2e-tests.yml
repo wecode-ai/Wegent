@@ -357,7 +357,7 @@ jobs:
           cache-from: |
             type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
             ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0}', env.DELIVERY_PR_CACHE) || '' }}
-          cache-to: ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}
+          cache-to: ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,compression=zstd,compression-level=1,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}
 
       - name: Verify Backend delivery image
         env:
