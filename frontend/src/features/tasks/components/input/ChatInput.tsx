@@ -206,6 +206,7 @@ export default function ChatInput({
   const compositionJustEndedRef = useRef(false)
   const { user } = useUser()
   const editableRef = useRef<HTMLDivElement>(null)
+  const editorViewportRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLSpanElement>(null)
   const lastFocusAtEndSignalRef = useRef(focusAtEndSignal)
   const [badgeWidth, setBadgeWidth] = useState(0)
@@ -217,9 +218,14 @@ export default function ChatInput({
   const [showMentionMenu, setShowMentionMenu] = useState(false)
   const [mentionMenuPosition, setMentionMenuPosition] = useState<MentionMenuAnchor | null>(null)
   const [mentionQuery, setMentionQuery] = useState('')
+  const closeMentionMenu = useCallback(() => {
+    setShowMentionMenu(false)
+    setMentionQuery('')
+  }, [])
 
   // Skill autocomplete state
   const [skillCommand, setSkillCommand] = useState<SkillCommand | null>(null)
+  const [skillMenuVisible, setSkillMenuVisible] = useState(false)
   const closeSkillMenu = useCallback(() => setSkillCommand(null), [])
 
   // Skill fly animation state (managed here so animation persists after autocomplete closes)
@@ -492,8 +498,10 @@ export default function ChatInput({
         showEmptyResults: currentCommand?.showEmptyResults ?? (!allowInitialQuery || !match[1]),
         anchor: range.cloneRange(),
       })
+      closeMentionMenu()
+      return true
     },
-    [onSkillSelect, skillCommand, closeSkillMenu, getTextBeforeCaret]
+    [onSkillSelect, skillCommand, closeSkillMenu, closeMentionMenu, getTextBeforeCaret]
   )
 
   useEffect(() => {
@@ -508,7 +516,14 @@ export default function ChatInput({
         getTextWithNewlines(input) !== skillCommand.draft
       )
         return
-      if (!caretIsInSkillCommand(input, skillCommand)) closeSkillMenu()
+      if (!caretIsInSkillCommand(input, skillCommand)) {
+        closeSkillMenu()
+        return
+      }
+      const caret = getEditorCaret(input)
+      if (caret && caret.compareBoundaryPoints(Range.START_TO_START, skillCommand.anchor) !== 0) {
+        setSkillCommand({ ...skillCommand, anchor: caret.cloneRange() })
+      }
     }
 
     document.addEventListener('selectionchange', handleSelectionChange)
@@ -521,6 +536,7 @@ export default function ChatInput({
       const text = getTextWithNewlines(e.currentTarget)
       setMessage(text)
       setShowPlaceholder(!text)
+      if (updateSkillCommand(e.currentTarget, text)) return
 
       // Helper function to get cursor geometry for autocomplete menus
       const getCursorGeometry = () => {
@@ -562,13 +578,10 @@ export default function ChatInput({
             const query = lastWord.substring(1)
             setMentionQuery(query)
           } else {
-            setShowMentionMenu(false)
-            setMentionQuery('')
+            closeMentionMenu()
           }
         }
       }
-
-      updateSkillCommand(e.currentTarget, text)
     },
     [
       isInputDisabled,
@@ -578,6 +591,7 @@ export default function ChatInput({
       team,
       enableTaskMentions,
       showMentionMenu,
+      closeMentionMenu,
       updateSkillCommand,
     ]
   )
@@ -610,11 +624,10 @@ export default function ChatInput({
         }
 
         editableRef.current.focus()
-        setShowMentionMenu(false)
-        setMentionQuery('')
+        closeMentionMenu()
       }
     },
-    [getTextWithNewlines, setMessage, setContentWithNewlines]
+    [getTextWithNewlines, setMessage, setContentWithNewlines, closeMentionMenu]
   )
 
   const handleMentionSelect = useCallback(
@@ -760,9 +773,9 @@ export default function ChatInput({
           const textNode = document.createTextNode(pastedText)
           range.insertNode(textNode)
 
-          // Move cursor to end of inserted text
-          range.setStartAfter(textNode)
-          range.setEndAfter(textNode)
+          // Keep the caret in the text node so its range has line geometry.
+          range.setStart(textNode, textNode.length)
+          range.collapse(true)
           selection.removeAllRanges()
           selection.addRange(range)
         }
@@ -841,6 +854,9 @@ export default function ChatInput({
     return t('chat:send_shortcut')
   }, [sendKey, t])
 
+  const activeMentionPosition =
+    showMentionMenu && (enableTaskMentions || (isGroupChat && team)) ? mentionMenuPosition : null
+
   return (
     <div className="w-full relative" data-tour="task-input">
       {/* Placeholder - shown when empty */}
@@ -857,7 +873,7 @@ export default function ChatInput({
       )}
 
       {/* Mention autocomplete menu */}
-      {showMentionMenu && mentionMenuPosition && (enableTaskMentions || (isGroupChat && team)) && (
+      {activeMentionPosition && (
         <MentionAutocomplete
           team={team}
           query={mentionQuery}
@@ -868,11 +884,8 @@ export default function ChatInput({
           onOpen={onMentionMenuOpen}
           onSelect={handleMentionSelect}
           onSelectTask={handleConversationSelect}
-          onClose={() => {
-            setShowMentionMenu(false)
-            setMentionQuery('')
-          }}
-          position={mentionMenuPosition}
+          onClose={closeMentionMenu}
+          position={activeMentionPosition}
         />
       )}
 
@@ -885,6 +898,8 @@ export default function ChatInput({
           query={skillCommand.query}
           showEmptyResults={skillCommand.showEmptyResults}
           editorRef={editableRef}
+          editorViewportRef={editorViewportRef}
+          onVisibilityChange={setSkillMenuVisible}
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
           onClose={closeSkillMenu}
@@ -907,6 +922,7 @@ export default function ChatInput({
       {/* Scrollable container that includes both badge and editable content */}
       <div className="relative">
         <div
+          ref={editorViewportRef}
           className="w-full custom-scrollbar transition-all duration-300 ease-in-out"
           style={{
             minHeight,
@@ -966,7 +982,7 @@ export default function ChatInput({
                     suppressContentEditableWarning
                   />
                 </TooltipTrigger>
-                {!(skillCommand && canSelectSkills) && !showMentionMenu && (
+                {!skillMenuVisible && !activeMentionPosition && (
                   <TooltipContent side="top" className="hidden text-xs md:block">
                     <p>{tooltipText}</p>
                   </TooltipContent>

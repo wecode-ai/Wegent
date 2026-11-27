@@ -37,7 +37,7 @@ jest.mock('@/features/common/UserContext', () => ({
 
 jest.mock('@/features/tasks/components/chat/MentionAutocomplete', () => ({
   __esModule: true,
-  default: () => null,
+  default: () => <div data-testid="mention-autocomplete" />,
 }))
 
 jest.mock('@/features/tasks/components/chat/SkillFlyAnimation', () => ({
@@ -192,7 +192,10 @@ test.each([
   { pendingCatalog: false, method: 'paste command', action: 'click' },
   { pendingCatalog: true, method: 'paste command', action: 'click' },
   { pendingCatalog: false, method: 'paste command', action: 'send unmatched path' },
+  { pendingCatalog: false, method: 'type', action: 'send unmatched path' },
+  { pendingCatalog: false, method: 'type', action: 'send with modifier' },
   { pendingCatalog: false, method: 'type', action: 'move caret' },
+  { pendingCatalog: false, method: 'type', action: 'switch from mention' },
   { pendingCatalog: false, method: 'type', action: 'keyboard' },
 ])(
   'preserves the draft for slash $method followed by $action (pending catalog: $pendingCatalog)',
@@ -203,7 +206,11 @@ test.each([
     let caretTop = 120
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
       configurable: true,
-      value: () => ({ top: caretTop, bottom: caretTop + 26, left: window.innerWidth - 16 }),
+      value: function (this: Range) {
+        return this.startContainer.nodeType === Node.TEXT_NODE
+          ? { top: caretTop, bottom: caretTop + 26, left: window.innerWidth - 16 }
+          : { top: 0, bottom: 0, left: 0 }
+      },
     })
     try {
       const skill = {
@@ -220,8 +227,9 @@ test.each([
         handleSendMessage: jest.fn(),
         onSkillSelect: jest.fn(),
         isLoading: false,
+        enableTaskMentions: action === 'switch from mention',
       }
-      const suffix = ' and keep this path /tmp'
+      const suffix = action === 'switch from mention' ? ' @' : ' and keep this path /tmp'
       const command = action === 'send unmatched path' ? '/tmp/notes.txt' : '/docs/pdf'
       const editingCommand = method === 'paste within command'
       const draft = 'Check ' + command + (editingCommand ? 'pdf' : '') + suffix
@@ -234,6 +242,15 @@ test.each([
       )
       const input = screen.getByTestId('message-input')
       input.focus()
+      const editorViewport = input.parentElement!.parentElement!
+      let editorBottom = 800
+      jest
+        .spyOn(editorViewport, 'getBoundingClientRect')
+        .mockImplementation(() => ({ top: 0, bottom: editorBottom }) as DOMRect)
+      if (action === 'switch from mention') {
+        fireEvent.input(input)
+        expect(screen.getByTestId('mention-autocomplete')).toBeInTheDocument()
+      }
       function typeCommand(value: string) {
         input.textContent = 'Check ' + value + suffix
         window.getSelection()?.collapse(input.firstChild, 'Check '.length + value.length)
@@ -248,22 +265,37 @@ test.each([
       } else {
         typeCommand('/')
         if (method === 'paste query') await user.paste('docs/pdf')
-        else typeCommand('/docs/pdf')
+        else typeCommand(command)
       }
       rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
 
       if (action === 'send unmatched path') {
+        const pasted = method === 'paste command'
+        const emptyMenu = screen.queryByText('common:skillSelector.no_available_skills')
+        if (pasted) {
+          expect(emptyMenu).not.toBeInTheDocument()
+          expect(screen.getByText('chat:send_shortcut')).toBeInTheDocument()
+        } else {
+          expect(emptyMenu).toBeVisible()
+        }
         await user.keyboard('{Enter}')
         expect(props.handleSendMessage).toHaveBeenCalledTimes(1)
         expect(props.setMessage).toHaveBeenLastCalledWith(draft)
         expect(props.onSkillSelect).not.toHaveBeenCalled()
-        expect(
-          screen.queryByText('common:skillSelector.no_available_skills')
-        ).not.toBeInTheDocument()
         return
       }
 
       const option = await screen.findByTestId('slash-skill-option')
+      expect(option).toBeVisible()
+      if (action === 'send with modifier') {
+        await user.keyboard('{Control>}{Enter}{/Control}')
+        expect(props.handleSendMessage).toHaveBeenCalledTimes(1)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        return
+      }
+      if (action === 'switch from mention') {
+        expect(screen.queryByTestId('mention-autocomplete')).not.toBeInTheDocument()
+      }
       if (action === 'move caret') {
         window.getSelection()?.collapse(input.firstChild, 0)
         fireEvent(document, new Event('selectionchange'))
@@ -277,6 +309,18 @@ test.each([
         const menu = screen.getByTestId('slash-skill-menu')
         expect(menu).toHaveStyle({ top: '154px', left: `${window.innerWidth - 408}px` })
         expect(screen.queryByText('chat:send_shortcut')).not.toBeInTheDocument()
+
+        editorBottom = 100
+        fireEvent.scroll(editorViewport)
+        expect(menu).not.toBeVisible()
+        expect(fireEvent.keyDown(input, { key: 'ArrowDown' })).toBe(true)
+        expect(screen.getByText('chat:send_shortcut')).toBeInTheDocument()
+        editorBottom = 800
+
+        caretTop = 180
+        window.getSelection()?.collapse(input.firstChild, 'Check /'.length)
+        fireEvent(document, new Event('selectionchange'))
+        expect(menu).toHaveStyle({ top: '214px' })
 
         caretTop = 560
         fireEvent.scroll(input)
