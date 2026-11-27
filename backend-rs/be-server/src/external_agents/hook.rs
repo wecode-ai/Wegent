@@ -115,39 +115,6 @@ fn escape_xml(value: &str, output: &mut String) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn encodes_untrusted_text_for_the_configured_format() {
-        let mut hook = Hook {
-            url: "https://hooks.example.com/incoming".into(),
-            method: "POST".into(),
-            content_type: "application/xml".into(),
-            headers: BTreeMap::new(),
-            template: "<text>{{input}}</text>".into(),
-        };
-        assert!(hook.validate("https://hooks.example.com").is_ok());
-        assert!(
-            hook.validate("https://hooks.example.com.evil.test")
-                .is_err()
-        );
-        let data = json!({"input":"x&<\"" });
-        assert_eq!(hook.render(&data).unwrap(), "<text>x&amp;&lt;&quot;</text>");
-        hook.content_type = "application/x-www-form-urlencoded".into();
-        hook.template = "text={{input}}".into();
-        assert_eq!(hook.render(&data).unwrap(), "text=x%26%3C%22");
-        hook.content_type = "application/json".into();
-        hook.template = r#"{"text":{{input}}}"#.into();
-        assert_eq!(
-            serde_json::from_str::<Value>(&hook.render(&data).unwrap()).unwrap()["text"],
-            data["input"]
-        );
-    }
-}
-
 pub(super) fn safe_scheme(url: &Url) -> bool {
     url.scheme() == "https"
         || (url.scheme() == "http"
@@ -205,4 +172,37 @@ fn cipher(key: &str) -> aes_gcm::Aes256Gcm {
         .finalize()
         .into_bytes();
     aes_gcm::Aes256Gcm::new(&key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn encodes_untrusted_text_for_the_configured_format() {
+        let mut hook = Hook {
+            url: "https://hooks.example.com/incoming".into(),
+            method: "POST".into(),
+            content_type: "application/xml".into(),
+            headers: BTreeMap::new(),
+            template: "<text>{{input}}</text>".into(),
+        };
+        assert!(hook.validate("https://hooks.example.com").is_ok());
+        assert!(
+            hook.validate("https://hooks.example.com.evil.test")
+                .is_err()
+        );
+        let data = json!({"input":"x&<\"" });
+        assert_eq!(hook.render(&data).unwrap(), "<text>x&amp;&lt;&quot;</text>");
+        hook.content_type = "application/x-www-form-urlencoded".into();
+        hook.template = "text={{input}}".into();
+        assert_eq!(hook.render(&data).unwrap(), "text=x%26%3C%22");
+        hook.content_type = "application/json".into();
+        hook.template = r#"{"text":{{input}}}"#.into();
+        assert_eq!(
+            serde_json::from_str::<Value>(&hook.render(&data).unwrap()).unwrap()["text"],
+            data["input"]
+        );
+    }
 }

@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react'
 
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Textarea } from '@wegent/collaboration/controls/Textarea'
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { TextField as Input } from '@wegent/collaboration/controls/TextField'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -103,7 +105,6 @@ export function ExternalProjectAgentForm({ create, checkConnection, onBack, onCr
     }
   }
 
-  const selectClass = 'h-9 min-w-0 rounded-md border border-border bg-background px-2 text-sm'
   return (
     <form className="flex min-h-0 flex-col" onSubmit={submit} data-testid="external-agent-form">
       <div className="grid min-h-0 gap-4 overflow-auto px-5 py-4">
@@ -195,15 +196,16 @@ export function ExternalProjectAgentForm({ create, checkConnection, onBack, onCr
             </label>
             <label className="grid gap-1 text-sm">
               {t('externalAgent.transport')}
-              <select
-                className={selectClass}
+              <SelectField<'hook' | 'worker'>
                 value={type}
-                onChange={event => setType(event.target.value === 'hook' ? 'hook' : 'worker')}
-                data-testid="external-agent-transport"
-              >
-                <option value="hook">{t('externalAgent.hook')}</option>
-                <option value="worker">{t('externalAgent.worker')}</option>
-              </select>
+                options={[
+                  { value: 'hook', label: t('externalAgent.hook') },
+                  { value: 'worker', label: t('externalAgent.worker') },
+                ]}
+                onChange={setType}
+                testId="external-agent-transport"
+                accessibleLabel={t('externalAgent.transport')}
+              />
             </label>
             {type === 'hook' ? (
               <>
@@ -221,36 +223,34 @@ export function ExternalProjectAgentForm({ create, checkConnection, onBack, onCr
                 <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-3">
                   <label className="grid gap-1 text-sm">
                     {t('externalAgent.method')}
-                    <select
-                      className={selectClass}
+                    <SelectField
                       value={method}
-                      onChange={event => setMethod(event.target.value)}
-                      data-testid="external-agent-hook-method"
-                    >
-                      {['POST', 'PUT', 'PATCH'].map(value => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
+                      options={['POST', 'PUT', 'PATCH'].map(value => ({ value, label: value }))}
+                      onChange={setMethod}
+                      testId="external-agent-hook-method"
+                      accessibleLabel={t('externalAgent.method')}
+                    />
                   </label>
                   <label className="grid gap-1 text-sm">
                     {t('externalAgent.format')}
-                    <select
-                      className={selectClass}
+                    <SelectField<ContentType>
                       value={contentType}
-                      onChange={event => {
-                        const next = event.target.value as ContentType
+                      options={[
+                        { value: 'application/json', label: 'JSON' },
+                        { value: 'application/xml', label: 'XML' },
+                        {
+                          value: 'application/x-www-form-urlencoded',
+                          label: t('externalAgent.form'),
+                        },
+                        { value: 'text/plain', label: t('externalAgent.text') },
+                      ]}
+                      onChange={next => {
                         if (template === templates[contentType]) setTemplate(templates[next])
                         setContentType(next)
                       }}
-                      data-testid="external-agent-hook-format"
-                    >
-                      <option value="application/json">JSON</option>
-                      <option value="application/xml">XML</option>
-                      <option value="application/x-www-form-urlencoded">
-                        {t('externalAgent.form')}
-                      </option>
-                      <option value="text/plain">{t('externalAgent.text')}</option>
-                    </select>
+                      testId="external-agent-hook-format"
+                      accessibleLabel={t('externalAgent.format')}
+                    />
                   </label>
                 </div>
                 <label className="grid gap-1 text-sm">
@@ -265,10 +265,10 @@ export function ExternalProjectAgentForm({ create, checkConnection, onBack, onCr
                 </label>
                 <label className="grid gap-1 text-sm">
                   {t('externalAgent.template')}
-                  <textarea
+                  <Textarea
                     required
                     rows={6}
-                    className="rounded-md border border-border bg-background p-2 font-mono text-code"
+                    className="font-mono text-code"
                     value={template}
                     onChange={event => setTemplate(event.target.value)}
                     data-testid="external-agent-hook-template"

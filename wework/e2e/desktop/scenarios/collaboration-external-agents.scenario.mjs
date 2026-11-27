@@ -140,13 +140,15 @@ export async function createDesktopScenario({ captureScreenshot, workbenchReadyT
 
       await openConfiguration('部署 Hook')
       await fill('external-agent-hook-url', `${origin}/tasks`)
-      await step('select', 'external-agent-hook-format', { value: 'application/xml' })
+      await click('external-agent-hook-format')
+      await click('external-agent-hook-format-option-application/xml')
       await capture('hook-configuration')
       await click('external-agent-save')
       await wait('external-agent-form', { visible: false })
 
       await openConfiguration('部署 Worker')
-      await step('select', 'external-agent-transport', { value: 'worker' })
+      await click('external-agent-transport')
+      await click('external-agent-transport-option-worker')
       await capture('worker-configuration')
       await click('external-agent-save')
       await wait('external-agent-worker-token')
