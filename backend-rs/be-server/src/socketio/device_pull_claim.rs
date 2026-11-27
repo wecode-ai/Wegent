@@ -303,6 +303,33 @@ pub(super) async fn reserve(
     }).await
 }
 
+fn binding_metadata(intent: &Value, workspace_device_id: &str) -> Value {
+    let selection = &intent["runtime_selection"];
+    let mut metadata = json!({"workspace_device_id": workspace_device_id});
+    if selection["model"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty())
+    {
+        metadata["model_selection"] = json!({
+            "modelName": selection["model"], "modelType": selection["model_type"],
+            "options": selection["model_options"]
+        });
+    }
+    let context = &intent["origin_context"];
+    if context["dispatch_role"] == "member" {
+        for (source, target) in [
+            ("dispatch_id", "dispatch_id"),
+            ("coordination_round_id", "dispatch_round_id"),
+            ("assignment_id", "assignment_id"),
+        ] {
+            if let Some(value) = context[source].as_str().filter(|id| !id.is_empty()) {
+                metadata[target] = json!(value);
+            }
+        }
+    }
+    metadata
+}
+
 async fn bind_issue_task(
     tx: &mut impl MysqlTransaction,
     command: &super::device_pull::PullCommand<'_>,
@@ -319,21 +346,14 @@ async fn bind_issue_task(
                  ORDER BY id DESC LIMIT 1 FOR UPDATE", store::LIVE),
         (command.owner_user_id, command.runtime_device_id, task_id.as_str()),
     ).await?;
-    let selection = &prepared.intent["runtime_selection"];
-    let mut metadata = json!({"workspace_device_id": if row.execution_device_id.is_empty() {
-        canonical_device
-    } else {
-        &row.execution_device_id
-    }});
-    if selection["model"]
-        .as_str()
-        .is_some_and(|model| !model.is_empty())
-    {
-        metadata["model_selection"] = json!({
-            "modelName": selection["model"], "modelType": selection["model_type"],
-            "options": selection["model_options"]
-        });
-    }
+    let metadata = binding_metadata(
+        &prepared.intent,
+        if row.execution_device_id.is_empty() {
+            canonical_device
+        } else {
+            &row.execution_device_id
+        },
+    );
     if let Some((id, item)) = existing {
         if item != issue.id {
             return Err(MysqlError::InvalidQuery {
@@ -786,6 +806,17 @@ mod tests {
         );
         assert_eq!(reply.runtime_task_id, root.runtime_task_id);
         assert_eq!(reply.runtime_turn_id, "codex-queue-17-execution-18");
+    }
+
+    #[test]
+    fn member_binding_retains_the_delivery_source_assignment() {
+        let intent = json!({"origin_context":{"dispatch_role":"member","dispatch_id":"dispatch",
+            "coordination_round_id":"round","assignment_id":"assignment"}});
+        assert_eq!(
+            binding_metadata(&intent, "runner"),
+            json!({"workspace_device_id":"runner",
+            "dispatch_id":"dispatch","dispatch_round_id":"round","assignment_id":"assignment"})
+        );
     }
 
     #[test]
