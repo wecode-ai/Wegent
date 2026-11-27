@@ -1394,6 +1394,31 @@ class TestSandboxManager:
         release.assert_awaited_once_with(lease)
 
     @pytest.mark.asyncio
+    async def test_e2b_delete_does_not_remove_replacement_after_lookup(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        from fastapi import HTTPException, Request
+
+        from executor_manager.routers import e2b
+
+        manager = sandbox_manager_with_mock_redis
+        replacement = copy.copy(sample_sandbox)
+        replacement.created_at += 1
+        mocker.patch.object(e2b, "get_sandbox_manager", return_value=manager)
+        mocker.patch.object(e2b, "_find_sandbox_by_e2b_id", return_value=sample_sandbox)
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=replacement
+        )
+        remove = mocker.patch.object(manager, "_delete_sandbox_runtime")
+
+        with pytest.raises(HTTPException) as error:
+            await e2b.delete_sandbox("original-e2b-id", Request({"type": "http"}))
+
+        assert error.value.status_code == 503
+        assert "sandbox_replaced" in error.value.detail["message"]
+        remove.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_terminate_sandbox_success(
         self,
         sandbox_manager_with_mock_redis,

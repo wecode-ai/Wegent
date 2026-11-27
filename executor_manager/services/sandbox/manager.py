@@ -843,9 +843,15 @@ class SandboxManager(metaclass=SingletonMeta):
             current.touch()
             return self._repository.save_sandbox(current)
 
-    async def terminate_sandbox(self, sandbox_id: str) -> Tuple[bool, str]:
+    async def terminate_sandbox(
+        self, sandbox_id: str, *, observed: Optional[Sandbox] = None
+    ) -> Tuple[bool, str]:
         """Terminate a sandbox and revoke its credentials after runtime removal."""
-        sandbox = self._repository.load_sandbox(sandbox_id)
+        sandbox = (
+            observed
+            if observed is not None
+            else self._repository.load_sandbox(sandbox_id)
+        )
         if sandbox is None:
             return False, f"Sandbox {sandbox_id} not found"
         if sandbox.status == SandboxStatus.TERMINATED:

@@ -484,7 +484,9 @@ async def delete_sandbox(sandbox_id: str, http_request: Request):
         )
 
     try:
-        success, message = await manager.terminate_sandbox(sandbox.sandbox_id)
+        success, message = await manager.terminate_sandbox(
+            sandbox.sandbox_id, observed=sandbox
+        )
     except SandboxTerminationError as exc:
         raise HTTPException(
             status_code=503,
