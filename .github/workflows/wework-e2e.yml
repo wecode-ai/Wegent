@@ -90,6 +90,7 @@ jobs:
                 wework/src/features/reply-predictions/*|\
                 wework/src/features/todo/IssueAssignmentReceipts*|\
                 wework/electron/*|wework/scripts/profile-renderer*|wework/scripts/ai-verify-devtools*|\
+                .github/actions/build-wework-macos-e2e/*|\
                 wework/e2e/desktop/modules/streaming-text-fixture.mjs|\
                 wework/e2e/desktop/modules/response-protocol.mjs|\
                 wework/e2e/desktop/modules/shell-command-response.mjs|\
@@ -1495,15 +1496,16 @@ jobs:
             --parallel-segments "$segments"
 
       - name: Publish verified PR macOS Executor runtime
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true' && (env.MACOS_COMPLETE_BUILD == 'true' || steps.macos-build.outputs.executor-built-during-packaging == 'true')
         env:
           CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXECUTOR_CACHE_VARIANT: ${{ env.MACOS_COMPLETE_BUILD == 'true' && 'pr' || 'opt1-pr' }}
         run: |
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
           .github/scripts/publish-macos-e2e-runtime-oci.sh \
             "$WEWORK_E2E_EXECUTOR_BIN" \
-            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-pr-$CACHE_PR_NUMBER"
+            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-$EXECUTOR_CACHE_VARIANT-$CACHE_PR_NUMBER"
 
       - name: Upload macOS Inspector failure evidence before cleanup
         if: always() && failure()

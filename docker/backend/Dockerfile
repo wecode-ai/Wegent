@@ -17,6 +17,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 # Cache dependency compilation independently of application source changes.
 FROM rust-builder-base AS rust-builder-deps
+ARG CARGO_PROFILE_RELEASE_OPT_LEVEL
 COPY --exclude=be-server/src --exclude=be-server/examples --exclude=be-server/tests \
     --exclude=config --exclude=docs --exclude=init_data --exclude=migrations/reference --exclude=scripts backend-rs/ ./
 COPY shared/rust /app/shared/rust

@@ -352,6 +352,8 @@ jobs:
           push: false
           tags: wegent-backend-delivery:${{ github.event.pull_request.head.sha || github.sha }}
           labels: org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
+          # Startup and shutdown probes exercise release behavior without benchmarking code generation.
+          build-args: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:all') && 'CARGO_PROFILE_RELEASE_OPT_LEVEL=1' || '' }}
           cache-from: |
             type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
             ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0}', env.DELIVERY_PR_CACHE) || '' }}

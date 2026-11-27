@@ -331,6 +331,10 @@ Platform E2E selects tests by changed paths on PRs and merge queue commits.
 Platform E2E and Rust tests cover source-only changes in the task execution
 crates. Delivery-image verification still runs for packaging, startup and other
 Backend inputs, and during full regression runs.
+Ordinary PRs build the delivery image on the same CentOS base and compile the
+gateway with the Rust release profile at optimization level 1. The probes
+exercise real startup, health checks, and shutdown. Release builds and full
+regression runs use the default optimization level.
 Scheduled and manual runs retain full coverage. Executor device and sandbox
 projects run in parallel on separate runners with their own services and
 databases. Device tests keep one worker and sandbox tests keep two. Rust Backend
@@ -344,7 +348,10 @@ Platform E2E prepares its dependencies and services while the Rust backend build
 then waits for the backend artifact from the same CI run before using it. PRs
 from the same repository can reuse Linux desktop packages with identical build
 inputs from earlier runs of that PR. The
-macOS desktop checks on ordinary PRs build the local app and Executor. Use a
+macOS desktop checks on ordinary PRs build the local app and Executor. When no
+exact Executor artifact is available, they compile it with the release profile
+at optimization level 1 and cache it per PR. Complete macOS builds use the
+default optimization level. Use a
 `ci:all` run when you need the complete macOS build or native backend artifact
 from a PR.
 
