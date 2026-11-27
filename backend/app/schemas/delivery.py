@@ -77,6 +77,7 @@ class LoopItemUpdate(BaseModel):
     position: LoopItemPosition | None = None
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
+    redeliver: bool = False
     version: int = Field(ge=1)
     archived: bool | None = None
     security_level: Literal["open", "related"] | None = None
@@ -119,6 +120,15 @@ class LoopItemUpdate(BaseModel):
         ]
         if len(values) > 1:
             raise ValueError("Only one assignee may be selected")
+        if self.redeliver and (
+            not self.assignee_user_id
+            or not self.notify_assignee
+            or self.model_fields_set
+            - {"version", "assignee_user_id", "notify_assignee", "redeliver"}
+        ):
+            raise ValueError(
+                "Redelivery requires only a human assignee and notification"
+            )
         return self
 
 

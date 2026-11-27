@@ -5,10 +5,24 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   IssueMainCommentComposer,
   createCollaborationTranslator,
+  type CommentAssignment,
   type CommentIssueActions,
 } from '@wegent/collaboration'
 
-function setup({ body = '请安排验收', closed = false, canToggle = true, childOnly = false } = {}) {
+const defaultOptions = [
+  { value: '2', label: 'User 2' },
+  { value: '3', label: 'User 3' },
+]
+
+function setup({
+  body = '请安排验收',
+  closed = false,
+  canToggle = true,
+  childOnly = false,
+  withIssueActions = true,
+  shortcuts = undefined as CommentAssignment['shortcuts'],
+  options = defaultOptions as CommentAssignment['options'],
+} = {}) {
   const send = vi.fn().mockResolvedValue(true)
   const assign = vi.fn().mockResolvedValue(undefined)
   const move = vi.fn().mockResolvedValue(undefined)
@@ -23,7 +37,7 @@ function setup({ body = '请安排验收', closed = false, canToggle = true, chi
     move,
     toggle,
   }
-  function Harness() {
+  function Harness({ options, shortcuts }: Pick<CommentAssignment, 'options' | 'shortcuts'>) {
     const [draft, setDraft] = useState(body)
     return (
       <IssueMainCommentComposer
@@ -38,23 +52,37 @@ function setup({ body = '请安排验收', closed = false, canToggle = true, chi
         sending={false}
         uploading={false}
         assignment={{
-          options: [{ value: '2', label: '小李' }],
+          options,
           assign,
+          shortcuts,
           ...(childOnly ? { canAssignCurrent: false, createChild } : {}),
         }}
-        issueActions={actions}
+        issueActions={withIssueActions ? actions : undefined}
         translate={createCollaborationTranslator('zh-CN')}
         labels={{ placeholder: '输入评论', send: '发送评论', attach: '附件', settings: '设置' }}
       />
     )
   }
-  render(<Harness />)
+  const { rerender } = render(<Harness options={options} shortcuts={shortcuts} />)
+  const refresh = (
+    nextOptions: CommentAssignment['options'],
+    nextShortcuts: CommentAssignment['shortcuts']
+  ) => rerender(<Harness options={nextOptions} shortcuts={nextShortcuts} />)
   const pick = async (kind: 'move' | 'assignee', value: string) => {
     await userEvent.click(screen.getByTestId(`task-comment-form-${kind}`))
     await userEvent.click(screen.getByTestId(`task-comment-form-${kind}-option-${value}`))
   }
   const openSendMenu = () => userEvent.click(screen.getByTestId('task-comment-form-send-actions'))
-  return { send, assign, move, toggle, pick, openSendMenu, createChild }
+  return {
+    send,
+    assign,
+    move,
+    toggle,
+    pick,
+    openSendMenu,
+    createChild,
+    refresh,
+  }
 }
 
 describe('Issue comment staged workflow', () => {
@@ -89,6 +117,7 @@ describe('Issue comment staged workflow', () => {
     expect(assign).not.toHaveBeenCalled()
     expect(createChild).not.toHaveBeenCalled()
   })
+
   it('stages and cancels changes without sending, assigning or moving', async () => {
     const { send, assign, move, pick } = setup()
     await pick('assignee', '2')
@@ -103,16 +132,130 @@ describe('Issue comment staged workflow', () => {
     expect(screen.getByTestId('send-message-button')).toHaveTextContent('发送评论')
   })
 
-  it('submits the comment once, then performs the selected assignment and lane change', async () => {
+  it.each([
+    {
+      label: 'stale redeliver shortcut',
+      withIssueActions: true,
+      initialShortcuts: [
+        { kind: 'redeliver', value: 'redeliver:user:2', target: 'user:2', label: 'User 2' },
+      ] as CommentAssignment['shortcuts'],
+      selectInitial: 'task-comment-form-assignee-redeliver',
+      nextOptions: defaultOptions,
+      nextShortcuts: [
+        { kind: 'redeliver', value: 'redeliver:user:3', target: 'user:3', label: 'User 3' },
+      ] as CommentAssignment['shortcuts'],
+      selectNext: 'task-comment-form-assignee-redeliver',
+      expectedLabel: 'User 3',
+      expectedAssigned: 'redeliver:user:3',
+    },
+    {
+      label: 'round-tripped return shortcut with the same previous assignee',
+      withIssueActions: true,
+      initialShortcuts: [
+        {
+          kind: 'return',
+          value: 'return:user:2',
+          target: 'user:2',
+          currentTarget: 'user:3',
+          historyIndex: 0,
+          label: '转回给 User 2',
+        },
+      ] as CommentAssignment['shortcuts'],
+      selectInitial: 'task-comment-form-assignee-return',
+      nextOptions: defaultOptions,
+      nextShortcuts: [
+        {
+          kind: 'return',
+          value: 'return:user:2',
+          target: 'user:2',
+          currentTarget: 'user:3',
+          historyIndex: 2,
+          label: '转回给 User 2',
+        },
+      ] as CommentAssignment['shortcuts'],
+      selectNext: 'task-comment-form-assignee-return',
+      expectedLabel: '转回给 User 2',
+      expectedAssigned: 'return:user:2',
+    },
+    {
+      label: 'removed recent assignee',
+      withIssueActions: true,
+      initialShortcuts: [
+        { kind: 'recent', value: 'recent:user:2', target: 'user:2', label: 'User 2' },
+      ] as CommentAssignment['shortcuts'],
+      selectInitial: 'task-comment-form-assignee-option-2',
+      nextOptions: [defaultOptions[1]],
+      nextShortcuts: [] as CommentAssignment['shortcuts'],
+      selectNext: 'task-comment-form-assignee-option-3',
+      expectedLabel: 'User 3',
+      expectedAssigned: '3',
+    },
+    {
+      label: 'disabled ordinary assignee without workflow actions',
+      withIssueActions: false,
+      initialShortcuts: undefined,
+      selectInitial: 'task-comment-form-assignee-option-2',
+      nextOptions: [{ ...defaultOptions[0], disabled: true }, defaultOptions[1]],
+      nextShortcuts: undefined,
+      selectNext: 'task-comment-form-assignee-option-3',
+      expectedLabel: 'User 3',
+      expectedAssigned: '3',
+    },
+  ])(
+    'requires reselection before sending when a staged target becomes invalid ($label)',
+    async ({
+      withIssueActions,
+      initialShortcuts,
+      selectInitial,
+      nextOptions,
+      nextShortcuts,
+      selectNext,
+      expectedLabel,
+      expectedAssigned,
+    }) => {
+      const { send, assign, move, pick, refresh } = setup({
+        withIssueActions,
+        shortcuts: initialShortcuts,
+      })
+      const picker = () => screen.getByTestId('task-comment-form-assignee')
+      const submit = () => screen.getByTestId('send-message-button')
+      await userEvent.click(picker())
+      await userEvent.click(screen.getByTestId(selectInitial))
+      if (withIssueActions) await pick('move', 'review')
+      expect(picker()).toHaveTextContent('User 2')
+      expect(submit()).toBeEnabled()
+
+      refresh(nextOptions, nextShortcuts)
+      expect(picker()).toHaveTextContent('重新选择负责人')
+      expect(picker()).toHaveAttribute('title', '重新选择负责人')
+      expect(picker()).toHaveAccessibleName(/重新选择负责人/)
+      expect(submit()).toBeDisabled()
+      fireEvent.submit(screen.getByTestId('task-comment-form'))
+      expect(send).not.toHaveBeenCalled()
+      expect(move).not.toHaveBeenCalled()
+      expect(assign).not.toHaveBeenCalled()
+
+      await userEvent.click(picker())
+      await userEvent.click(screen.getByTestId(selectNext))
+      expect(picker()).toHaveTextContent(expectedLabel)
+      expect(submit()).toBeEnabled()
+      await userEvent.click(submit())
+      await waitFor(() => expect(assign).toHaveBeenCalledExactlyOnceWith(expectedAssigned))
+      expect(send).toHaveBeenCalledOnce()
+      expect(move).toHaveBeenCalledTimes(withIssueActions ? 1 : 0)
+    }
+  )
+
+  it('submits the comment and lane change before dispatching the selected assignment', async () => {
     const { send, assign, move, pick } = setup()
     await pick('assignee', '2')
     await pick('move', 'review')
     await userEvent.click(screen.getByTestId('send-message-button'))
-    await waitFor(() => expect(move).toHaveBeenCalledWith('review'))
+    await waitFor(() => expect(assign).toHaveBeenCalledExactlyOnceWith('2'))
     expect(send).toHaveBeenCalledExactlyOnceWith('请安排验收', [], { commentOnly: true })
-    expect(assign).toHaveBeenCalledExactlyOnceWith('2')
-    expect(send.mock.invocationCallOrder[0]).toBeLessThan(assign.mock.invocationCallOrder[0])
-    expect(assign.mock.invocationCallOrder[0]).toBeLessThan(move.mock.invocationCallOrder[0])
+    expect(move).toHaveBeenCalledExactlyOnceWith('review')
+    expect(send.mock.invocationCallOrder[0]).toBeLessThan(move.mock.invocationCallOrder[0])
+    expect(move.mock.invocationCallOrder[0]).toBeLessThan(assign.mock.invocationCallOrder[0])
     expect(screen.getByTestId('task-comment-form-assignee')).toHaveAttribute('data-value', '')
     expect(screen.getByTestId('task-comment-form-move')).toHaveAttribute('data-value', '')
   })
@@ -151,34 +294,43 @@ describe('Issue comment staged workflow', () => {
     expect(screen.getByTestId('task-comment-form-move')).toHaveAttribute('data-value', 'review')
   })
 
-  it('retries a failed move without duplicating the saved comment or assignment', async () => {
+  it('retries a failed move without duplicating the saved comment or dispatching prematurely', async () => {
     const { send, assign, move, pick } = setup()
     move.mockRejectedValueOnce(new Error('连接失败'))
     await pick('assignee', '2')
     await pick('move', 'review')
     await userEvent.click(screen.getByTestId('send-message-button'))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('评论已发送'))
+    expect(assign).not.toHaveBeenCalled()
     expect(screen.getByTestId('send-message-button')).toHaveTextContent('更新事项')
     await userEvent.click(screen.getByTestId('send-message-button'))
-    await waitFor(() => expect(move).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(assign).toHaveBeenCalledOnce())
+    expect(move).toHaveBeenCalledTimes(2)
     expect(send).toHaveBeenCalledOnce()
-    expect(assign).toHaveBeenCalledOnce()
+    expect(move.mock.invocationCallOrder[1]).toBeLessThan(assign.mock.invocationCallOrder[0])
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('closes with its comment and retries only closure after a partial failure', async () => {
-    const { send, toggle, openSendMenu } = setup()
+  it('retries closure after a partial failure and dispatches only after closure succeeds', async () => {
+    const { send, assign, move, toggle, pick, openSendMenu } = setup()
     toggle.mockRejectedValueOnce(new Error('连接失败'))
+    await pick('assignee', '2')
+    await pick('move', 'review')
     await openSendMenu()
     await userEvent.click(screen.getByTestId('task-comment-form-close'))
     expect(send).not.toHaveBeenCalled()
     expect(toggle).not.toHaveBeenCalled()
     await userEvent.click(screen.getByTestId('send-message-button'))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('评论已发送'))
+    expect(assign).not.toHaveBeenCalled()
+    expect(move).toHaveBeenCalledOnce()
     await userEvent.click(screen.getByTestId('send-message-button'))
-    await waitFor(() => expect(toggle).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(assign).toHaveBeenCalledOnce())
+    expect(move).toHaveBeenCalledOnce()
+    expect(toggle).toHaveBeenCalledTimes(2)
     expect(toggle).toHaveBeenLastCalledWith(true)
     expect(send).toHaveBeenCalledExactlyOnceWith('请安排验收', [], { commentOnly: true })
+    expect(toggle.mock.invocationCallOrder[1]).toBeLessThan(assign.mock.invocationCallOrder[0])
   })
 
   it('does not close an Issue without a comment', async () => {

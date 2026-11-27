@@ -110,6 +110,7 @@
     "handoffActions": {
       "assign": "指派",
       "reassign": "重新指派",
+      "redeliver": "重新投递",
       "unassign": "取消指派",
       "unknown": "交接"
     },

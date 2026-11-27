@@ -27,7 +27,7 @@ export function selectHistoryNodes(input: ExperienceTimelineInput): ExperienceTi
   const assignments =
     issue.assignment_history?.map(entry =>
       historyNode(
-        `history:handoff:${JSON.stringify([issue.id, entry.at, entry.by_user_id, entry.to_type, entry.to_id, entry.action])}`,
+        `history:handoff:${JSON.stringify([issue.id, entry.at, entry.by_user_id, entry.to_type, entry.to_id, entry.redeliver ? 'redeliver' : entry.action])}`,
         entry.at,
         entry.by_user_id,
         {
@@ -36,7 +36,7 @@ export function selectHistoryNodes(input: ExperienceTimelineInput): ExperienceTi
             ? null
             : { id: String(entry.by_user_id), name: entry.by_user_name ?? null },
           handoff: {
-            action: entry.action,
+            action: entry.redeliver ? 'redeliver' : entry.action,
             targetType: entry.to_type,
             targetId: entry.to_id,
             targetName: entry.to_type === 'user' ? (entry.to_name ?? null) : null,

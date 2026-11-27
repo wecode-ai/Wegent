@@ -62,6 +62,7 @@ interface SearchableSelectCommonProps<T extends string> {
   searchInvalid?: boolean
   searchDescriptionId?: string
   triggerContent?: ReactNode
+  triggerTitle?: string
   footer?: ReactNode
   contentClassName?: string
   modal?: boolean
@@ -130,6 +131,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
     searchInvalid,
     searchDescriptionId,
     triggerContent,
+    triggerTitle,
     footer,
     contentClassName,
     modal = false,
@@ -273,9 +275,10 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
           data-value={values.join(',')}
           aria-label={accessibleLabel}
           title={
-            selected
+            triggerTitle ??
+            (selected
               ? [selected.group, selected.label, selected.description].filter(Boolean).join(' · ')
-              : values.join(', ')
+              : values.join(', '))
           }
           className={cn(selectionTriggerClasses(appearance, density), className)}
         >
@@ -348,6 +351,15 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
           >
             {visible.map((option, index) => (
               <Fragment key={option.value}>
+                {index > 0 &&
+                  visible[index - 1].section &&
+                  option.section !== visible[index - 1].section && (
+                    <div
+                      aria-hidden="true"
+                      data-testid={`${testId}-section-divider-${index}`}
+                      className="mx-2 my-1 border-t border-border"
+                    />
+                  )}
                 {option.section && option.section !== visible[index - 1]?.section && (
                   <p className="px-2.5 pb-1 pt-2 text-xs font-medium text-text-secondary">
                     {option.section}
@@ -371,6 +383,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
                   data-testid={option.testId ?? `${testId}-option-${option.value || 'empty'}`}
                   className={cn(
                     controlOption,
+                    option.section && 'mb-0.5',
                     values.includes(option.value) && 'bg-muted font-medium'
                   )}
                 >
