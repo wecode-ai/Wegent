@@ -25,7 +25,7 @@ interface SkillCommand {
   end: number
   query: string
   showEmptyResults: boolean
-  position: { top: number; left: number }
+  anchor: Range
 }
 
 function getEditorCaret(input: HTMLElement): Range | null {
@@ -484,19 +484,13 @@ export default function ChatInput({
       const start = queryEnd - match[1].length - 1
       const end = queryEnd + (text.slice(queryEnd).match(/^\S+/)?.[0].length ?? 0)
       const currentCommand = skillCommand?.start === start ? skillCommand : undefined
-      let position = currentCommand?.position
-      if (!position) {
-        const rect = range.getBoundingClientRect()
-        const containerRect = input.getBoundingClientRect()
-        position = { top: rect.top - containerRect.top - 8, left: rect.left - containerRect.left }
-      }
       setSkillCommand({
         draft: text,
         start,
         end,
         query: match[1],
         showEmptyResults: currentCommand?.showEmptyResults ?? (!allowInitialQuery || !match[1]),
-        position,
+        anchor: range.cloneRange(),
       })
     },
     [onSkillSelect, skillCommand, closeSkillMenu, getTextBeforeCaret]
@@ -894,7 +888,7 @@ export default function ChatInput({
           selectedSkillIds={selectedSkillIds}
           onSelect={handleSkillSelect}
           onClose={closeSkillMenu}
-          position={skillCommand.position}
+          anchor={skillCommand.anchor}
           isChatShell={isChatShell}
           skillButtonRef={skillButtonRef}
           onTriggerFlyAnimation={handleTriggerFlyAnimation}
@@ -972,9 +966,11 @@ export default function ChatInput({
                     suppressContentEditableWarning
                   />
                 </TooltipTrigger>
-                <TooltipContent side="top" className="hidden text-xs md:block">
-                  <p>{tooltipText}</p>
-                </TooltipContent>
+                {!(skillCommand && canSelectSkills) && !showMentionMenu && (
+                  <TooltipContent side="top" className="hidden text-xs md:block">
+                    <p>{tooltipText}</p>
+                  </TooltipContent>
+                )}
               </Tooltip>
             </TooltipProvider>
           </div>

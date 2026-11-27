@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Check, Zap, User, Users, Globe } from 'lucide-react'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -36,8 +36,8 @@ interface SkillAutocompleteProps {
   onSelect: (skill: UnifiedSkill) => void
   /** Callback when menu should close */
   onClose: () => void
-  /** Position relative to container */
-  position: { top: number; left: number }
+  /** Live caret range in the editor */
+  anchor: { getBoundingClientRect(): Pick<DOMRect, 'top' | 'bottom' | 'left'> }
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
   /** Ref to the skill button element for fly animation target */
@@ -48,6 +48,47 @@ interface SkillAutocompleteProps {
 
 interface GroupedSkill extends Omit<SourceGroupedSkill, 'group'> {
   group: SourceGroupedSkill['group'] | 'team'
+}
+
+const MENU_GAP = 8
+const MENU_MARGIN = 8
+const MENU_MAX_WIDTH = 400
+const MENU_MAX_HEIGHT = 300
+
+function getMenuPlacement(anchor: SkillAutocompleteProps['anchor'], menu: HTMLElement) {
+  const caret = anchor.getBoundingClientRect()
+  const viewport = window.visualViewport
+  const viewportTop = viewport?.offsetTop ?? 0
+  const viewportLeft = viewport?.offsetLeft ?? 0
+  const viewportHeight = viewport?.height ?? window.innerHeight
+  const viewportWidth = viewport?.width ?? window.innerWidth
+  const topEdge = viewportTop + MENU_MARGIN
+  const bottomEdge = viewportTop + viewportHeight - MENU_MARGIN
+  const aboveAnchor = Math.min(caret.top - MENU_GAP, bottomEdge)
+  const belowAnchor = Math.max(caret.bottom + MENU_GAP, topEdge)
+  const above = aboveAnchor - topEdge
+  const below = bottomEdge - belowAnchor
+  const preferredBelow = caret.top < viewportTop + viewportHeight / 2
+  const desiredHeight = Math.min(
+    menu.scrollHeight + menu.offsetHeight - menu.clientHeight,
+    MENU_MAX_HEIGHT
+  )
+  const preferredSpace = preferredBelow ? below : above
+  const otherSpace = preferredBelow ? above : below
+  const opensBelow =
+    preferredSpace < desiredHeight && otherSpace > preferredSpace ? !preferredBelow : preferredBelow
+  const width = Math.min(MENU_MAX_WIDTH, Math.max(0, viewportWidth - MENU_MARGIN * 2))
+
+  return {
+    top: opensBelow ? belowAnchor : aboveAnchor,
+    left: Math.max(
+      viewportLeft + MENU_MARGIN,
+      Math.min(caret.left, viewportLeft + viewportWidth - width - MENU_MARGIN)
+    ),
+    width,
+    maxHeight: Math.max(0, Math.min(MENU_MAX_HEIGHT, opensBelow ? below : above)),
+    transform: opensBelow ? undefined : 'translateY(-100%)',
+  }
 }
 
 /**
@@ -71,7 +112,7 @@ export default function SkillAutocomplete({
   selectedSkillIds = [],
   onSelect,
   onClose,
-  position,
+  anchor,
   isChatShell,
   skillButtonRef,
   onTriggerFlyAnimation,
@@ -79,6 +120,7 @@ export default function SkillAutocomplete({
   const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [placement, setPlacement] = useState<ReturnType<typeof getMenuPlacement>>()
 
   // Group and filter skills
   const groupedSkills = useMemo<GroupedSkill[]>(() => {
@@ -111,6 +153,35 @@ export default function SkillAutocomplete({
       return nameMatch || displayNameMatch || descriptionMatch
     })
   }, [groupedSkills, query])
+
+  const hasResults = filteredSkills.length > 0
+  const showMenu = showEmptyResults || hasResults
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!menu) return
+
+    const updatePlacement = () => setPlacement(getMenuPlacement(anchor, menu))
+    const handleScroll = (event: Event) => {
+      if (event.target !== menu) updatePlacement()
+    }
+    updatePlacement()
+    const observer =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updatePlacement)
+    observer?.observe(menu)
+    if (editorRef?.current) observer?.observe(editorRef.current)
+    const viewport = window.visualViewport
+    viewport?.addEventListener('resize', updatePlacement)
+    viewport?.addEventListener('scroll', updatePlacement)
+    window.addEventListener('resize', updatePlacement)
+    window.addEventListener('scroll', handleScroll, true)
+    return () => {
+      observer?.disconnect()
+      viewport?.removeEventListener('resize', updatePlacement)
+      viewport?.removeEventListener('scroll', updatePlacement)
+      window.removeEventListener('resize', updatePlacement)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [anchor, editorRef, filteredSkills, showMenu])
 
   useEffect(() => {
     const focused = document.activeElement
@@ -250,23 +321,7 @@ export default function SkillAutocomplete({
     }
   }
 
-  if (filteredSkills.length === 0) {
-    if (!showEmptyResults) return null
-    return (
-      <div
-        ref={menuRef}
-        className="absolute z-50 bg-surface border border-border rounded-md shadow-lg py-2 px-3 min-w-[250px]"
-        style={{
-          bottom: `calc(100% - ${position.top}px)`,
-          left: `${position.left}px`,
-        }}
-      >
-        <div className="text-sm text-text-muted">
-          {t('common:skillSelector.no_available_skills')}
-        </div>
-      </div>
-    )
-  }
+  if (!showMenu) return null
 
   // Group skills for rendering with section headers
   // For group skills, we need to track namespace changes to show group name
@@ -341,16 +396,22 @@ export default function SkillAutocomplete({
   return (
     <div
       ref={menuRef}
-      className="absolute z-50 bg-surface border border-border rounded-md shadow-lg py-1 min-w-[300px] max-w-[400px] max-h-[300px] overflow-y-auto"
-      style={{
-        bottom: `calc(100% - ${position.top}px)`,
-        left: `${position.left}px`,
-      }}
+      data-testid="slash-skill-menu"
+      className="fixed z-50 overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-lg"
+      style={placement ?? { visibility: 'hidden' }}
     >
-      {renderItems}
-      <div className="px-3 py-1 text-xs text-text-muted border-t border-border mt-1">
-        {t('common:skillSelector.skill_autocomplete_title')}
-      </div>
+      {hasResults ? (
+        <>
+          {renderItems}
+          <div className="mt-1 border-t border-border px-3 py-1 text-xs text-text-muted">
+            {t('common:skillSelector.skill_autocomplete_title')}
+          </div>
+        </>
+      ) : (
+        <div className="px-3 py-1 text-sm text-text-muted">
+          {t('common:skillSelector.no_available_skills')}
+        </div>
+      )}
     </div>
   )
 }

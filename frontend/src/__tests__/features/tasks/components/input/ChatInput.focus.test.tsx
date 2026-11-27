@@ -199,9 +199,11 @@ test.each([
   async ({ pendingCatalog, method, action }) => {
     const user = userEvent.setup()
     const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
+    const viewportHeight = jest.replaceProperty(window, 'innerHeight', 800)
+    let caretTop = 120
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
       configurable: true,
-      value: () => ({ top: 0, left: 0 }),
+      value: () => ({ top: caretTop, bottom: caretTop + 26, left: window.innerWidth - 16 }),
     })
     try {
       const skill = {
@@ -272,6 +274,20 @@ test.each([
       }
 
       if (action === 'keyboard') {
+        const menu = screen.getByTestId('slash-skill-menu')
+        expect(menu).toHaveStyle({ top: '154px', left: `${window.innerWidth - 408}px` })
+        expect(screen.queryByText('chat:send_shortcut')).not.toBeInTheDocument()
+
+        caretTop = 560
+        fireEvent.scroll(input)
+        expect(menu).toHaveStyle({ top: '552px', transform: 'translateY(-100%)' })
+
+        Object.defineProperty(menu, 'scrollHeight', { value: 300 })
+        viewportHeight.replaceValue(240)
+        caretTop = 112
+        fireEvent.resize(window)
+        expect(menu).toHaveStyle({ top: '104px', maxHeight: '96px' })
+
         await user.tab({ shift: true })
         expect(option).toHaveFocus()
         fireEvent(document, new Event('selectionchange'))
@@ -280,9 +296,11 @@ test.each([
         await user.click(option)
       }
       expect(props.onSkillSelect).toHaveBeenCalledWith(skill)
+      expect(screen.getByText('chat:send_shortcut')).toBeInTheDocument()
       expect(props.setMessage).toHaveBeenLastCalledWith('Check ' + suffix)
       expect(window.getSelection()?.anchorOffset).toBe('Check '.length)
     } finally {
+      viewportHeight.restore()
       if (originalRect)
         Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRect)
       else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect')

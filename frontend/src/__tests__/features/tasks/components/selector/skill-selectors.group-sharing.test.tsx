@@ -25,6 +25,7 @@ const sharedSkill: UnifiedSkill = {
   publication_status: 'archived',
   availability: { inMyDefault: false },
 }
+const anchor = { getBoundingClientRect: () => ({ top: 20, bottom: 46, left: 20 }) }
 
 describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry => {
   it('selects the clicked record when two namespaces contain the same name', async () => {
@@ -47,7 +48,7 @@ describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry =
         <SkillAutocomplete
           {...props}
           query=""
-          position={{ top: 0, left: 0 }}
+          anchor={anchor}
           onSelect={onSelect}
           onClose={jest.fn()}
         />
@@ -83,7 +84,7 @@ describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry =
         <SkillAutocomplete
           {...props}
           query=""
-          position={{ top: 0, left: 0 }}
+          anchor={anchor}
           onSelect={onSelect}
           onClose={jest.fn()}
         />
@@ -114,7 +115,7 @@ it.each(['{Enter}', ' '])('activates the focused skill after ArrowDown with %s',
       teamSkillNames={[sharedSkill.name, secondSkill.name]}
       preloadedSkillNames={[]}
       query=""
-      position={{ top: 0, left: 0 }}
+      anchor={anchor}
       isChatShell={false}
       onSelect={onSelect}
       onClose={jest.fn()}
@@ -140,7 +141,7 @@ it('lets Enter activate a control outside the open skill menu', async () => {
         teamSkillNames={[]}
         preloadedSkillNames={[]}
         query=""
-        position={{ top: 0, left: 0 }}
+        anchor={anchor}
         isChatShell={false}
         onSelect={onSelect}
         onClose={jest.fn()}
