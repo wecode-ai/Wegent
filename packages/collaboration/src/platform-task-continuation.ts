@@ -5,10 +5,17 @@ export const PlatformTaskConnection = createContext<{
   userId: number;
 } | null>(null);
 
-export function usePlatformTaskContinuation(taskId?: string | number | null) {
+export function usePlatformTaskContinuation(
+  taskId?: string | number | null,
+  ownerId?: number | null,
+  deviceId?: string | null,
+) {
   const connection = useContext(PlatformTaskConnection);
   if (
     !connection ||
+    !deviceId?.trim() ||
+    !ownerId ||
+    ownerId !== connection.userId ||
     typeof window === "undefined" ||
     !/^[1-9]\d*$/.test(String(taskId)) ||
     !Number.isSafeInteger(Number(taskId))

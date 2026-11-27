@@ -346,7 +346,11 @@ function ChatAreaContent({
     accessDenied,
     taskState: sessionTaskState,
   } = useTaskSession()
-  const continuationUrl = usePlatformTaskContinuation(selectedTaskDetail?.id)
+  const continuationUrl = usePlatformTaskContinuation(
+    selectedTaskDetail?.id,
+    selectedTaskDetail?.is_group_owner ? selectedTaskDetail.user?.id : null,
+    selectedTaskDetail?.device_id
+  )
   const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
   const taskState =
@@ -2755,17 +2759,15 @@ function ChatAreaContent({
         onPrefillMessage={chatState.setTaskInputMessage}
       />
 
-      {continuationUrl &&
-        selectedTaskDetail?.device_id &&
-        selectedTaskDetail.id === effectiveTaskId && (
-          <a
-            href={continuationUrl}
-            data-testid="continue-platform-task-in-wework"
-            className="inline-flex min-h-11 items-center self-end px-3 text-sm text-primary hover:underline"
-          >
-            {t('continue_in_wework')}
-          </a>
-        )}
+      {continuationUrl && selectedTaskDetail?.id === effectiveTaskId && (
+        <a
+          href={continuationUrl}
+          data-testid="continue-platform-task-in-wework"
+          className="inline-flex min-h-11 items-center self-end px-3 text-sm text-primary hover:underline"
+        >
+          {t('continue_in_wework')}
+        </a>
+      )}
 
       {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
       {hasMessages && selectedTaskDetail?.id && (

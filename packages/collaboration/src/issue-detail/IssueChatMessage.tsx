@@ -236,6 +236,7 @@ export function IssueChatMessage({
   showInlineExecutionStatus = false,
   agentRole,
   eventOnly = false,
+  platformTaskBindings,
   taskAiState,
   executionStatus,
   executionDeviceName,
@@ -262,6 +263,7 @@ export function IssueChatMessage({
   showInlineExecutionStatus?: boolean;
   agentRole?: "manager" | "member";
   eventOnly?: boolean;
+  platformTaskBindings?: ReadonlyMap<number, { task_user_id: number; device_id: string }>;
   taskAiState?: IssueActivityAiState | null;
   /** Presentation only; never changes comment lifecycle or content. */
   executionStatus?: string;
@@ -319,7 +321,12 @@ export function IssueChatMessage({
       ? message.status === "completed"
       : displayStatus === "succeeded";
   const backendExecution = isAgent ? backendTaskExecution(message) : null;
-  const continuationUrl = usePlatformTaskContinuation(backendExecution?.taskId);
+  const binding = platformTaskBindings?.get(Number(backendExecution?.taskId));
+  const continuationUrl = usePlatformTaskContinuation(
+    backendExecution?.taskId,
+    binding?.task_user_id,
+    binding?.device_id,
+  );
   const openBackendExecution = backendExecution
     ? () => {
         onOpenUrl(backendExecution.executionUrl);

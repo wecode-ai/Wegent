@@ -656,7 +656,13 @@ describe("shared Issue threads", () => {
     ).toEqual({ taskId: "7", executionUrl: "https://example.com/task/7" });
   });
 
-  it("offers both the scoped desktop conversation and the original web task", () => {
+  it.each([
+    [new Map([[7, { task_user_id: 42, device_id: "device" }]]), true],
+    [new Map([[7, { task_user_id: 43, device_id: "device" }]]), false],
+    [new Map([[7, { task_user_id: 42, device_id: "" }]]), false],
+    [new Map([[8, { task_user_id: 42, device_id: "device" }]]), false],
+    [undefined, false],
+  ] as const)("keeps the web task accessible and scopes desktop continuation %#", (bindings, eligible) => {
     const open = vi.fn();
     const url = "https://web.example/chat?taskId=7";
     act(() =>
@@ -669,6 +675,7 @@ describe("shared Issue threads", () => {
               ...message,
               metadata: { backend_task_id: 7, execution_url: url },
             }}
+            platformTaskBindings={bindings}
             mine={false}
             translate={translate}
             onOpenUrl={open}
@@ -682,7 +689,7 @@ describe("shared Issue threads", () => {
           '[data-testid="cloud-task-activity-continue-in-wework-root"]',
         )
         ?.getAttribute("href"),
-    ).toBe("wework://platform-tasks/https%3A%2F%2Fbackend.example%2Fapi/42/7");
+    ).toBe(eligible ? "wework://platform-tasks/https%3A%2F%2Fbackend.example%2Fapi/42/7" : undefined);
     act(() =>
       container
         .querySelector<HTMLButtonElement>(
