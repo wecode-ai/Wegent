@@ -34,11 +34,16 @@ REASONING_END = "__END_REASONING__"
 TRUNCATED_START = "__TRUNCATED__"
 TRUNCATED_END = "__END_TRUNCATED__"
 
-# Bilingual truncation warning message
+# Bilingual truncation warning messages
 TRUNCATION_WARNING_MESSAGE = """
 
 ---
 ⚠️ Content Truncated: Model output reached token limit, response may be incomplete."""
+
+REFUSAL_WARNING_MESSAGE = """
+
+---
+⚠️ Model Refusal: The model stopped before completing its response."""
 
 # Semaphore for concurrent chat limit (lazy initialized)
 _chat_semaphore: Optional[asyncio.Semaphore] = None
@@ -540,15 +545,24 @@ class StreamingCore:
 
     async def finalize(self) -> dict:
         """Finalize streaming and return results."""
-        # Handle truncation: append warning message and emit error event
+        # Handle early termination: append a warning and emit an error event.
         if self.state.is_truncated:
-            # Append bilingual warning message to the response
-            self.state.append_content(TRUNCATION_WARNING_MESSAGE)
-
-            # Emit error event for truncation
-            await self.emitter.error(
-                f"Content truncated due to max_token limit (reason: {self.state.truncation_reason})"
+            warning_message = (
+                REFUSAL_WARNING_MESSAGE
+                if self.state.truncation_reason == "refusal"
+                else TRUNCATION_WARNING_MESSAGE
             )
+            self.state.append_content(warning_message)
+
+            await self.emitter.error(
+                f"Model response ended early (reason: {self.state.truncation_reason})"
+            )
+
+        stop_reason = "end_turn"
+        if self.state.is_deferred_user_input:
+            stop_reason = "tool_deferred"
+        elif self.state.is_truncated:
+            stop_reason = self.state.truncation_reason
 
         result = self.state.get_current_result(include_value=True)
 
@@ -556,10 +570,6 @@ class StreamingCore:
             "[STREAMING] Finalize result: subtask=%d truncated=%s",
             self.state.subtask_id,
             self.state.is_truncated,
-        )
-
-        stop_reason = (
-            "tool_deferred" if self.state.is_deferred_user_input else "end_turn"
         )
 
         # Emit done event via ResponsesAPIEmitter
@@ -582,6 +592,8 @@ class StreamingCore:
             context_compactions=result.get("context_compactions"),
             termination_reason=result.get("termination_reason"),
             retrieval_summary=result.get("retrieval_summary"),
+            truncated=result.get("truncated"),
+            truncation_reason=result.get("truncation_reason"),
         )
 
         return result
