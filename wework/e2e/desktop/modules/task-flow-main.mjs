@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { appendFile } from 'node:fs/promises'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
 import { closeExitedProcessOutput, flushProcessOutput } from '../process-output.mjs'
 import { launchWindowsOwnedApplication } from '../windows-owned-process.mjs'
@@ -262,6 +263,7 @@ import {
   confirmLocalProjectName,
   createOfficialPluginMarketplaceFixture,
   createPluginMarketplaceFixture,
+  createNativeShutdownCapture,
   createSingleRootLocalProject,
   ensureModelOptionVisible,
   join,
@@ -1656,6 +1658,9 @@ async function main() {
         }
         await owned?.resume()
         await scenarioStartup
+        if (process.platform !== 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets) {
+          application.captureShutdownSnapshot = createNativeShutdownCapture(application, resultDir)
+        }
         if (nativeInspector) {
           control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
         }
@@ -4993,7 +4998,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         })
       }
     }
-    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    let applicationStopped = false
+    await runTeardownStep('desktop application', async () => {
+      await stopDesktopAppProcess(app)
+      applicationStopped = true
+    })
     await runTeardownStep('native cloud authorization', async () => nativeCloudLogin?.restore())
     // Scenario fixtures can still need the controller, proxies, and backend during cleanup.
     await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
@@ -5007,7 +5016,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         })
       }
     })
-    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('desktop controller', async () => {
+      try {
+        await control.close()
+      } catch (error) {
+        if (control.fatalError && control.fatalError !== error) {
+          throw new AggregateError(
+            [control.fatalError, error],
+            'Desktop scenario and controller shutdown failed'
+          )
+        }
+        throw error
+      }
+      // Native teardown must not bypass a model/scenario assertion retained by
+      // the controller merely because no renderer command is needed anymore.
+      await control.guard(Promise.resolve())
+    })
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
@@ -5017,14 +5041,18 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
       await flushProcessOutput()
     })
-    await runTeardownStep('Codex SQLite home', async () =>
-      rm(codexSqliteHome, {
-        recursive: true,
-        force: true,
-        maxRetries: process.platform === 'win32' ? 20 : 0,
-        retryDelay: 100,
-      })
-    )
+    if (applicationStopped) {
+      await runTeardownStep('Codex SQLite home', async () =>
+        rm(codexSqliteHome, {
+          recursive: true,
+          force: true,
+          maxRetries: process.platform === 'win32' ? 20 : 0,
+          retryDelay: 100,
+        })
+      )
+    } else {
+      console.error('[desktop-e2e] Retained Codex SQLite home because application shutdown failed')
+    }
     await runTeardownStep('macOS Launch Services registration', async () => {
       if (appBundlePath && process.platform === 'darwin') {
         spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
@@ -5050,17 +5078,45 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       console.error(`[desktop-e2e] ${failure.label} teardown failed:`, failure.error)
     }
     if (testFailed) {
+      if (teardownFailures.length > 0) {
+        try {
+          await appendFile(
+            join(resultDir, 'failure.txt'),
+            `\nTeardown failures:\n${teardownFailures
+              .map(failure => `${failure.label}: ${failure.error?.stack ?? failure.error}`)
+              .join('\n')}\n`,
+            'utf8'
+          )
+        } catch (error) {
+          console.error('[desktop-e2e] Teardown diagnostic append failed:', error)
+        }
+      }
       if (cleanupError) {
         console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
       }
     } else {
       if (teardownFailures.length > 0) {
-        throw new AggregateError(
+        const error = new AggregateError(
           teardownFailures.map(failure => failure.error),
           `Desktop E2E teardown failed: ${teardownFailures
             .map(failure => failure.label)
             .join(', ')}`
         )
+        try {
+          await writeFile(
+            join(resultDir, 'failure.txt'),
+            `${error.stack}\n${teardownFailures
+              .map(failure => `${failure.label}: ${failure.error?.stack ?? failure.error}`)
+              .join('\n')}\n`,
+            'utf8'
+          )
+        } catch (diagnosticError) {
+          console.error(
+            '[desktop-e2e] Teardown failure diagnostics could not be written:',
+            diagnosticError
+          )
+        }
+        throw error
       }
       if (cleanupError) throw cleanupError
     }

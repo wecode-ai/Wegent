@@ -26,12 +26,16 @@ import { reservePort } from '../port-reservation.mjs'
 import { appendProcessOutput } from '../process-output.mjs'
 import {
   crashOwnedProcessTree,
+  InvalidOwnedProcessSnapshotError,
   logDesktopE2eSignal,
   processIsAlive,
   stopProcess,
   stopProcessGroup,
+  stopOwnedProcessTree,
+  validateOwnedProcessSnapshot,
 } from '../process-lifecycle.mjs'
 import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
+import { captureOwnedProcessSnapshot, readNativeProcessIdentity } from '../process-identity.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
@@ -1051,7 +1055,7 @@ function redisCliBinary(
   )
 }
 
-async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
+async function stopDesktopAppProcess(app, { forceSnapshot, shutdownSnapshot } = {}) {
   if (!app) return
   if (forceSnapshot) {
     await crashOwnedProcessTree(app, forceSnapshot)
@@ -1059,6 +1063,28 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     return
   }
   if (!app.launcher) {
+    if (app.captureShutdownSnapshot) {
+      try {
+        shutdownSnapshot ??= await app.captureShutdownSnapshot()
+      } catch (error) {
+        // Stop the known group, but retain the capture failure and its runtime
+        // files rather than assuming independent writers have exited.
+        await stopKnownGroupAfterFailure(app, error)
+      }
+    }
+    if (shutdownSnapshot) {
+      try {
+        await stopOwnedProcessTree(app, shutdownSnapshot)
+      } catch (error) {
+        if (error instanceof InvalidOwnedProcessSnapshotError) {
+          // Omitted descendants cannot be authorized by a degraded snapshot.
+          // Stop only the known group and retain the ownership failure/home.
+          await stopKnownGroupAfterFailure(app, error)
+        }
+        throw error
+      }
+      return
+    }
     await stopProcessGroup(app)
     return
   }
@@ -1076,6 +1102,79 @@ async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
     process.kill(app.pid, 'SIGKILL')
   }
   await stopProcess(app.launcher)
+}
+
+async function stopKnownGroupAfterFailure(app, error) {
+  try {
+    const isOwnedGroup =
+      app.captureShutdownSnapshot?.ownerIsAlive ??
+      (() => app.exitCode === null && app.signalCode === null && processIsAlive(app.pid))
+    await stopProcessGroup(app, { isOwnedGroup })
+  } catch (cleanupError) {
+    throw new AggregateError([error, cleanupError], 'Desktop snapshot and group shutdown failed')
+  }
+  throw error
+}
+
+/** Source application teardown must work after its renderer has closed or stopped responding. */
+export function createNativeShutdownCapture(
+  app,
+  resultDir,
+  {
+    capture = captureOwnedProcessSnapshot,
+    write = writeFile,
+    reportError = console.error,
+    readIdentity = readNativeProcessIdentity,
+  } = {}
+) {
+  const applicationIdentity = readIdentity(app.pid)
+  if (!applicationIdentity)
+    throw new Error('The isolated application has no native startup identity')
+  let controlledQuitSnapshot
+  const ownerIsAlive = () => {
+    if (app.exitCode !== null || app.signalCode !== null) return false
+    const current = readIdentity(app.pid)
+    if (current === null) return false
+    if (
+      current.pid !== applicationIdentity.pid ||
+      current.startedAt !== applicationIdentity.startedAt ||
+      current.parentPid !== applicationIdentity.parentPid ||
+      current.processGroupId !== applicationIdentity.processGroupId ||
+      current.instanceToken !== applicationIdentity.instanceToken
+    ) {
+      throw new Error('The isolated application changed identity before shutdown')
+    }
+    return true
+  }
+  const captureCurrent = async () => {
+    if (!ownerIsAlive()) {
+      throw new Error('The isolated application exited before its shutdown capture')
+    }
+    const snapshot = capture(applicationIdentity)
+    validateOwnedProcessSnapshot(app, snapshot)
+    if (!ownerIsAlive())
+      throw new Error('The isolated application exited during its shutdown capture')
+    try {
+      await write(join(resultDir, 'shutdown-process-tree.json'), JSON.stringify(snapshot, null, 2))
+    } catch (error) {
+      reportError('[desktop-e2e] Shutdown snapshot diagnostic write failed:', error)
+    }
+    return snapshot
+  }
+  const captureShutdownSnapshot = async () => {
+    if (controlledQuitSnapshot && !ownerIsAlive()) return controlledQuitSnapshot
+    return captureCurrent()
+  }
+  captureShutdownSnapshot.prepareForQuit = async () => {
+    controlledQuitSnapshot = undefined
+    controlledQuitSnapshot = await captureCurrent()
+  }
+  captureShutdownSnapshot.ownerIsAlive = ownerIsAlive
+  return captureShutdownSnapshot
+}
+
+export async function prepareDesktopAppQuit(app) {
+  await app.captureShutdownSnapshot?.prepareForQuit?.()
 }
 
 async function runChecked(command, args, options = {}) {

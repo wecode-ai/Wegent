@@ -98,12 +98,10 @@ pub(super) fn extract_plugin_zip(
     }
 
     let mut entries = Vec::new();
+    let mut directories = Vec::new();
     let mut executable_modes = BTreeMap::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
-        if file.is_dir() {
-            continue;
-        }
         let Some(path) = file.enclosed_name().map(Path::to_path_buf) else {
             return Err(CapabilitySyncError::invalid_payload(format!(
                 "Unsafe path in plugin ZIP: {}",
@@ -111,6 +109,10 @@ pub(super) fn extract_plugin_zip(
             )));
         };
         if is_macos_metadata_path(&path) {
+            continue;
+        }
+        if file.is_dir() {
+            directories.push(path);
             continue;
         }
         let mut bytes = Vec::new();
@@ -129,7 +131,12 @@ pub(super) fn extract_plugin_zip(
     remove_existing_path(&temp_path)?;
     fs::create_dir_all(&temp_path)?;
     let extraction_result = (|| -> Result<(), CapabilitySyncError> {
-        for (path, bytes) in &entries {
+        let paths = directories
+            .iter()
+            .filter(|path| !executable_modes.contains_key(*path))
+            .map(|path| (path, None))
+            .chain(entries.iter().map(|(path, bytes)| (path, Some(bytes))));
+        for (path, bytes) in paths {
             if !manifest_prefix.as_os_str().is_empty() && !path.starts_with(&manifest_prefix) {
                 continue;
             }
@@ -138,6 +145,10 @@ pub(super) fn extract_plugin_zip(
                 continue;
             }
             let target = temp_path.join(relative);
+            let Some(bytes) = bytes else {
+                fs::create_dir_all(&target)?;
+                continue;
+            };
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -246,7 +257,7 @@ pub(super) fn normalized_plugin_manifests(
     Ok([codex, claude])
 }
 
-fn read_plugin_manifest(path: &Path) -> Result<Option<Value>, CapabilitySyncError> {
+pub(super) fn read_plugin_manifest(path: &Path) -> Result<Option<Value>, CapabilitySyncError> {
     if !path.is_file() {
         return Ok(None);
     }
@@ -867,6 +878,44 @@ pub(super) fn now_rfc3339_like() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extraction_preserves_empty_directories_within_selected_plugin_root() {
+        use std::io::Write;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let installed = temporary.path().join("installed");
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::FileOptions::default();
+        for directory in [
+            "package/skills/",
+            "package/assets/empty/",
+            "package/.codex-plugin/plugin.json/",
+            "package/.claude-plugin/plugin.json/",
+            "outside/",
+            "package/__MACOSX/empty/",
+        ] {
+            archive.add_directory(directory, options).unwrap();
+        }
+        archive
+            .start_file("package/.codex-plugin/plugin.json", options)
+            .unwrap();
+        archive.write_all(b"{\"name\":\"example\"}").unwrap();
+        archive
+            .start_file("package/.claude-plugin/plugin.json", options)
+            .unwrap();
+        archive.write_all(b"{\"name\":\"example\"}").unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+
+        extract_plugin_zip(&bytes, &installed).unwrap();
+
+        assert!(installed.join("skills").is_dir());
+        assert!(installed.join("assets/empty").is_dir());
+        assert!(installed.join(CODEX_PLUGIN_MANIFEST_PATH).is_file());
+        assert!(installed.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file());
+        assert!(!installed.join("outside").exists());
+        assert!(!installed.join("__MACOSX").exists());
+    }
 
     #[cfg(unix)]
     #[test]

@@ -410,11 +410,15 @@ export function handleConnectorOAuthRequest(
   }
 
   if (path === `${CONNECTOR_OAUTH_PREFIX}/_control` && method === 'POST') {
+    // Browser-driven OAuth steps can outlive a pooled control socket's idle timeout.
+    res.setHeader('Connection', 'close')
     control(res, body)
     return true
   }
 
   if (path === `${CONNECTOR_OAUTH_PREFIX}/_state` && method === 'GET') {
+    // State polling uses the same API client pool as provider controls.
+    res.setHeader('Connection', 'close')
     sendJson(res, 200, snapshot())
     return true
   }

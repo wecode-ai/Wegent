@@ -1,0 +1,32 @@
+[
+  {
+    "name": "uniformly-indented-inline-fields",
+    "content": "---\n  name: review\n  description: Review changes\n---\n",
+    "skill_name": "review",
+    "description": "Review changes"
+  },
+  {
+    "name": "comments-blanks-and-unknown-mapping-before-fields",
+    "content": "---\n# name: ignored comment at column zero\n\n  metadata:\n    name: internal-id\n    description: Internal description\n  name: review\n  description: Review changes\n---\n",
+    "skill_name": "review",
+    "description": "Review changes"
+  },
+  {
+    "name": "uniformly-indented-folded-description",
+    "content": "---\n# description: ignored comment\n  metadata:\n    name: internal-id\n  name: review\n  description: >-\n    First line\n    second line\n\n    Next paragraph\n---\n",
+    "skill_name": "review",
+    "description": "First line second line\nNext paragraph"
+  },
+  {
+    "name": "uniformly-indented-literal-with-nested-fields-after",
+    "content": "---\n  name: review\n  description: |\n    First line\n    second line\n  metadata:\n    name: internal-id\n    description: Internal description\n---\n",
+    "skill_name": "review",
+    "description": "First line\nsecond line"
+  },
+  {
+    "name": "unknown-root-mapping-does-not-promote-nested-fields",
+    "content": "---\n# name: ignored comment\n\n  metadata:\n    name: internal-id\n    description: Internal description\n---\n",
+    "skill_name": "example",
+    "description": ""
+  }
+]

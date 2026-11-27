@@ -8,15 +8,17 @@
 //! script produced.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{Instant, UNIX_EPOCH},
 };
 
 use serde_json::{json, Value};
 
 use wegent_execution_contracts::command::CommandResult;
+
+use super::capabilities::{scan_local_plugin_skills, PLUGIN_MANIFEST_PATHS};
 
 const CODEX_USER_PRIORITY: i64 = 0;
 const CODEX_SYSTEM_PRIORITY: i64 = 10;
@@ -196,45 +198,112 @@ fn scan_skill_dir(
 }
 
 fn scan_plugin_dir(root: &Path, source: &'static str) -> Vec<SkillEntry> {
-    if !root.is_dir() {
-        return Vec::new();
-    }
-
-    let mut skill_files = Vec::new();
-    collect_skill_md_files(root, &mut skill_files);
-    skill_files.sort_by(|left, right| {
-        left.to_string_lossy()
-            .to_lowercase()
-            .cmp(&right.to_string_lossy().to_lowercase())
-    });
-
-    let mut output = Vec::new();
-    for skill_md in skill_files {
-        let skill_dir = match skill_md.parent() {
-            Some(dir) => dir.to_path_buf(),
-            None => continue,
+    let root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        let Ok(current_dir) = env::current_dir() else {
+            return Vec::new();
         };
-        // Only skills that live directly under a `skills` directory are valid.
-        if skill_dir
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            != Some("skills")
-        {
+        current_dir.join(root)
+    };
+    // Resolve parent traversal at the configured anchor, keeping cache aliases below it.
+    let root = if root
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
+        let Ok(root) = fs::canonicalize(&root) else {
+            return Vec::new();
+        };
+        root
+    } else {
+        root
+    };
+    let plugin_roots = collect_plugin_roots(&root);
+    let manifest_roots: HashSet<_> = plugin_roots
+        .iter()
+        .filter(|(_, has_manifest)| *has_manifest)
+        .map(|(path, _)| path.clone())
+        .collect();
+    let mut skill_files = HashSet::new();
+    let mut output = Vec::new();
+    for (plugin_root, _) in plugin_roots {
+        let Ok(skills) = scan_local_plugin_skills(&plugin_root, &manifest_roots) else {
+            continue;
+        };
+        let (plugin_name, provider, version) = plugin_metadata(&root, &plugin_root);
+        for skill in skills {
+            let Some(relative) = skill["path"].as_str() else {
+                continue;
+            };
+            let directory = if relative == "." {
+                plugin_root.clone()
+            } else {
+                plugin_root.join(relative)
+            };
+            let owner = directory
+                .ancestors()
+                .find(|path| manifest_roots.contains(*path));
+            if owner.is_some_and(|owner| owner != plugin_root.as_path()) {
+                continue;
+            }
+            let skill_md = directory.join("SKILL.md");
+            if !skill_files.insert(skill_md.clone()) {
+                continue;
+            }
+            output.push(SkillEntry {
+                name: skill["name"].as_str().unwrap_or_default().to_owned(),
+                description: skill["description"].as_str().unwrap_or_default().to_owned(),
+                path: skill_md.to_string_lossy().into_owned(),
+                source,
+                scope: "user",
+                source_priority: plugin_source_priority(provider.as_deref()),
+                plugin_name: Some(plugin_name.clone()),
+                plugin_provider: provider.clone(),
+                plugin_version: version.clone(),
+                mtime: file_mtime(&skill_md),
+            });
+        }
+    }
+    output
+}
+
+fn collect_plugin_roots(root: &Path) -> Vec<(PathBuf, bool)> {
+    let mut pending = vec![(root.to_path_buf(), None, false)];
+    let mut ancestors = HashSet::new();
+    let mut output = Vec::new();
+    while let Some((directory, owner, leaving)) = pending.pop() {
+        if leaving {
+            ancestors.remove(&directory);
             continue;
         }
-
-        let (plugin_name, provider, version) = plugin_metadata(root, &skill_dir);
-        if let Some(mut entry) = skill_entry(
-            &skill_dir,
-            source,
-            "user",
-            plugin_source_priority(provider.as_deref()),
-            Some(plugin_name),
-        ) {
-            entry.plugin_provider = provider;
-            entry.plugin_version = version;
-            output.push(entry);
+        if !directory.is_dir() {
+            continue;
+        }
+        let has_manifest = PLUGIN_MANIFEST_PATHS
+            .iter()
+            .any(|relative| fs::symlink_metadata(directory.join(relative)).is_ok());
+        let is_plugin_root =
+            has_manifest || (owner != Some(true) && directory.join("skills").is_dir());
+        // Only configured collection anchors and plugin roots may be links.
+        if directory.is_symlink() && directory != root && (owner.is_some() || !is_plugin_root) {
+            continue;
+        }
+        let Ok(canonical) = fs::canonicalize(&directory) else {
+            continue;
+        };
+        if !ancestors.insert(canonical.clone()) {
+            continue;
+        }
+        let owner = if is_plugin_root {
+            output.push((directory.clone(), has_manifest));
+            Some(has_manifest)
+        } else {
+            owner
+        };
+        pending.push((canonical, None, true));
+        if let Some(mut children) = sorted_dir_entries(&directory) {
+            children.sort();
+            pending.extend(children.into_iter().rev().map(|path| (path, owner, false)));
         }
     }
     output
@@ -283,14 +352,7 @@ fn skill_entry(
     })
 }
 
-fn plugin_metadata(root: &Path, skill_dir: &Path) -> (String, Option<String>, Option<String>) {
-    // skill_dir is `<plugin_root>/skills/<skill>`, so the plugin root is two
-    // levels up.
-    let plugin_root = skill_dir
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| skill_dir.to_path_buf());
+fn plugin_metadata(root: &Path, plugin_root: &Path) -> (String, Option<String>, Option<String>) {
     let mut plugin_name = plugin_root
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -329,13 +391,18 @@ fn plugin_source_priority(provider: Option<&str>) -> i64 {
     }
 }
 
-fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
-    let mut metadata = HashMap::new();
+pub(super) fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
     let content = match fs::read(path) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-        Err(_) => return metadata,
+        Err(_) => return HashMap::new(),
     };
-    let lines = content.split('\n').collect::<Vec<_>>();
+    parse_frontmatter_content(&content)
+}
+
+/// Parse already-decoded content with the local skill frontmatter rules.
+pub(super) fn parse_frontmatter_content(content: &str) -> HashMap<String, String> {
+    let mut metadata = HashMap::new();
+    let lines = content.lines().collect::<Vec<_>>();
     if lines.first().map(|line| line.trim()) != Some("---") {
         return metadata;
     }
@@ -348,15 +415,28 @@ fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
         frontmatter.push(*line);
     }
 
+    let base_indent = frontmatter
+        .iter()
+        .filter(|line| {
+            let stripped = line.trim();
+            !stripped.is_empty() && !stripped.starts_with('#') && line.contains(':')
+        })
+        .map(|line| leading_spaces(line))
+        .min()
+        .unwrap_or(0);
     let mut index = 0;
     while index < frontmatter.len() {
         let line = frontmatter[index];
         let stripped = line.trim();
-        if stripped.is_empty() || stripped.starts_with('#') || !line.contains(':') {
+        let current_indent = leading_spaces(line);
+        if current_indent > base_indent
+            || stripped.is_empty()
+            || stripped.starts_with('#')
+            || !line.contains(':')
+        {
             index += 1;
             continue;
         }
-        let current_indent = leading_spaces(line);
         let (raw_key, raw_value) = split_once_colon(line);
         let key = raw_key.trim().to_owned();
         let raw_value = raw_value.trim().to_owned();
@@ -444,7 +524,17 @@ fn strip_quotes(value: &str) -> String {
         let first = chars[0];
         let last = chars[chars.len() - 1];
         if first == last && (first == '"' || first == '\'') {
-            return chars[1..chars.len() - 1].iter().collect();
+            if first == '"' {
+                if let Ok(decoded) = serde_json::from_str::<String>(stripped) {
+                    return decoded;
+                }
+            }
+            let unquoted: String = chars[1..chars.len() - 1].iter().collect();
+            return if first == '\'' {
+                unquoted.replace("''", "'")
+            } else {
+                unquoted
+            };
         }
     }
     stripped.to_owned()
@@ -484,20 +574,6 @@ fn sorted_dir_entries(root: &Path) -> Option<Vec<PathBuf>> {
     )
 }
 
-fn collect_skill_md_files(root: &Path, output: &mut Vec<PathBuf>) {
-    let Ok(read_dir) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in read_dir.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_skill_md_files(&path, output);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
-            output.push(path);
-        }
-    }
-}
-
 fn entry_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -529,58 +605,5 @@ fn elapsed_seconds(started_at: Instant) -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_frontmatter_handles_literal_block_scalar() {
-        let dir = temp_dir("frontmatter-literal");
-        let path = dir.join("SKILL.md");
-        fs::write(
-            &path,
-            "---\ndescription: |\n  line one\n  line two\nname: after\n---\n",
-        )
-        .unwrap();
-
-        let metadata = parse_frontmatter(&path);
-        assert_eq!(
-            metadata.get("description").map(String::as_str),
-            Some("line one\nline two")
-        );
-        assert_eq!(metadata.get("name").map(String::as_str), Some("after"));
-        fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn parse_frontmatter_folds_folded_block_scalar() {
-        let dir = temp_dir("frontmatter-folded");
-        let path = dir.join("SKILL.md");
-        fs::write(
-            &path,
-            "---\ndescription: >\n  first paragraph\n  still first\n\n  second paragraph\n---\n",
-        )
-        .unwrap();
-
-        let metadata = parse_frontmatter(&path);
-        assert_eq!(
-            metadata.get("description").map(String::as_str),
-            Some("first paragraph still first\nsecond paragraph")
-        );
-        fs::remove_dir_all(dir).ok();
-    }
-
-    fn temp_dir(label: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|value| value.as_nanos())
-            .unwrap_or_default();
-        let path = std::env::temp_dir().join(format!(
-            "wegent-local-skills-{}-{}-{}",
-            std::process::id(),
-            label,
-            nanos
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-}
+#[path = "local_skills_tests.rs"]
+mod tests;

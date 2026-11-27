@@ -22,13 +22,13 @@ from app.schemas.installed_plugin import (
     PluginLocalAuthToolDefinition,
     PluginMCPComponent,
     PluginPathComponent,
-    PluginSkillComponent,
     PluginUploadInfo,
     WorkbenchDesktopSidecar,
     WorkbenchFrontendModule,
     WorkbenchPluginComponent,
 )
 from app.schemas.plugin_account_auth import PluginAccountAuthDefinition
+from app.services.plugin_skill_discovery import parse_plugin_skills
 
 MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_INLINE_INTERFACE_ASSET_BYTES = 512 * 1024
@@ -395,7 +395,7 @@ class PluginPackageParser:
     ) -> InstalledPluginComponents:
         names = [name for name in archive.namelist() if not name.endswith("/")]
         return InstalledPluginComponents(
-            skills=self._parse_skills(archive, root, names),
+            skills=parse_plugin_skills(archive, root, manifest),
             commands=self._parse_markdown_files(root, names, "commands"),
             agents=self._parse_markdown_files(root, names, "agents"),
             hooks=self._parse_json_file_components(root, names, "hooks"),
@@ -694,31 +694,6 @@ class PluginPackageParser:
             return prompts[:3] or None
         return None
 
-    def _parse_skills(
-        self, archive: zipfile.ZipFile, root: str, names: Iterable[str]
-    ) -> list[PluginSkillComponent]:
-        skills: list[PluginSkillComponent] = []
-        prefix = f"{root}skills/"
-        for name in sorted(names):
-            if not name.startswith(prefix) or not name.endswith("/SKILL.md"):
-                continue
-            metadata = self._read_skill_frontmatter(archive, name)
-            relative_parent = self._relative_path(root, str(PurePosixPath(name).parent))
-            skill_name = metadata.get("name") or PurePosixPath(name).parent.name
-            skills.append(
-                PluginSkillComponent(
-                    name=skill_name,
-                    description=metadata.get("description", ""),
-                    path=relative_parent,
-                )
-            )
-        return skills
-
-    def _relative_path(self, root: str, path: str) -> str:
-        if not root:
-            return path
-        return str(PurePosixPath(path).relative_to(root.rstrip("/")))
-
     def _parse_markdown_files(
         self, root: str, names: Iterable[str], folder: str
     ) -> list[PluginPathComponent]:
@@ -980,28 +955,6 @@ class PluginPackageParser:
             if exc.status_code == 400 and str(exc.detail).startswith("Missing"):
                 return None
             raise
-
-    def _read_skill_frontmatter(
-        self, archive: zipfile.ZipFile, path: str
-    ) -> dict[str, str]:
-        try:
-            with archive.open(path) as file:
-                lines = file.read().decode("utf-8").splitlines()
-        except Exception:
-            return {}
-        if not lines or lines[0].strip() != "---":
-            return {}
-        metadata: dict[str, str] = {}
-        for line in lines[1:]:
-            if line.strip() == "---":
-                break
-            key, separator, value = line.partition(":")
-            if not separator:
-                continue
-            normalized_key = key.strip()
-            if normalized_key in {"name", "description"}:
-                metadata[normalized_key] = value.strip().strip("\"'")
-        return metadata
 
 
 plugin_package_parser = PluginPackageParser()

@@ -11,8 +11,11 @@ import {
 import {
   activateLinuxMainWindow,
   clickLinuxPointer,
+  inspectLinuxPointer,
   moveLinuxWindowPointer,
   moveWindowsWindowPointer,
+  pressLinuxPointer,
+  releaseLinuxPointer,
 } from '../modules/native-download-dialogs.mjs'
 import { withProjectRenderer } from '../modules/project-create-test-utils.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -176,10 +179,11 @@ async function verifySearchOverlay(
     })()`)
   // Chromium can still route pointer input to a guest after the host trigger is visible.
   // Observe trusted motion on the search trigger before sending the only click.
+  let pointerSnapshot
   try {
     await read(`(() => {
       const abort = new AbortController()
-      const observation = { abort, event: null, clicks: {} }
+      const observation = { abort, event: null, clicks: {}, trigger: document.querySelector('[data-testid="runtime-search-button"]') }
       window.__weworkSearchTriggerMotion = observation
       document.addEventListener('pointermove', event => {
         observation.event = {
@@ -188,12 +192,16 @@ async function verifySearchOverlay(
           onTrigger: event.target instanceof Element && Boolean(event.target.closest('[data-testid="runtime-search-button"]'))
         }
       }, { capture: true, signal: abort.signal })
-      for (const type of ['pointerdown', 'pointerup', 'click']) {
-        document.addEventListener(type, event => {
+      for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'click']) {
+        window.addEventListener(type, event => {
           const target = event.target instanceof Element ? event.target : null
           observation.clicks[type] = {
             x: event.clientX, y: event.clientY, trusted: event.isTrusted,
-            target: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? target?.localName
+            target: target?.closest('[data-testid]')?.getAttribute('data-testid') ?? target?.localName,
+            count: (observation.clicks[type]?.count ?? 0) + 1,
+            buttons: event.buttons, button: event.button, prevented: event.defaultPrevented,
+            triggerConnected: observation.trigger?.isConnected,
+            sameTrigger: target?.closest('[data-testid="runtime-search-button"]') === observation.trigger
           }
         }, { capture: true, signal: abort.signal })
       }
@@ -225,20 +233,35 @@ async function verifySearchOverlay(
       5_000
     )
     console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
-    // The X11 click helper queues the release before the renderer acknowledges
-    // the press. Wait for the trusted host press before sending the release.
-    await pressAndRelease(ready.point, () =>
-      waitForValue(
-        () => read('window.__weworkSearchTriggerMotion.clicks.pointerdown ?? null'),
-        press =>
-          press?.trusted &&
-          press.target === 'runtime-search-button' &&
-          press.x === ready.point.x &&
-          press.y === ready.point.y,
-        'Native pointer press must reach the search trigger before release',
-        5_000
-      )
-    )
+    // Wait for the trusted host press before sending the release; keep the
+    // original native acknowledgement deadline and release-error diagnostics.
+    if (linuxWindow) {
+      let pressError
+      try {
+        await pressLinuxPointer()
+        await waitForValue(
+          () => read('window.__weworkSearchTriggerMotion.clicks.pointerdown ?? null'),
+          event =>
+            event?.trusted &&
+            event.target === 'runtime-search-button' &&
+            event.x === ready.point.x &&
+            event.y === ready.point.y,
+          'The native press must reach the search trigger before release',
+          1_000
+        )
+      } catch (error) {
+        pressError = error
+        throw error
+      } finally {
+        await releaseLinuxPointer().catch(error => {
+          if (!pressError) throw error
+          console.info('[search-trigger-native-input]', { releaseError: String(error) })
+        })
+      }
+      pointerSnapshot = inspectLinuxPointer(linuxWindow).catch(error => ({ error: String(error) }))
+    } else {
+      await pressAndRelease(ready.point)
+    }
     await waitForValue(
       () =>
         read(`(() => {
@@ -253,6 +276,31 @@ async function verifySearchOverlay(
       5_000
     )
   } finally {
+    try {
+      const dom = await read(`(() => {
+        const observation = window.__weworkSearchTriggerMotion
+        const button = document.querySelector('[data-testid="runtime-search-button"]')
+        const input = document.querySelector('[data-testid="workbench-search-input"]')
+        const point = observation?.event
+        const hit = point && document.elementFromPoint(point.x, point.y)
+        const style = button && getComputedStyle(button)
+        return { event: observation?.event, clicks: observation?.clicks,
+          focused: document.hasFocus(), active: document.activeElement?.getAttribute('data-testid') || document.activeElement?.localName,
+          searchPresent: Boolean(input), searchFocused: Boolean(input && input === document.activeElement),
+          triggerChanged: Boolean(observation && button !== observation.trigger), triggerConnected: observation?.trigger?.isConnected,
+          hit: hit && (hit.dataset.testid || hit.localName), hitOnTrigger: Boolean(hit?.closest('[data-testid="runtime-search-button"]')),
+          trigger: button && { disabled: button.disabled, appRegion: style.webkitAppRegion,
+            pointerEvents: style.pointerEvents, bounds: button.getBoundingClientRect().toJSON() } }
+      })()`)
+      const snapshot = { dom, native: (await pointerSnapshot) ?? null }
+      await writeFile(
+        join(resultDir, 'search-trigger-native-input.json'),
+        JSON.stringify(snapshot, null, 2)
+      )
+      console.info('[search-trigger-native-input]', JSON.stringify(snapshot))
+    } catch (error) {
+      console.info('[search-trigger-native-input]', { captureError: String(error) })
+    }
     await read(`(() => {
       window.__weworkSearchTriggerMotion?.abort.abort()
       delete window.__weworkSearchTriggerMotion
