@@ -21,6 +21,7 @@ import { createGitConnectionsModel } from './standInGitConnectionsModel'
 import { hasConnectionDraft, rebaseConnectionDraft } from './standInConnectionSettingsModel'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
+import { createStandInInstanceSource } from './standInInstanceSource'
 import { effectiveProjectSource, updateProjectSource, type ProjectSource } from './standInProjects'
 import { parseStandInEntry } from './standInEntry'
 import { newStandInRole } from '@/api/personalStandIn'
@@ -590,8 +591,10 @@ it('shares cloud primary execution device across clients and falls back cleanly 
   })
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe(foreignDesktopId))
   freshAccount = makeAccount('cloud-2', 'rev-3')
+  getAccount.mockClear()
   act(() => result.current.reload())
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('cloud-2'))
+  expect(getAccount).toHaveBeenCalledTimes(1)
 
   freshAccount = makeAccount(undefined, 'rev-4')
   act(() => result.current.reload())
@@ -694,6 +697,174 @@ it('retires a prepared account activation when the chosen device disconnects bef
     1,
     expect.objectContaining({ deviceId: 'cloud-1' })
   )
+})
+
+it('does not retire a new account preparation using a stale binding read', async () => {
+  const configured = makeAccount('cloud-1')
+  let latest = configured
+  let saved: StandInInstanceBinding = { version: 0, status: 'unbound', target: null }
+  const holdRead = Promise.withResolvers<void>()
+  const staleReadStarted = Promise.withResolvers<void>()
+  const confirm = Promise.withResolvers<PersonalAssistantAccount>()
+  const confirmationStarted = Promise.withResolvers<void>()
+  let holdNextGet = false
+  let confirmNextAccount = false
+  const binding = vi.fn<StandInExecutorApi['binding']>(
+    async (_device, operation = 'get', version, target) => {
+      if (operation === 'get' && holdNextGet) {
+        holdNextGet = false
+        const captured = saved
+        staleReadStarted.resolve()
+        await holdRead.promise
+        return captured
+      }
+      if (operation === 'prepareBind') {
+        saved = { version: 1, status: 'activating', target: target! }
+        confirmNextAccount = true
+      } else if (operation === 'cancelActivation') {
+        expect(version).toBe(saved.version)
+        expect(target).toEqual(saved.target)
+        saved = { version: 2, status: 'unbound', target: null }
+      }
+      return saved
+    }
+  )
+  const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>()
+  const services = {
+    standInApi: {
+      binding,
+      lifecycle,
+      personalGet: async (_owner: number, deviceId: string) => ({
+        userId: 1,
+        executionDeviceId: deviceId,
+        version: 1,
+        roles: [],
+      }),
+    },
+    personalAssistantAccountApi: {
+      get: async () => {
+        if (confirmNextAccount) {
+          confirmNextAccount = false
+          confirmationStarted.resolve()
+          return confirm.promise
+        }
+        return latest
+      },
+    },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const source = createStandInInstanceSource({
+    services,
+    api: services.standInApi,
+    userId: 1,
+    backendUrl: account.backendUrl,
+    accountMode: true,
+  })
+  const unsubscribe = source.subscribe(
+    {
+      account: configured,
+      newAccount: true,
+      active: true,
+      connected: true,
+      devices: [cloudDevice('cloud-1'), cloudDevice('cloud-2')],
+    },
+    () => {}
+  )
+  let setup: Promise<boolean> | undefined
+  try {
+    await waitFor(() => expect(source.getSnapshot().setupTarget?.deviceId).toBe('cloud-1'))
+    holdNextGet = true
+    source.reload()
+    await staleReadStarted.promise
+    setup = source.setup()
+    await confirmationStarted.promise
+    // The binding was prepared after the read captured an unbound row.
+    await act(async () => holdRead.resolve())
+    latest = makeAccount('cloud-2', 'rev-2')
+    confirm.resolve(latest)
+    await setup
+    expect(saved.status).toBe('unbound')
+    expect(binding).toHaveBeenCalledWith(
+      'local',
+      'cancelActivation',
+      1,
+      expect.objectContaining({ deviceId: 'cloud-1' })
+    )
+    expect(lifecycle).not.toHaveBeenCalled()
+  } finally {
+    holdRead.resolve()
+    confirm.resolve(latest)
+    await setup
+    unsubscribe()
+  }
+})
+
+it('does not activate a local preparation after the original subscriber leaves', async () => {
+  let saved: StandInInstanceBinding = { version: 0, status: 'unbound', target: null }
+  const preparationStarted = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const binding = vi.fn<StandInExecutorApi['binding']>(
+    async (_device, operation = 'get', version, target) => {
+      if (operation === 'prepareBind') {
+        saved = { version: 1, status: 'activating', target: target! }
+        preparationStarted.resolve()
+        await release.promise
+      } else if (operation === 'cancelActivation') {
+        expect(version).toBe(1)
+        expect(target).toEqual(saved.target)
+        saved = { version: 2, status: 'unbound', target: null }
+      } else if (operation === 'completeActivation') {
+        saved = { version: 2, status: 'active', target: saved.target }
+      }
+      return saved
+    }
+  )
+  const profile = { userId: 1, executionDeviceId: 'local', version: 1, roles: [] }
+  const lifecycle = vi.fn<StandInExecutorApi['lifecycle']>().mockResolvedValue(profile)
+  const services = {
+    standInApi: { binding, lifecycle, personalGet: async () => profile },
+    getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'local' }),
+  } as unknown as WorkbenchServices
+  const source = createStandInInstanceSource({
+    services,
+    api: services.standInApi,
+    userId: 1,
+    backendUrl: account.backendUrl,
+  })
+  const owner = { active: true, connected: true, devices: [] }
+  const unsubscribe = source.subscribe(owner, () => {})
+  let nextUnsubscribe: (() => void) | undefined
+  let setup: Promise<boolean> | undefined
+  try {
+    await waitFor(() => expect(source.getSnapshot().setupTarget?.deviceId).toBe('local'))
+    setup = source.setup()
+    await preparationStarted.promise
+    unsubscribe()
+    // Wait for ownership teardown before subscribing again, while the committed
+    // prepareBind response is still blocked.
+    await Promise.resolve()
+    await act(async () => {
+      nextUnsubscribe = source.subscribe(owner, () => {})
+    })
+    expect(lifecycle).not.toHaveBeenCalled()
+    release.resolve()
+    await setup
+    await waitFor(() =>
+      expect(source.getSnapshot().binding).toMatchObject({ status: 'unbound', version: 2 })
+    )
+    expect(saved.status).toBe('unbound')
+    expect(binding).toHaveBeenCalledWith(
+      'local',
+      'cancelActivation',
+      1,
+      expect.objectContaining({ deviceId: 'local' })
+    )
+    expect(lifecycle).not.toHaveBeenCalled()
+  } finally {
+    release.resolve()
+    await setup
+    nextUnsubscribe?.()
+  }
 })
 
 it('switches primary execution device directly without stopping and allows switching away while an offline device stops', async () => {

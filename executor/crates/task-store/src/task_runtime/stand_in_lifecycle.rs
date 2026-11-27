@@ -1,10 +1,34 @@
 //! Instance binding and whole-profile lifecycle transitions are durable and versioned.
 use super::personal_stand_in::{
-    read_personal, stamp_project_enabled, stamp_stand_in_connections, write_personal,
+    personal_snapshot, read_personal, stamp_project_enabled, stamp_stand_in_connections,
+    write_personal,
 };
 use super::*;
 
 const BINDING_KEY: &str = "stand-in-instance-binding";
+
+fn read_binding(
+    connection: &Connection,
+    instance_device: Option<&str>,
+) -> Result<(String, Option<LoopItem>), TaskRuntimeError> {
+    let key = instance_device
+        .map(|device| format!("{BINDING_KEY}:{device}"))
+        .unwrap_or_else(|| BINDING_KEY.to_owned());
+    let mut saved = get_item_from(connection, &key, "stand_in_binding")?;
+    if let (None, Some(device)) = (&saved, instance_device) {
+        // Development worktrees share this database but have separate desktop IDs.
+        // A legacy local binding can only belong to the device it was bound to.
+        saved = get_item_from(connection, BINDING_KEY, "stand_in_binding")?
+            .filter(|item| item.metadata["target"]["deviceId"].as_str() == Some(device));
+    }
+    Ok((key, saved))
+}
+
+fn legacy_stopping_matches(binding: &Value, user: i64, device: &str) -> bool {
+    binding["status"] == "stopping"
+        && binding["target"]["userId"].as_i64() == Some(user)
+        && binding["target"]["deviceId"].as_str() == Some(device)
+}
 
 /// A stopped target accepts only portable, disabled imports without changing its saved grants.
 pub(super) fn preserve_stopped_import(
@@ -80,21 +104,12 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let key = instance_device.map(|device| format!("{BINDING_KEY}:{device}"));
-        let key = key.as_deref().unwrap_or(BINDING_KEY);
-        let mut saved = get_item_from(&transaction, key, "stand_in_binding")?;
-        if let (None, Some(device)) = (&saved, instance_device) {
-            // Development worktrees share this database but have separate desktop IDs.
-            // A legacy local binding can only belong to the device it was bound to.
-            if let Some(legacy) = get_item_from(&transaction, BINDING_KEY, "stand_in_binding")?
-                .filter(|item| item.metadata["target"]["deviceId"].as_str() == Some(device))
-            {
-                transaction.execute(
-                    "UPDATE loop_items SET id=?1 WHERE id=?2 AND resource_type='stand_in_binding'",
-                    params![key, BINDING_KEY],
-                )?;
-                saved = Some(legacy);
-            }
+        let (key, saved) = read_binding(&transaction, instance_device)?;
+        if saved.as_ref().is_some_and(|item| item.id != key) {
+            transaction.execute(
+                "UPDATE loop_items SET id=?1 WHERE id=?2 AND resource_type='stand_in_binding'",
+                params![key, BINDING_KEY],
+            )?;
         }
         let mut binding = saved
             .map(|item| item.metadata)
@@ -124,9 +139,7 @@ impl LocalTaskStore {
             let generation = binding["stoppingTargetGenerations"][&stop_key]
                 .as_i64()
                 .unwrap_or(0);
-            let legacy_stopping = binding["status"] == "stopping"
-                && binding["target"]["userId"].as_i64() == Some(user_id)
-                && binding["target"]["deviceId"].as_str() == Some(device_id);
+            let legacy_stopping = legacy_stopping_matches(&binding, user_id, device_id);
             let pending =
                 stopping.iter().any(|item| item.as_str() == Some(&stop_key)) || legacy_stopping;
             if matches!(operation, "markStopping" | "markStoppingWithGeneration") {
@@ -255,7 +268,7 @@ impl LocalTaskStore {
         device: &str,
         operation: &str,
     ) -> Result<Value, TaskRuntimeError> {
-        self.transition_personal_stand_in_with_version(user, device, operation, None)
+        self.transition_personal_stand_in_with_version(user, device, operation, None, None)
     }
 
     pub fn transition_personal_stand_in_with_version(
@@ -264,13 +277,31 @@ impl LocalTaskStore {
         device: &str,
         operation: &str,
         expected_version: Option<i64>,
+        instance_device: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
-        self.personal_stand_in(user, device)?;
         let mut guard = self.connection()?;
         let transaction = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous = read_personal(&transaction, user, device)?;
+        let (previous, needs_persistence) = personal_snapshot(&transaction, user, device)?;
         if expected_version.is_some_and(|version| previous["version"] != version) {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        if operation == "start" && expected_version.is_some() {
+            let (_, saved) = read_binding(&transaction, instance_device)?;
+            if let Some(item) = saved {
+                let binding = item.metadata;
+                let stop_key = format!("{user}:{device}");
+                if legacy_stopping_matches(&binding, user, device)
+                    || binding["stoppingTargets"]
+                        .as_array()
+                        .is_some_and(|targets| {
+                            targets
+                                .iter()
+                                .any(|target| target.as_str() == Some(&stop_key))
+                        })
+                {
+                    return Err(TaskRuntimeError::VersionConflict);
+                }
+            }
         }
         let mut settings = previous.clone();
         match operation {
@@ -350,6 +381,8 @@ impl LocalTaskStore {
                 &previous,
                 &settings,
             )?;
+        } else if needs_persistence {
+            write_personal(&transaction, &settings)?;
         }
         transaction.commit()?;
         Ok(settings)
@@ -653,6 +686,150 @@ mod tests {
                 .unwrap(),
             new
         );
+    }
+
+    #[test]
+    fn conditional_lifecycle_normalizes_only_after_version_matches() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        for (user, operation, version) in [(7, "stop", 8), (8, "start", 7)] {
+            let legacy = json!({
+                "userId":user, "executionDeviceId":"old-alias", "version":7,
+                "roles":[], "primary":{"enabled":true,"prompt":"Keep my prompt","preferences":""},
+                "processing":{"mode":"silent"}
+            });
+            write_personal(&store.connection().unwrap(), &legacy).unwrap();
+            let read_saved = || {
+                get_item_from(
+                    &store.connection().unwrap(),
+                    &crate::task_runtime::personal_stand_in::personal_key(user),
+                    "personal_stand_in",
+                )
+                .unwrap()
+                .unwrap()
+                .metadata
+            };
+            assert!(matches!(
+                store.transition_personal_stand_in_with_version(
+                    user,
+                    "mac",
+                    operation,
+                    Some(6),
+                    None
+                ),
+                Err(TaskRuntimeError::VersionConflict)
+            ));
+            assert_eq!(read_saved(), legacy);
+            let updated = store
+                .transition_personal_stand_in_with_version(user, "mac", operation, Some(7), None)
+                .unwrap();
+            assert_eq!(read_saved(), updated);
+            assert_eq!(updated["version"], version);
+            assert_eq!(updated["executionDeviceId"], "mac");
+            assert!(updated.get("processing").is_none());
+            assert_eq!(updated["primary"]["prompt"], "Keep my prompt");
+            assert_eq!(updated["primary"]["enabled"], operation == "start");
+        }
+    }
+
+    #[test]
+    fn conditional_start_respects_pending_stop_marker_in_binding_scope() {
+        for instance_device in [None, Some("mac")] {
+            let root = tempfile::tempdir().unwrap();
+            let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+            store
+                .transition_personal_stand_in(7, "mac", "stop")
+                .unwrap();
+            let stopped = store
+                .transition_personal_stand_in(7, "mac", "stopped")
+                .unwrap();
+            let version = stopped["version"].as_i64();
+            let target = json!({"userId":7,"deviceId":"mac"});
+            let marked = store
+                .stand_in_binding(
+                    instance_device,
+                    "markStoppingWithGeneration",
+                    -1,
+                    target.clone(),
+                )
+                .unwrap();
+            assert!(matches!(
+                store.transition_personal_stand_in_with_version(
+                    7,
+                    "mac",
+                    "start",
+                    version,
+                    instance_device
+                ),
+                Err(TaskRuntimeError::VersionConflict)
+            ));
+            assert_eq!(store.read_personal_stand_in(7, "mac").unwrap(), stopped);
+            let generation = marked["stoppingTargetGenerations"]["7:mac"]
+                .as_i64()
+                .unwrap();
+            store
+                .stand_in_binding(
+                    instance_device,
+                    "clearStoppingIfGeneration",
+                    generation,
+                    target.clone(),
+                )
+                .unwrap();
+            for unrelated in [
+                json!({"userId":8,"deviceId":"mac"}),
+                json!({"userId":7,"deviceId":"cloud"}),
+            ] {
+                store
+                    .stand_in_binding(instance_device, "markStoppingWithGeneration", -1, unrelated)
+                    .unwrap();
+            }
+            let unrelated_scope = if instance_device.is_some() {
+                None
+            } else {
+                Some("other-worktree")
+            };
+            store
+                .stand_in_binding(unrelated_scope, "markStoppingWithGeneration", -1, target)
+                .unwrap();
+            let resumed = store
+                .transition_personal_stand_in_with_version(
+                    7,
+                    "mac",
+                    "start",
+                    version,
+                    instance_device,
+                )
+                .unwrap();
+            assert!(resumed["lifecycle"].is_null());
+            assert_eq!(resumed["primary"]["enabled"], true);
+        }
+    }
+
+    #[test]
+    fn conditional_start_respects_matching_legacy_stop_without_migrating_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let target = json!({"userId":7,"deviceId":"mac"});
+        store.stand_in_binding(None, "bind", 0, target).unwrap();
+        let stopping = store
+            .stand_in_binding(None, "beginStop", 1, Value::Null)
+            .unwrap();
+        let settings = store.read_personal_stand_in(7, "mac").unwrap();
+        assert!(matches!(
+            store.transition_personal_stand_in_with_version(
+                7,
+                "mac",
+                "start",
+                settings["version"].as_i64(),
+                Some("mac")
+            ),
+            Err(TaskRuntimeError::VersionConflict)
+        ));
+        assert_eq!(
+            store.stand_in_binding(None, "get", 0, Value::Null).unwrap(),
+            stopping
+        );
+        assert_eq!(store.read_personal_stand_in(7, "mac").unwrap(), settings);
     }
 
     #[test]

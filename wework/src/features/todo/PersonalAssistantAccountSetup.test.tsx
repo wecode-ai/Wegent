@@ -407,6 +407,53 @@ test.each([
   }
 )
 
+test('a catalog refresh during initialization adopts the committed remote account', async () => {
+  const created: PersonalAssistantAccount = {
+    ...account,
+    definitions: [
+      {
+        roleId: '@primary',
+        team: makeTeam('Default'),
+        bot: {
+          metadata: account.defaultTeamRef,
+          spec: { execution_policy: { mode: 'fixed', environment_id: peer.device_id } },
+        },
+        ghost: { spec: { systemPrompt: '' } },
+      },
+    ],
+  }
+  const latest = { ...created, revision: 'after-catalog-refresh' }
+  let resolveInitialization!: (value: PersonalAssistantAccount) => void
+  const initialization = new Promise<PersonalAssistantAccount>(resolve => {
+    resolveInitialization = resolve
+  })
+  const { get, initialize, changeDeviceCatalog, readAccount } = setup(null, blank, undefined, {
+    initialEntry: peerEntry,
+    devices: [peer],
+    deviceCatalogStatus: 'available',
+    personalGet: async (userId, deviceId) => ({ ...blank, userId, executionDeviceId: deviceId }),
+  })
+  initialize.mockImplementationOnce(() => initialization)
+  try {
+    await waitFor(() =>
+      expect(initialize).toHaveBeenCalledWith(expect.any(String), undefined, peer.device_id)
+    )
+    // The write committed, but its response is still delayed when the catalog invalidates the load.
+    get.mockResolvedValue(latest)
+    changeDeviceCatalog([], 'syncing')
+    expect(await screen.findByText('primary')).toBeVisible()
+    expect(readAccount()).toEqual(latest)
+    await act(async () => {
+      resolveInitialization(created)
+      await initialization
+    })
+    expect(readAccount()).toEqual(latest)
+    expect(initialize).toHaveBeenCalledTimes(1)
+  } finally {
+    resolveInitialization(created)
+  }
+})
+
 test.each(['missing', 'denied'])(
   'an explicit remote link with a %s device cannot initialize on a different target',
   async reason => {

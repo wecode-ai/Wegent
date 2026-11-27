@@ -38,7 +38,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await openStandInSettings(control)
       await wait(`${panel} header h2`, { text: '设置', visible: true })
       await wait(testId('stand-in-primary-execution-toggle'), { text: '运行环境' })
-      await wait(testId('stand-in-im-channels-toggle'))
+      assert.equal(
+        await control.command('getElementCount', testId('stand-in-im-channels-toggle')),
+        '0'
+      )
       await wait(testId('stand-in-memory-open'))
       await click('stand-in-primary-profile-close')
       await wait(panel, { visible: false })
@@ -53,7 +56,10 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await wait(testId('stand-in-connections-open'), { text: '连接' })
       await wait(testId('stand-in-advanced-open'), { text: '运行环境' })
       await wait(testId('stand-in-role-device'))
-      await wait(testId('stand-in-im-channels-toggle'))
+      assert.equal(
+        await control.command('getElementCount', testId('stand-in-im-channels-toggle')),
+        '0'
+      )
       await wait(testId('stand-in-memory-open'))
       await wait(`${panel} footer ${testId('stand-in-role-delete')}`, { visible: true })
       assert.equal(await control.command('getElementCount', `${panel} header button`), '2')

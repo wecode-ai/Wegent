@@ -56,7 +56,11 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function setup(firstAccount: () => Promise<PersonalAssistantAccount>, devices: DeviceInfo[] = []) {
+function setup(
+  firstAccount: () => Promise<PersonalAssistantAccount>,
+  devices: DeviceInfo[] = [],
+  includeProposals = false
+) {
   const get = vi.fn<() => Promise<PersonalAssistantAccount>>().mockImplementationOnce(firstAccount)
   const localBinding: StandInInstanceBinding = {
     version: 1,
@@ -72,10 +76,11 @@ function setup(firstAccount: () => Promise<PersonalAssistantAccount>, devices: D
       roles: [],
     })
   )
+  const proposal = vi.fn<() => Promise<null>>().mockResolvedValue(null)
   const inbox = vi.fn(async () => ({ items: [], sourceErrors: [] }))
   const services = {
     personalAssistantAccountApi: { get },
-    standInApi: { binding, personalGet, inbox },
+    standInApi: { binding, personalGet, proposal, inbox },
     getLocalRuntimeSidebarIdentity: async () => ({
       deviceId: localDeviceId,
       runtimeInstanceId: 'runtime',
@@ -87,12 +92,13 @@ function setup(firstAccount: () => Promise<PersonalAssistantAccount>, devices: D
     state: { user: { id: userId }, devices: nextDevices },
   })
   mocks.workbench = workbench(devices)
-  const hook = renderHook(() => useAssistantSourceState(true, false))
+  const hook = renderHook(() => useAssistantSourceState(true, includeProposals))
   return {
     ...hook,
     get,
     binding,
     personalGet,
+    proposal,
     changeDevices(nextDevices: DeviceInfo[]) {
       mocks.workbench = workbench(nextDevices)
       hook.rerender()
@@ -156,26 +162,54 @@ test('catalog updates keep the verified inbox visible until a new source is reso
   expect(result.current.deviceId).toBe(third.device_id)
 })
 
-test('settings changes on another device for this account re-resolve the primary source', async () => {
+test('settings changes on another device re-resolve the primary without redundant proposal reads', async () => {
   const first = cloudDevice('cloud-1')
   const second = cloudDevice('cloud-2')
-  const { result, get, personalGet } = setup(
+  const { result, get, personalGet, proposal } = setup(
     () => Promise.resolve(account(first.device_id)),
-    [first, second]
+    [first, second],
+    true
   )
-  await waitFor(() => expect(result.current.inboxReady).toBe(true))
-  const changed = { userId, executionDeviceId: second.device_id, version: 1, roles: [] }
-  act(() => publishPersonalStandIn({ ...changed, userId: userId + 1 }))
-  expect(get).toHaveBeenCalledTimes(1)
+  // Hold proposal completion so a periodic refresh cannot affect the event assertions.
+  const proposalRead = deferred<null>()
+  proposal.mockReturnValue(proposalRead.promise)
+  try {
+    await waitFor(() => expect(result.current.inboxReady).toBe(true))
+    expect(proposal).toHaveBeenCalledTimes(1)
+    const changed = { userId, executionDeviceId: second.device_id, version: 1, roles: [] }
+    act(() => publishPersonalStandIn({ ...changed, userId: userId + 1 }))
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(proposal).toHaveBeenCalledTimes(1)
 
-  get.mockResolvedValueOnce(account(second.device_id))
-  act(() => publishPersonalStandIn(changed))
-  await waitFor(() => {
-    expect(result.current.deviceId).toBe(second.device_id)
-    expect(result.current.inboxReady).toBe(true)
-  })
-  expect(personalGet.mock.calls).toEqual([
-    [userId, first.device_id],
-    [userId, second.device_id],
-  ])
+    get.mockResolvedValueOnce(account(first.device_id))
+    await act(async () => publishPersonalStandIn(changed))
+    expect(personalGet).toHaveBeenCalledTimes(2)
+    expect(proposal).toHaveBeenCalledTimes(1)
+
+    get.mockResolvedValueOnce(account(second.device_id))
+    await act(async () => publishPersonalStandIn(changed))
+    await waitFor(() => {
+      expect(result.current.deviceId).toBe(second.device_id)
+      expect(result.current.inboxReady).toBe(true)
+    })
+    expect(personalGet.mock.calls).toEqual([
+      [userId, first.device_id],
+      [userId, first.device_id],
+      [userId, second.device_id],
+    ])
+    expect(proposal.mock.calls).toEqual([
+      [userId, first.device_id, undefined],
+      [userId, second.device_id, undefined],
+    ])
+
+    get.mockResolvedValueOnce(account(second.device_id))
+    await act(async () => publishPersonalStandIn(changed))
+    expect(proposal).toHaveBeenCalledTimes(3)
+
+    get.mockResolvedValueOnce(account(second.device_id))
+    await act(async () => result.current.refresh())
+    expect(proposal).toHaveBeenCalledTimes(4)
+  } finally {
+    await act(async () => proposalRead.resolve(null))
+  }
 })

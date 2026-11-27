@@ -885,9 +885,7 @@ async fn reply_to_work(
             .ok_or("Source connection was removed; reply was not sent")?;
     if !email && crate::task_runtime::personal_stand_in::is_primary_dingtalk(role, source) {
         if source["delegated"] == true || !identity.ask_before_act {
-            return Err(
-                "Automatic primary DingTalk replies require an eligible delegation decision".into(),
-            );
+            return Err("Primary DingTalk replies require native confirmation".into());
         }
         if !crate::task_runtime::personal_stand_in::matches_delegation_account(
             &settings,

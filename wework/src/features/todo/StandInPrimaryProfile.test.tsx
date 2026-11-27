@@ -13,19 +13,13 @@ import { AppPreferencesContext } from '@/features/app-preferences/appPreferences
 import { AuthContext, type AuthContextValue } from '@/features/auth/useAuth'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { personalStandInFixture } from './personalStandInSettings.testFixtures'
 import { standInOverviewFixture } from './StandInOverviewPage.testFixtures'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
-import { StandInImConnections } from './StandInImConnections'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
-function openPrimaryProfile(
-  selfLearningEnabled?: boolean,
-  imSessionApi?: WorkbenchServices['imSessionApi'],
-  cloudDefinitionRevision?: string
-) {
+function openPrimaryProfile(selfLearningEnabled?: boolean, cloudDefinitionRevision?: string) {
   const { settings } = personalStandInFixture()
   settings.cloudDefinitionRevision = cloudDefinitionRevision
   const { services } = standInOverviewFixture().props
@@ -68,20 +62,6 @@ function openPrimaryProfile(
         devices={[]}
         projects={[]}
         onSelectDevice={() => {}}
-        shortcuts={[
-          {
-            id: 'im',
-            testId: 'stand-in-im-channels-toggle',
-            label: 'Chat channels',
-            content: (
-              <StandInImConnections
-                services={{ ...services, imSessionApi }}
-                deviceId={settings.executionDeviceId}
-                name="Assistant"
-              />
-            ),
-          },
-        ]}
       />
     </AppPreferencesContext.Provider>
   )
@@ -302,60 +282,6 @@ test('saves a confirmed task permission with the primary profile', async () => {
   })
 })
 
-test('chat channels are listed directly without sessions and returning keeps the profile draft', async () => {
-  const { save } = openPrimaryProfile(undefined, {
-    bindStandIn: async (_sessionKey, binding) => binding,
-    listPrivateSessions: async () => ({ total: 0, items: [] }),
-  })
-  fireEvent.change(screen.getByTestId('stand-in-preferences'), {
-    target: { value: 'Edited private context' },
-  })
-  fireEvent.click(screen.getByTestId('stand-in-im-channels-toggle'))
-  expect(screen.getByTestId('stand-in-path-tool')).toHaveTextContent('Chat channels')
-  for (const channel of ['dingtalk', 'telegram', 'discord', 'weibo']) {
-    expect(screen.getByTestId(`stand-in-im-channel-${channel}`)).toBeVisible()
-  }
-  expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('stand-in-preferences')).not.toBeInTheDocument()
-  fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
-  expect(await screen.findByTestId('stand-in-im-empty')).toBeVisible()
-  fireEvent.click(screen.getByTestId('stand-in-im-dialog-close'))
-  fireEvent.click(screen.getByTestId('stand-in-primary-back-to-settings'))
-  expect(screen.getByTestId('stand-in-preferences')).toHaveValue('Edited private context')
-  expect(save()).toMatchObject({ preferences: 'Edited private context' })
-})
-
-test('a connected channel shows its status beside the other channel entries', async () => {
-  const { settings } = personalStandInFixture()
-  openPrimaryProfile(undefined, {
-    bindStandIn: async (_sessionKey, binding) => binding,
-    listPrivateSessions: async () => ({
-      total: 1,
-      items: [
-        {
-          session_key: 'telegram-session',
-          channel_type: 'telegram',
-          channel_label: 'Telegram',
-          channel_id: 1,
-          conversation_id: 'test-chat',
-          sender_id: 'test-sender',
-          display_name: 'Example conversation',
-          last_seen_at: '2025-01-01T00:00:00Z',
-          mode: 'stand_in',
-          stand_in: { deviceId: settings.executionDeviceId, roleId: null },
-        },
-      ],
-    }),
-  })
-  fireEvent.click(screen.getByTestId('stand-in-im-channels-toggle'))
-  expect(await screen.findByText('已连接当前助理')).toBeVisible()
-  expect(screen.getByTestId('stand-in-im-channel-dingtalk')).toBeVisible()
-  fireEvent.click(screen.getByTestId('stand-in-im-channel-telegram'))
-  expect(screen.getByTestId('stand-in-im-connect-telegram-session')).toHaveTextContent(
-    'Example conversation'
-  )
-})
-
 test('turning on learning alone preserves the existing Ghost and private preferences', () => {
   const { save } = openPrimaryProfile()
   fireEvent.click(screen.getByTestId('stand-in-self-learning-toggle'))
@@ -379,7 +305,7 @@ test('editing private preferences preserves the independently learned Ghost, inc
 })
 
 test('a migrated default assistant keeps its shared instructions when private preferences change', () => {
-  const { save } = openPrimaryProfile(undefined, undefined, 'cloud-revision')
+  const { save } = openPrimaryProfile(undefined, 'cloud-revision')
   expect(screen.getByTestId('stand-in-primary-ghost-prompt')).toHaveValue('Ask for evidence')
   fireEvent.change(screen.getByTestId('stand-in-preferences'), {
     target: { value: 'Edited private context' },

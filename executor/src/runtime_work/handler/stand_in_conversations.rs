@@ -315,12 +315,9 @@ impl RuntimeWorkRpcHandler {
                 let mut settings = store
                     .stand_in_proposal_settings(user, id)
                     .map_err(settings_error)?;
-                let normalized = store
+                store
                     .validate_personal_stand_in_settings(user, &self.device_id, settings.clone())
                     .map_err(settings_error)?;
-                let _ = self
-                    .preflight_dingtalk_delegation(user, &mut settings, &normalized, &previous)
-                    .await?;
                 self.preflight_git_connections(&settings, &previous).await?;
                 self.prepare_connection_boundaries(&mut settings, &previous)
                     .await?;

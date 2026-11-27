@@ -173,6 +173,7 @@ export function createLocalStandInInstanceSource({
     | { deviceId: string; version: number; result: Promise<StandInInstanceBinding> }
     | undefined
   let abandonedActivation: { deviceId: string; binding: StandInInstanceBinding } | undefined
+  let pendingSetup: Promise<void> | undefined
   const publish = (patch: Partial<InstanceSnapshot>) => {
     snapshot = { ...snapshot, ...patch }
     for (const listener of listeners) listener()
@@ -285,6 +286,12 @@ export function createLocalStandInInstanceSource({
       epoch === activation &&
       revision === readRevision
     try {
+      // A new subscriber must not adopt a durable preparation while its previous
+      // owner is still deciding whether to activate or cancel it.
+      if (pendingSetup) {
+        await pendingSetup
+        if (!current()) return
+      }
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
       if (current())
@@ -296,15 +303,16 @@ export function createLocalStandInInstanceSource({
         })
       let binding = await api.binding(identity.deviceId)
       if (!current()) return
-      if (abandonedActivation?.deviceId === identity.deviceId) {
+      const abandoned = abandonedActivation
+      if (abandoned?.deviceId === identity.deviceId) {
         if (
           binding.status === 'activating' &&
-          binding.version === abandonedActivation.binding.version &&
-          sameTarget(binding.target, abandonedActivation.binding.target)
+          binding.version === abandoned.binding.version &&
+          sameTarget(binding.target, abandoned.binding.target)
         ) {
           binding = await cancelStandInActivation(api, identity.deviceId, binding)
         }
-        abandonedActivation = undefined
+        if (abandonedActivation === abandoned) abandonedActivation = undefined
         if (!current()) return
       }
       if (legacyOnly && binding.status !== 'stopped') {
@@ -380,13 +388,17 @@ export function createLocalStandInInstanceSource({
     }
   ) => {
     const owner = observation
-    if (!listeners.size || !owner?.active || snapshot.busy) return
+    if (!listeners.size || !owner?.active || snapshot.busy || pendingSetup) return
     const binding = snapshot.binding
     const localDeviceId = snapshot.localDeviceId
     const revision = lifetime
     publish({ busy: true, error: null })
+    let finishSetup: (() => void) | undefined
     try {
       if (operation === 'setup') {
+        pendingSetup = new Promise<void>(resolve => {
+          finishSetup = resolve
+        })
         if (legacyOnly) return
         const target = snapshot.setupTarget
         if (!api || !localDeviceId || binding?.status !== 'unbound' || !target) return
@@ -537,6 +549,10 @@ export function createLocalStandInInstanceSource({
         publish({ error: { cause, fallback: 'save_settings_failed' } })
       if (operation === 'migrate' || operation === 'initialize') throw cause
     } finally {
+      if (finishSetup) {
+        pendingSetup = undefined
+        finishSetup()
+      }
       if (observed(revision, localDeviceId)) {
         const setupScopeChanged =
           operation === 'setup' &&

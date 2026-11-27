@@ -2,9 +2,8 @@
 use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::personal_stand_in::{
-    active_delegated_source, is_primary_dingtalk, requires_dingtalk_delegation,
-    source_collection_namespace, source_provider, stand_in_collection_connection,
-    stand_in_connection, stand_in_identities,
+    requires_dingtalk_delegation, source_collection_namespace, source_provider,
+    stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
 use crate::task_runtime::stand_in_projection::project_visible_work;
 
@@ -179,22 +178,6 @@ impl RuntimeWorkRpcHandler {
                 else {
                     continue;
                 };
-                if work["source"]["delegated"] == true && is_primary_dingtalk(role, &work["source"])
-                {
-                    if active_delegated_source(role, &work["source"]).is_some() {
-                        let work_id = work["id"].as_str().unwrap_or_default();
-                        if let Err(error) = self
-                            .dispatch_connection_work(user, work_id, false, None, None)
-                            .await
-                        {
-                            log_executor_event(
-                                "DingTalk delegation dispatch deferred",
-                                &[("code", error.code)],
-                            );
-                        }
-                    }
-                    continue;
-                }
                 for message in visible.messages {
                     let source = &message["source"];
                     if message["dispatchStatus"] != "pending"
@@ -252,16 +235,6 @@ impl RuntimeWorkRpcHandler {
         let outcome = self
             .collect_connection_source(store, user, source, roles, &state, version)
             .await;
-        if source["delegated"] == true
-            && outcome
-                .as_ref()
-                .is_err_and(|error| error.code == "dingtalk_account_changed")
-        {
-            store
-                .invalidate_delegation_account(user, &self.device_id, source, version)
-                .map_err(settings_error)?;
-            return Ok(());
-        }
         save_collection_result(store, user, source, version, &state, outcome)
     }
 
@@ -275,7 +248,7 @@ impl RuntimeWorkRpcHandler {
         settings_version: &Value,
     ) -> Result<Value, AppIpcError> {
         let _stage = super::stand_in_diagnostics::CoordinationStage::start(user, "collect_source");
-        let mut checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
+        let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
             if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
                 && state["after"].is_string()
             {
@@ -288,14 +261,6 @@ impl RuntimeWorkRpcHandler {
                 Value::Null
             }
         });
-        if source["delegated"] == true
-            && state["error"].is_object()
-            && state["error"]["code"] != "dingtalk_delegation_gap"
-        {
-            if let Some(checkpoint) = checkpoint.as_object_mut() {
-                checkpoint.insert("recover".into(), json!(true));
-            }
-        }
         let page = self
             .connection_call(
                 "collectObservation",
@@ -309,41 +274,14 @@ impl RuntimeWorkRpcHandler {
                 AppIpcError::new("connection_response_invalid", "Missing connection events")
             })?
             .clone();
-        let mut checkpoint = page["nextCheckpoint"].as_object().cloned().ok_or_else(|| {
+        let checkpoint = page["nextCheckpoint"].as_object().cloned().ok_or_else(|| {
             AppIpcError::new(
                 "connection_response_invalid",
                 "Missing connection checkpoint",
             )
         })?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
-        let gap = checkpoint.remove("delegationGap");
-        let mut next = json!({"checkpoint":checkpoint});
-        if let Some(gap) = gap {
-            let from = gap["from"]
-                .as_str()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
-            let until = gap["until"]
-                .as_str()
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
-            if source["delegated"] != true
-                || !messages.is_empty()
-                || page["hasMore"] != false
-                || next["checkpoint"]["cursor"] != "0"
-                || next["checkpoint"]["after"] != gap["until"]
-                || !matches!(
-                    gap["reason"].as_str(),
-                    Some("duration" | "volume" | "coverage")
-                )
-                || !from.zip(until).is_some_and(|(from, until)| from < until)
-            {
-                return Err(AppIpcError::new(
-                    "connection_response_invalid",
-                    "Invalid DingTalk delegation recovery checkpoint",
-                ));
-            }
-            next["delegationGap"] = gap;
-            return Ok(next);
-        }
+        let next = json!({"checkpoint":checkpoint});
         let event_count = messages.len();
         let page = (messages, next);
         let next = self
@@ -414,20 +352,6 @@ impl RuntimeWorkRpcHandler {
                 };
                 matched = true;
                 if requires_dingtalk_delegation(role, grant) {
-                    if let Some(grant) = active_delegated_source(role, source) {
-                        self.store_delegated_event(store, user, role, grant, &message)
-                            .inspect_err(|_| {
-                                log_dingtalk_group_intake(
-                                    source,
-                                    &message,
-                                    role_id,
-                                    "delegation_intake_failed",
-                                );
-                            })?;
-                        log_dingtalk_group_intake(source, &message, role_id, "delegation_checked");
-                    } else {
-                        log_dingtalk_group_intake(source, &message, role_id, "inactive_delegation");
-                    }
                     continue;
                 }
                 if !source_accepts_message(grant, &message) {
@@ -550,9 +474,7 @@ fn collection_sources(
         .filter(|identity| identity["enabled"] == true)
     {
         for source in identity["connections"].as_array().into_iter().flatten() {
-            if requires_dingtalk_delegation(identity, source)
-                && active_delegated_source(identity, source).is_none()
-            {
+            if requires_dingtalk_delegation(identity, source) {
                 continue;
             }
             let key = json!([
@@ -684,8 +606,6 @@ fn save_collection_result(
             } else {
                 json!({})
             };
-            // The store preserves the latest notice when updating a source checkpoint.
-            next.as_object_mut().unwrap().remove("delegationGap");
             next["error"] = json!({"code":error.code,"message":error.message,"retryable":true});
             if let Some(code) = &error.provider_code {
                 next["error"]["providerCode"] = json!(code);

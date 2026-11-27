@@ -46,6 +46,57 @@ function appendedRole(
     return role
 }
 
+// Preserve accepted peer values unless the draft independently changed that field.
+// Composite permission and connection fields remain atomic when both writers edited them.
+function rebaseFields<T extends object>(
+  before: T | undefined,
+  edited: T | undefined,
+  latest: T | undefined
+): { value: T | undefined } | null {
+  if (dequal(before, edited)) return { value: latest }
+  if (dequal(before, latest) || dequal(edited, latest)) return { value: edited }
+  if (!before || !edited || !latest) return null
+  const value = { ...latest }
+  const fields = new Set([...Object.keys(before), ...Object.keys(edited)] as (keyof T)[])
+  for (const field of fields) {
+    if (dequal(before[field], edited[field])) continue
+    if (!dequal(before[field], latest[field]) && !dequal(edited[field], latest[field])) return null
+    value[field] = edited[field]
+  }
+  return { value }
+}
+
+function rebaseRetainedDraft(
+  before: PersonalStandInSettings,
+  edited: PersonalStandInSettings,
+  latest: PersonalStandInSettings
+): PersonalStandInSettings | undefined {
+  if (before.userId !== latest.userId || before.executionDeviceId !== latest.executionDeviceId)
+    return
+  const primary = rebaseFields(before.primary, edited.primary, latest.primary)
+  if (!primary) return
+  // Roles are identified by ID, so an independent edit cannot revive a removed role
+  // or discard another client's newly created role.
+  const previous = new Map(before.roles.map(role => [role.id, role]))
+  const changes = new Map(edited.roles.map(role => [role.id, role]))
+  const roles = new Map(latest.roles.map(role => [role.id, role]))
+  for (const id of new Set([...previous.keys(), ...changes.keys()])) {
+    const role = rebaseFields(previous.get(id), changes.get(id), roles.get(id))
+    if (!role) return
+    if (role.value) roles.set(id, role.value)
+    else roles.delete(id)
+  }
+  const teamsEdited = !dequal(before.teams, edited.teams)
+  if (teamsEdited && !dequal(before.teams, latest.teams) && !dequal(edited.teams, latest.teams))
+    return
+  return {
+    ...latest,
+    primary: primary.value,
+    roles: [...roles.values()],
+    teams: teamsEdited ? edited.teams : latest.teams,
+  }
+}
+
 /** One account and Executor own the read, editable draft, and accepted writes. */
 export function createPersonalStandInSettingsResource({
   api,
@@ -73,7 +124,9 @@ export function createPersonalStandInSettingsResource({
   let resetRevision: number | undefined
   let saving = false
   let errorOverride: ErrorState | undefined
-  let definitionConflict: { cause: unknown; revision: string | undefined } | undefined
+  let definitionConflict:
+    | { cause: unknown; revision: string | undefined; baseline?: PersonalStandInSettings }
+    | undefined
   const resource = createAsyncResource(
     JSON.stringify(['personal-stand-in', userId, deviceId, localDeviceId]),
     async signal => {
@@ -92,8 +145,16 @@ export function createPersonalStandInSettingsResource({
           data.settings.cloudDefinitionRevision !== definitionConflict.revision
         if (resetRevision === editRevision && (!definitionConflict || conflictResolved)) {
           draft = undefined
-        }
-        if (conflictResolved) definitionConflict = undefined
+          definitionConflict = undefined
+        } else if (conflictResolved && definitionConflict && draft) {
+          const baseline = definitionConflict.baseline
+          const rebased = baseline && rebaseRetainedDraft(baseline, draft, data.settings)
+          if (rebased) {
+            draft = rebased
+            definitionConflict = undefined
+          }
+          // Overlapping edits retain the draft and conflict until an explicit discard/reload.
+        } else if (conflictResolved) definitionConflict = undefined
         resetRevision = undefined
         errorOverride = definitionConflict
           ? { cause: definitionConflict.cause, operation: 'save_settings_failed' }
@@ -255,7 +316,15 @@ export function createPersonalStandInSettingsResource({
           'code' in cause &&
           cause.code === 'cloud_definition_version_conflict'
         ) {
-          definitionConflict = { cause, revision: value.cloudDefinitionRevision }
+          definitionConflict = {
+            cause,
+            revision: value.cloudDefinitionRevision,
+            baseline:
+              loaded.settings.cloudDefinitionRevision === value.cloudDefinitionRevision &&
+              loaded.settings.version === value.version
+                ? loaded.settings
+                : undefined,
+          }
         }
         if (listeners.size && cause instanceof PersonalAssistantDefinitionSaveError) {
           const edited = draft ?? value

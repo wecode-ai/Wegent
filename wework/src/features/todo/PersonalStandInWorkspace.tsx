@@ -97,13 +97,12 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
         userId={Number(props.user.id)}
         active={props.active}
       >
-        {(account, publishAccount, readAccount, reloadAccount) => (
+        {(account, publishAccount, readAccount) => (
           <AccountStandInWorkspace
             {...props}
             account={account}
             publishAccount={publishAccount}
             readAccount={readAccount}
-            reloadAccount={reloadAccount}
           />
         )}
       </PersonalAssistantAccountSetup>
@@ -129,12 +128,10 @@ function AccountStandInWorkspace({
   account,
   publishAccount,
   readAccount,
-  reloadAccount,
 }: PersonalStandInWorkspaceProps & {
   account?: PersonalAssistantAccount
   publishAccount?: (account: PersonalAssistantAccount) => void
   readAccount?: () => PersonalAssistantAccount | undefined
-  reloadAccount?: () => void
 }) {
   const { t, i18n } = useTranslation('common')
   const { t: experienceT } = useTranslation('collaborationExp')
@@ -519,7 +516,6 @@ function AccountStandInWorkspace({
             className="min-h-11 px-2 underline md:min-h-8"
             onClick={() => {
               if (instance.error) {
-                reloadAccount?.()
                 instance.reload()
               } else if (deviceRecovery?.error) {
                 setDeviceRecovery(undefined)

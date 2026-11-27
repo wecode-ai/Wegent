@@ -85,7 +85,8 @@ export class BrowserApprovedUploads {
       signal.throwIfAborted()
       const source = await open(
         file.realPath,
-        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+        // Do not block on special files before validating the opened descriptor.
+        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
       ).catch(() => {
         throw approvalTargetChanged('The approved local file could not be opened.')
       })

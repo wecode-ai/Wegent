@@ -13,14 +13,17 @@ fn stand_in_owner(origin: &Value) -> Option<i64> {
 }
 
 impl RuntimeWorkRpcHandler {
+    fn stand_in_binding_instance(&self) -> Option<&str> {
+        (std::env::var("WEWORK_DEVELOPMENT_ISOLATED").as_deref() == Ok("1"))
+            .then_some(self.device_id.as_str())
+    }
+
     pub(super) fn stand_in_binding(&self, payload: Value) -> Result<Value, AppIpcError> {
         let operation = payload["operation"].as_str().unwrap_or("get");
-        let instance_device = (std::env::var("WEWORK_DEVELOPMENT_ISOLATED").as_deref() == Ok("1"))
-            .then_some(self.device_id.as_str());
         LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(settings_error)?
             .stand_in_binding(
-                instance_device,
+                self.stand_in_binding_instance(),
                 operation,
                 payload["version"].as_i64().unwrap_or(-1),
                 payload["target"].clone(),
@@ -116,6 +119,7 @@ impl RuntimeWorkRpcHandler {
                     &self.device_id,
                     operation,
                     expected_version,
+                    self.stand_in_binding_instance(),
                 )
                 .map_err(settings_error)?;
             if operation == "start" || settings["lifecycle"]["status"] == "stopped" {
@@ -388,10 +392,28 @@ mod tests {
             "version_conflict"
         );
         assert_eq!(store.personal_stand_in(7, "mac").unwrap(), stopped);
-        let restarted = handler
-            .personal_stand_in_lifecycle(json!({"userId":7,"operation":"startIfVersion","expectedVersion":stopped["version"]}))
-            .await
+        let start =
+            json!({"userId":7,"operation":"startIfVersion","expectedVersion":stopped["version"]});
+        let target = json!({"userId":7,"deviceId":"mac"});
+        let marked = handler
+            .stand_in_binding(json!({"operation":"markStoppingWithGeneration","target":target}))
             .unwrap();
+        assert_eq!(
+            handler
+                .personal_stand_in_lifecycle(start.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "version_conflict"
+        );
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), stopped);
+        handler
+            .stand_in_binding(json!({
+                "operation":"clearStoppingIfGeneration", "target":target,
+                "version":marked["stoppingTargetGenerations"]["7:mac"],
+            }))
+            .unwrap();
+        let restarted = handler.personal_stand_in_lifecycle(start).await.unwrap();
         assert!(restarted["lifecycle"].is_null());
         assert_eq!(
             handler

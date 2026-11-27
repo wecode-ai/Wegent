@@ -523,7 +523,6 @@ test('search and collection keep using the explicitly selected organization prof
   assert.equal(page.items[0].profile, profile)
   const source = {
     providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
-    delegated: true,
     profile,
     accountId: identity.accountId,
     organizationId: identity.organizationId,
@@ -534,7 +533,18 @@ test('search and collection keep using the explicitly selected organization prof
   assert.deepEqual((await provider.collect(ctx, { source })).events, [])
   assert.equal(calls.find(call => call.tool === 'searchMessages').arguments.profile, profile)
   state.tokenOrganization = 'org-a'
-  await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_account_changed' })
+  await assert.rejects(provider.listResources(ctx, { kind: 'direct', query: 'Owner', profile }), {
+    code: 'dingtalk_account_changed',
+  })
+})
+
+test('rejects a saved automatic delegation before calling the DingTalk connector', async () => {
+  const { provider, ctx, calls } = readinessFixture()
+  const source = { providerId: '@wegent/dsh-connection-dingtalk/dingtalk', delegated: true }
+  await assert.rejects(provider.collect(ctx, { source }), {
+    message: 'DingTalk delegation has been removed',
+  })
+  assert.deepEqual(calls, [])
 })
 
 test('verifies private scope using the conversation ID nested by native DWS', async () => {
@@ -563,7 +573,7 @@ test('verifies private scope using the conversation ID nested by native DWS', as
   assert.ok(!calls.some(call => call.tool === 'searchMessages'))
 })
 
-test('verifies and collects complete scoped pages from the native DingTalk search', async t => {
+test('verifies complete scoped pages from the native DingTalk search', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-24T00:10:00Z') })
   const { ctx, provider, state } = readinessFixture()
   const input = {
@@ -592,84 +602,10 @@ test('verifies and collects complete scoped pages from the native DingTalk searc
   assert.equal(ready.status, 'ready')
   assert.equal(ready.permissions.read, 'verified')
 
-  const source = {
-    ...input.sources[0],
-    ...ready.identity,
-    delegated: true,
-    enabledAfter: '2026-11-24T00:05:00Z',
-  }
-  const chat = conversation('direct', true, 'peer')
-  chat.messages[0].createTime = '2026-11-24T00:09:00Z'
-  state.scopedSearch.result.conversationMessagesList = [chat]
-  const result = await provider.collect(ctx, { source })
-  assert.deepEqual(
-    result.events.map(event => event.id),
-    ['direct:peer']
-  )
-
-  chat.openConversationId = 'foreign'
-  await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_response_invalid' })
-  chat.openConversationId = 'direct'
   state.scopedSearch.result.complete = false
   const incomplete = await provider.check(ctx, input)
   assert.equal(incomplete.status, 'error')
   assert.equal(incomplete.code, 'dingtalk_response_invalid')
-  await assert.rejects(provider.collect(ctx, { source }), { code: 'dingtalk_response_invalid' })
-})
-
-test('sorts delegated pages chronologically before releasing inbox events', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-24T00:10:00Z') })
-  const { ctx, provider, state } = readinessFixture()
-  const ready = await provider.check(ctx, {
-    readiness: true,
-    profile: 'org-a:owner',
-  })
-  const source = {
-    ...ready.identity,
-    kind: 'group',
-    id: 'group',
-    delegated: true,
-    enabledAfter: '2026-11-24T00:05:00Z',
-  }
-  const native = (id, at) => ({
-    senderOpenDingTalkId: 'alice',
-    content: id,
-    openMessageId: id,
-    createTime: at,
-  })
-  const page = (messages, hasMore, nextCursor) => ({
-    success: true,
-    result: {
-      conversationMessagesList: [
-        {
-          openConversationId: 'group',
-          singleChat: false,
-          messages,
-        },
-      ],
-      hasMore,
-      nextCursor,
-    },
-  })
-  state.scopedSearch = input => {
-    if (input.arguments.cursor === '0')
-      return page(
-        [native('late', '2026-11-24T00:09:00Z'), native('same-b', '2026-11-24T00:08:00Z')],
-        true,
-        'older'
-      )
-    return page([native('same-a', '2026-11-24T00:08:00Z')], false, '0')
-  }
-
-  const result = await provider.collect(ctx, {
-    source,
-    checkpoint: { after: '2026-11-24T00:05:00Z', cursor: '0' },
-  })
-
-  assert.deepEqual(
-    result.events.map(event => event.id),
-    ['same-a', 'same-b', 'late']
-  )
 })
 
 test('requires reauthorization before contact search when the legacy token cannot refresh', async () => {

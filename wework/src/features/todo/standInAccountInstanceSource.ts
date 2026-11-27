@@ -153,6 +153,7 @@ export function createAccountStandInInstanceSource({
     | { version: number; target: StandInBindingTarget; result: Promise<StandInInstanceBinding> }
     | undefined
   let abandonedActivation: { deviceId: string; binding: StandInInstanceBinding } | undefined
+  let pendingSetup: Promise<void> | undefined
   const publish = (patch: Partial<InstanceSnapshot>) => {
     snapshot = { ...snapshot, ...patch }
     for (const listener of listeners) listener()
@@ -184,15 +185,16 @@ export function createAccountStandInInstanceSource({
     localDeviceId: string,
     binding: StandInInstanceBinding
   ) => {
-    if (abandonedActivation?.deviceId !== localDeviceId) return binding
+    const abandoned = abandonedActivation
+    if (abandoned?.deviceId !== localDeviceId) return binding
     if (
       binding.status === 'activating' &&
-      binding.version === abandonedActivation.binding.version &&
-      sameTarget(binding.target, abandonedActivation.binding.target)
+      binding.version === abandoned.binding.version &&
+      sameTarget(binding.target, abandoned.binding.target)
     ) {
       binding = await cancelStandInActivation(api!, localDeviceId, binding)
     }
-    abandonedActivation = undefined
+    if (abandonedActivation === abandoned) abandonedActivation = undefined
     return binding
   }
   const selectionScope = (
@@ -307,6 +309,12 @@ export function createAccountStandInInstanceSource({
       epoch === activation &&
       revision === readRevision
     try {
+      // A new subscriber must not adopt a durable preparation while its previous
+      // owner is still deciding whether to activate or cancel it.
+      if (pendingSetup) {
+        await pendingSetup
+        if (!current()) return
+      }
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
       if (current()) {
@@ -390,10 +398,10 @@ export function createAccountStandInInstanceSource({
         snapshot.error?.fallback === 'save_settings_failed'
           ? snapshot.error
           : null
-      const nativeBinding = await retireAbandonedActivation(
-        identity.deviceId,
-        await api.binding(identity.deviceId, 'get')
-      )
+      const savedBinding = await api.binding(identity.deviceId, 'get')
+      if (!current()) return
+      const nativeBinding = await retireAbandonedActivation(identity.deviceId, savedBinding)
+      if (!current()) return
       const localPending = localStopGeneration(nativeBinding, target)
       const sharedPending = sharedStopIntent(stopAccount, targetDeviceId)
       const pendingStop =
@@ -532,7 +540,7 @@ export function createAccountStandInInstanceSource({
     }
   ) => {
     const owner = observation
-    if (!listeners.size || !owner?.active || snapshot.busy) return
+    if (!listeners.size || !owner?.active || snapshot.busy || pendingSetup) return
     const binding = snapshot.binding
     const localDeviceId = snapshot.localDeviceId
     const revision = lifetime
@@ -540,8 +548,12 @@ export function createAccountStandInInstanceSource({
     activation++
     stopping = operation === 'stop'
     publish({ busy: true, error: null })
+    let finishSetup: (() => void) | undefined
     try {
       if (operation === 'setup') {
+        pendingSetup = new Promise<void>(resolve => {
+          finishSetup = resolve
+        })
         if (accountNavigationOnly) return
         const selection = setupSelection
         const target = snapshot.setupTarget
@@ -872,6 +884,10 @@ export function createAccountStandInInstanceSource({
         publish({ error: { cause, fallback: 'save_settings_failed' } })
       if (operation === 'migrate' || operation === 'bind' || operation === 'initialize') throw cause
     } finally {
+      if (finishSetup) {
+        pendingSetup = undefined
+        finishSetup()
+      }
       if (observed(revision, localDeviceId)) {
         stopping = false
         const setupScopeChanged =

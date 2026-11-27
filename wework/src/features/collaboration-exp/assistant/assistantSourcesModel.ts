@@ -253,14 +253,18 @@ export function createAssistantSourcesModel(
         unsubscribe = subscribePersonalStandIn(settings => {
           const source = snapshot.source
           if (
-            (services.personalAssistantAccountApi &&
-              userId !== LOCAL_USER.id &&
-              settings.userId === userId) ||
-            (source &&
-              settings.userId === source.ownerId &&
-              settings.executionDeviceId === source.deviceId)
-          )
+            source &&
+            settings.userId === source.ownerId &&
+            settings.executionDeviceId === source.deviceId
+          ) {
             void refresh()
+          } else if (
+            services.personalAssistantAccountApi &&
+            userId !== LOCAL_USER.id &&
+            settings.userId === userId
+          ) {
+            void load()
+          }
         })
         void refresh()
       } else if (inputsChanged) {
