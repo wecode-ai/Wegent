@@ -4332,6 +4332,11 @@ fn codex_app_server_command(
         command.env_remove("WEWORK_SPACE_AUTH_TOKEN");
     }
     for config_override in &launch_config.config_overrides {
+        // Task MCP transports and their approval rules are installed together by
+        // thread/start or thread/resume. A field alone is not a valid CLI server.
+        if config_override.starts_with("mcp_servers.") {
+            continue;
+        }
         command.arg("-c").arg(config_override);
     }
     command.arg("app-server");

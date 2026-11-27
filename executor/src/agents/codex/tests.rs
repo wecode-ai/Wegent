@@ -1319,6 +1319,31 @@ async fn codex_app_server_starts_beyond_windows_max_path() {
 }
 
 #[test]
+fn private_process_defers_mcp_approval_until_the_thread_binds_its_transport() {
+    let mut config = CodexLaunchConfig::default();
+    config.config_overrides.extend([
+        "mcp_servers={}".into(),
+        "mcp_servers.probe.default_tools_approval_mode=\"writes\"".into(),
+    ]);
+    config.thread_config.insert(
+        "mcp_servers.probe.url".into(),
+        json!("http://127.0.0.1/probe"),
+    );
+    let command = codex_app_server_command("codex", Path::new("/tmp"), &config);
+    let args: Vec<_> = command.as_std().get_args().collect();
+    assert!(args.iter().any(|arg| *arg == "mcp_servers={}"));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.to_string_lossy().contains("probe")));
+    let mut params = Map::new();
+    append_thread_launch_params(&mut params, &config);
+    assert_eq!(
+        params["config"]["mcp_servers"]["probe"],
+        json!({"url":"http://127.0.0.1/probe", "default_tools_approval_mode":"writes"})
+    );
+}
+
+#[test]
 fn codex_app_server_uses_native_desktop_http_identity() {
     let mut config = CodexLaunchConfig::default();
     config.env.insert(
