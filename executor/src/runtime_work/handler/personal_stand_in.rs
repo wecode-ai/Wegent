@@ -703,9 +703,7 @@ impl RuntimeWorkRpcHandler {
                 // A stopped installation-local identity can migrate to its connected account.
                 let stopped_local_source =
                     user == 0 && settings["lifecycle"]["status"] == "stopped" && {
-                        let binding = store
-                            .stand_in_binding("get", -1, Value::Null)
-                            .map_err(settings_error)?;
+                        let binding = self.stand_in_binding(json!({"operation": "get"}))?;
                         binding["status"] == "stopped"
                             && binding["target"]["userId"] == 0
                             && binding["target"]["deviceId"].as_str()
