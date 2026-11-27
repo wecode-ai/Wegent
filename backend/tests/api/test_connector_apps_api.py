@@ -433,6 +433,7 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
     if mode == "declined":
         declined = complete(first, error="access_denied")
         assert declined.status_code == 200
+        assert 'data-testid="connector-oauth-result-declined"' in declined.text
         assert "<h1>Authorization declined</h1>" in declined.text
         assert poll(first)["status"] == "declined"
         return
@@ -441,12 +442,13 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
     assert completed.status_code == 200
     assert completed.headers["content-type"].startswith("text/html")
     assert completed.headers["cache-control"] == "no-store"
+    assert 'data-testid="connector-oauth-result-success"' in completed.text
     if external:
         assert completed.headers["content-language"] == "zh-CN"
         assert "<h1>连接器已连接</h1>" in completed.text
     else:
         assert completed.headers["content-language"] == "en"
-        assert "<h1>Connector connected</h1>" in completed.text
+        assert "<h1>Connector is connected</h1>" in completed.text
     assert poll(first)["status"] == "success"
     assert poll(first)["connection"]["external_account_name"] == "octocat"
 

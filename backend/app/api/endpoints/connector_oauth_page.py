@@ -15,7 +15,7 @@ _PAGE = Template(Path(__file__).with_suffix(".html").read_text(encoding="utf-8")
 _LANGUAGE_TAGS = {"en": "en", "zh": "zh-CN"}
 _COPY = {
     "en": {
-        "success": "Connector connected",
+        "success": "Connector is connected",
         "declined": "Authorization declined",
         "return": "You can close this window and return to Wegent.",
         "retry": "Close this window and return to Wegent to try again.",
