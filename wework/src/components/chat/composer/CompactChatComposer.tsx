@@ -284,6 +284,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       isModelSelectionReady &&
       !disabled &&
       !submitDisabled
+    const canPause = Boolean(showPauseButton && isStreaming && onPause)
     const explicitLineCount = value.split('\n').length
 
     const handleComposerChange = useCallback(
@@ -472,54 +473,58 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           />
           <div
             data-testid="compact-input-pill"
-            className={[
-              'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
-              'z-chrome',
-              isStreaming && canSend ? 'pr-[92px]' : 'pr-14',
-            ].join(' ')}
+            className="relative z-chrome flex min-h-[52px] min-w-0 flex-1 flex-wrap items-end justify-end gap-x-2 rounded-[26px] border border-border bg-background pl-4 pr-1 shadow-[0_12px_40px_rgba(0,0,0,0.08)]"
           >
-            <ComposerTextarea
-              ref={composerRef}
-              onOpenModelSelector={
-                modelSelectorOverride === undefined ? modelSelectorControl.requestOpen : undefined
+            <div
+              className={
+                canExpandInput
+                  ? 'min-w-[min(100%,9rem)] flex-1 pr-14'
+                  : 'min-w-[min(100%,6rem)] flex-1'
               }
-              modelSelectorOpen={modelSelectorControl.open}
-              testId={inputTestId}
-              textareaRef={textareaRef}
-              value={value}
-              onChange={handleComposerChange}
-              onBlur={onBlur}
-              onCompositionStart={onCompositionStart}
-              onCompositionEnd={onCompositionEnd}
-              onSubmit={onSubmit}
-              canSend={canSend}
-              placeholder={placeholder}
-              rows={1}
-              onPasteFiles={files => onFileSelect?.(files)}
-              onOpenSkillFile={onOpenSkillFile}
-              workspaceTarget={workspaceTarget}
-              workspaceFileApi={workspaceFileApi}
-              cloudMentionCandidates={cloudMentionCandidates}
-              conversationMentionCandidates={conversationMentionCandidates}
-              cloudProjectCandidates={cloudProjectCandidates}
-              cloudSpaceEnabled={cloudSpaceEnabled}
-              onSelectCloudProject={onSelectCloudProject}
-              className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-primary outline-none placeholder:text-text-muted"
-              onListLocalSkills={onListLocalSkills}
-              onListLocalApps={onListLocalApps}
-              models={models}
-              selectedModel={selectedModel}
-              selectedModelOptions={selectedModelOptions}
-              planModeActive={planModeActive}
-              onSetPlanMode={onSetPlanMode}
-              onSetGoal={onSetGoal}
-              onSelectModel={onSelectModel}
-              onBlockedModelSelect={onBlockedModelSelect}
-              isModelSelectionReady={isModelSelectionReady}
-              sendKey={sendKey}
-              followUpBehavior={followUpBehavior}
-              isStreaming={isStreaming}
-            />
+            >
+              <ComposerTextarea
+                ref={composerRef}
+                onOpenModelSelector={
+                  modelSelectorOverride === undefined ? modelSelectorControl.requestOpen : undefined
+                }
+                modelSelectorOpen={modelSelectorControl.open}
+                testId={inputTestId}
+                textareaRef={textareaRef}
+                value={value}
+                onChange={handleComposerChange}
+                onBlur={onBlur}
+                onCompositionStart={onCompositionStart}
+                onCompositionEnd={onCompositionEnd}
+                onSubmit={onSubmit}
+                canSend={canSend}
+                placeholder={placeholder}
+                rows={1}
+                onPasteFiles={files => onFileSelect?.(files)}
+                onOpenSkillFile={onOpenSkillFile}
+                workspaceTarget={workspaceTarget}
+                workspaceFileApi={workspaceFileApi}
+                cloudMentionCandidates={cloudMentionCandidates}
+                conversationMentionCandidates={conversationMentionCandidates}
+                cloudProjectCandidates={cloudProjectCandidates}
+                cloudSpaceEnabled={cloudSpaceEnabled}
+                onSelectCloudProject={onSelectCloudProject}
+                className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-primary outline-none placeholder:text-text-muted"
+                onListLocalSkills={onListLocalSkills}
+                onListLocalApps={onListLocalApps}
+                models={models}
+                selectedModel={selectedModel}
+                selectedModelOptions={selectedModelOptions}
+                planModeActive={planModeActive}
+                onSetPlanMode={onSetPlanMode}
+                onSetGoal={onSetGoal}
+                onSelectModel={onSelectModel}
+                onBlockedModelSelect={onBlockedModelSelect}
+                isModelSelectionReady={isModelSelectionReady}
+                sendKey={sendKey}
+                followUpBehavior={followUpBehavior}
+                isStreaming={isStreaming}
+              />
+            </div>
             {canExpandInput && (
               <ControlButton
                 variant="unstyled"
@@ -532,95 +537,100 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 <Maximize2 className="h-4 w-4" />
               </ControlButton>
             )}
-            {showSubmitButton &&
-              (showPauseButton && isStreaming && !canSend ? (
-                <ControlButton
-                  variant="primary"
-                  size="sm"
-                  type="button"
-                  data-testid="pause-response-button"
-                  onClick={onPause}
-                  className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background hover:bg-text-primary/90"
-                  aria-label={t('workbench.pause_response', '暂停回复')}
-                >
-                  <Square className="h-4 w-4 fill-current" />
-                </ControlButton>
-              ) : isStreaming && canSend ? (
-                <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
+            {showSubmitButton && (
+              <div className="mb-1 flex shrink-0 items-center gap-1">
+                {canPause && (
+                  <ControlButton
+                    variant={canSend ? 'secondary' : 'primary'}
+                    size="sm"
+                    type="button"
+                    data-testid="pause-response-button"
+                    onClick={onPause}
+                    disabled={disabled}
+                    className="h-11 w-11 rounded-full p-0"
+                    aria-label={t('workbench.pause_response', '暂停回复')}
+                  >
+                    <Square className="h-4 w-4 fill-current" />
+                  </ControlButton>
+                )}
+                {isStreaming && canSend ? (
+                  <div className="flex items-center rounded-[22px] bg-text-primary text-background">
+                    <ControlButton
+                      variant="primary"
+                      size="sm"
+                      type="submit"
+                      data-testid={submitButtonTestId}
+                      className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
+                      aria-label={primaryBusyLabel}
+                    >
+                      <ArrowUp className="h-5 w-5" />
+                    </ControlButton>
+                    <ActionMenu
+                      ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+                      testId="send-mode-menu-button"
+                      icon={ChevronDown}
+                      density="dense"
+                      triggerClassName="flex items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
+                      items={[
+                        {
+                          label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                          icon: Clock3,
+                          testId: 'send-after-turn-option',
+                          onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
+                          shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
+                        },
+                        {
+                          label:
+                            modelChangePending && activeModelLabel
+                              ? t(
+                                  'workbench.guide_current_turn_with_model',
+                                  'Guide current response · {{model}}',
+                                  { model: activeModelLabel }
+                                )
+                              : t('workbench.guide_current_turn', '引导当前回复'),
+                          icon: CornerDownRight,
+                          testId: 'guide-current-turn-option',
+                          onSelect: () =>
+                            onSubmit(composerRef.current?.getValue() ?? value, {
+                              guideWhenBusy: true,
+                            }),
+                          shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
+                        },
+                        {
+                          label:
+                            modelChangePending && selectedModelLabel
+                              ? t(
+                                  'workbench.interrupt_and_send_with_model',
+                                  'Interrupt and use {{model}}',
+                                  { model: selectedModelLabel }
+                                )
+                              : t('workbench.interrupt_and_send', '打断并立即发送'),
+                          icon: Zap,
+                          testId: 'interrupt-and-send-option',
+                          onSelect: () =>
+                            onSubmit(composerRef.current?.getValue() ?? value, {
+                              interruptWhenBusy: true,
+                            }),
+                          shortcut: 'mod+Shift+Enter',
+                        },
+                      ]}
+                    />
+                  </div>
+                ) : !canPause ? (
                   <ControlButton
                     variant="primary"
                     size="sm"
                     type="submit"
                     data-testid={submitButtonTestId}
-                    className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
-                    aria-label={primaryBusyLabel}
+                    disabled={!canSend}
+                    className="h-11 w-11 rounded-full p-0 disabled:bg-text-muted"
+                    aria-label={t('workbench.send_message', '发送消息')}
                   >
                     <ArrowUp className="h-5 w-5" />
                   </ControlButton>
-                  <ActionMenu
-                    ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
-                    testId="send-mode-menu-button"
-                    icon={ChevronDown}
-                    density="dense"
-                    triggerClassName="flex items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
-                    items={[
-                      {
-                        label: t('workbench.send_after_turn', '当前回复结束后发送'),
-                        icon: Clock3,
-                        testId: 'send-after-turn-option',
-                        onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
-                        shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
-                      },
-                      {
-                        label:
-                          modelChangePending && activeModelLabel
-                            ? t(
-                                'workbench.guide_current_turn_with_model',
-                                'Guide current response · {{model}}',
-                                { model: activeModelLabel }
-                              )
-                            : t('workbench.guide_current_turn', '引导当前回复'),
-                        icon: CornerDownRight,
-                        testId: 'guide-current-turn-option',
-                        onSelect: () =>
-                          onSubmit(composerRef.current?.getValue() ?? value, {
-                            guideWhenBusy: true,
-                          }),
-                        shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
-                      },
-                      {
-                        label:
-                          modelChangePending && selectedModelLabel
-                            ? t(
-                                'workbench.interrupt_and_send_with_model',
-                                'Interrupt and use {{model}}',
-                                { model: selectedModelLabel }
-                              )
-                            : t('workbench.interrupt_and_send', '打断并立即发送'),
-                        icon: Zap,
-                        testId: 'interrupt-and-send-option',
-                        onSelect: () =>
-                          onSubmit(composerRef.current?.getValue() ?? value, {
-                            interruptWhenBusy: true,
-                          }),
-                        shortcut: 'mod+Shift+Enter',
-                      },
-                    ]}
-                  />
-                </div>
-              ) : (
-                <ControlButton
-                  variant="primary"
-                  size="sm"
-                  type="submit"
-                  data-testid={submitButtonTestId}
-                  disabled={!canSend}
-                  className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background disabled:bg-text-muted"
-                  aria-label={t('workbench.send_message', '发送消息')}
-                >
-                  <ArrowUp className="h-5 w-5" />
-                </ControlButton>
-              ))}
+                ) : null}
+              </div>
+            )}
           </div>
         </form>
         {contextSheetOpen && (

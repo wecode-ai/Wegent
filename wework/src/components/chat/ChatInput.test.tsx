@@ -435,7 +435,7 @@ describe('ChatInput', () => {
   })
 
   test.each(['desktop', 'compact'] as const)(
-    'keeps the %s composer in send mode while a subagent is running',
+    'keeps send available when pause is explicitly hidden in the %s composer',
     async variant => {
       const onSubmit = vi.fn()
       const props = {
@@ -461,27 +461,36 @@ describe('ChatInput', () => {
     }
   )
 
-  test('shows desktop send button for a draft while the assistant is streaming', async () => {
-    const onSubmit = vi.fn()
+  test.each(['desktop', 'compact'] as const)(
+    'keeps pause and send available for a draft while the %s composer is streaming',
+    async variant => {
+      const onSubmit = vi.fn()
+      const onPause = vi.fn()
+      const props = {
+        value: '继续修复',
+        onChange: vi.fn(),
+        onSubmit,
+        onPause,
+        disabled: false,
+        variant,
+      }
 
-    render(
-      <ChatInput
-        value="继续修复"
-        onChange={vi.fn()}
-        onSubmit={onSubmit}
-        disabled={false}
-        variant="desktop"
-        isStreaming
-      />
-    )
+      const { rerender } = render(<ChatInput {...props} isStreaming />)
 
-    expect(screen.getByTestId('send-message-button')).toBeEnabled()
-    expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+      expect(screen.getByTestId('pause-response-button')).toBeEnabled()
+      await userEvent.click(screen.getByTestId('pause-response-button'))
+      expect(onPause).toHaveBeenCalledTimes(1)
+      expect(onSubmit).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByTestId('send-message-button'))
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSubmit).toHaveBeenCalledWith('继续修复')
 
-    expect(onSubmit).toHaveBeenCalledWith('继续修复')
-  })
+      rerender(<ChatInput {...props} />)
+      expect(screen.getByTestId('send-message-button')).toBeEnabled()
+      expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+    }
+  )
 
   test('uses the selected follow-up behavior for the primary streaming action', async () => {
     const onSubmit = vi.fn()
@@ -1181,40 +1190,12 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('pause-response-button')).toHaveClass(
-      'absolute',
-      'bottom-1',
-      'right-1',
-      'h-11',
-      'w-11'
-    )
+    expect(screen.getByTestId('pause-response-button')).toHaveClass('h-11', 'w-11')
     expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('pause-response-button'))
 
     expect(onPause).toHaveBeenCalledTimes(1)
-  })
-
-  test('shows compact send button for a draft while the assistant is streaming', async () => {
-    const onSubmit = vi.fn()
-
-    render(
-      <ChatInput
-        value="继续修复"
-        onChange={vi.fn()}
-        onSubmit={onSubmit}
-        disabled={false}
-        isStreaming
-      />
-    )
-
-    expect(screen.getByTestId('send-message-button')).toBeEnabled()
-    expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-[92px]')
-
-    await userEvent.click(screen.getByTestId('send-message-button'))
-
-    expect(onSubmit).toHaveBeenCalledWith('继续修复')
   })
 
   test('opens a mobile context sheet that uploads files without type restrictions', async () => {

@@ -16,9 +16,11 @@ export function createDesktopScenario(options) {
     subagentTextRelease,
     async beforeSubagentOutput(control) {
       const sendButton = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
-      await control.command('waitFor', `${sendButton}:disabled`)
+      const pauseButton = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
+      await control.command('waitFor', `${pauseButton}:enabled`)
       await control.command('fill', COMPOSER_SELECTOR, { value: GUIDANCE })
       await control.command('waitFor', `${sendButton}:enabled`)
+      await control.command('waitFor', `${pauseButton}:enabled`)
       await control.command(
         'clickWhenEnabled',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-mode-menu-button"]`
@@ -27,7 +29,8 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', '[data-testid="user-message-content"]', {
         text: GUIDANCE,
       })
-      await control.command('waitFor', `${sendButton}:disabled`)
+      await control.command('waitFor', `${pauseButton}:enabled`)
+      assert.equal(Number(await control.command('getElementCount', sendButton)), 0)
       const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const messages = JSON.parse(
         await control.command('getRuntimeConversationMessages', 'body', {

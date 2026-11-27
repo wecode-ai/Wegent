@@ -155,6 +155,7 @@ export function ComposerToolbar({
     followUpBehavior === 'guide'
       ? t('workbench.guide_current_turn', '引导当前回复')
       : t('workbench.send_after_turn', '当前回复结束后发送')
+  const canPause = Boolean(showPauseButton && isStreaming && onPause)
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current
@@ -281,31 +282,33 @@ export function ComposerToolbar({
           : null}
         {workspaceMenu}
         {renderTrailingActions?.(compact)}
-        {showSubmitButton &&
-          (showPauseButton && isStreaming && !canSend ? (
-            <Tooltip
-              label={t('workbench.pause_response', '暂停回复')}
-              align="end"
-              testId="composer-pause-tooltip"
+        {showSubmitButton && canPause && (
+          <Tooltip
+            label={t('workbench.pause_response', '暂停回复')}
+            align="end"
+            testId="composer-pause-tooltip"
+          >
+            <ControlButton
+              variant={canSend ? 'secondary' : 'primary'}
+              size="sm"
+              type="button"
+              data-composer-primary-action={canSend ? undefined : 'true'}
+              data-testid="pause-response-button"
+              onClick={onPause}
+              disabled={disabled}
+              className={cn(
+                composerIconActionDensity,
+                'flex shrink-0 items-center justify-center rounded-full'
+              )}
+              aria-label={t('workbench.pause_response', '暂停回复')}
             >
-              <ControlButton
-                variant="primary"
-                size="sm"
-                type="button"
-                data-composer-primary-action="true"
-                data-testid="pause-response-button"
-                onClick={onPause}
-                disabled={disabled || !onPause}
-                className={
-                  composerIconActionDensity +
-                  ' flex shrink-0 items-center justify-center rounded-full bg-text-primary text-background hover:bg-text-primary/90'
-                }
-                aria-label={t('workbench.pause_response', '暂停回复')}
-              >
-                <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
-              </ControlButton>
-            </Tooltip>
-          ) : isStreaming && canSend ? (
+              <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
+            </ControlButton>
+          </Tooltip>
+        )}
+        {showSubmitButton &&
+          (canSend || !canPause) &&
+          (isStreaming && canSend ? (
             <ComposerSendGroup>
               <ComposerSendButton
                 label={primaryBusyLabel}
