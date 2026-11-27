@@ -175,6 +175,7 @@ export async function verifyRecordedMemberTranscript({
   backendUrl,
   projectId,
   issueId,
+  memberMessageId,
   memberBinding,
   timeoutMs,
 }) {
@@ -201,13 +202,12 @@ export async function verifyRecordedMemberTranscript({
     issueId,
     timeoutMs
   )
-  const memberActivity = activity.find(
-    message =>
-      message.metadata.activity_type === 'member_execution' &&
-      message.runtimeAddress?.taskId === memberBinding.task_id
-  )
+  const memberActivity = activity.find(message => message.messageId === memberMessageId)
   assert.ok(memberActivity, '项目查看者应能从 Issue 动态中获得成员执行入口')
+  assert.equal(memberActivity.metadata.dispatch_role, 'member')
   const address = memberActivity.runtimeAddress
+  assert.equal(address?.deviceId, memberBinding.device_id, '查看者获得的入口应指向成员执行设备')
+  assert.equal(address?.taskId, memberBinding.task_id, '查看者获得的入口应指向实际成员会话')
   const transcript = await waitForValue(
     () =>
       read(

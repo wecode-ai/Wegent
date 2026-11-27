@@ -1017,6 +1017,7 @@ export async function createDesktopScenario({
         backendUrl,
         projectId: project.id,
         issueId: rootIssue.id,
+        memberMessageId,
         memberBinding,
         timeoutMs: uiTimeoutMs,
       })
