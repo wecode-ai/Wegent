@@ -187,6 +187,7 @@ mod stand_in_calendar;
 mod stand_in_connection_guidance;
 mod stand_in_context;
 mod stand_in_conversations;
+mod stand_in_delegation;
 mod stand_in_diagnostics;
 mod stand_in_dispatches;
 mod stand_in_events;

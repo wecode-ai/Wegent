@@ -26,6 +26,10 @@ interface SkillAutocompleteProps {
   preloadedSkillNames: string[]
   /** Filter query after / */
   query: string
+  /** Whether an unmatched query displays the empty menu */
+  showEmptyResults?: boolean
+  /** Editor that opened the slash menu */
+  editorRef?: React.RefObject<HTMLElement | null>
   /** Already selected skill IDs */
   selectedSkillIds?: number[]
   /** Callback when a skill is selected */
@@ -36,8 +40,6 @@ interface SkillAutocompleteProps {
   position: { top: number; left: number }
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
-  /** Whether the selector is read-only (can view but not modify) */
-  readOnly?: boolean
   /** Ref to the skill button element for fly animation target */
   skillButtonRef?: React.RefObject<HTMLElement | null>
   /** Callback to trigger fly animation (animation is rendered in parent) */
@@ -64,12 +66,13 @@ export default function SkillAutocomplete({
   teamSkillNames,
   preloadedSkillNames,
   query = '',
+  showEmptyResults = true,
+  editorRef,
   selectedSkillIds = [],
   onSelect,
   onClose,
   position,
   isChatShell,
-  readOnly = false,
   skillButtonRef,
   onTriggerFlyAnimation,
 }: SkillAutocompleteProps) {
@@ -109,15 +112,18 @@ export default function SkillAutocomplete({
     })
   }, [groupedSkills, query])
 
-  // Reset selected index when filtered skills change
   useEffect(() => {
-    setSelectedIndex(0)
+    const focused = document.activeElement
+    const focusedIndex = menuRef.current?.contains(focused)
+      ? focused?.getAttribute('data-skill-index')
+      : null
+    setSelectedIndex(Number(focusedIndex ?? 0))
   }, [filteredSkills])
 
   // Close on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      if (!menuRef.current?.contains(event.target as Node)) {
         onClose()
       }
     }
@@ -129,13 +135,13 @@ export default function SkillAutocomplete({
   }, [onClose])
 
   const handleSelect = useCallback(
-    (skill: UnifiedSkill, event?: React.MouseEvent | React.KeyboardEvent) => {
+    (skill: UnifiedSkill, option?: HTMLElement | null) => {
       // Get start position from the clicked element or menu
       let startX = 0
       let startY = 0
 
-      if (event && 'currentTarget' in event && event.currentTarget instanceof HTMLElement) {
-        const rect = event.currentTarget.getBoundingClientRect()
+      if (option) {
+        const rect = option.getBoundingClientRect()
         startX = rect.left + rect.width / 2
         startY = rect.top + rect.height / 2
       } else if (menuRef.current) {
@@ -174,38 +180,39 @@ export default function SkillAutocomplete({
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const menu = menuRef.current
+      if (!menu || event.isComposing || event.keyCode === 229 || !(event.target instanceof Node))
+        return
+
+      const focusInMenu = menu.contains(event.target)
+      if (!focusInMenu && !editorRef?.current?.contains(event.target)) return
+
+      const getOption = (index: number) =>
+        menuRef.current?.querySelector<HTMLButtonElement>(`[data-skill-index="${index}"]`)
+
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         onClose()
-      } else if (event.key === 'ArrowDown') {
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         event.stopPropagation()
-        setSelectedIndex(prev => Math.min(prev + 1, filteredSkills.length - 1))
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        event.stopPropagation()
-        setSelectedIndex(prev => Math.max(prev - 1, 0))
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        event.stopPropagation()
-        // In read-only mode, Enter just closes the menu
-        if (readOnly) {
-          onClose()
-        } else if (filteredSkills[selectedIndex]) {
-          // For keyboard selection, get position from the selected item
-          const selectedItem = menuRef.current?.querySelector(
-            `[data-skill-index="${selectedIndex}"]`
-          ) as HTMLElement | null
-          if (selectedItem) {
-            const fakeEvent = {
-              currentTarget: selectedItem,
-            } as unknown as React.KeyboardEvent
-            handleSelect(filteredSkills[selectedIndex].skill, fakeEvent)
-          } else {
-            handleSelect(filteredSkills[selectedIndex].skill)
-          }
+        if (filteredSkills.length === 0) return
+
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        const nextIndex = Math.min(Math.max(selectedIndex + step, 0), filteredSkills.length - 1)
+        setSelectedIndex(nextIndex)
+        const option = getOption(nextIndex)
+        if (focusInMenu) {
+          option?.focus()
+        } else {
+          option?.scrollIntoView?.({ block: 'nearest' })
         }
+      } else if (event.key === 'Enter' && !focusInMenu) {
+        event.preventDefault()
+        event.stopPropagation()
+        const selected = filteredSkills[selectedIndex]
+        if (selected) handleSelect(selected.skill, getOption(selectedIndex))
       }
     }
 
@@ -213,7 +220,7 @@ export default function SkillAutocomplete({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [onClose, filteredSkills, selectedIndex, handleSelect, readOnly])
+  }, [onClose, filteredSkills, selectedIndex, handleSelect, editorRef])
 
   // Get section header for a group
   const getSectionHeader = (group: 'team' | 'personal' | 'group' | 'public') => {
@@ -244,6 +251,7 @@ export default function SkillAutocomplete({
   }
 
   if (filteredSkills.length === 0) {
+    if (!showEmptyResults) return null
     return (
       <div
         ref={menuRef}
@@ -301,43 +309,32 @@ export default function SkillAutocomplete({
     itemIndex++
 
     renderItems.push(
-      <div
-        key={skill.name}
+      <button
+        key={skill.id}
+        type="button"
+        data-testid="slash-skill-option"
         data-skill-index={displayIndex}
-        className={`px-3 py-2 transition-colors flex items-center gap-2 ${
-          readOnly ? 'cursor-default' : 'cursor-pointer'
-        } ${
-          displayIndex === selectedIndex ? 'bg-muted' : readOnly ? '' : 'hover:bg-muted'
+        aria-pressed={isSelected}
+        className={`min-h-[44px] w-full px-3 py-2 text-left transition-colors flex items-center gap-2 cursor-pointer ${
+          displayIndex === selectedIndex ? 'bg-muted' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
-        onClick={readOnly ? undefined : e => handleSelect(skill, e)}
-        role={readOnly ? undefined : 'button'}
-        tabIndex={readOnly ? -1 : 0}
-        onKeyDown={
-          readOnly
-            ? undefined
-            : e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  handleSelect(skill, e)
-                }
-              }
-        }
+        onMouseDown={e => e.preventDefault()}
+        onFocus={() => setSelectedIndex(displayIndex)}
+        onClick={e => handleSelect(skill, e.currentTarget)}
       >
-        <Zap className={`h-4 w-4 flex-shrink-0 ${readOnly ? 'text-text-muted' : 'text-primary'}`} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span
-              className={`text-sm font-medium truncate ${readOnly ? 'text-text-muted' : 'text-text-primary'}`}
-            >
+        <Zap className="h-4 w-4 flex-shrink-0 text-primary" />
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-2">
+            <span className="text-sm font-medium truncate text-text-primary">
               {skill.displayName || skill.name}
             </span>
             {isSelected && <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />}
-          </div>
+          </span>
           {skill.description && (
-            <div className="text-xs text-text-muted truncate">{skill.description}</div>
+            <span className="block text-xs text-text-muted truncate">{skill.description}</span>
           )}
-        </div>
-      </div>
+        </span>
+      </button>
     )
   }
 

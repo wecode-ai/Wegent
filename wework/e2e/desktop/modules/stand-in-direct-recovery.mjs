@@ -450,6 +450,7 @@ export function createDirectRecoveryVerification(options) {
         assert.equal(collectionLockCalls, 1, 'The recovered all-contact message executes once')
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
         await openStandInActivity(control)
         await control.command(
           'clickWhenEnabled',

@@ -12,5 +12,8 @@ export function useBufferedStreamingText(
     [store, content, isStreaming, flushIntervalMs]
   )
   const bufferedContent = useSyncExternalStore(subscribe, store.getSnapshot, store.getSnapshot)
-  return isStreaming && content.startsWith(bufferedContent) ? bufferedContent : content
+  const canUseBufferedContent = isStreaming && (bufferedContent !== '' || flushIntervalMs <= 0)
+  return canUseBufferedContent && content.startsWith(bufferedContent)
+    ? bufferedContent
+    : content
 }

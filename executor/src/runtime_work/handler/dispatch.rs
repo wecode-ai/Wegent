@@ -143,6 +143,14 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.readiness" => boxed_rpc(move || async move {
+                let mut payload = payload;
+                let provider = string_field(&payload, "providerId")
+                    .ok_or_else(|| AppIpcError::new("bad_request", "providerId is required"))?;
+                payload["readiness"] = json!(true);
+                self.connection_call("check", Some(&provider), payload)
+                    .await
+            }),
             "runtime.connections.observations.sync" => {
                 boxed_rpc(
                     move || async move { self.sync_cloud_connection_subscription(payload).await },
@@ -250,6 +258,14 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.stand_in.work.run" => {
                 boxed_rpc(move || async move { self.run_connection_stand_in_work(payload).await })
+            }
+            "runtime.stand_in.work.takeover" => {
+                boxed_rpc(move || async move { self.take_over_delegated_dingtalk_work(payload) })
+            }
+            "runtime.stand_in.work.verify_delivery" => {
+                boxed_rpc(
+                    move || async move { self.verify_delegated_dingtalk_delivery(payload).await },
+                )
             }
             "runtime.stand_in.work.adjust" => {
                 boxed_rpc(move || async move { self.adjust_connection_stand_in_work(payload) })

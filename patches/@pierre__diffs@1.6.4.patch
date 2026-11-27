@@ -1,0 +1,131 @@
+diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
+index eb8c2831276f18eda0ddcb12967d0182679953a4..59a25113a02e8709582efaa25ca0b2c69f62b17a 100644
+--- a/dist/components/VirtualizedFileDiff.js
++++ b/dist/components/VirtualizedFileDiff.js
+@@ -538,7 +538,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		return !this.isAdvancedMode() && super.shouldSelfHealEditSession();
+ 	}
+ 	setVisibility(visible) {
+-		if (this.isAdvancedMode() || this.fileContainer == null) return;
++		if (this.isAdvancedMode() || this.fileContainer == null || this.isVisible === visible) return;
+ 		this.renderRange = void 0;
+ 		if (visible && !this.isVisible) {
+ 			this.top = this.getVirtualizedTop();
+diff --git a/dist/react/utils/useFileDiffInstance.js b/dist/react/utils/useFileDiffInstance.js
+--- a/dist/react/utils/useFileDiffInstance.js
++++ b/dist/react/utils/useFileDiffInstance.js
+@@ -107,6 +107,7 @@ function useFileDiffInstance({ fileDiff, oldFile, newFile, options, editorOptions
+ 	useIsomorphicLayoutEffect(() => {
+ 		const { current: instance } = instanceRef;
+ 		if (instance == null) return;
++		if (instance instanceof VirtualizedFileDiff) instance.setMetrics(metrics);
+ 		const newOptions = mergeFileDiffOptions({
+ 			controlledSelection,
+ 			hasCustomHeader,
+diff --git a/dist/components/Virtualizer.js b/dist/components/Virtualizer.js
+--- a/dist/components/Virtualizer.js
++++ b/dist/components/Virtualizer.js
+@@ -298,6 +298,31 @@ var Virtualizer = class Virtualizer {
+ 		});
+ 		this.markDOMDirty();
+ 	}
++	// Capture before a React layout change, while the old line positions are still visible.
++	captureLayoutScrollAnchor() {
++		if (this.root == null || (this.root instanceof Document ? window.scrollY : this.root.scrollTop) <= 0) return;
++		const anchor = this.getScrollAnchor(this.getHeight());
++		if (anchor == null) return;
++		const { fileElement, lineIndex, lineOffset } = anchor;
++		const instance = this.observers.get(fileElement);
++		if (instance == null) return;
++		const findLine = () => lineIndex != null ? fileElement.shadowRoot?.querySelector(`[data-line][data-line-index="${lineIndex}"]`) : void 0;
++		const row = findLine();
++		const lineNumber = row != null ? Number(row.getAttribute("data-line")) : void 0;
++		const side = row?.getAttribute("data-line-type") === "change-deletion" || row?.closest("code[data-deletions]") != null ? "deletions" : "additions";
++		return () => {
++			if (!fileElement.isConnected || this.observers.get(fileElement) !== instance) return;
++			if (lineIndex == null || findLine() != null) this.scrollFix(anchor);
++			else if (lineOffset != null && Number.isFinite(lineNumber) && lineNumber > 0) {
++				const position = instance.getLinePosition?.(lineNumber, side);
++				if (position != null) {
++					const top = getRelativeBoundingTop(fileElement, this.getScrollContainerElement()) + position.top;
++					if (top !== lineOffset) this.applyScrollFix(top - lineOffset);
++				}
++			}
++			queueRender(this.computeRenderRangeAndEmit);
++		};
++	}
+ 	getScrollAnchor(viewportHeight) {
+ 		const scrollContainer = this.getScrollContainerElement();
+ 		let bestAnchor;
+diff --git a/dist/react/Virtualizer.d.ts b/dist/react/Virtualizer.d.ts
+index 82b5593..0cea7b0 100644
+--- a/dist/react/Virtualizer.d.ts
++++ b/dist/react/Virtualizer.d.ts
+@@ -9,8 +9,10 @@ interface VirtualizerProps {
+   style?: CSSProperties;
+   contentClassName?: string;
+   contentStyle?: CSSProperties;
++  /** Changes to layout geometry that must preserve the visible reading anchor. */
++  layoutRevision?: number;
+ }
+-declare function Virtualizer({ children, config, className, style, contentClassName, contentStyle }: VirtualizerProps): React.JSX.Element;
++declare function Virtualizer({ children, config, className, style, contentClassName, contentStyle, layoutRevision }: VirtualizerProps): React.JSX.Element;
+ declare function useVirtualizer(): Virtualizer$1 | undefined;
+ //#endregion
+ export { Virtualizer, VirtualizerContext, useVirtualizer };
+diff --git a/dist/react/Virtualizer.js b/dist/react/Virtualizer.js
+index af437dc..2b98ea7 100644
+--- a/dist/react/Virtualizer.js
++++ b/dist/react/Virtualizer.js
+@@ -1,10 +1,23 @@
+ "use client";
+ import { Virtualizer as Virtualizer$1 } from "../components/Virtualizer.js";
+-import { createContext, useCallback, useContext, useState } from "react";
++import { Component, createContext, useCallback, useContext, useState } from "react";
+ import { jsx } from "react/jsx-runtime";
+ //#region src/react/Virtualizer.tsx
+ const VirtualizerContext = createContext(void 0);
+-function Virtualizer({ children, config, className, style, contentClassName, contentStyle }) {
++// React's snapshot lifecycle captures geometry before DOM mutations and restores
++// it after descendant layout effects have updated the virtualized row heights.
++class LayoutScrollAnchor extends Component {
++	getSnapshotBeforeUpdate(previous) {
++		return previous.layoutRevision !== this.props.layoutRevision ? this.props.instance?.captureLayoutScrollAnchor() ?? null : null;
++	}
++	componentDidUpdate(_previous, _state, restore) {
++		restore?.();
++	}
++	render() {
++		return this.props.children;
++	}
++}
++function Virtualizer({ children, config, className, style, contentClassName, contentStyle, layoutRevision }) {
+ 	const [instance] = useState(() => {
+ 		return typeof window !== "undefined" ? new Virtualizer$1(config) : void 0;
+ 	});
+@@ -14,14 +27,18 @@ function Virtualizer({ children, config, className, style, contentClassName, con
+ 	}, [instance]);
+ 	return /* @__PURE__ */ jsx(VirtualizerContext.Provider, {
+ 		value: instance,
+-		children: /* @__PURE__ */ jsx("div", {
+-			className,
+-			style,
+-			ref,
++		children: /* @__PURE__ */ jsx(LayoutScrollAnchor, {
++			instance,
++			layoutRevision,
+ 			children: /* @__PURE__ */ jsx("div", {
+-				className: contentClassName,
+-				style: contentStyle,
+-				children
++				className,
++				style,
++				ref,
++				children: /* @__PURE__ */ jsx("div", {
++					className: contentClassName,
++					style: contentStyle,
++					children
++				})
+ 			})
+ 		})
+ 	});

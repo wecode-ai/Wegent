@@ -172,6 +172,7 @@ pub use wegent_knowledge_access::auth::{
 };
 #[cfg(test)]
 mod app_test_support;
+mod external_connector_authorization;
 mod mcp_identity;
 #[cfg(test)]
 pub(crate) use wegent_mcp_providers::user_mcp_oauth;
@@ -275,6 +276,7 @@ pub use wegent_media::video_result_urls;
 #[cfg(test)]
 mod web_content_route_tests;
 use wegent_identity::wework_auth_tokens;
+mod stand_in_account;
 mod stand_in_issue_events;
 mod wework_runtime_downloads;
 mod work_queues;

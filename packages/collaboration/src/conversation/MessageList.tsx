@@ -1,5 +1,6 @@
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
+import { hideAnsweredQuestionSummaries } from './answeredQuestionPresentation'
 import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
 import {
   isCancelledAssistantMessage,
@@ -40,6 +41,7 @@ import {
 } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import { getConversationVirtualMeasurements } from './conversationViewportCache'
+import type { ConversationLayoutChangeReason } from './scrollableMessageTypes'
 import { SelectionActionsPopover } from './SelectionActionsPopover'
 import {
   useConversationVirtualizer,
@@ -54,7 +56,6 @@ import {
 } from '../markdown/MarkdownWindowingScope'
 
 export interface MessageListProps {
-  assistantMessageStyle?: 'plain' | 'bubble'
   showProcessingStatus?: boolean
   userMessageServices: UserMessageServices
   virtualize?: boolean
@@ -70,7 +71,8 @@ export interface MessageListProps {
   scrollTailHeight?: number
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
-  onVirtualLayoutChange?: () => void
+  onVirtualLayoutChange?: (reason?: ConversationLayoutChangeReason) => void
+  layoutRevision?: string
   className?: string
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
@@ -150,7 +152,6 @@ export const MessageList = memo(function MessageList({
   useContentVisibility = false,
   onVirtualMeasurement,
   renderVisualization,
-  assistantMessageStyle,
   showProcessingStatus,
   messages,
   turns = EMPTY_TURNS,
@@ -159,6 +160,7 @@ export const MessageList = memo(function MessageList({
   scrollTailHeight = 0,
   onBeforeUserMessageToggle,
   onVirtualLayoutChange,
+  layoutRevision,
   className,
   conversationKey,
   isWaitingForAssistant = false,
@@ -204,7 +206,8 @@ export const MessageList = memo(function MessageList({
   const nativeTypography = useElementTypography(
     listRef,
     MESSAGE_LAYOUT_CSS_PROPERTIES,
-    virtualize && scrollElementRef !== undefined
+    virtualize && scrollElementRef !== undefined,
+    layoutRevision
   )
   const layout = useMemo(
     () => ({
@@ -217,12 +220,12 @@ export const MessageList = memo(function MessageList({
     [nativeTypography, initialTypography, fontEpoch]
   )
   const layoutWidth = layout.width
-  const layoutKey = JSON.stringify([
-    layout.width,
+  const layoutPropertiesKey = JSON.stringify([
     className ?? null,
     layout.typography,
     layout.fontEpoch,
   ])
+  const layoutKey = JSON.stringify([layoutWidth, layoutPropertiesKey])
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
   const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
@@ -235,6 +238,10 @@ export const MessageList = memo(function MessageList({
     [turns]
   )
   const visibleMessages = useMemo(() => {
+    const displayMessages =
+      showProcessingStatus === false
+        ? hideAnsweredQuestionSummaries(resolvedMessages)
+        : resolvedMessages
     const userTurns = new Set(
       resolvedMessages
         .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
@@ -246,8 +253,10 @@ export const MessageList = memo(function MessageList({
         .map(message => message.turnId)
         .filter(turnId => turnId && !userTurns.has(turnId))
     )
-    return resolvedMessages.filter(message => {
+    return displayMessages.filter((message, index) => {
       if (isStandInActivityMessage(message)) return false
+      const questionSummaryRemoved = message !== resolvedMessages[index]
+      if (questionSummaryRemoved && !shouldRenderMessage(message, false)) return false
       if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
         const turn = runtimeTurnsById.get(message.turnId)
         if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
@@ -261,9 +270,9 @@ export const MessageList = memo(function MessageList({
           return true
         if (isCompletedStandInActivityTrace(message)) return false
       }
-      return shouldRenderMessage(message)
+      return questionSummaryRemoved || shouldRenderMessage(message)
     })
-  }, [resolvedMessages, runtimeTurnsById])
+  }, [resolvedMessages, runtimeTurnsById, showProcessingStatus])
   // Native crash history may retain an open status; only its latest root turn is live.
   const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
   const lastAssistantMessageIdByTurn = useMemo(() => {
@@ -289,7 +298,9 @@ export const MessageList = memo(function MessageList({
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
-    (waitingIndicatorStyle === 'dots' ||
+    // Outcome views hide the thinking indicator inside streaming assistant messages.
+    (showProcessingStatus === false ||
+      waitingIndicatorStyle === 'dots' ||
       !resolvedMessages.some(
         message => message.role === 'assistant' && message.status === 'streaming'
       ))
@@ -302,16 +313,18 @@ export const MessageList = memo(function MessageList({
   const virtualLayoutReady = virtualMessages && layoutWidth > 0
   const virtualMeasurementKey =
     virtualMessages && conversationKey != null ? String(conversationKey) : null
-  const measurementLayout = useMemo(
-    () => ({
-      key: layoutKey,
-      messages: new Map(
+  const measurementSignatures = useMemo(
+    () =>
+      new Map(
         virtualMessages
           ? visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
           : []
       ),
-    }),
-    [layoutKey, visibleMessages, virtualMessages]
+    [visibleMessages, virtualMessages]
+  )
+  const measurementLayout = useMemo(
+    () => ({ key: layoutKey, messages: measurementSignatures }),
+    [layoutKey, measurementSignatures]
   )
   const initialMeasurementsCache = useMemo(
     () =>
@@ -320,23 +333,10 @@ export const MessageList = memo(function MessageList({
         : (getConversationVirtualMeasurements(virtualMeasurementKey, measurementLayout) ?? []),
     [measurementLayout, virtualMeasurementKey]
   )
-  const messageIntrinsicHeights = useMemo(() => {
-    if (!virtualLayoutReady) return new Map<string, number>()
-    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    return new Map(
-      visibleMessages.map(message => [
-        message.id,
-        measuredSizes.get(message.id) ??
-          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography),
-      ])
-    )
-  }, [
-    initialMeasurementsCache,
-    layoutWidth,
-    layout.typography,
-    virtualLayoutReady,
-    visibleMessages,
-  ])
+  const measuredSizes = useMemo(
+    () => new Map(initialMeasurementsCache.map(item => [item.key, item.size])),
+    [initialMeasurementsCache]
+  )
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 shrink-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl shrink-0 flex-col gap-4 px-6 pb-2 pt-8'
@@ -374,11 +374,16 @@ export const MessageList = memo(function MessageList({
     [geometryRows]
   )
   const estimateSize = useCallback(
-    (index: number) =>
-      index === visibleMessages.length
-        ? 32
-        : Math.ceil(messageIntrinsicHeights.get(visibleMessages[index].id) ?? 220),
-    [messageIntrinsicHeights, visibleMessages]
+    (index: number) => {
+      const message = visibleMessages[index]
+      if (!message) return 32
+      if (!virtualLayoutReady) return 220
+      return Math.ceil(
+        measuredSizes.get(message.id) ??
+          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography)
+      )
+    },
+    [measuredSizes, layoutWidth, layout.typography, virtualLayoutReady, visibleMessages]
   )
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
@@ -390,7 +395,14 @@ export const MessageList = memo(function MessageList({
     },
     [forcedVirtualMessageIndex, streamingVirtualMessageIndex]
   )
-  const measureElement = useMessageRowMeasure(onVirtualMeasurement)
+  const [viewportPort] = useState(createMessageListViewportPort)
+  const recordMeasurement = useCallback(
+    (row: HTMLElement, width: number, size: number) => {
+      viewportPort.recordMeasurement(row, width, size, layoutWidth, measurementLayout)
+    },
+    [viewportPort, layoutWidth, measurementLayout]
+  )
+  const measureElement = useMessageRowMeasure(onVirtualMeasurement, recordMeasurement, layoutWidth)
   const {
     virtualizer: messageVirtualizer,
     tailHeight,
@@ -428,19 +440,18 @@ export const MessageList = memo(function MessageList({
     messageVirtualizer,
     virtualLayoutReady
   )
-  const [viewportPort] = useState(createMessageListViewportPort)
   const markdownWindowingState = useMemo(() => {
     const scope = createMarkdownWindowingScope(
       scrollElementRef,
-      element => viewportPort.chunkLayout(scope, element),
+      (element, materialized) => viewportPort.chunkLayout(scope, element, materialized),
       layout.typography.rootFontSize,
       onNativeScrollRange
     )
-    return { conversationKey, layoutKey, scope }
+    return { conversationKey, scope }
   }, [
     conversationKey,
     scrollElementRef,
-    layoutKey,
+    layoutPropertiesKey,
     layout.typography.rootFontSize,
     viewportPort,
     onNativeScrollRange,
@@ -509,6 +520,8 @@ export const MessageList = memo(function MessageList({
       virtual: virtualMessages,
       ready: virtualLayoutReady,
       layoutKey,
+      layoutWidth,
+      layoutPropertiesKey,
       measurementKey: virtualMeasurementKey,
       measurementLayout,
       virtualizer: messageVirtualizer,
@@ -616,6 +629,7 @@ export const MessageList = memo(function MessageList({
               data-message-row={hasViewportRows ? true : undefined}
               style={row.style}
               className="min-w-0"
+              role={waitingIndicatorStyle === 'dots' ? undefined : 'status'}
               data-testid="message-assistant-waiting"
             >
               <AssistantThinkingIndicator variant={waitingIndicatorStyle} />
@@ -654,7 +668,6 @@ export const MessageList = memo(function MessageList({
               isHistoricalTurn={isHistoricalTurn}
               userMessageServices={userMessageServices}
               renderVisualization={renderVisualization}
-              assistantMessageStyle={assistantMessageStyle}
               showProcessingStatus={showProcessingStatus}
               conversationKey={conversationKey}
               devices={devices}
@@ -728,9 +741,10 @@ export const MessageList = memo(function MessageList({
   )
 })
 
-function shouldRenderMessage(message: WorkbenchMessage): boolean {
+function shouldRenderMessage(message: WorkbenchMessage, allowEmptyStreaming = true): boolean {
   if (message.role !== 'assistant') return true
-  if (message.status === 'streaming' || message.status === 'failed') return true
+  if ((allowEmptyStreaming && message.status === 'streaming') || message.status === 'failed')
+    return true
   if (isCancelledAssistantMessage(message)) return true
   if (message.fileChanges) return true
   if (message.references?.length || message.memoryCitations?.length) {

@@ -14,7 +14,9 @@ import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
 import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
 import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { useState } from 'react'
-import { StandInNavigationButton } from './StandInRoleSelector'
+import { Share2 } from 'lucide-react'
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
+import { Tooltip } from '@/components/ui/tooltip'
 import { StandInReviewDialog } from './StandInReviewDialog'
 
 export function StandInShareControl({
@@ -55,20 +57,23 @@ export function StandInShareControl({
 
   return (
     <>
-      <StandInNavigationButton
-        selected={open}
-        data-testid="stand-in-shares-open"
-        aria-haspopup="dialog"
-        onClick={() =>
-          beforeOpen(() => {
-            setOpen(true)
-            setShares(null)
-            void refresh()
-          })
-        }
-      >
-        {t('standIn.sharing.title')}
-      </StandInNavigationButton>
+      <Tooltip label={t('standIn.sharing.title')} side="bottom" align="end">
+        <IconButton
+          aria-label={t('standIn.sharing.title')}
+          aria-expanded={open}
+          data-testid="stand-in-shares-open"
+          aria-haspopup="dialog"
+          onClick={() =>
+            beforeOpen(() => {
+              setOpen(true)
+              setShares(null)
+              void refresh()
+            })
+          }
+        >
+          <Share2 aria-hidden="true" className="size-4" />
+        </IconButton>
+      </Tooltip>
       {active && open && (
         <StandInReviewDialog
           open

@@ -85,6 +85,102 @@ async fn stand_in_native_answers_use_the_live_request_and_reject_invalid_replays
     assert!(receiver.try_recv().is_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn stand_in_async_answers_use_the_saved_execution_profile() {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _environment: Vec<_> = [
+        "HOME",
+        "CODEX_HOME",
+        "WEGENT_CODEX_HOME",
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_WORKBENCH_HOME",
+        "WEGENT_CAPABILITIES_HOME",
+        "CODEX_SQLITE_HOME",
+    ]
+    .into_iter()
+    .map(|key| {
+        let directory = home.path().join(key);
+        fs::create_dir_all(&directory).unwrap();
+        ScalarEnv::set(key, directory.to_str().unwrap())
+    })
+    .collect();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for role in [None, Some("role-1")] {
+                let (mut handler, root) = isolated_runtime_work_handler("stand-in-async-answer");
+                install_native_history(
+                    &mut handler,
+                    &root,
+                    vec![json!({
+                        "id":"turn-1", "status":"completed", "items":[{
+                            "id":"question", "type":"agentMessage",
+                            "questions":[{"title":"question-1", "options":["answer-1", "answer-2"]}]
+                        }]
+                    })],
+                    None,
+                );
+                // Hold admission capacity so the exact accepted continuation can
+                // be inspected before a native turn consumes it.
+                handler.turn_scheduler.lock().unwrap().settings = RuntimeSettings::uniform(0);
+                let task = super::super::stand_in_conversations::conversation_task_id(7, role);
+                let origin = json!({"type":"stand_in_identity","userId":7,
+                    "standInId":role,"deviceId":"device-1","runtimeTaskId":task});
+                let mut link = RuntimeTaskLink::new_pending(
+                    task.clone(),
+                    root.to_string_lossy().into_owned(),
+                    "task-1".into(),
+                );
+                link.thread_id = Some("thread-1".into());
+                link.status = "done".into();
+                link.running = false;
+                link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.into());
+                let saved = serde_json::from_value(json!({
+                    "user_id":7,"origin":origin,"model_config":{"model_id":"model-1"}
+                }))
+                .unwrap();
+                link.runtime_handle["origin"] = origin;
+                store_runtime_execution_request(&mut link.runtime_handle, &saved);
+                handler.upsert_local_task(link);
+
+                let payload = json!({"method":"runtime.tasks.send", "payload":{
+                    "taskId":task,"message":"answer-1","clientUserMessageId":"answer",
+                    "requestUserInputResponse":{"delivery":"async","itemId":"question",
+                        "interactionScope":"turn-1","answers":{"question_1":{"answers":["answer-1"]}}}
+                }});
+                let result = handler.handle_runtime_rpc(payload.clone()).await.unwrap();
+                assert_eq!(result["accepted"], true, "{result}");
+                assert_eq!(result["status"], "queued");
+                {
+                    let scheduler = handler.turn_scheduler.lock().unwrap();
+                    assert_eq!(scheduler.queued_turns.len(), 1);
+                    let turn = &scheduler.queued_turns[0];
+                    assert_eq!(turn.local_task_id, task);
+                    assert_eq!(turn.request.prompt, "answer-1");
+                    assert_eq!(turn.request.model_config["model_id"], "model-1");
+                    assert_eq!(turn.request.extra["origin"]["standInId"], json!(role));
+                    assert!(turn.request.extra["runtime_command_id"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("stand-in-owner-input:"));
+                }
+                let rejected = handler.handle_runtime_rpc(payload).await.unwrap_err();
+                assert_eq!(rejected.code, "stale_request_user_input");
+                assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                handler
+                    .codex_app_server
+                    .request("test/stop", json!({}))
+                    .await
+                    .unwrap();
+                let _ = fs::remove_dir_all(root);
+            }
+        });
+}
+
 #[test]
 fn question_publication_retries_auth_timeout_and_rate_limit_failures() {
     for code in [401, 403, 408, 425, 429, 500, 502, 503, 504] {
@@ -248,6 +344,7 @@ async fn blocking_question_download_race(stop: bool) {
     } else {
         "question-download-duplicate"
     });
+    let _workspace = ScalarEnv::set("WORKSPACE_ROOT", root.join("workspace").to_str().unwrap());
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
         "task".into(),
         root.to_string_lossy().into_owned(),
@@ -385,6 +482,7 @@ fn async_question_attachment_groups_reach_new_turn_prompt() {
 #[cfg(unix)]
 async fn assert_async_question_attachment_groups() {
     let (mut handler, root) = isolated_runtime_work_handler("async-question-file-groups");
+    let _workspace = ScalarEnv::set("WORKSPACE_ROOT", root.join("workspace").to_str().unwrap());
     install_native_history(
         &mut handler,
         &root,

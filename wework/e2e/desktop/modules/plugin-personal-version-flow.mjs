@@ -130,14 +130,17 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
     )
   const detailRow = name =>
     `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
-  const startChat = async () =>
-    waitForSnapshot(
+  const startChat = async name => {
+    await control.command('clickIfPresent', testId('plugin-detail-back-button'))
+    await control.command('clickWhenEnabled', detailRow(name))
+    return waitForSnapshot(
       control,
       snapshot =>
         snapshot.testIds.includes('plugin-detail-actions-bar') &&
         snapshot.text.split('\n').some(text => /^(立即对话|Start chat)$/i.test(text)),
       'Installed author source did not expose the existing Start chat action'
     )
+  }
 
   for (const alreadyShared of [false, true]) {
     const name = alreadyShared ? 'author-install-shared-e2e' : 'author-install-private-e2e'
@@ -212,8 +215,7 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       await control.command('waitFor', testId('plugin-import-dialog'), { visible: false })
     }
     if (alreadyShared) {
-      await control.command('clickWhenEnabled', detailRow(name))
-      await startChat()
+      await startChat(name)
     }
 
     let install = await until(
@@ -259,7 +261,7 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       assert.ok(await accountPlugin(cloud, name), 'The old delete preview removed account intent')
       await assertPersonalSourceUnchanged(source)
       await control.command('clickWhenEnabled', testId('plugin-delete-cancel-button'))
-      await startChat()
+      await startChat(name)
     }
     await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
 

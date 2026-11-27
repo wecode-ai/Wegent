@@ -8,6 +8,7 @@ type Status =
   | ReturnType<typeof standInState>['status']
   | 'waitingForDevice'
   | 'waitingForParent'
+  | 'waitingChildren'
   | 'waitingForDependencies'
   | 'retrying'
   | 'blockedByDependency'
@@ -24,6 +25,7 @@ export type Branch = {
   parentId: string
   role?: string
   status: Status
+  completionConfirmed?: boolean
   error?: string
   dispatcherDeviceId: string
   cancelGroup?: boolean
@@ -52,6 +54,7 @@ export const actionableStatuses: Status[] = [
   'waiting',
   'waitingForDevice',
   'waitingForParent',
+  'waitingChildren',
   'waitingForDependencies',
   'retrying',
   'blockedByDependency',
@@ -66,7 +69,9 @@ export function activeStandInAncestors(branches: Branch[]): ReadonlySet<string> 
 }
 
 export function standInBranchStatus(branch: Branch, activeAncestors: ReadonlySet<string>) {
-  return branch.status === 'completed' && activeAncestors.has(branch.taskId)
+  return branch.status === 'completed' &&
+    !branch.completionConfirmed &&
+    activeAncestors.has(branch.taskId)
     ? 'waitingChildren'
     : branch.status
 }
@@ -75,7 +80,7 @@ export function activeStandInBranchRows(branches: Branch[]) {
   const activeAncestors = activeStandInAncestors(branches)
   return branches.flatMap(branch => {
     const status = standInBranchStatus(branch, activeAncestors)
-    return status === 'waitingChildren' || activeStatuses.includes(status)
+    return activeStatuses.includes(status)
       ? [{ taskId: branch.taskId, title: branch.title, address: branch.address, status }]
       : []
   })
@@ -92,7 +97,9 @@ export function selectStandInDelegatedWork(
   const sameDevice = (id: unknown) =>
     typeof id === 'string' && (aliases.get(id) ?? id) === (aliases.get(deviceId) ?? deviceId)
   const branches = new Map<string, Branch>()
+  const localExecutionStatuses = new Set<string>()
   for (const row of remote) {
+    if (row.statusSource === 'local_execution') localExecutionStatuses.add(row.taskId)
     branches.set(row.taskId, {
       taskId: row.taskId,
       address: row.taskAddress,
@@ -103,7 +110,11 @@ export function selectStandInDelegatedWork(
       prerequisiteTaskIds: row.prerequisiteTaskIds ?? undefined,
       parentId: row.parentTaskId,
       role: row.roleName,
-      status: remoteStatus[row.status],
+      status:
+        row.status === 'running' && row.waitingForChildren
+          ? 'waitingChildren'
+          : remoteStatus[row.status],
+      completionConfirmed: row.status === 'done',
       dispatcherDeviceId: deviceId,
       cancelGroup: row.cancelGroup,
       attempt: row.attempt,
@@ -127,6 +138,25 @@ export function selectStandInDelegatedWork(
     }
     const state = standInState(item)
     const entry = branches.get(item.address.taskId)
+    const execution = (item.lifecycle?.task?.runtimeHandle?.executionRequest ??
+      item.task.runtimeHandle?.executionRequest) as
+      | { standInDelegation?: { attempt?: unknown } }
+      | undefined
+    const nativeAttempt = execution?.standInDelegation?.attempt
+    const attempt =
+      typeof nativeAttempt === 'number' && Number.isSafeInteger(nativeAttempt) && nativeAttempt >= 0
+        ? nativeAttempt
+        : 0
+    const newerAttempt = Boolean(entry && attempt > entry.attempt)
+    // The dispatcher owns terminal results and operation states. A live task
+    // from an older attempt cannot overwrite them.
+    const useDispatcherStatus =
+      entry &&
+      !newerAttempt &&
+      (entry.attempt > attempt ||
+        localExecutionStatuses.has(entry.taskId) ||
+        (entry.status !== 'running' && entry.status !== 'waiting') ||
+        (typeof origin.sourceDeviceId === 'string' && state.status === 'completed'))
     branches.set(item.address.taskId, {
       taskId: item.address.taskId,
       address: item.address,
@@ -137,21 +167,12 @@ export function selectStandInDelegatedWork(
       prerequisiteTaskIds: entry?.prerequisiteTaskIds,
       parentId: origin.sourceTaskId,
       role: typeof origin.standInName === 'string' ? origin.standInName : entry?.role,
-      status:
-        entry &&
-        (entry.status === 'waitingForParent' ||
-          entry.status === 'retrying' ||
-          cancellingStatuses.includes(entry.status) ||
-          (entry.status === 'cancelled' && actionableStatuses.includes(state.status)) ||
-          (typeof origin.sourceDeviceId === 'string' &&
-            state.status === 'completed' &&
-            activeStatuses.includes(entry.status)))
-          ? entry.status
-          : state.status,
+      status: useDispatcherStatus ? entry.status : state.status,
+      completionConfirmed: useDispatcherStatus ? entry.completionConfirmed : undefined,
       error: state.summary,
       cancelGroup: entry?.cancelGroup,
-      attempt: entry?.attempt ?? 0,
-      retryAllowed: entry?.retryAllowed ?? false,
+      attempt: Math.max(entry?.attempt ?? 0, attempt),
+      retryAllowed: !newerAttempt && (entry?.retryAllowed ?? false),
       dispatcherDeviceId:
         entry?.dispatcherDeviceId ??
         (typeof origin.sourceDeviceId === 'string' ? origin.sourceDeviceId : item.address.deviceId),

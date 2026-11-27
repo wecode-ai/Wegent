@@ -87,6 +87,7 @@ export function IssueExistingTaskAction({
             task: task.address,
             project,
             type: 'bound',
+            itemId: issue.id,
           })
         onLinked()
         source.onLinked?.()

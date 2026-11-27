@@ -51,6 +51,8 @@ Reply cards carry `sys_full_json_obj` (`{"config":{"autoLayout":true}}`) by defa
 
 The same DingTalk channel can push its in-app notifications as cards. Turn on "Send task notifications as cards" and mentions, assignments, run starts and run completion/failure/cancellation go out as cards. Only channels with notification cards configured receive IM pushes, so another bot the user connected does not send a duplicate; a channel without the option sends no IM notification, while in-app notifications and stored records are unaffected. When a card delivery attempt fails, the markdown notification is sent instead.
 
+Cards for tasks assigned to a person show the assigner above the task title. If the assigner’s name is unavailable, the heading reads “You received a task.”
+
 By default, DingTalk's built-in Markdown message card needs no custom template. Its variable contract is `title`, `markdown`, `tips`, and `msgButtons` inside `sys_full_json_obj`. The custom template below uses a different contract. Notifications use ordinary message cards, not AI cards with streaming state and feedback controls.
 
 For a layout that separates the notification type, item, detail, and actions, import the [Wegent notification card example](../../../../examples/dingtalk-wework-notification-card.json):

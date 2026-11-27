@@ -140,6 +140,15 @@ fn failed_store_write_does_not_update_index_signature() {
         .lock()
         .expect("index signature lock should be available");
 
+    assert!(store
+        .try_upsert_task(RuntimeTaskLink::new_pending(
+            "unacknowledged-task".into(),
+            directory.path().to_string_lossy().into_owned(),
+            "Unacknowledged task".into(),
+        ))
+        .is_err());
+    assert!(store.get_task("unacknowledged-task").is_none());
+
     store.upsert_task(RuntimeTaskLink::new_pending(
         "failed-task".to_owned(),
         "/tmp/failed".to_owned(),

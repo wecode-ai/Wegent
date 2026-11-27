@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Profiler, type ReactNode } from 'react'
+import userEvent from '@testing-library/user-event'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
 
@@ -35,11 +36,6 @@ jest.mock('@/features/common/UserContext', () => ({
 }))
 
 jest.mock('@/features/tasks/components/chat/MentionAutocomplete', () => ({
-  __esModule: true,
-  default: () => null,
-}))
-
-jest.mock('@/features/tasks/components/chat/SkillAutocomplete', () => ({
   __esModule: true,
   default: () => null,
 }))
@@ -187,3 +183,109 @@ describe('ChatInput external focus', () => {
     expect(screen.getByText('chat:send_shortcut').parentElement).toHaveClass('hidden', 'md:block')
   })
 })
+
+test.each([
+  { pendingCatalog: false, method: 'type', action: 'click' },
+  { pendingCatalog: true, method: 'type', action: 'click' },
+  { pendingCatalog: false, method: 'paste query', action: 'click' },
+  { pendingCatalog: false, method: 'paste within command', action: 'click' },
+  { pendingCatalog: false, method: 'paste command', action: 'click' },
+  { pendingCatalog: true, method: 'paste command', action: 'click' },
+  { pendingCatalog: false, method: 'paste command', action: 'send unmatched path' },
+  { pendingCatalog: false, method: 'type', action: 'move caret' },
+  { pendingCatalog: false, method: 'type', action: 'keyboard' },
+])(
+  'preserves the draft for slash $method followed by $action (pending catalog: $pendingCatalog)',
+  async ({ pendingCatalog, method, action }) => {
+    const user = userEvent.setup()
+    const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect')
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 0, left: 0 }),
+    })
+    try {
+      const skill = {
+        id: 1,
+        name: 'pdf',
+        namespace: 'default',
+        description: 'Read docs/pdf files',
+        user_id: 1,
+        is_public: false,
+        is_active: true,
+      }
+      const props = {
+        setMessage: jest.fn(),
+        handleSendMessage: jest.fn(),
+        onSkillSelect: jest.fn(),
+        isLoading: false,
+      }
+      const suffix = ' and keep this path /tmp'
+      const command = action === 'send unmatched path' ? '/tmp/notes.txt' : '/docs/pdf'
+      const editingCommand = method === 'paste within command'
+      const draft = 'Check ' + command + (editingCommand ? 'pdf' : '') + suffix
+      const { rerender } = render(
+        <ChatInput
+          {...props}
+          message={'Check ' + (editingCommand ? '/pdf' : '') + suffix}
+          availableSkills={pendingCatalog ? [] : [skill]}
+        />
+      )
+      const input = screen.getByTestId('message-input')
+      input.focus()
+      function typeCommand(value: string) {
+        input.textContent = 'Check ' + value + suffix
+        window.getSelection()?.collapse(input.firstChild, 'Check '.length + value.length)
+        fireEvent.input(input)
+      }
+      if (method === 'paste command') {
+        window.getSelection()?.collapse(input.firstChild, 'Check '.length)
+        await user.paste(command)
+      } else if (editingCommand) {
+        window.getSelection()?.collapse(input.firstChild, 'Check /'.length)
+        await user.paste('docs/pdf')
+      } else {
+        typeCommand('/')
+        if (method === 'paste query') await user.paste('docs/pdf')
+        else typeCommand('/docs/pdf')
+      }
+      rerender(<ChatInput {...props} message={draft} availableSkills={[skill]} />)
+
+      if (action === 'send unmatched path') {
+        await user.keyboard('{Enter}')
+        expect(props.handleSendMessage).toHaveBeenCalledTimes(1)
+        expect(props.setMessage).toHaveBeenLastCalledWith(draft)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        expect(
+          screen.queryByText('common:skillSelector.no_available_skills')
+        ).not.toBeInTheDocument()
+        return
+      }
+
+      const option = await screen.findByTestId('slash-skill-option')
+      if (action === 'move caret') {
+        window.getSelection()?.collapse(input.firstChild, 0)
+        fireEvent(document, new Event('selectionchange'))
+        expect(option).not.toBeInTheDocument()
+        expect(input.textContent).toBe(draft)
+        expect(props.onSkillSelect).not.toHaveBeenCalled()
+        return
+      }
+
+      if (action === 'keyboard') {
+        await user.tab({ shift: true })
+        expect(option).toHaveFocus()
+        fireEvent(document, new Event('selectionchange'))
+        await user.keyboard('{Enter}')
+      } else {
+        await user.click(option)
+      }
+      expect(props.onSkillSelect).toHaveBeenCalledWith(skill)
+      expect(props.setMessage).toHaveBeenLastCalledWith('Check ' + suffix)
+      expect(window.getSelection()?.anchorOffset).toBe('Check '.length)
+    } finally {
+      if (originalRect)
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRect)
+      else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect')
+    }
+  }
+)

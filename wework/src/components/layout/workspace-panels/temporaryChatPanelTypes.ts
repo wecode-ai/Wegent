@@ -42,7 +42,7 @@ export interface TemporaryChatPanelProps {
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<
     RuntimeSendRequest,
-    'cloudProjectId' | 'origin' | 'additionalContext' | 'conversationContext'
+    'cloudProjectId' | 'origin' | 'additionalContext' | 'conversationContext' | 'assistantPrompt'
   >
   sendEphemeral?: boolean
   emptyStateText?: string
@@ -51,7 +51,6 @@ export interface TemporaryChatPanelProps {
   showModelSelector?: boolean
   hideProcessing?: boolean
   showActivityDots?: boolean
-  assistantMessageStyle?: 'plain' | 'bubble'
   markReadWhenActive?: boolean
   nativeConversation?: boolean
   allowMessagesDuringApproval?: boolean

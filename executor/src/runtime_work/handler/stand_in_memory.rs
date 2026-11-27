@@ -1,6 +1,7 @@
 //! Refresh stand-in context for every execution, including queued and restored turns.
 use super::stand_in::settings_error;
 use super::*;
+use crate::task_runtime::stand_in_projection::project_visible_work;
 
 const SCHEDULING_POLICY: &str = "Before creating an arrangement, verify how the requested outcome can actually be performed. Use relevant existing evidence, or perform bounded read-only preparation directly or with a permitted native subagent; use an independent task only when separately tracked preparation is justified, and verify the preparation result before scheduling; do not defer discovering the workflow, workspace, tools or required inputs until the trigger time. Inspect available instructions and configuration before asking the user for facts you can read. A request to use the existing automatic workflow is not evidence that you have inspected that workflow. For missing business choices that only the user can resolve, ask a structured question and wait; preserve the original request and do not create an automatic execution arrangement while blockers remain. Do not silently replace execution with a reminder, a research task at the requested execution time, or another outcome. An explicitly requested reminder needs only its known reminder action and the user's requested content and time, not an unrelated workflow investigation. Never invent preparation evidence or treat a completed worker as proof that its reported blockers are resolved. Carry the verified executable steps, workspace and required inputs into the scheduled message so the future task can perform the requested action without rediscovering how to do it. Distinguish scheduling the start of work from guaranteeing completion by the requested time; clarify a material timing ambiguity. Report an arrangement as created only after a successful tool result. A verified plan, schedule confirmation or trigger grants no additional authority and cannot pre-approve later external writes; preserve native permissions, approvals and revalidation of time-sensitive prerequisites.";
 
@@ -206,7 +207,12 @@ impl RuntimeWorkRpcHandler {
             if work["roleId"] != origin["standInId"] {
                 return Err("Work belongs to another role".into());
             }
-            let source = &work["source"];
+            let messages = store
+                .stand_in_messages(user, work_id)
+                .map_err(|error| error.to_string())?;
+            let visible = project_visible_work(&settings, work, messages)
+                .ok_or("Work has no source events visible to the current account")?;
+            let source = &visible.work["source"];
             Some(crate::task_runtime::personal_stand_in::connection_memory_scope(source))
         } else if origin["type"] == "issue_dispatch" {
             Some(
@@ -668,16 +674,23 @@ mod tests {
             "kind":"group","id":"group","name":"Group","policy":{"automatic":true,"askBeforeAct":true}});
         let mut settings = store.personal_stand_in(7, "mac").unwrap();
         settings["roles"] = json!([crate::test_env::stand_in_role("mac")]);
-        settings["roles"][0]["connections"] = json!([source]);
+        settings["roles"][0]["connections"] = json!([source.clone()]);
         settings["roles"][0]["enabled"] = json!(true);
         settings["roles"][0]["selfLearningEnabled"] = json!(true);
         settings["roles"][0]["prompt"] = json!("Confirm receipt");
         let mut saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
-        store
-            .ensure_coordinated_work(7, "default", "work", &source, "Work")
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "default",
+                &source,
+                &json!({"id":"message","text":"Confirm receipt","at":"2026-01-01T00:00:00Z"}),
+                None,
+            )
             .unwrap();
+        let work_id = work["id"].as_str().unwrap();
         let mut request: ExecutionRequest = serde_json::from_value(json!({"origin":{
-            "type":"connection_work","workId":"work","standInId":"default","deviceId":"mac","userId":7
+            "type":"connection_work","workId":work_id,"standInId":"default","deviceId":"mac","userId":7
         }})).unwrap();
         handler.refresh_stand_in_context(&mut request).unwrap();
         let version = format!("{:x}", Sha256::digest(b"Confirm receipt"));

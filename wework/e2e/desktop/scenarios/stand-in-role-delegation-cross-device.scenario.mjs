@@ -24,6 +24,7 @@ const RESULT = '周五下午发布窗口可用。'
 const FINAL = '跨设备发布工程已确认，周五下午可以发布。'
 const testId = id => `[data-testid=${JSON.stringify(id)}]`
 const ROOT = testId('stand-in-overview')
+const PRIMARY = `${ROOT} ${testId('stand-in-primary-open')}`
 const CHAT = `${ROOT} ${testId('stand-in-conversation')}`
 const CARD = `${CHAT} ${testId('stand-in-delegated-work')}`
 const TOGGLE = `${CARD} [data-testid="stand-in-delegated-work-toggle"]`
@@ -274,6 +275,14 @@ export function createDesktopScenario({
       })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command(
+        'clickWhenEnabled',
+        testId('personal-assistant-account-migrate-confirm'),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('clickWhenEnabled', PRIMARY)
       await control.command('waitFor', CHAT)
       const language = await control.command('getAttribute', 'html', { value: 'lang' })
       const english = language?.startsWith('en')
@@ -304,9 +313,8 @@ export function createDesktopScenario({
       await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
       assert.equal(await control.command('getElementCount', testId('stand-in-onboarding')), '0')
       await captureScreenshot(control, '00-remote-role-configured.png', ROOT)
-      const primary = testId('stand-in-primary-open')
-      await control.command('clickWhenEnabled', primary, { timeoutMs: uiTimeoutMs })
-      await control.command('waitFor', `${primary}[aria-current="page"]`, {
+      await control.command('clickWhenEnabled', PRIMARY, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', `${PRIMARY}[aria-current="page"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
@@ -353,6 +361,7 @@ export function createDesktopScenario({
       })
       await captureScreenshot(control, '04-remote-role-task-open.png')
       await control.command('navigate', 'body', { value: '/stand-in' })
+      await control.command('clickWhenEnabled', PRIMARY)
       await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
       await cloud.restartCloudExecutor({
         async beforeSpawn() {
