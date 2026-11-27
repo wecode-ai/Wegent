@@ -1871,6 +1871,7 @@ class SandboxManager(metaclass=SingletonMeta):
             elif self._repository.delete_executor_binding(
                 int(sandbox_id),
                 expected_executor_name=sandbox.container_name,
+                expected_container_id=result.get("container_id") or "",
                 sandbox=True,
             ):
                 self._repository.remove_from_active_set(sandbox_id)

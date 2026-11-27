@@ -1108,6 +1108,7 @@ class TestDockerExecutor:
             ["docker", "stop", "--", container_id],
             ["docker", "rm", "--", container_id],
         ]
+        assert result["container_id"] == container_id
 
     @pytest.mark.parametrize(
         ("runtime_status", "expected"),

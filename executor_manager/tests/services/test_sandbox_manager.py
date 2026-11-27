@@ -2622,7 +2622,7 @@ class TestSandboxManager:
         def delete_container(_name):
             if lease_lost:
                 loop.call_soon_threadsafe(lease.lost.set)
-            return {"status": delete_status}
+            return {"status": delete_status, "container_id": "a" * 64}
 
         mock_executor.delete_executor.side_effect = delete_container
         mocker.patch(
@@ -2662,7 +2662,10 @@ class TestSandboxManager:
         mock_executor.delete_executor.assert_called_once()
         if delete_status == "success" and not lease_lost:
             revoke.assert_called_once_with(
-                12345, expected_executor_name="wegent-task-testuser-12345", sandbox=True
+                12345,
+                expected_executor_name="wegent-task-testuser-12345",
+                expected_container_id="a" * 64,
+                sandbox=True,
             )
         else:
             revoke.assert_not_called()

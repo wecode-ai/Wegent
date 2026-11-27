@@ -1404,7 +1404,7 @@ class DockerExecutor(Executor):
                 }
 
             # Delete container
-            return delete_container(container_id)
+            return {**delete_container(container_id), "container_id": container_id}
         except Exception as e:
             logger.error(f"Error deleting container {executor_name}: {e}")
             return {

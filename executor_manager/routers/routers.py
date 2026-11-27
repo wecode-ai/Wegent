@@ -400,7 +400,9 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
 
                 task_id = int(task_id_str)
                 if not get_sandbox_repository().delete_executor_binding(
-                    task_id, expected_executor_name=request.executor_name
+                    task_id,
+                    expected_executor_name=request.executor_name,
+                    expected_container_id=result.get("container_id") or "",
                 ):
                     return result
                 tracker = get_running_task_tracker()
