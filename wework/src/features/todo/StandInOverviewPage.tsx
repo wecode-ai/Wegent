@@ -1,5 +1,6 @@
 import { useWorkbenchTaskReminders } from '@/features/workbench/runtimeTaskReminders'
 import {
+  newStandInRole,
   standInConversationTaskId,
   standInRoleName,
   type StandInShareEntry,
@@ -31,6 +32,8 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { StandInConversation } from './StandInConversation'
+import { StandInDeviceSelect } from './StandInDeviceSelect'
+import { StandInSettingsError, StandInSettingsHeader } from './StandInSettingsLayout'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
 import type { activeStandInBranchRows } from './standInDelegatedBranches'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
@@ -317,6 +320,21 @@ export function StandInOverviewPage({
   const delegationPanelOpen = delegationPanelScope === detailsScope
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
   const rolesById = new Map(state.draft?.roles.map(role => [role.id, role]))
+  if (primaryDeviceId) {
+    for (const definition of account?.definitions ?? []) {
+      const { roleId } = definition
+      if (roleId === '@primary' || rolesById.has(roleId)) continue
+      const role = newStandInRole(
+        definition.bot.spec?.execution_policy?.environment_id ?? primaryDeviceId,
+        roleId
+      )
+      rolesById.set(roleId, {
+        ...role,
+        name: definition.team.metadata.displayName ?? role.name,
+        prompt: definition.ghost.spec.systemPrompt,
+      })
+    }
+  }
   const retiredRoles = new Set(account?.retiredRoleIds)
   const roles = [
     ...(roleLocations?.map(entry => {
@@ -385,6 +403,14 @@ export function StandInOverviewPage({
   const overviewError =
     (profile === 'primary' ? null : state.error) || proposalFailureMessage || inbox.error
   const visibleProfileError = !state.saved ? state.error : undefined
+  const cloudProfileOnly = Boolean(
+    !state.draft && definition && (profile === 'primary' || profile === 'role')
+  )
+  const closeProfile = () => {
+    if (bindingPending) return
+    if (panelRef.current) panelRef.current.requestClose()
+    else setProfile(null)
+  }
   const visibleOverviewError = detailsAnchor ? overviewError : undefined
   const visibleProposalError =
     state.saved && !team && !shared && !viewedProposalId ? proposalFailureMessage : undefined
@@ -519,7 +545,7 @@ export function StandInOverviewPage({
             onSettings={() => {
               setDetailsAnchor(null)
               setCalendarRequest(0)
-              openProfile(role ? 'role' : 'primary')
+              openProfile(role ? 'role' : 'primary', detailsAnchor)
             }}
             onGuide={() => {
               setDetailsAnchor(null)
@@ -851,7 +877,7 @@ export function StandInOverviewPage({
           )}
         </StandInReviewDialog>
         {profile &&
-          (profile !== 'primary' || state.draft) &&
+          (profile !== 'primary' || state.draft || cloudProfileOnly) &&
           createPortal(
             <div
               className={`fixed inset-x-0 bottom-0 z-modal bg-black/20 text-text-primary ${isDesktopRuntime() ? 'top-[38px]' : 'top-0'}`}
@@ -863,12 +889,11 @@ export function StandInOverviewPage({
               }}
               onClick={event => {
                 const outside = overview.consumeBackdropClick()
-                if (event.target === event.currentTarget && outside)
-                  panelRef.current?.requestClose()
+                if (event.target === event.currentTarget && outside) closeProfile()
               }}
             >
               <DialogSurface
-                onClose={() => panelRef.current?.requestClose()}
+                onClose={closeProfile}
                 render={
                   <aside
                     aria-label={t(
@@ -883,7 +908,41 @@ export function StandInOverviewPage({
                   />
                 }
               >
-                {profile === 'memory' && api && saved ? (
+                {cloudProfileOnly && definition ? (
+                  <section className="space-y-4 px-5">
+                    <StandInSettingsHeader
+                      title={
+                        definition.team.metadata.displayName || t('standIn.personal.default_role')
+                      }
+                      disabled={bindingPending}
+                      close={{ testId: 'stand-in-primary-profile-close', onClick: closeProfile }}
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{t('standIn.device')}</span>
+                      <StandInDeviceSelect
+                        value={
+                          definition.bot.spec?.execution_policy?.environment_id ?? deviceId ?? ''
+                        }
+                        currentDeviceId={state.currentDeviceId}
+                        devices={props.devices}
+                        disabled={bindingPending || !onBindDevice}
+                        testId="personal-assistant-execution-device"
+                        onChange={device => {
+                          if (!onBindDevice || bindingPending) return
+                          setBindingPending(true)
+                          setBindingError('')
+                          void onBindDevice(definition.roleId, device)
+                            .catch(cause => setBindingError(getStandInErrorMessage(cause)))
+                            .finally(() => setBindingPending(false))
+                        }}
+                      />
+                    </div>
+                    <p className="text-sm text-text-secondary">
+                      {t('standIn.workspace.execution_device_help')}
+                    </p>
+                    <StandInSettingsError error={bindingError || null} />
+                  </section>
+                ) : profile === 'memory' && api && saved ? (
                   <StandInMemoryPanel
                     ref={panelRef}
                     key={saved.executionDeviceId}
@@ -1035,6 +1094,7 @@ export function StandInOverviewPage({
         })
       }
       bypass={Boolean(
+        (deviceId && state.currentDeviceId && deviceId !== state.currentDeviceId) ||
         props.initialProfileId ||
         profile ||
         (roleId && primaryDeviceId && primaryDeviceId !== deviceId) ||

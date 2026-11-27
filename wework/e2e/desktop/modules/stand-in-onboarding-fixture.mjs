@@ -52,10 +52,12 @@ export async function createStandInFixtureSession(cloud) {
   return session.access_token
 }
 
-export async function initializeFixtureAssistant(backendUrl, token) {
+export async function initializeFixtureAssistant(backendUrl, token, executionDeviceId) {
   return fetchJson(`${backendUrl}/api/v1/personal-assistant`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ definitions: [{ roleId: '@primary', name: '默认助理', prompt: '' }] }),
+    body: JSON.stringify({
+      definitions: [{ roleId: '@primary', name: '默认助理', prompt: '', executionDeviceId }],
+    }),
   })
 }

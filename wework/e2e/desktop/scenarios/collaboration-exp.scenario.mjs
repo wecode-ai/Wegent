@@ -169,8 +169,6 @@ export function createDesktopScenario({
       cloud = environment
       await request('/api/admin/setup-complete', {})
       cloudUser = await request('/api/users/me')
-      // Team management opens the cloud account's settings for a device-owned role.
-      await initializeFixtureAssistant(cloud.backendUrl, cloud.authToken)
       const ownerName = `collaboration-exp-owner-${process.pid}`
       const password = 'collaboration-exp-permission-fixture'
       await request('/api/admin/users', {
@@ -247,6 +245,11 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      await initializeFixtureAssistant(
+        cloud.backendUrl,
+        cloud.authToken,
+        JSON.parse(await control.command('getLocalExecutorStatus', 'body')).deviceId
+      )
       const initialPreferences = JSON.parse(await control.command('getAppPreferences', 'body'))
       let previousSize
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)

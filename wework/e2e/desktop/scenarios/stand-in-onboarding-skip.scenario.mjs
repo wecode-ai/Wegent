@@ -87,12 +87,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         false
       )
       await control.command('waitFor', CHAT, { visible: false })
-      await control.command('waitFor', selector('stand-in-message-center'), { visible: false })
+      await control.command('waitFor', selector('stand-in-message-center-open'), { visible: false })
       await captureScreenshot(control, 'stand-in-onboarding-deferred.png')
-      assert.equal(
-        await control.command('getElementCount', selector('stand-in-message-center-open')),
-        '0'
-      )
       await control.command('clickWhenEnabled', resume)
       await control.command('waitFor', selector('stand-in-onboarding-model'))
       const catalog = (await rpc('runtime.runner.catalog', {})).models

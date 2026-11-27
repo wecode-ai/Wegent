@@ -3,6 +3,7 @@ import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { StandInBindingTarget } from '@/api/standIn'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useStandInInbox } from '@/features/todo/useStandInInbox'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
@@ -21,14 +22,17 @@ export const AssistantSourceContext = createContext<ReturnType<
 export function useAssistantSourceState(
   active: boolean,
   includeProposals: boolean,
-  expectedBinding?: StandInBindingTarget
+  target?: StandInBindingTarget,
+  workspaceServices?: WorkbenchServices
 ) {
-  const { services, state } = useWorkbench()
+  const workbench = useWorkbench()
+  const services = workspaceServices ?? workbench.services
+  const { state } = workbench
   const cloud = useContext(CloudConnectionContext)
   const userId = Number(state.user?.id ?? LOCAL_USER.id)
   const backendUrl = cloud?.apiBaseUrl ?? ''
-  const expectedUser = expectedBinding?.userId
-  const expectedDevice = expectedBinding?.deviceId
+  const expectedUser = target?.userId
+  const expectedDevice = target?.deviceId
   const scope = JSON.stringify([userId, backendUrl, expectedUser, expectedDevice])
   const api = services.standInApi
   const model = useMemo(

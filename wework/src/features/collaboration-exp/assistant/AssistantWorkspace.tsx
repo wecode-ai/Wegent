@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInBindingTarget } from '@/api/standIn'
@@ -34,7 +34,7 @@ interface AssistantWorkspaceProps {
   projects: CollaborationProject[]
   localDeviceId: string
   devices: DeviceInfo[]
-  headerActions?: ReactNode
+  onSelectDevice(deviceId: string): Promise<void>
   onClose(): void
 }
 
@@ -69,7 +69,10 @@ export default function AssistantWorkspace(props: AssistantWorkspaceProps) {
             userId={props.binding.userId}
             deviceId={props.binding.deviceId}
             active={props.active}
-            bypass={Boolean(props.conversation)}
+            bypass={Boolean(
+              props.conversation ||
+              (props.localDeviceId && props.binding.deviceId !== props.localDeviceId)
+            )}
             configuration={{
               settings: onboarding.saved,
               loading: onboarding.loading,
@@ -77,6 +80,8 @@ export default function AssistantWorkspace(props: AssistantWorkspaceProps) {
               projects: props.projects,
               localDeviceId: props.localDeviceId,
               devices: props.devices,
+              executionDeviceId: props.binding.deviceId,
+              onSelectDevice: props.onSelectDevice,
               services,
               onSave: onboarding.save,
               onReload: onboarding.reload,
@@ -102,7 +107,7 @@ function AssistantWorkspaceContent({
   active,
   binding,
   conversation,
-  headerActions,
+  services: assistantServices,
 }: AssistantWorkspaceProps) {
   const { state, services } = useWorkbench()
   const tabs = useOptionalWorkspaceTabs()
@@ -118,7 +123,7 @@ function AssistantWorkspaceContent({
     { relevance: 'all' }
   ).flatMap(row => row.conversations.items)
   const [panel, setPanel] = useState<AssistantHomePanel>(null)
-  const assistantSource = useAssistantSourceState(active, true, binding)
+  const assistantSource = useAssistantSourceState(active, true, binding, assistantServices)
   const taskSearch = tabs?.tabs
     .find(tab => tab.id === COLLABORATION_EXP_TAB_ID)
     ?.contentRoute.split('?')[1]
@@ -152,12 +157,7 @@ function AssistantWorkspaceContent({
       scroll: false,
       minWidth: 280,
       defaultWidth: 900,
-      actions: (
-        <>
-          <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />
-          {headerActions}
-        </>
-      ),
+      actions: <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />,
       content: (
         <AssistantHome
           active={active}

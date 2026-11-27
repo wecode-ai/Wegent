@@ -88,12 +88,11 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 查看助理待处理事项 | 我的助理 → 助理详情 → 顶部待处理事项 → 详情 | 有异常或后台处理需要输入时显示。见[助理详情](./personal-stand-in.md)。 |
 | 检查助理后台评估的账号连接 | 我的助理 → 助理详情 → 待处理事项的详情 → 检查云端连接 | 后台评估因账号不匹配被拒绝时显示，打开连接设置。见[助理详情](./personal-stand-in.md)。 |
 | 恢复已归档的助理来源工作        | 我的助理 → 助理详情 → 近期活动 → 查看全部活动 → 对应工作 → 取消归档                                 | 仅在工作已归档时显示；恢复不自动执行，见[来源会话策略](./personal-stand-in.md#stand-in-source-session-policy)                                                                                                                                                   |
-| 修改默认助理模型 | 我的助理 → 右上角助理详情 → 管理助理 → 运行环境 | 默认助理绑定执行设备后可用。打开运行环境行，选择模型后保存。见[模型选择](./personal-stand-in.md#stand-in-model-selection)。 |
+| 修改默认助理模型 | 我的助理 → 右上角助理详情 → 管理助理 → 运行环境 | 默认助理配置执行设备后可用。打开运行环境行，选择模型后保存。见[模型选择](./personal-stand-in.md#stand-in-model-selection)。 |
 | 配置助理任务权限 | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 运行环境 → 任务默认权限；单条任务在其对话底部调整 | 适用于你主动交办后由助理创建的 Codex 任务。见[助理任务权限](./personal-stand-in.md#stand-in-task-permissions)。 |
 | 配置助理运行环境                | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 运行环境                        | 默认助理在运行环境页选择执行设备，选择后立即生效，点击运行环境行可配置模型、思考档位和工作目录。见[助理档案逐项操作](./personal-stand-in.md#role-execution-device)                                                                                                                                                          |
-| 停止助理 / 更换绑定             | 左侧栏 → 我的助理 → 默认助理 → 助理详情 → 管理助理 → 设置面板左下角“停止助理”                | 停止当前绑定设备上的助理任务后才显示默认助理换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)                                                                                                                                    |
-| 迁移助理 | 左侧栏 → 我的助理 → 待处理的旧绑定 | 有可用目标设备时显示迁移流程。目标助理准备成功后开放对话，并收起该流程。见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)。 |
-| 下载助理定义备份 | 左侧栏 → 我的助理 → 默认助理 → 助理详情 → 管理助理 → 下载助理定义备份 | 登录云端后导出此实例发现的冲突定义。见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)。 |
+| 迁移助理 | 左侧栏 → 我的助理 → 待处理的旧档案或旧设备 | 有可用目标设备时显示迁移流程。目标助理准备成功后开放对话，并收起该流程。见[执行设备与旧档案恢复](./personal-stand-in.md#instance-binding-and-stopping)。 |
+| 下载助理定义备份 | 左侧栏 → 我的助理 → 默认助理 → 助理详情 → 管理助理 → 下载助理定义备份 | 登录云端后导出此实例发现的冲突定义。见[执行设备与旧档案恢复](./personal-stand-in.md#instance-binding-and-stopping)。 |
 | 从 IM 联系助理 | 已登记的机器人私聊 → 发送 `/standin` | 使用账号的默认助理。见[连接 IM 对话](./personal-stand-in.md#im-conversations)。 |
 | 连接钉钉 | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 连接 → 钉钉 | 首次引导也使用同一连接界面。选择全部消息或筛选来源后保存，见[连接钉钉](./personal-stand-in.md#dingtalk-delegation)。 |
 | 接收钉钉群聊的每条新消息 | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 添加接收范围 → 群聊 | 选好群聊范围后，在触发条件中选「每条新消息」，再保存。见[群消息接收范围](./personal-stand-in.md#dingtalk-group-message-scope)。 |

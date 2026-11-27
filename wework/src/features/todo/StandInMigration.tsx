@@ -1,6 +1,7 @@
 import { standInRoleName, type StandInRole } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { DeviceInfo } from '@/types/api'
 import {
   SelectContent,
@@ -57,7 +58,11 @@ export function StandInMigration({
       onDismiss()
     } catch (cause) {
       setConfirmation(undefined)
-      if (cause instanceof StandInMigrationError) setError(t(`standIn.migration.${cause.code}`))
+      setError(
+        cause instanceof StandInMigrationError
+          ? t(`standIn.migration.${cause.code}`)
+          : getStandInErrorMessage(cause)
+      )
     } finally {
       setPending(false)
     }

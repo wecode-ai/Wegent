@@ -257,7 +257,9 @@ pub async fn call(
                 &route.logical_device_id,
             ))
         })?;
-    if grant == TaskGrant::AssistantShareDefinition && payload["userId"].as_i64() != Some(user_id) {
+    if (grant == TaskGrant::AssistantShareDefinition && payload["userId"].as_i64() != Some(user_id))
+        || (grant == TaskGrant::StandInOwner && !stand_in_owner_payload(method, user_id, &payload))
+    {
         return Err(CallFailure::Rpc(rpc_error(
             "permission_denied",
             "The requested assistant owner must match the connected account",
@@ -327,6 +329,10 @@ pub async fn call(
         TaskGrant::AssistantShareDefinition => {
             request["appTaskAccessScope"] = json!("assistant-share-definition")
         }
+        TaskGrant::StandInOwner => {
+            request["appTaskAccessScope"] = json!("stand-in-owner");
+            request["standInOwnerUserId"] = json!(user_id);
+        }
         TaskGrant::Unscoped => {}
     }
     let ack = call_runtime_method_envelope(
@@ -354,6 +360,21 @@ pub async fn call(
         &route.logical_device_id,
     )
     .map_err(|error| CallFailure::Rpc(*error))
+}
+
+fn stand_in_owner_payload(method: &str, user_id: i64, payload: &Value) -> bool {
+    match method {
+        "runtime.stand_in.device_identity" => true,
+        "runtime.tasks.get" => payload["taskId"]
+            .as_str()
+            .is_some_and(|task| task.starts_with(&format!("stand-in-chat-{user_id}-"))),
+        "runtime.stand_in.conversation" => {
+            payload["userId"].as_i64() == Some(user_id)
+                && payload.get("scope").is_none()
+                && payload["options"]["conversationScope"].is_null()
+        }
+        _ => payload["userId"].as_i64() == Some(user_id),
+    }
 }
 
 fn project_runtime_result(
@@ -586,6 +607,11 @@ fn project_response_device_ids(
 ) -> Map<String, Value> {
     let mut projected = result.clone();
     project_flat_device_ids(&mut projected, runtime_device_id, logical_device_id);
+    if method == "runtime.stand_in.personal.get"
+        && projected.get("executionDeviceId").and_then(Value::as_str) == Some(runtime_device_id)
+    {
+        projected.insert("executionDeviceId".into(), json!(logical_device_id));
+    }
     if !method.starts_with("runtime.worktrees.") && method != "runtime.archived_conversations.list"
     {
         return projected;

@@ -100,12 +100,14 @@ export function createStandInInstanceSource({
   userId,
   backendUrl,
   requireSetupConfirmation = true,
+  legacyOnly = false,
 }: {
   services: WorkbenchServices
   api: StandInExecutorApi | undefined
   userId: number
   backendUrl: string
   requireSetupConfirmation?: boolean
+  legacyOnly?: boolean
 }) {
   let snapshot: InstanceSnapshot = { localDeviceId: '', busy: false, error: null }
   const listeners = new Set<() => void>()
@@ -234,6 +236,11 @@ export function createStandInInstanceSource({
         })
       let binding = await api.binding(identity.deviceId)
       if (!current()) return
+      if (legacyOnly && binding.status !== 'stopped') {
+        publishBinding(binding)
+        publish({ error: null })
+        return
+      }
       if (binding.status === 'unbound') {
         publishBinding(binding)
         const entry = owner.entry
@@ -336,6 +343,16 @@ export function createStandInInstanceSource({
       const initializeDestination = async () => {
         if (!target || !input.initializeTarget) throw new StandInMigrationError('not_stopped')
         assertObserved(revision, localDeviceId)
+        if (legacyOnly) {
+          const settings = await api.personalGet(target.userId, target.deviceId)
+          if (settings.lifecycle?.status === 'stopping')
+            throw new StandInMigrationError('not_stopped')
+          if (settings.lifecycle?.status === 'stopped')
+            await api.lifecycle(target.userId, target.deviceId, 'start')
+          assertObserved(revision, localDeviceId)
+          await input.initializeTarget()
+          return 'initialized' as const
+        }
         await initializeStandInTarget(
           api,
           localDeviceId,
@@ -413,6 +430,7 @@ export function createStandInInstanceSource({
         }
       }
       assertObserved(revision, localDeviceId)
+      if (legacyOnly) return role
       const next = await api.binding(localDeviceId, 'prepareBind', current.version, target)
       assertObserved(revision, localDeviceId)
       publishBinding(next)
