@@ -547,11 +547,16 @@ def admit_collaboration_batch(
                 turn_scope
                 and root.metadata_json.get("last_manager_turn") == turn_scope[1]
             )
-            or root.metadata_json.get("last_manager_run")
-            == values.manager_runtime_task_id
+            or (
+                (turn_scope or not values.manager_turn_id)
+                and root.metadata_json.get("last_manager_run")
+                == values.manager_runtime_task_id
+            )
         ):
             raise HTTPException(409, "Manager turn is closed")
-        require_finished_batch(db, root, item)
+        require_finished_batch(
+            db, root, item, None if turn_scope else values.manager_turn_id
+        )
     elif root is not None:
         require_open_round(db, root, item, values.round_id)
     if not server_dispatch:
@@ -931,6 +936,7 @@ def decide_collaboration_issue_status(
         comment=values.comment,
         request=request,
         manager_runtime_task_id=values.manager_runtime_task_id,
+        manager_turn_id=values.manager_turn_id,
     )
     return decision.response
 

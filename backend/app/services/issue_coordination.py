@@ -211,13 +211,28 @@ def require_open_round(
 
 
 def require_finished_batch(
-    db: Session, root: ProjectChatMessage, item: LoopItem
+    db: Session,
+    root: ProjectChatMessage,
+    item: LoopItem,
+    device_turn: str | None = None,
 ) -> None:
     last_batch = root.metadata_json.get("last_batch")
     if last_batch:
         from app.services.collaboration_manager_activity import _round_finished
 
         activity = db.query(ProjectChatMessage).filter_by(message_id=last_batch).one()
+        if device_turn:
+            # The Executor resumes the same session with a turn keyed by the finished round.
+            metadata = activity.metadata_json
+            identity = json.dumps(
+                [metadata["dispatch_id"], metadata["coordination_round_id"]],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if hashlib.sha256(identity.encode()).hexdigest() != device_turn:
+                raise HTTPException(
+                    409, "Manager turn does not follow the current round"
+                )
         if not _round_finished(
             db,
             item.cloud_project_id,

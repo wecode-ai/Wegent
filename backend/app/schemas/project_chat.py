@@ -302,6 +302,7 @@ class LoopItemExecutionBatchCreate(ProjectChatSchema):
     loop_item_id: str = Field(min_length=1, max_length=64)
     dispatch_id: str = Field(min_length=1, max_length=255)
     round_id: str = Field(min_length=1, max_length=128)
+    manager_turn_id: str | None = Field(default=None, min_length=1, max_length=255)
     manager_runtime_task_id: str | None = Field(
         default=None, min_length=1, max_length=255
     )
@@ -315,6 +316,7 @@ class LoopItemExecutionManagerDecision(ProjectChatSchema):
     loop_item_id: str = Field(min_length=1, max_length=64)
     dispatch_id: str = Field(min_length=1, max_length=255)
     manager_agent_id: str | None = Field(default=None, min_length=1, max_length=128)
+    manager_turn_id: str | None = Field(default=None, min_length=1, max_length=255)
     manager_runtime_task_id: str | None = Field(
         default=None, min_length=1, max_length=255
     )

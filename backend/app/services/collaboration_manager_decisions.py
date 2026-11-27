@@ -127,6 +127,7 @@ def apply_collaboration_manager_decision(
     reason: str,
     comment: str = "",
     manager_runtime_task_id: str | None = None,
+    manager_turn_id: str | None = None,
     request: Request | None = None,
     task_id: int | None = None,
     subtask_id: int | None = None,
@@ -247,11 +248,12 @@ def apply_collaboration_manager_decision(
         if (
             turn_scope and root.metadata_json.get("last_manager_turn") == turn_scope[1]
         ) or (
-            manager_runtime_task_id
+            (turn_scope or not manager_turn_id)
+            and manager_runtime_task_id
             and manager_runtime_task_id == root.metadata_json.get("last_manager_run")
         ):
             raise HTTPException(409, "Manager turn already submitted assignments")
-        require_finished_batch(db, root, item)
+        require_finished_batch(db, root, item, None if turn_scope else manager_turn_id)
     if not manager:
         require_open_round(db, root, item, round_id)
     existing_comment = (

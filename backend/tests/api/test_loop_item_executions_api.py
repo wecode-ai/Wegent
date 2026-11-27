@@ -4,6 +4,7 @@
 
 """Focused API tests for LoopItem execution ownership."""
 
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -723,6 +724,19 @@ def test_server_round_replays_human_receipt_and_rejects_changed_list(
         )
     assert bad_stage.value.status_code == 422
     receipt = submit(values)
+    # A device manager reuses its session while each resumed turn has a distinct ID.
+    next_id = hashlib.sha256(b'["dispatch-1","round:1"]').hexdigest()
+    for turn_id, detail in [
+        ("initial-turn", "Manager turn does not follow the current round"),
+        (next_id, "Assigned work is still pending"),
+    ]:
+        with pytest.raises(HTTPException) as gated:
+            submit(
+                values.model_copy(
+                    update={"round_id": "round:2", "manager_turn_id": turn_id}
+                )
+            )
+        assert gated.value.detail == detail
     execution_id = receipt["agent_assignments"][0]["execution_id"]
     assert test_db.get(LoopItemExecution, execution_id).agent_id == worker.id
     assert submit(values) == receipt

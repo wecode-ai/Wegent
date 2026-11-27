@@ -120,6 +120,8 @@ enum BoardToolCategory {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub(crate) struct SpaceContextGrant {
     version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    manager_turn_id: Option<String>,
     task_id: String,
     space_id: Option<String>,
     item_id: Option<String>,
@@ -2051,6 +2053,7 @@ async fn call_backend_tool(
                 "manager_agent_id": manager_agent_id,
                 "idempotency_key": decision.get("idempotency_key"),
                 "manager_runtime_task_id": grant.task_id,
+                "manager_turn_id": grant.manager_turn_id,
                 "target_status": decision.get("target_status"),
                 "reason": decision.get("reason"),
                 "comment": decision.get("comment"),
@@ -2102,6 +2105,7 @@ async fn call_backend_tool(
                     "dispatch_id": dispatch_id,
                     "round_id": round_id,
                     "manager_runtime_task_id": grant.task_id,
+                    "manager_turn_id": grant.manager_turn_id,
                     "manager_agent_id": manager_agent_id,
                     "items": items,
                 }))
@@ -3998,7 +4002,10 @@ mod tests {
 
     #[test]
     fn binds_collaboration_manager_with_management_and_execution_tools() {
-        let mut request = ExecutionRequest::default();
+        let mut request = ExecutionRequest {
+            subtask_id: "manager-turn".into(),
+            ..Default::default()
+        };
         request
             .extra
             .insert("cloudProjectId".to_owned(), json!("cloud-42"));
@@ -4015,6 +4022,7 @@ mod tests {
         let grant = decode_grant(&request);
 
         assert_eq!(grant.dispatch_id.as_deref(), Some("dispatch-2"));
+        assert_eq!(grant.manager_turn_id.as_deref(), Some("manager-turn"));
         assert_eq!(grant.role, Some(SpaceContextRole::Manager));
         assert!(grant.categories.contains(&BoardToolCategory::Management));
         assert!(grant.categories.contains(&BoardToolCategory::Execution));
@@ -4064,6 +4072,7 @@ mod tests {
     fn personal_issue_context_allows_explicit_project_and_issue_targets() {
         let grant = SpaceContextGrant {
             version: 1,
+            manager_turn_id: None,
             task_id: "task-1".to_owned(),
             space_id: Some("space-1".to_owned()),
             item_id: Some("item-1".to_owned()),
@@ -4098,6 +4107,7 @@ mod tests {
     fn manager_can_manage_child_items_inside_the_bound_project() {
         let grant = SpaceContextGrant {
             version: 1,
+            manager_turn_id: None,
             task_id: "manager-task-1".to_owned(),
             space_id: Some("space-1".to_owned()),
             item_id: Some("ISSUE-1".to_owned()),
@@ -4125,6 +4135,7 @@ mod tests {
     fn rejects_expired_context_grant() {
         let grant = SpaceContextGrant {
             version: 1,
+            manager_turn_id: None,
             task_id: "task-1".to_owned(),
             space_id: Some("space-1".to_owned()),
             item_id: Some("item-1".to_owned()),
@@ -4467,6 +4478,7 @@ mod tests {
                         "manager_agent_id": "manager-agent",
                         "idempotency_key": "decision-1",
                         "manager_runtime_task_id": "manager-task",
+                        "manager_turn_id": "resumed-turn",
                         "target_status": "in_review",
                         "reason": "Evidence is ready",
                         "comment": "Please confirm the completed work",
@@ -4487,6 +4499,7 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let grant = SpaceContextGrant {
             task_id: "manager-task".to_owned(),
+            manager_turn_id: Some("resumed-turn".into()),
             space_id: Some("12".to_owned()),
             item_id: Some("ISSUE-1".to_owned()),
             dispatch_id: Some("dispatch-1".to_owned()),
@@ -4660,6 +4673,7 @@ mod tests {
             };
             let grant = project_id.map(|id| SpaceContextGrant {
                 version: 1,
+                manager_turn_id: None,
                 task_id: "task-1".to_owned(),
                 space_id: Some(id),
                 item_id: Some("ISSUE-1".to_owned()),
