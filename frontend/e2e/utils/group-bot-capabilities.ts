@@ -250,3 +250,31 @@ export function verifyLegacyBotProbe(
     receipt: [...receipts][0],
   }
 }
+
+export async function deleteBotCapabilityFixtures(
+  api: ApiClient,
+  resources: string[],
+  skills: number[]
+) {
+  for (const path of resources) {
+    const resource = '/api/v1/namespaces/default/' + path
+    if (path.startsWith('bots/')) {
+      const bot = await api.get<{ spec: { ghostRef: { name: string; namespace?: string } } }>(
+        resource
+      )
+      expect(bot.status, JSON.stringify(bot.data)).toBe(200)
+      const { name, namespace = 'default' } = bot.data!.spec.ghostRef
+      const removed = await api.delete(resource)
+      expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+      const ghost = await api.delete(`/api/v1/namespaces/${namespace}/ghosts/${name}`)
+      expect(ghost.status, JSON.stringify(ghost.data)).toBe(200)
+    } else {
+      const removed = await api.delete(resource)
+      expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+    }
+  }
+  for (const id of skills) {
+    const removed = await api.delete(`/api/v1/kinds/skills/${id}`)
+    expect(removed.status, JSON.stringify(removed.data)).toBe(204)
+  }
+}

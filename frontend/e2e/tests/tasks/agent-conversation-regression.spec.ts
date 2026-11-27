@@ -20,6 +20,7 @@ import {
   sharedCodexProbe,
 } from '../../utils/standalone-bot-capabilities'
 import {
+  deleteBotCapabilityFixtures,
   createGroupBotCapability,
   groupBotProbe,
   verifyGroupBotProbe,
@@ -1309,15 +1310,8 @@ test.describe('Agent conversation regression', () => {
           contentType: 'application/json',
         })
       } finally {
-        for (const path of cleanup) {
-          const result = await request.delete(API_BASE_URL + '/api/v1/namespaces/default/' + path, {
-            headers: authHeaders(),
-          })
-          expect([200, 204, 404]).toContain(result.status())
-        }
+        await deleteBotCapabilityFixtures(apiClient, cleanup, skillCleanup)
         expect((await request.delete(MOCK_MODEL_SERVER_URL + auditPath)).ok()).toBe(true)
-        for (const id of skillCleanup)
-          expect((await apiClient.delete(`/api/v1/kinds/skills/${id}`)).status).toBe(204)
       }
     })
   }
