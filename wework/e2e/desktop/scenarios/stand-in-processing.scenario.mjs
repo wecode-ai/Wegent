@@ -341,6 +341,10 @@ export function createDesktopScenario({
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
         )
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-project-open-scope-projects"]'
+        )
         const timing = `[data-testid="stand-in-project-policy-${project.id}"]`
         await control.command(
           'clickWhenEnabled',
@@ -380,6 +384,10 @@ export function createDesktopScenario({
         await control.command(
           'click',
           `[data-testid="stand-in-connection-project-local-${project.id}"]`
+        )
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-project-open-scope-projects"]'
         )
         await control.command(
           'clickWhenEnabled',

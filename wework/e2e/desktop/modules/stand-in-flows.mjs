@@ -40,7 +40,7 @@ export async function openProjectStandIn(
   if (connect) {
     await editProjectSource(control, true)
     await onConnections?.()
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+    await saveRoleScopeAndReturn(control)
     await control.command('waitFor', '[data-testid="stand-in-role-name"]')
   }
   if (requirements) await control.command('waitFor', '[data-testid="stand-in-prompt"]')
@@ -59,27 +59,31 @@ export async function editProjectSource(control, enabled) {
     await openProjectScopeDetails(control)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode"]')
     await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-all"]')
-    const back = '[data-testid="stand-in-connections-back"]'
-    await control.command('clickWhenEnabled', back)
-    await control.command('waitFor', '[data-testid="stand-in-project-choose-projects"]')
-    await control.command('clickWhenEnabled', back)
+    return
   } else if (!enabled && count) {
     await clearProjectScopes(control)
   }
-  await control.command('waitFor', '[data-testid^="stand-in-project-open-scope-"]', {
-    visible: enabled,
-  })
+  await control.command(
+    'waitFor',
+    '[data-testid^="stand-in-project-open-scope-"]:not([data-testid$="-pending-removal"]):not([data-testid$="-undo-remove"])',
+    { visible: enabled }
+  )
 }
 
-export async function addAllProjectScopes(control, { configure = false } = {}) {
+export async function saveRoleScopeAndReturn(control) {
+  const nested =
+    (await control.command('getElementCount', '[data-testid="stand-in-path-scope"]')) !== '0'
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+  if (nested) {
+    await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-back"]')
+    await control.command('clickWhenEnabled', '[data-testid="stand-in-back"]')
+  }
+}
+
+export async function addAllProjectScopes(control) {
   await control.command('clickWhenEnabled', '[data-testid="stand-in-project-add-scope"]')
   await control.command('clickWhenEnabled', '[data-testid="stand-in-all-projects"]')
-  if (configure) return
-  const back =
-    '[data-testid="stand-in-connections-back"],[data-testid="stand-in-onboarding-connections-back"]'
-  await control.command('clickWhenEnabled', back)
-  await control.command('waitFor', '[data-testid="stand-in-project-choose-projects"]')
-  await control.command('clickWhenEnabled', back)
 }
 
 export async function openProjectScopeDetails(control) {

@@ -37,12 +37,13 @@ test('adds or edits one DingTalk scope at a time without changing another accoun
     const [role, setRole] = useState(draft)
     const scopeBack = useRef<(() => void) | null>(null)
     return (
-      <ConnectionScopeNavigation value={{ back: scopeBack, setTitle: () => {} }}>
+      <ConnectionScopeNavigation value={{ list: scopeBack, setTitle: () => {} }}>
         <button type="button" onClick={() => scopeBack.current?.()}>
           Back
         </button>
         <StandInSourceConnections
           role={role}
+          savedConnections={sources}
           provider={{
             id: STAND_IN_DINGTALK_PROVIDER,
             displayName: 'DingTalk',
@@ -79,13 +80,17 @@ test('adds or edits one DingTalk scope at a time without changing another accoun
   expect(group).toMatchObject({ id: '*', scope: 'all', collectionKey: 'all-messages' })
   expect(group?.excludedResources).toBeUndefined()
   expect(draft.connections?.some(row => row.profile === 'work' && row.kind === 'direct')).toBe(true)
-  fireEvent.click(screen.getByTestId('stand-in-dingtalk-open-all-scope'))
   fireEvent.click(screen.getByTestId('stand-in-processing-settings-toggle'))
   expect(screen.getByTestId('stand-in-dingtalk-policy-all-messages')).toBeInTheDocument()
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-kind-group'))
-  fireEvent.click(screen.getByTestId('stand-in-dingtalk-remove-kind-scope'))
-  fireEvent.click(screen.getByTestId('stand-in-dingtalk-open-scope-direct-*'))
-  fireEvent.click(screen.getByTestId('stand-in-dingtalk-remove-kind-scope'))
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-open-all-scope-remove'))
+  expect(
+    screen.getByTestId('stand-in-dingtalk-open-scope-group-*-pending-removal')
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-open-scope-group-*-undo-remove'))
+  expect(draft.connections).toEqual([sources[0], sources[1]])
+  fireEvent.click(screen.getByTestId('stand-in-dingtalk-open-scope-group-*-remove'))
   expect(draft.connections).toEqual([sources[1]])
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-add-scope'))
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-kind-direct'))
@@ -94,11 +99,10 @@ test('adds or edits one DingTalk scope at a time without changing another accoun
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-choose-selected'))
   expect(screen.getByTestId('stand-in-dingtalk-query')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-  expect(screen.getByTestId('stand-in-dingtalk-kind-group')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
   expect(draft.connections).toEqual([sources[1]])
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-add-scope'))
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-scope-all'))
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
   fireEvent.click(screen.getByTestId('stand-in-dingtalk-open-all-scope-remove'))
   expect(draft.connections).toEqual([sources[1]])
 })

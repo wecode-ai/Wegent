@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
-import { openStandInSettings } from './stand-in-profile-navigation.mjs'
-import { openConnectionTypePicker } from './stand-in-flows.mjs'
 
 /** Extend the connections checkpoint using its real persisted, account-bound group. */
 export async function verifyStandInGroupMessageScope(control, uiTimeoutMs, roleId) {
@@ -22,10 +20,10 @@ export async function verifyStandInGroupMessageScope(control, uiTimeoutMs, roleI
     return settings.roles.find(role => role.id === roleId)
   }
   const openSource = async () => {
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
-    await openConnectionTypePicker(control)
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
-    await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]')
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]'
+    )
     await control.command('waitFor', selector)
   }
   const original = (await load()).connections.find(row => row.id === groupId)
@@ -33,7 +31,7 @@ export async function verifyStandInGroupMessageScope(control, uiTimeoutMs, roleI
   for (const mode of ['all-messages', 'mentions']) {
     await choose(mode)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-    await control.command('waitFor', '[data-testid="stand-in-connections-open"]')
+    await control.command('waitFor', '[data-testid="stand-in-dingtalk-add-scope"]')
     await control.command('waitFor', '[data-testid="stand-in-saved"]')
     const saved = (await load()).connections.find(row => row.id === groupId)
     assert.equal(saved.collectionKey, mode === 'all-messages' ? mode : undefined)
@@ -46,9 +44,8 @@ export async function verifyStandInGroupMessageScope(control, uiTimeoutMs, roleI
   }
   await choose('all-messages')
   await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-discard"]')
-  await control.command('waitFor', '[data-testid="stand-in-page"]', { visible: false })
-  await openStandInSettings(control)
+  await control.command('waitFor', '[data-testid="stand-in-dingtalk-add-scope"]')
   await openSource()
   await control.command('waitFor', selector, { text: '仅接收 @我' })
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-back"]')
 }

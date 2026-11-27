@@ -48,6 +48,7 @@ export function ConnectionScopeRow({
   testId,
   disabled,
   direct = false,
+  pending = false,
   onClick,
   onRemove,
   ref,
@@ -57,6 +58,7 @@ export function ConnectionScopeRow({
   testId: string
   disabled?: boolean
   direct?: boolean
+  pending?: boolean
   onClick(): void
   onRemove?(): void
   ref?: Ref<HTMLButtonElement>
@@ -75,8 +77,12 @@ export function ConnectionScopeRow({
       >
         <span className="min-w-0 flex-1 whitespace-normal break-words">
           {name}
-          {description && (
-            <span className="mt-0.5 block text-xs text-text-secondary">{description}</span>
+          {(description || pending) && (
+            <span className="mt-0.5 block text-xs text-text-secondary">
+              {description}
+              {description && pending && ' · '}
+              {pending && t('standIn.workspace.connection_pending_sources')}
+            </span>
           )}
         </span>
         {!direct && <ChevronRight className="size-4 shrink-0 text-text-secondary" aria-hidden />}
@@ -94,6 +100,44 @@ export function ConnectionScopeRow({
           {t('standIn.workspace.connection_remove_scope_action')}
         </Button>
       )}
+    </li>
+  )
+}
+
+export function PendingScopeRemoval({
+  name,
+  testId,
+  disabled,
+  onRestore,
+}: {
+  name: string
+  testId: string
+  disabled?: boolean
+  onRestore(): void
+}) {
+  const { t } = useTranslation('common')
+  return (
+    <li
+      className="flex min-h-11 items-center gap-3 px-3 py-2"
+      data-testid={`${testId}-pending-removal`}
+    >
+      <span className="min-w-0 flex-1 break-words text-sm">
+        {name}
+        <span className="mt-0.5 block text-xs text-text-secondary">
+          {t('standIn.workspace.connection_pending_removal')}
+        </span>
+      </span>
+      <Button
+        variant="unstyled"
+        type="button"
+        className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
+        data-testid={`${testId}-undo-remove`}
+        disabled={disabled}
+        aria-label={t('standIn.workspace.connection_undo_named_removal', { name })}
+        onClick={onRestore}
+      >
+        {t('standIn.workspace.connection_undo_removal')}
+      </Button>
     </li>
   )
 }

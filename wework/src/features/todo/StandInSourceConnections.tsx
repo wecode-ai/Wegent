@@ -25,8 +25,8 @@ import {
   ConnectionRulePicker,
   type ConnectionScopeRule,
 } from './ConnectionScopeFields'
-import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
-import { useConnectionScopeBack, useConnectionScopeTitle } from './connectionScopeNavigation'
+import { ConnectionScopeList, ConnectionScopeRow, PendingScopeRemoval } from './ConnectionScopeList'
+import { useConnectionScopeList, useConnectionScopeTitle } from './connectionScopeNavigation'
 import { createSourceConnectionsModel, hasAllDingTalkMessages } from './sourceConnectionsModel'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
@@ -34,6 +34,7 @@ import { StandInSourceNavigationContext } from './standInOverviewSource'
 
 type SourceConnectionsProps = {
   role: StandInRole
+  savedConnections?: readonly StandInSourceConnection[]
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
   deviceId: string
@@ -62,6 +63,7 @@ export function StandInSourceConnections(props: SourceConnectionsProps) {
 
 function StandInSourceConnectionsContent({
   role,
+  savedConnections = [],
   provider,
   api,
   deviceId,
@@ -149,6 +151,14 @@ function StandInSourceConnectionsContent({
   const profile = provider.availability.profile
   const accountRows = rows.filter(row => !dingTalk || row.profile === profile)
   const otherAccountRows = rows.filter(row => dingTalk && row.profile !== profile)
+  const savedAccountRows =
+    dingTalk && profile
+      ? savedConnections.filter(row => row.providerId === provider.id && row.profile === profile)
+      : []
+  const savedKeys = new Set(savedAccountRows.map(identity))
+  const currentKeys = new Set(accountRows.map(identity))
+  const removedAccountRows = savedAccountRows.filter(row => !currentKeys.has(identity(row)))
+  const removedAllMessages = accountRows.length === 0 && hasAllDingTalkMessages(removedAccountRows)
   const complete = hasAllDingTalkMessages(accountRows)
   const prefix = dingTalk ? 'stand-in-dingtalk' : 'stand-in-connection-' + provider.id
   const updateRows = model.replaceProviderRows
@@ -180,11 +190,11 @@ function StandInSourceConnectionsContent({
     setKind(nextKind)
     setEditor('kind', kindLabel(nextKind))
   }
-  useConnectionScopeBack(
+  useConnectionScopeList(
     editor
       ? () => {
           model.resetSearch()
-          setEditor(editor === 'kind' ? kindParent : null)
+          setEditor(null)
         }
       : null
   )
@@ -446,7 +456,9 @@ function StandInSourceConnectionsContent({
                 <ConnectionScopeList
                   disabled={!editable}
                   empty={
-                    accountRows.length ? undefined : t('standIn.workspace.dingtalk_not_receiving')
+                    accountRows.length || removedAccountRows.length
+                      ? undefined
+                      : t('standIn.workspace.dingtalk_not_receiving')
                   }
                   testId={`${prefix}-add-scope`}
                   onAdd={() => setEditor('choose')}
@@ -461,6 +473,7 @@ function StandInSourceConnectionsContent({
                           : undefined
                       }
                       testId={`${prefix}-open-all-scope`}
+                      pending={!hasAllDingTalkMessages(savedAccountRows)}
                       disabled={!editable}
                       onClick={() => setEditor('all')}
                       onRemove={() => updateRows(otherAccountRows)}
@@ -493,6 +506,7 @@ function StandInSourceConnectionsContent({
                           .filter(Boolean)
                           .join(' · ')}
                         testId={`${prefix}-open-scope-${row.kind}-${row.id}`}
+                        pending={!savedKeys.has(identity(row))}
                         disabled={!editable}
                         ref={row.id === requestedSourceId ? focusRequestedSource : undefined}
                         onRemove={() => updateRows(rows.filter(value => value !== row))}
@@ -509,6 +523,28 @@ function StandInSourceConnectionsContent({
                       />
                     ))
                   )}
+                  {removedAllMessages ? (
+                    <PendingScopeRemoval
+                      name={t('standIn.workspace.dingtalk_every_message')}
+                      testId={`${prefix}-open-all-scope`}
+                      disabled={!editable}
+                      onRestore={() => updateRows([...rows, ...removedAccountRows])}
+                    />
+                  ) : (
+                    removedAccountRows.map(row => (
+                      <PendingScopeRemoval
+                        key={identity(row)}
+                        name={
+                          row.kind === 'direct' && row.scope === 'all'
+                            ? t('standIn.workspace.dingtalk_all_direct_messages')
+                            : row.name
+                        }
+                        testId={`${prefix}-open-scope-${row.kind}-${row.id}`}
+                        disabled={!editable}
+                        onRestore={() => updateRows([...rows, row])}
+                      />
+                    ))
+                  )}
                 </ConnectionScopeList>
                 {storedOtherAccounts}
               </>
@@ -516,24 +552,7 @@ function StandInSourceConnectionsContent({
             {dingTalk && editor && (
               <div className="space-y-2">
                 {editor === 'item' ? (
-                  editedItem && (
-                    <>
-                      {editedItem.kind === 'group' && groupMessagePicker(editedItem)}
-                      <ControlButton
-                        variant="outline"
-                        type="button"
-                        size="sm"
-                        disabled={!editable}
-                        data-testid={`${prefix}-remove-item-scope`}
-                        onClick={() => {
-                          updateRows(rows.filter(row => row !== editedItem))
-                          setEditor(null)
-                        }}
-                      >
-                        {t('standIn.workspace.connection_remove_scope')}
-                      </ControlButton>
-                    </>
-                  )
+                  editedItem?.kind === 'group' && groupMessagePicker(editedItem)
                 ) : editor === 'choose' || editor === 'all' ? (
                   <>
                     <ul className="divide-y divide-border">
@@ -546,7 +565,7 @@ function StandInSourceConnectionsContent({
                           direct
                           onClick={() => {
                             setAllDingTalkMessages()
-                            setEditor(null)
+                            setEditor('all')
                           }}
                         />
                       )}
@@ -581,7 +600,11 @@ function StandInSourceConnectionsContent({
                     ) : (
                       <ConnectionRulePicker
                         value={rule}
-                        rules={['all', 'include', 'exclude']}
+                        rules={
+                          kindParent === 'all'
+                            ? ['all', 'include', 'exclude', 'off']
+                            : ['all', 'include', 'exclude']
+                        }
                         labels={{ all: wildcardLabel, include: selectedLabel }}
                         onChange={chooseRule}
                         disabled={!editable}
@@ -682,22 +705,6 @@ function StandInSourceConnectionsContent({
                 {kindRows.length > 1 && <h4 className="text-sm font-medium">{triggerLabel}</h4>}
                 {kindRows.map(groupMessagePicker)}
               </div>
-            )}
-            {dingTalk && editor === 'kind' && kindRows.length > 0 && (
-              <ControlButton
-                variant="outline"
-                type="button"
-                size="sm"
-                className="self-start"
-                disabled={!editable}
-                data-testid={`${prefix}-remove-kind-scope`}
-                onClick={() => {
-                  changeDingTalkRule(kind, 'off')
-                  setEditor(null)
-                }}
-              >
-                {t('standIn.workspace.connection_remove_scope')}
-              </ControlButton>
             )}
           </>
         }

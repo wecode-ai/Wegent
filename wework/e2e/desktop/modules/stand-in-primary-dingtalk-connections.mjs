@@ -27,8 +27,19 @@ async function choose(control, name, value) {
   await control.command('clickWhenEnabled', id(`${name}-${value}`))
 }
 
-async function save(control) {
+async function saveScope(control, list) {
   await control.command('clickWhenEnabled', id('stand-in-primary-save'))
+  await control.command('waitFor', id('stand-in-path-scope'), { visible: false })
+  await control.command('waitFor', list)
+}
+
+async function save(control) {
+  const scope = id('stand-in-path-scope')
+  const fromScope = (await control.command('getElementCount', scope)) !== '0'
+  if (fromScope) {
+    await saveScope(control, dingtalk('add-scope'))
+    await control.command('clickWhenEnabled', id('stand-in-primary-profile-close'))
+  } else await control.command('clickWhenEnabled', id('stand-in-primary-save'))
   await control.command('waitFor', panel, { visible: false })
 }
 
@@ -145,7 +156,6 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   const load = () =>
     requestExecutor(control, 'runtime.stand_in.personal.get', { userId }, uiTimeoutMs)
   await fixture.setAuthState('scoped-ready')
-  const initial = (await load()).primary
   await control.command('clickWhenEnabled', id('stand-in-primary-open'))
   await openConnections(control)
 
@@ -154,10 +164,9 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('waitFor', id('stand-in-path-scope'), { text: '项目和独立事项' })
   await control.command('clickWhenEnabled', id('stand-in-independent-issues'))
   await control.command('waitFor', `${id('stand-in-independent-issues')}[aria-checked="true"]`)
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('waitFor', id('stand-in-path-scope'), { text: '添加接收范围' })
   await captureScreenshot(control, 'connection-projects-add-scope.png', panel)
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
+  const projectList = id('stand-in-project-add-scope')
+  await saveScope(control, projectList)
   await control.command('waitFor', id('stand-in-project-open-scope-includeIndependentIssues'))
   await control.command('waitFor', id('stand-in-project-open-scope-projects'), { visible: false })
   await control.command(
@@ -169,7 +178,7 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('fill', id('stand-in-connection-tags-input'), { value: 'independent-qa' })
   await control.command('press', id('stand-in-connection-tags-input'), { key: 'Enter' })
   await control.command('waitFor', id('stand-in-connection-tags-tag-independent-qa'))
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
+  await saveScope(control, projectList)
   await openProjectScopeDetails(control)
   await control.command('waitFor', `${id('stand-in-independent-issues')}[aria-checked="true"]`)
   await control.command('fill', id('stand-in-search-project-scope'), { value: project.name })
@@ -203,22 +212,32 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('press', id('stand-in-connection-tags-input'), { key: 'Enter' })
   await control.command('waitFor', id('stand-in-connection-tags-tag-second-project-qa'))
   await captureScreenshot(control, 'connection-projects-second-project-tags.png', panel)
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('waitFor', id('stand-in-project-choose-projects'))
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
+  await saveScope(control, projectList)
   await control.command('clickWhenEnabled', id('stand-in-project-add-scope'))
   await control.command('clickWhenEnabled', id('stand-in-participating-issues'))
   await choose(control, 'stand-in-project-participatingTrigger', 'assignment')
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('waitFor', id('stand-in-project-choose-projects'))
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
+  await saveScope(control, projectList)
   await captureScreenshot(control, 'connection-projects-custom-issue-triggers.png', panel)
   await control.command('clickWhenEnabled', id('stand-in-connections-back'))
 
   await enterSource(control, 'dingtalk')
   await control.command('waitFor', dingtalk('connections'))
+  const beforeGroup = (await load()).primary
   await control.command('clickWhenEnabled', dingtalk('add-scope'))
   await captureScreenshot(control, 'connection-dingtalk-choose-scope.png', panel)
+  await control.command('clickWhenEnabled', dingtalk('kind-group'))
+  await control.command('clickWhenEnabled', dingtalk('choose-all'))
+  await control.command('waitFor', id('stand-in-primary-save'), {
+    text: '保存接收范围',
+    enabled: true,
+  })
+  await control.command('waitFor', id('stand-in-primary-cancel'), { text: '放弃', enabled: true })
+  await captureScreenshot(control, 'connection-dingtalk-all-groups-before-discard.png', panel)
+  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
+  await control.command('waitFor', dingtalk('add-scope'))
+  await control.command('waitFor', dingtalk('open-scope-group-*'), { visible: false })
+  assert.deepEqual((await load()).primary, beforeGroup, 'Back discards the new all-groups scope')
+  await control.command('clickWhenEnabled', dingtalk('add-scope'))
   await control.command('clickWhenEnabled', dingtalk('kind-group'))
   await control.command('waitFor', dingtalk('query'), { visible: false })
   await control.command('clickWhenEnabled', dingtalk('choose-selected'))
@@ -227,26 +246,25 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('clickWhenEnabled', dingtalk('result-scoped-group'))
   await choose(control, 'stand-in-dingtalk-message-scope-scoped-group', 'mentions')
   await captureScreenshot(control, 'connection-dingtalk-custom-group-trigger.png', panel)
-
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('waitFor', dingtalk('kind-direct'))
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('waitFor', dingtalk('open-scope-group-scoped-group'))
+  assert.deepEqual((await load()).primary, beforeGroup, 'Choosing a group keeps it uncommitted')
+  await saveScope(control, dingtalk('add-scope'))
+  const savedGroup = dingtalk('open-scope-group-scoped-group')
+  await control.command('waitFor', savedGroup)
   await control.command('clickWhenEnabled', dingtalk('add-scope'))
   await control.command('clickWhenEnabled', dingtalk('kind-direct'))
   await control.command('clickWhenEnabled', dingtalk('choose-all'))
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await control.command('waitFor', dingtalk('query'), { visible: false })
+  await saveScope(control, dingtalk('add-scope'))
+  await control.command('waitFor', dingtalk('open-scope-direct-*'))
   await captureScreenshot(control, 'connection-dingtalk-group-and-all-private.png', panel)
-  await control.command('clickWhenEnabled', id('stand-in-connections-back'))
-  await enterSource(control, 'dingtalk')
-  const savedGroup = dingtalk('open-scope-group-scoped-group')
+  const beforeRemoval = (await load()).primary
+  await control.command('clickWhenEnabled', dingtalk('open-scope-group-scoped-group-remove'))
+  await control.command('waitFor', dingtalk('open-scope-group-scoped-group-pending-removal'), {
+    text: '待移除',
+  })
+  assert.deepEqual((await load()).primary, beforeRemoval, 'Remove waits for explicit Save')
+  await control.command('clickWhenEnabled', dingtalk('open-scope-group-scoped-group-undo-remove'))
   await control.command('waitFor', savedGroup)
-  assert.deepEqual((await load()).primary, initial, 'Selections only change the draft before save')
-
-  await control.command('clickWhenEnabled', savedGroup)
-  await control.command('clickWhenEnabled', dingtalk('remove-item-scope'))
+  await control.command('clickWhenEnabled', dingtalk('open-scope-group-scoped-group-remove'))
   await save(control)
   const privateOnly = (await load()).primary
   assert.equal(privateOnly.dingTalkConnectionMode, 'confirmed')
@@ -285,7 +303,7 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await captureScreenshot(control, 'connection-dingtalk-all-private-messages.png', panel)
   await control.command('clickWhenEnabled', dingtalk('add-scope'))
   await control.command('clickWhenEnabled', dingtalk('scope-all'))
-  await control.command('waitFor', dingtalk('kind-group'), { visible: false })
+  await control.command('waitFor', id('stand-in-path-scope'), { text: '全部消息' })
   await captureScreenshot(control, 'connection-dingtalk-all-messages.png', panel)
   await save(control)
   const all = selectedSources((await load()).primary)
@@ -301,7 +319,7 @@ export async function verifyPrimaryDingTalkConnections(control, userId, fixture,
   await control.command('waitFor', dingtalk('open-all-scope'))
   await captureScreenshot(control, 'connection-dingtalk-saved-all-messages.png', panel)
   await control.command('clickWhenEnabled', dingtalk('open-all-scope-remove'))
-  await control.command('waitFor', dingtalk('open-all-scope'), { visible: false })
+  await control.command('waitFor', dingtalk('open-all-scope-pending-removal'), { text: '待移除' })
   assert.deepEqual(selectedSources((await load()).primary), all, 'Remove only changes the draft')
   await captureScreenshot(control, 'connection-dingtalk-all-messages-removed-draft.png', panel)
   await save(control)

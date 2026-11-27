@@ -33,6 +33,10 @@ import {
   type StandInSettingsShortcut,
 } from './StandInSettingsLayout'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import {
+  connectionConfigurationChanges,
+  hasConnectionDraft,
+} from './standInConnectionSettingsModel'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 
@@ -134,10 +138,12 @@ export function StandInPrimaryProfile({
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
+  const [connectionView, setConnectionView] = useState<string | null>(null)
   const [connectionScopeTitle, setConnectionScopeTitle] = useState<string | null>(null)
   const connectionTitleChanged = useCallback(
-    (title: string | null, _view: string | null, scopeTitle: string | null) => {
+    (title: string | null, view: string | null, scopeTitle: string | null) => {
       setConnectionTitle(title)
+      setConnectionView(view)
       setConnectionScopeTitle(scopeTitle)
     },
     []
@@ -183,26 +189,48 @@ export function StandInPrimaryProfile({
     tagDraft.getDirtySnapshot,
     tagDraft.getDirtySnapshot
   )
+  const scopeView = connections && connectionScopeTitle ? connectionView : null
   const profileDirty = !dequal(original, draft)
   const dirty = profileDirty || scheduleDirty || connectionDraftDirty
   const preserveLegacyInstructions =
     !separatePrompt &&
     draft.selfLearningEnabled === true &&
     draft.preferences === original.preferences
-  const savePrimary = () =>
-    onSave({
-      ...settings,
-      primary: {
+  const savePrimary = async () => {
+    const updated = scopeView
+      ? { ...saved, ...connectionConfigurationChanges(saved, draft, scopeView) }
+      : {
+          ...draft,
+          ...(preserveLegacyInstructions
+            ? { prompt: saved.prompt, preferences: saved.preferences }
+            : {}),
+          collaboration:
+            saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+              ? draft.collaboration
+              : undefined,
+        }
+    const primary = scopeView
+      ? primaryWithConnectionMode(saved, {
+          ...updated,
+          enabled: saved.enabled || connectionChangeEnablesIdentity(saved, updated),
+        })
+      : updated
+    const result = await onSave({ ...settings, primary }, Boolean(scopeView))
+    if (result?.primary && scopeView) {
+      const accepted = normalizePrimary(result.primary)
+      const remaining = {
         ...draft,
-        ...(preserveLegacyInstructions
-          ? { prompt: saved.prompt, preferences: saved.preferences }
-          : {}),
-        collaboration:
-          saved.collaboration || !dequal(draft.collaboration, original.collaboration)
-            ? draft.collaboration
-            : undefined,
-      },
-    })
+        ...connectionConfigurationChanges(draft, accepted, scopeView),
+        dingTalkConnectionMode: accepted.dingTalkConnectionMode,
+      }
+      setBaseline(accepted)
+      setDraft({
+        ...remaining,
+        enabled: accepted.enabled || connectionChangeEnablesIdentity(accepted, remaining),
+      })
+      connectionRef.current?.returnToScopeList()
+    }
+  }
   const role = {
     ...defaultRole,
     ...draft,
@@ -369,16 +397,20 @@ export function StandInPrimaryProfile({
             localDeviceId={localDeviceId}
             disabled={blocked}
             onChange={value =>
-              setDraft(
-                primaryWithConnectionMode(saved, {
-                  ...draft,
-                  dingTalkConnectionMode: saved.dingTalkConnectionMode,
-                  enabled: original.enabled || connectionChangeEnablesIdentity(original, value),
-                  collaboration: value.collaboration,
-                  calendar: value.calendar,
-                  connections: value.connections ?? [],
+              setDraft(current => {
+                const changed = hasConnectionDraft(value, original)
+                const source = changed ? value : original
+                return primaryWithConnectionMode(saved, {
+                  ...current,
+                  dingTalkConnectionMode: original.dingTalkConnectionMode,
+                  enabled:
+                    original.enabled ||
+                    (changed && connectionChangeEnablesIdentity(original, value)),
+                  collaboration: source.collaboration,
+                  calendar: source.calendar,
+                  connections: source.connections ?? [],
                 })
-              )
+              })
             }
           />
         </div>
@@ -480,10 +512,24 @@ export function StandInPrimaryProfile({
           prefix="stand-in-primary"
           leading={connectionDetailOpen ? undefined : footerLeading}
           busy={blocked}
-          saveLabel={saving ? t('standIn.saving') : loading ? t('standIn.loading') : undefined}
+          saveLabel={
+            saving
+              ? t('standIn.saving')
+              : loading
+                ? t('standIn.loading')
+                : scopeView
+                  ? t('standIn.personal.save_receive_scope')
+                  : undefined
+          }
           disabled={blocked}
-          saveDisabled={blocked || !profileDirty || scheduleDirty || connectionDraftDirty}
-          onCancel={close}
+          saveDisabled={
+            blocked ||
+            scheduleDirty ||
+            connectionDraftDirty ||
+            !(scopeView ? hasConnectionDraft(draft, original, scopeView) : profileDirty)
+          }
+          cancelLabel={scopeView ? t('standIn.personal.discard') : undefined}
+          onCancel={scopeView ? back : close}
           onSave={() => {
             void savePrimary()
           }}

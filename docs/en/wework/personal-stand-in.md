@@ -276,7 +276,7 @@ After verifying a mailbox, select **Add a receive scope** and choose an inbox. N
 
 ### Connect DingTalk
 
-Onboarding and both types of assistants share the DingTalk connection page. Select **Add a receive scope**, then choose **All messages**, **Groups**, or **Direct messages**. **All messages** includes every new message in accessible groups and new direct messages from all contacts. To receive all direct messages only, add **Direct messages → All direct messages**. Search appears after you choose **Specific groups** or **Specific contacts**. Return to the list to edit or remove a scope. For groups, choose **Every new message** or **Only mentions**. Direct messages trigger on each new message. Changes stay in the draft when you go back. Select **Start chatting** in onboarding or **Save** in assistant settings to apply them.
+Onboarding and both types of assistants share the DingTalk connection page. Select **Add a receive scope**, then choose **All messages**, **Groups**, or **Direct messages**. **All messages** includes every new message in accessible groups and new direct messages from all contacts. To receive all direct messages only, add **Direct messages → All direct messages**. Search appears after you choose **Specific groups** or **Specific contacts**. Return to the list to edit or remove a scope. For groups, choose **Every new message** or **Only mentions**. Direct messages trigger on each new message. Select **Discard** or go back to drop the edits in the scope editor. Select **Save scope** in the scope editor to return to the DingTalk scope list.
 
 The default assistant requires confirmation before sending from a standard DingTalk connection. Existing delegation grants stay in effect until you edit and save that assistant’s DingTalk connection. Under **Assistant details → Recent activity**, you can still verify delivery for existing replies or take over replies that have yet to be submitted.
 
@@ -438,7 +438,7 @@ Roles can receive personal events or all subscribable repository events. The plu
 
 ## Set up your stand-in
 
-On first use, choose an execution device and a chat model, then select **Start chatting**. Wework saves the model and any configured app connections together. You can add optional connections later from assistant settings. If saving or completing setup fails, the guide keeps the current settings available for retry. **Set up later** closes the current page and leaves setup open for your next visit.
+On first use, choose an execution device and a chat model, then select **Start chatting**. Starting chat saves the model. Save each connection from its own page. You can add optional connections later from assistant settings. If saving or completing setup fails, the guide keeps the current settings available for retry. **Set up later** closes the guide. Choose **Continue setup** in My assistants to reopen it. Your saved scopes stay in place.
 
 To select specific projects, choose **Add a receive scope → Projects and independent issues**, then search and select the projects. Expand **Task tags** in the scope details to filter each selected project, issues you participate in, or independent issues. If you receive issues from all projects, you can set one filter for that range. New ranges receive issues with any tag by default. Use **Remove** beside a scope to remove it from the draft.
 
@@ -448,7 +448,7 @@ Use the header to switch between the default assistant and the assistants you ad
 
 After first-time setup, the header shows **Default assistant** and **Add assistant**. Assistants you add appear by name.
 
-Use the header Back button to return to assistant setup with your changes, then select **Start chatting** to apply them. If you close setup with unsaved changes, the guide asks whether to discard them. Apps that require authorization prompt you to sign in.
+Open a connection from assistant setup to see its receive scopes. Edit or add a scope, then select **Save scope** to return to its list. Select a model and **Start chatting** from assistant setup. If you close setup with unsaved changes, the guide asks whether to discard them. Apps that require authorization prompt you to sign in.
 
 Setup creates no scheduled work. The question-mark entry keeps examples for daily briefings, meeting preparation, project follow-up, DingTalk replies, and weekly reviews. Choosing an example only inserts an editable conversation draft; confirm sources and schedules after sending it.
 

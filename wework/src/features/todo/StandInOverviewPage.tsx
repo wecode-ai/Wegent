@@ -631,7 +631,7 @@ export function StandInOverviewPage({
         )
       : undefined
   const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
-  const content = (
+  const content = (resumeSetup?: ReactNode) => (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
       data-testid="stand-in-overview"
@@ -723,6 +723,7 @@ export function StandInOverviewPage({
             {directoryError}
           </p>
         )}
+        {(showingMessageCenter || (!roleId && !team && !shared)) && resumeSetup}
         {showingMessageCenter ? (
           <StandInMessageCenterHost
             api={messageCenterApi}
@@ -755,7 +756,7 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {api && conversationDevice ? (
+            {api && conversationDevice && (team || shared || roleId || !resumeSetup) ? (
               <StandInConversation
                 delegationPanelOpen={delegationPanelOpen}
                 sidebarTasks={
@@ -1142,6 +1143,6 @@ export function StandInOverviewPage({
       {content}
     </StandInOnboarding>
   ) : (
-    content
+    content()
   )
 }

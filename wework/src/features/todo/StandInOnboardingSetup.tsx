@@ -1,8 +1,15 @@
 import { dequal } from 'dequal'
 import { ChevronLeft } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import { useCallback, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import type { CollaborationProject } from '@wegent/collaboration'
+import {
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
+import { createTagDraft, type CollaborationProject } from '@wegent/collaboration'
 import {
   newStandInPrimaryRole,
   primaryWithConnectionMode,
@@ -21,7 +28,10 @@ import {
   StandInConnectionSettings,
   type StandInConnectionNavigationHandle,
 } from './StandInConnectionSettings'
-import { hasConnectionDraft } from './standInConnectionSettingsModel'
+import {
+  connectionConfigurationChanges,
+  hasConnectionDraft,
+} from './standInConnectionSettingsModel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import type { DeviceInfo } from '@/types/api'
@@ -50,6 +60,7 @@ export function StandInOnboardingSetup({
   onComplete,
   onBusyChange,
   backSlot,
+  backLabel,
   footerSlot,
   onScopeTitleChange,
   ref,
@@ -59,6 +70,7 @@ export function StandInOnboardingSetup({
   onComplete(openConversation: boolean): Promise<boolean>
   onBusyChange(busy: boolean): void
   backSlot?: HTMLElement | null
+  backLabel?: string
   footerSlot?: HTMLElement | null
   onScopeTitleChange?(connectionTitle: string | null, pageTitle: string | null): void
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
@@ -79,17 +91,29 @@ export function StandInOnboardingSetup({
     setRole(initial)
     setInitialRole(initial)
   }
-  const [detail, setDetail] = useState<string | null>(null)
+  const [connectionPage, setConnectionPage] = useState<{
+    detail: string | null
+    scope: string | null
+  }>({ detail: null, scope: null })
+  const { detail, scope } = connectionPage
   const detailTitleChanged = useCallback(
     (title: string | null, view: string | null, pageTitle: string | null) => {
-      setDetail(view)
+      setConnectionPage({ detail: view, scope: pageTitle })
       onScopeTitleChange?.(title, pageTitle)
     },
     [onScopeTitleChange]
   )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [discard, setDiscard] = useState(false)
+  const [discard, setDiscard] = useState<'leave' | 'chat' | null>(null)
+  const [connectionEditorDirty, setConnectionEditorDirty] = useState(false)
+  const [tagDraft] = useState(createTagDraft)
+  const tagDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
+  const connectionEditPending = connectionEditorDirty || tagDraftDirty
   const models = useStandInModels(
     configuration.services,
     {
@@ -105,10 +129,10 @@ export function StandInOnboardingSetup({
   const model = models.resolve(models.selectedModel)
   const connections = useRef<StandInConnectionNavigationHandle>(null)
   const connectionChanged = Boolean(role && hasConnectionDraft(role, initialRole ?? undefined))
-  const showDraftNotice = detail
-    ? Boolean(role && hasConnectionDraft(role, initialRole ?? undefined, detail))
-    : connectionChanged
-  const navigation = useStandInPanelNavigation(connectionChanged, busy, () => setDiscard(true))
+  const currentConnectionChanged = Boolean(
+    detail && role && hasConnectionDraft(role, initialRole ?? undefined, detail)
+  )
+  const navigation = useStandInPanelNavigation(connectionChanged, busy, () => setDiscard('leave'))
   const discardConnections = () => {
     if (!initialRole) return
     setRole(
@@ -131,9 +155,10 @@ export function StandInOnboardingSetup({
     else leave()
   }
   useImperativeHandle(ref, () => ({ requestLeave }))
-  /** Persist settings before completion, retaining the saved version for completion-only retries. */
-  const finish = async () => {
-    if (!baseline || !role || !model || busy) return
+  const submit = async (target: 'connections' | 'chat') => {
+    const chatting = target === 'chat'
+    if (!baseline || !role || busy || connectionEditPending) return
+    if (chatting ? !model : !detail || !currentConnectionChanged) return
     setBusy(true)
     onBusyChange(true)
     setError(null)
@@ -141,25 +166,36 @@ export function StandInOnboardingSetup({
       const next: PersonalStandInSettings = {
         ...baseline,
         primary: primaryWithConnectionMode(baseline.primary, {
+          enabled: false,
           prompt: '',
           preferences: '',
           ...baseline.primary,
-          enabled: true,
-          model,
-          ...(role.modelOptions === undefined ? {} : { modelOptions: role.modelOptions }),
-          ...(role.connections === undefined ? {} : { connections: role.connections }),
-          collaboration: role.collaboration,
+          ...(chatting && model
+            ? {
+                enabled: true,
+                model,
+                ...(role.modelOptions === undefined ? {} : { modelOptions: role.modelOptions }),
+              }
+            : {}),
+          ...(!chatting && detail
+            ? connectionConfigurationChanges(baseline.primary, role, detail)
+            : {}),
         }),
       }
       if (!dequal(next, baseline)) {
         const saved = await configuration.onSave(next)
         if (!saved) return
         setBaseline(saved)
-        const savedRole = { ...role, ...saved.primary }
-        setRole(savedRole)
+        const savedRole = { ...newStandInPrimaryRole(saved.executionDeviceId), ...saved.primary }
         setInitialRole(savedRole)
+        setRole(
+          !chatting && detail
+            ? { ...role, ...connectionConfigurationChanges(role, savedRole, detail) }
+            : savedRole
+        )
       }
-      await onComplete(true)
+      if (chatting) await onComplete(true)
+      else connections.current?.returnToScopeList()
     } catch (cause) {
       setError(getStandInErrorMessage(cause))
     } finally {
@@ -184,32 +220,57 @@ export function StandInOnboardingSetup({
   }
   const currentDevice =
     baseline && findWorkbenchDevice(configuration.devices ?? [], baseline.executionDeviceId)
-  const actions = (!detail || showDraftNotice) && (
+  const editingConnection = Boolean(detail)
+  const actions = (!editingConnection || scope || currentConnectionChanged || busy) && (
     <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-border px-5 py-3 md:px-6">
-      {showDraftNotice && (
+      {connectionChanged && !editingConnection && (
         <p
           role="status"
           data-testid="stand-in-connections-pending"
           className="mr-auto min-w-0 text-sm text-text-secondary"
         >
-          {t(
-            detail
-              ? 'standIn.onboarding.connections_draft_retained'
-              : 'standIn.onboarding.connections_draft_apply'
-          )}
+          {t('standIn.workspace.connection_pending')}
         </p>
       )}
-      {!detail && (
+      {scope && (
         <Button
-          data-testid="stand-in-onboarding-complete"
+          variant="outline"
+          data-testid="stand-in-onboarding-drop-scope"
+          disabled={busy}
           className="min-h-11 md:min-h-10"
-          aria-busy={busy}
-          disabled={busy || loading || !role || !model}
-          onClick={() => void finish()}
+          onClick={() => connections.current?.back()}
         >
-          {t(busy ? 'standIn.onboarding.saving' : 'standIn.onboarding.start')}
+          {t('standIn.personal.discard')}
         </Button>
       )}
+      <Button
+        data-testid={
+          editingConnection
+            ? 'stand-in-onboarding-save-connections'
+            : 'stand-in-onboarding-complete'
+        }
+        className="min-h-11 md:min-h-10"
+        aria-busy={busy}
+        disabled={
+          busy ||
+          loading ||
+          connectionEditPending ||
+          (editingConnection ? !currentConnectionChanged : !role || !model)
+        }
+        onClick={() => {
+          if (editingConnection) void submit('connections')
+          else if (connectionChanged) setDiscard('chat')
+          else void submit('chat')
+        }}
+      >
+        {t(
+          busy
+            ? 'standIn.onboarding.saving'
+            : editingConnection
+              ? 'standIn.personal.save_receive_scope'
+              : 'standIn.onboarding.start'
+        )}
+      </Button>
     </div>
   )
   return (
@@ -304,14 +365,14 @@ export function StandInOnboardingSetup({
             createPortal(
               <Button
                 variant="ghost"
-                size="icon"
+                size="sm"
+                className="min-h-11 max-w-full gap-1.5 px-2 text-sm text-text-primary md:min-h-9"
                 data-testid="stand-in-onboarding-connections-back"
-                aria-label={t('standIn.personal.back')}
-                title={t('standIn.personal.back')}
                 disabled={busy}
                 onClick={() => connections.current?.back()}
               >
-                <ChevronLeft aria-hidden="true" />
+                <ChevronLeft className="size-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 whitespace-normal text-left">{backLabel}</span>
               </Button>,
               backSlot
             )}
@@ -324,6 +385,8 @@ export function StandInOnboardingSetup({
             deviceId={baseline.executionDeviceId}
             localDeviceId={localDeviceId}
             disabled={busy || loading}
+            onScheduleDirtyChange={setConnectionEditorDirty}
+            tagDraft={tagDraft}
             hideHeading
             showPendingStatus={false}
             onChange={setRole}
@@ -342,7 +405,7 @@ export function StandInOnboardingSetup({
               className="min-h-11 min-w-11 md:min-h-10"
               disabled={busy || loading}
               onClick={() =>
-                navigation.requestLeave(() => {
+                requestLeave(() => {
                   setBaseline(null)
                   setRole(null)
                   setInitialRole(null)
@@ -357,22 +420,33 @@ export function StandInOnboardingSetup({
       )}
       {footerSlot ? createPortal(actions, footerSlot) : actions}
       <ConfirmDialog
-        open={discard}
+        open={discard !== null}
         destructive
-        title={t('standIn.personal.discard_help')}
-        description={t('standIn.personal.discard_description')}
+        title={t(
+          discard === 'chat'
+            ? 'standIn.onboarding.discard_connections'
+            : 'standIn.personal.discard_help'
+        )}
+        description={t(
+          discard === 'chat'
+            ? 'standIn.onboarding.keep_saved_scopes'
+            : 'standIn.personal.discard_description'
+        )}
         cancelLabel={t('standIn.personal.keep_editing')}
-        confirmLabel={t('standIn.personal.discard')}
+        confirmLabel={t(
+          discard === 'chat' ? 'standIn.onboarding.discard_and_start' : 'standIn.personal.discard'
+        )}
         confirmTestId="stand-in-onboarding-discard"
         cancelTestId="stand-in-onboarding-keep-editing"
         onClose={() => {
           navigation.cancelLeave()
-          setDiscard(false)
+          setDiscard(null)
         }}
         onConfirm={() => {
-          setDiscard(false)
+          setDiscard(null)
           discardConnections()
-          navigation.confirmLeave(() => {})
+          if (discard === 'chat') void submit('chat')
+          else navigation.confirmLeave(() => {})
         }}
       />
     </div>

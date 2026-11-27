@@ -170,6 +170,7 @@ export function StandInSettingsActions({
   disabled,
   saveDisabled,
   onCancel,
+  cancelLabel,
   onSave,
   saveLabel,
   busy = false,
@@ -180,6 +181,7 @@ export function StandInSettingsActions({
   disabled: boolean
   saveDisabled: boolean
   onCancel(): void
+  cancelLabel?: string
   onSave(): void
   saveLabel?: string
   busy?: boolean
@@ -206,7 +208,7 @@ export function StandInSettingsActions({
         onClick={onCancel}
         className="min-h-11 rounded-lg px-3 text-sm hover:bg-muted md:min-h-9"
       >
-        {t('standIn.cancel')}
+        {cancelLabel ?? t('standIn.cancel')}
       </ControlButton>
       <ControlButton
         variant="primary"

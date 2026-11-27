@@ -9,10 +9,9 @@ import {
   ConnectionFixedTrigger,
   type ConnectionScopeRule,
 } from './ConnectionScopeFields'
-import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
-import { useConnectionScopeBack, useConnectionScopeTitle } from './connectionScopeNavigation'
+import { ConnectionScopeList, ConnectionScopeRow, PendingScopeRemoval } from './ConnectionScopeList'
+import { useConnectionScopeList, useConnectionScopeTitle } from './connectionScopeNavigation'
 import { hasAllCollaborationSources, projectRefKey, type ProjectSource } from './standInProjects'
-import { Button } from '@wegent/collaboration/markdown/Button'
 
 const issueKeys = ['includeParticipatingIssues', 'includeIndependentIssues'] as const
 const triggerModes = ['both', 'assignment', 'mention'] as const
@@ -21,6 +20,7 @@ export type ProjectScopeEditor = 'choose' | 'all' | 'projects' | (typeof issueKe
 
 export function StandInProjectScope({
   source,
+  savedSource,
   projects,
   allowLocalProjects,
   focusedProjectId,
@@ -29,8 +29,10 @@ export function StandInProjectScope({
   setEditor: setScopeEditor,
   protectTagDraft,
   onChange,
+  onRestore,
 }: {
   source: ProjectSource
+  savedSource?: ProjectSource
   projects: CollaborationProject[]
   allowLocalProjects: boolean
   focusedProjectId?: string
@@ -39,6 +41,7 @@ export function StandInProjectScope({
   setEditor(editor: ProjectScopeEditor): void
   protectTagDraft(action: () => void): void
   onChange(patch: Partial<ProjectSource>): void
+  onRestore(scope: 'projects' | (typeof issueKeys)[number]): void
 }) {
   const { t } = useTranslation('common')
   const setScopeTitle = useConnectionScopeTitle()
@@ -60,7 +63,6 @@ export function StandInProjectScope({
         : null
     )
   }
-  const [openedFromAdd, setOpenedFromAdd] = useState(false)
   const [ruleDraft, setRuleDraft] = useState<ConnectionScopeRule>()
   const [query, setQuery] = useState('')
   const rule =
@@ -93,18 +95,12 @@ export function StandInProjectScope({
   }
   const needle = query.trim().toLocaleLowerCase()
   const visible = [...catalog.values()].filter(row => row.name.toLocaleLowerCase().includes(needle))
-  const resetEditor = (next: ProjectScopeEditor = null) => {
-    setEditor(next)
-    setOpenedFromAdd(false)
+  const resetEditor = () => {
+    setEditor(null)
     setQuery('')
     setRuleDraft(undefined)
   }
-  useConnectionScopeBack(
-    editor
-      ? () =>
-          protectTagDraft(() => resetEditor(editor !== 'choose' && openedFromAdd ? 'choose' : null))
-      : null
-  )
+  useConnectionScopeList(editor ? resetEditor : null)
   const changeRule = (next: ConnectionScopeRule) => {
     if (rule === next) return
     protectTagDraft(() => {
@@ -118,6 +114,10 @@ export function StandInProjectScope({
     })
   }
 
+  const hasProjects = source.allProjects || source.projects.length > 0
+  const savedProjects = Boolean(savedSource?.allProjects || savedSource?.projects.length)
+  const removedProjects = savedProjects && !hasProjects
+  const removedIssues = issueKeys.filter(key => savedSource?.[key] && !source[key])
   const triggerLabel = t('standIn.workspace.connection_trigger')
   const issueLabels = {
     includeParticipatingIssues: t('standIn.workspace.receive_participating_issues'),
@@ -141,11 +141,15 @@ export function StandInProjectScope({
       {!editor && (
         <ConnectionScopeList
           disabled={disabled}
-          empty={source.enabled ? undefined : t('standIn.workspace.connection_not_configured')}
+          empty={
+            source.enabled || removedProjects || removedIssues.length
+              ? undefined
+              : t('standIn.workspace.connection_not_configured')
+          }
           testId="stand-in-project-add-scope"
           onAdd={() => setEditor('choose')}
         >
-          {(source.allProjects || source.projects.length > 0) && (
+          {hasProjects && (
             <ConnectionScopeRow
               name={t(
                 source.allProjects
@@ -172,9 +176,22 @@ export function StandInProjectScope({
                       .join('、')
               }
               testId="stand-in-project-open-scope-projects"
+              pending={!savedProjects}
               onClick={() => setEditor('projects')}
               onRemove={() => onChange({ allProjects: false, projects: [], excludedProjects: [] })}
               disabled={disabled}
+            />
+          )}
+          {removedProjects && (
+            <PendingScopeRemoval
+              name={t(
+                savedSource?.allProjects
+                  ? 'standIn.workspace.project_only_all'
+                  : 'standIn.workspace.project_rule_include'
+              )}
+              testId="stand-in-project-open-scope-projects"
+              disabled={disabled}
+              onRestore={() => onRestore('projects')}
             />
           )}
           {issueKeys
@@ -184,11 +201,21 @@ export function StandInProjectScope({
                 key={key}
                 name={issueLabels[key]}
                 testId={`stand-in-project-open-scope-${key}`}
+                pending={!savedSource?.[key]}
                 onClick={() => setEditor(key)}
                 onRemove={() => onChange({ [key]: false })}
                 disabled={disabled}
               />
             ))}
+          {removedIssues.map(key => (
+            <PendingScopeRemoval
+              key={key}
+              name={issueLabels[key]}
+              testId={`stand-in-project-open-scope-${key}`}
+              disabled={disabled}
+              onRestore={() => onRestore(key)}
+            />
+          ))}
         </ConnectionScopeList>
       )}
       {editor === 'choose' && (
@@ -209,7 +236,6 @@ export function StandInProjectScope({
                   projectTrigger: undefined,
                   participatingTrigger: undefined,
                 })
-                setOpenedFromAdd(true)
                 setEditor('all')
               }}
             />
@@ -219,7 +245,6 @@ export function StandInProjectScope({
             testId="stand-in-project-choose-projects"
             disabled={disabled}
             onClick={() => {
-              setOpenedFromAdd(true)
               setEditor('projects')
             }}
           />
@@ -231,7 +256,6 @@ export function StandInProjectScope({
               disabled={disabled}
               onClick={() => {
                 onChange({ includeParticipatingIssues: true })
-                setOpenedFromAdd(true)
                 setEditor('includeParticipatingIssues')
               }}
             />
@@ -367,26 +391,8 @@ export function StandInProjectScope({
           )}
         </div>
       )}
-      {editor === 'includeParticipatingIssues' && (
-        <div className="space-y-2">
-          {triggerPicker('participatingTrigger', triggerLabel)}
-          <Button
-            variant="outline"
-            type="button"
-            size="sm"
-            disabled={disabled}
-            data-testid="stand-in-project-remove-issue-scope"
-            onClick={() =>
-              protectTagDraft(() => {
-                onChange({ [editor]: false })
-                resetEditor()
-              })
-            }
-          >
-            {t('standIn.workspace.connection_remove_scope')}
-          </Button>
-        </div>
-      )}
+      {editor === 'includeParticipatingIssues' &&
+        triggerPicker('participatingTrigger', triggerLabel)}
     </div>
   )
 }

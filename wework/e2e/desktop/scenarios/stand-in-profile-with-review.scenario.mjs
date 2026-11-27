@@ -298,7 +298,7 @@ export function createDesktopScenario(options) {
         initialScheduleIds,
         'Closing the introduction must not create any arrangement beyond the native memory default'
       )
-      await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-resume"]')
       await verifyGuideExamples(control)
       const beforeSetup = await rpc('runtime.stand_in.personal.get', { userId: USER })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
@@ -306,15 +306,9 @@ export function createDesktopScenario(options) {
       assert.deepEqual(
         await rpc('runtime.stand_in.personal.get', { userId: USER }),
         beforeSetup,
-        'Selecting a connection must remain a draft until starting chat'
+        'Selecting a scope must remain a draft until saving'
       )
-      await control.command('click', '[data-testid="stand-in-onboarding-connections-back"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
-      await control.command('waitFor', '[data-testid="stand-in-project-open-scope-projects"]')
-      await control.command(
-        'clickWhenEnabled',
-        '[data-testid="stand-in-onboarding-connections-back"]'
-      )
+      const saveConnection = '[data-testid="stand-in-onboarding-save-connections"]'
       const concurrentSettings = await rpc('runtime.stand_in.personal.save', {
         userId: USER,
         settings: {
@@ -327,7 +321,7 @@ export function createDesktopScenario(options) {
           },
         },
       })
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-complete"]')
+      await control.command('clickWhenEnabled', saveConnection)
       await control.command('waitFor', '[data-testid="stand-in-onboarding-setup"] [role="alert"]')
       assert.equal(
         (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
@@ -341,6 +335,23 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-onboarding-discard"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-add-projects-connection"]')
       await addAllProjectScopes(control)
+      await control.command('waitFor', saveConnection, { enabled: true })
+      await options.captureScreenshot(control, 'onboarding-project-scope-before-save.png', GUIDE)
+      await control.command('clickWhenEnabled', saveConnection)
+      await control.command('waitFor', '[data-testid="stand-in-project-open-scope-projects"]')
+      await control.command('waitFor', saveConnection, { visible: false })
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-onboarding-complete"]'),
+        '0'
+      )
+      const savedConnection = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      assert.equal(savedConnection.primary.collaboration.allProjects, true)
+      assert.equal(savedConnection.primary.enabled, false)
+      assert.equal(
+        (await rpc('runtime.stand_in.onboarding.get', { userId: USER })).state.completed,
+        false
+      )
+      await options.captureScreenshot(control, 'onboarding-project-scope-saved.png', GUIDE)
       await control.command(
         'clickWhenEnabled',
         '[data-testid="stand-in-onboarding-connections-back"]'
@@ -390,6 +401,11 @@ export function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-off"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-path-scope"]', {
+        visible: false,
+      })
+      await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-profile-close"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
       })

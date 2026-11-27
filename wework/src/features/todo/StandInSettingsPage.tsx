@@ -44,6 +44,10 @@ import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInSelfLearningSetting } from './StandInSelfLearningSetting'
 import { StandInTaskPermissionSettings } from './StandInTaskPermissionSettings'
+import {
+  connectionConfigurationChanges,
+  hasConnectionDraft,
+} from './standInConnectionSettingsModel'
 import { projectRefKey, updateProjectSource } from './standInProjects'
 import { createStandInRoleDraft } from './standInRoleDraft'
 import {
@@ -235,10 +239,12 @@ function StandInSettingsEditor({
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
+  const [connectionView, setConnectionView] = useState<string | null>(null)
   const [connectionScopeTitle, setConnectionScopeTitle] = useState<string | null>(null)
   const connectionTitleChanged = useCallback(
-    (title: string | null, _view: string | null, scopeTitle: string | null) => {
+    (title: string | null, view: string | null, scopeTitle: string | null) => {
       setConnectionTitle(title)
+      setConnectionView(view)
       setConnectionScopeTitle(scopeTitle)
     },
     []
@@ -322,6 +328,8 @@ function StandInSettingsEditor({
     requestClose: closeSettings,
     requestLeave,
   }))
+  const savedRole = saved?.roles.find(row => row.id === role?.id)
+  const scopeView = view === 'connections' && connectionScopeTitle ? connectionView : null
   const save = async (disconnectProject = false) => {
     if (!draft || !role || moving || connectionDraftDirty) return
     if (!saved?.roles.some(value => value.id === role.id) && !role.name.trim()) {
@@ -337,33 +345,52 @@ function StandInSettingsEditor({
       return
     }
     if (view === 'project' && !projectRoleId) return
+    const scopeSettings =
+      scopeView && savedRole && saved && !changingDevice
+        ? {
+            ...savedRole,
+            ...connectionConfigurationChanges(savedRole, role, scopeView),
+          }
+        : null
     const value =
-      disconnectProject && projectRef
-        ? { ...draft, roles: draft.roles.map(row => disconnectStandInProject(row, projectRef)) }
-        : projectRef && (view === 'project' || view === 'create' || view === 'main')
-          ? {
-              ...draft,
-              roles: draft.roles.map(row =>
-                row.id !== role.id
-                  ? row
-                  : {
-                      ...row,
-                      enabled: view === 'project' ? true : row.enabled,
-                      collaboration: updateProjectSource(row.collaboration, {
-                        allProjects: row.collaboration.enabled && row.collaboration.allProjects,
-                        projects: row.collaboration.projects.some(
-                          item => projectRefKey(item) === projectRefKey(projectRef)
-                        )
-                          ? row.collaboration.projects
-                          : [...row.collaboration.projects, projectRef],
-                        excludedProjects: row.collaboration.excludedProjects.filter(
-                          item => projectRefKey(item) !== projectRefKey(projectRef)
-                        ),
-                      }),
-                    }
-              ),
-            }
-          : draft
+      scopeSettings && saved
+        ? {
+            ...saved,
+            roles: saved.roles.map(row =>
+              row.id === role.id
+                ? {
+                    ...scopeSettings,
+                    enabled: row.enabled || connectionChangeEnablesIdentity(row, scopeSettings),
+                  }
+                : row
+            ),
+          }
+        : disconnectProject && projectRef
+          ? { ...draft, roles: draft.roles.map(row => disconnectStandInProject(row, projectRef)) }
+          : projectRef && (view === 'project' || view === 'create' || view === 'main')
+            ? {
+                ...draft,
+                roles: draft.roles.map(row =>
+                  row.id !== role.id
+                    ? row
+                    : {
+                        ...row,
+                        enabled: view === 'project' ? true : row.enabled,
+                        collaboration: updateProjectSource(row.collaboration, {
+                          allProjects: row.collaboration.enabled && row.collaboration.allProjects,
+                          projects: row.collaboration.projects.some(
+                            item => projectRefKey(item) === projectRefKey(projectRef)
+                          )
+                            ? row.collaboration.projects
+                            : [...row.collaboration.projects, projectRef],
+                          excludedProjects: row.collaboration.excludedProjects.filter(
+                            item => projectRefKey(item) !== projectRefKey(projectRef)
+                          ),
+                        }),
+                      }
+                ),
+              }
+            : draft
     const changedRole = value.roles.find(row => row.id === role.id)!
     const definitionChange = {
       kind: role.id === createdRoleId ? ('create' as const) : ('update' as const),
@@ -393,11 +420,35 @@ function StandInSettingsEditor({
     const result = await state.save(value, definitionChange)
     if (!result) return
     setCreatedRoleId(undefined)
-    setHistory([])
+    if (!scopeView) setHistory([])
     setNotice(true)
     if ((initialProject || initialCreate) && ['project', 'main', 'create'].includes(view))
       onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
-    else if (view !== 'main') setView('main')
+    else if (scopeView) {
+      const accepted = result.roles.find(row => row.id === role.id)
+      let remainingDraft = result
+      if (scopeSettings && accepted) {
+        const remaining = {
+          ...role,
+          ...connectionConfigurationChanges(role, accepted, scopeView),
+          version: accepted.version,
+        }
+        remainingDraft = {
+          ...result,
+          roles: result.roles.map(row =>
+            row.id === role.id
+              ? {
+                  ...remaining,
+                  enabled: accepted.enabled || connectionChangeEnablesIdentity(accepted, remaining),
+                }
+              : row
+          ),
+        }
+        setDraft(remainingDraft)
+      }
+      setHistory(entries => entries.map(entry => ({ ...entry, draft: remainingDraft })))
+      connectionRef.current?.returnToScopeList()
+    } else if (view !== 'main') setView('main')
     else onSaved?.(result.roles.find(row => row.id === role.id) ?? result.roles[0])
   }
   const createRole = useCallback(() => {
@@ -840,9 +891,13 @@ function StandInSettingsEditor({
                 moving ||
                 scheduleDirty ||
                 connectionDraftDirty ||
+                Boolean(
+                  scopeView && savedRole && role && !hasConnectionDraft(role, savedRole, scopeView)
+                ) ||
                 (view === 'project' && !projectRoleId)
               }
-              onCancel={cancelView}
+              cancelLabel={scopeView ? t('standIn.personal.discard') : undefined}
+              onCancel={scopeView ? () => connectionRef.current?.back() : cancelView}
               onSave={() => void save(view === 'project' && projectEnabled)}
               saveLabel={t(
                 saving
@@ -853,12 +908,14 @@ function StandInSettingsEditor({
                       : 'standIn.personal.enable_and_use'
                     : view === 'create' && !initialProject
                       ? 'standIn.personal.create_title'
-                      : view === 'connections'
-                        ? 'standIn.personal.save_connections'
-                        : 'standIn.save'
+                      : scopeView
+                        ? 'standIn.personal.save_receive_scope'
+                        : view === 'connections'
+                          ? 'standIn.personal.save_connections'
+                          : 'standIn.save'
               )}
             >
-              {view === 'connections' ? (
+              {view === 'connections' && !scopeView ? (
                 <span className="mr-auto text-xs text-text-secondary">
                   {t('standIn.personal.connections_only')}
                 </span>

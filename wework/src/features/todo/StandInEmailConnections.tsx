@@ -1,4 +1,4 @@
-import type { StandInRole } from '@/api/personalStandIn'
+import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -31,13 +31,14 @@ import {
   initialEmailForm as initialForm,
 } from './standInEmailConnectionsModel'
 import { StandInConnectionForm } from './StandInConnectionForm'
-import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
-import { useConnectionScopeBack, useConnectionScopeTitle } from './connectionScopeNavigation'
+import { ConnectionScopeList, ConnectionScopeRow, PendingScopeRemoval } from './ConnectionScopeList'
+import { useConnectionScopeList, useConnectionScopeTitle } from './connectionScopeNavigation'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 export { EMAIL_PROVIDER } from './standInEmailConnectionsModel'
 
 interface StandInEmailConnectionsProps {
   role: StandInRole
+  savedConnections?: readonly StandInSourceConnection[]
   local: boolean
   disabled: boolean
   canManageAccounts?: boolean
@@ -62,6 +63,7 @@ export function StandInEmailConnections(props: StandInEmailConnectionsProps) {
 }
 function StandInEmailConnectionsContent({
   role,
+  savedConnections = [],
   local,
   canManageAccounts = false,
   disabled,
@@ -93,6 +95,13 @@ function StandInEmailConnectionsContent({
   const connect = model.connect
   const removeAccount = model.removeAccount
   const rows = (role.connections ?? []).filter(row => row.providerId === EMAIL_PROVIDER)
+  const savedScopes = new Set(
+    savedConnections.filter(row => row.providerId === EMAIL_PROVIDER).map(row => row.profile)
+  )
+  const accountScopes = new Set(rows.map(row => row.profile))
+  const removedInboxes = savedConnections.filter(
+    row => row.providerId === EMAIL_PROVIDER && !accountScopes.has(row.profile)
+  )
   const [selectingInbox, setSelectingInbox] = useState(false)
   const [inboxId, setInboxId] = useState<string | null>(null)
   const setScopeTitle = useConnectionScopeTitle()
@@ -103,12 +112,17 @@ function StandInEmailConnectionsContent({
   const availableInboxes = local
     ? accounts.filter(account => !rows.some(row => row.profile === account.id))
     : []
+  const openInbox = (id: string, name: string) => {
+    setSelectingInbox(false)
+    setInboxId(id)
+    setScopeTitle?.(name)
+  }
   const backToScopes = () => {
     setSelectingInbox(false)
     setInboxId(null)
     setScopeTitle?.(null)
   }
-  useConnectionScopeBack(!adding && (selectingInbox || editedInbox) ? backToScopes : null)
+  useConnectionScopeList(!adding && (selectingInbox || editedInbox) ? backToScopes : null)
   useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
   return (
     <section
@@ -393,7 +407,7 @@ function StandInEmailConnectionsContent({
           </>
         }
         scope={
-          !adding && (accounts.length > 0 || rows.length > 0) ? (
+          !adding && (accounts.length > 0 || rows.length > 0 || removedInboxes.length > 0) ? (
             selectingInbox ? (
               <>
                 <p className="text-sm text-text-secondary">
@@ -410,7 +424,7 @@ function StandInEmailConnectionsContent({
                         direct
                         onClick={() => {
                           connect({ id: account.id, email: account.email })
-                          backToScopes()
+                          openInbox(account.id, account.email)
                         }}
                       />
                     ))}
@@ -421,29 +435,13 @@ function StandInEmailConnectionsContent({
                   </p>
                 )}
               </>
-            ) : editedInbox ? (
-              <>
-                <ControlButton
-                  variant="outline"
-                  type="button"
-                  size="sm"
-                  className="self-start"
-                  data-testid={`stand-in-email-remove-${editedInbox.profile}`}
-                  disabled={disabled || busy}
-                  onClick={() => {
-                    onChange({
-                      ...role,
-                      connections: (role.connections ?? []).filter(row => row !== editedInbox),
-                    })
-                    backToScopes()
-                  }}
-                >
-                  {t('standIn.workspace.connection_remove_scope')}
-                </ControlButton>
-              </>
-            ) : (
+            ) : editedInbox ? null : (
               <ConnectionScopeList
-                empty={rows.length ? undefined : t('standIn.workspace.connection_not_configured')}
+                empty={
+                  rows.length || removedInboxes.length
+                    ? undefined
+                    : t('standIn.workspace.connection_not_configured')
+                }
                 disabled={disabled || busy || availableInboxes.length === 0}
                 testId="stand-in-email-add-scope"
                 onAdd={() => {
@@ -461,16 +459,25 @@ function StandInEmailConnectionsContent({
                         : undefined
                     }
                     testId={`stand-in-email-open-scope-${row.profile}`}
+                    pending={!savedScopes.has(row.profile)}
                     disabled={disabled || busy}
-                    onClick={() => {
-                      setInboxId(row.profile)
-                      setScopeTitle?.(row.name)
-                    }}
+                    onClick={() => openInbox(row.profile, row.name)}
                     onRemove={() =>
                       onChange({
                         ...role,
                         connections: (role.connections ?? []).filter(value => value !== row),
                       })
+                    }
+                  />
+                ))}
+                {removedInboxes.map(row => (
+                  <PendingScopeRemoval
+                    key={row.profile}
+                    name={row.name}
+                    testId={`stand-in-email-open-scope-${row.profile}`}
+                    disabled={disabled || busy}
+                    onRestore={() =>
+                      onChange({ ...role, connections: [...(role.connections ?? []), row] })
                     }
                   />
                 ))}

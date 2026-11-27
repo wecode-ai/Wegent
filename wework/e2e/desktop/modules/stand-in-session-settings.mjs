@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
-import { openConnectionTypePicker } from './stand-in-flows.mjs'
 
 /** Reuse the installed DingTalk protocol fixture and real renderer/settings persistence. */
 export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId) {
@@ -14,7 +13,10 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
   }
   const load = () =>
     requestExecutor(control, 'runtime.stand_in.personal.get', { userId: 9001 }, uiTimeoutMs)
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]'
+  )
   await control.command(
     'waitFor',
     '[data-testid="stand-in-processing-settings-toggle"][aria-expanded="false"]'
@@ -34,8 +36,7 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
       )
         await control.command('clickWhenEnabled', strategy)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      // Saving a source returns to the open role settings.
-      await control.command('waitFor', '[data-testid="stand-in-connections-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-dingtalk-add-scope"]')
       await control.command('waitFor', '[data-testid="stand-in-saved"]')
       const saved = await load()
       const source = saved.roles
@@ -50,10 +51,10 @@ export async function verifyStandInSessionSettings(control, uiTimeoutMs, roleId)
           sessionStrategy,
         }
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
-      await openConnectionTypePicker(control)
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-add-dingtalk-connection"]')
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-dingtalk-open-scope-group-connection-migration-fixture"]'
+      )
       await control.command(
         'waitFor',
         '[data-testid="stand-in-processing-settings-toggle"][aria-expanded="false"]'

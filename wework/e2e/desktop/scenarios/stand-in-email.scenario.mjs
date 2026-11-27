@@ -303,20 +303,25 @@ export function createDesktopScenario({
       await captureScreenshot(control, '03-verified-account-with-intake-off.png')
       await control.command('clickWhenEnabled', mailboxScope)
       await control.command('clickWhenEnabled', mailbox)
+      await control.command('waitFor', '[data-testid="stand-in-path-scope"]', {
+        text: accounts[0].email,
+      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-back"]')
-      await control.command(
-        'clickWhenEnabled',
-        `[data-testid="stand-in-add-${PROVIDER}-connection"]`
+      await control.command('waitFor', mailboxScope)
+      await control.command('waitFor', `[data-testid="stand-in-email-open-scope-${accountId}"]`, {
+        visible: false,
+      })
+      assert.deepEqual(
+        await runtimeSettings(),
+        verifiedSettings,
+        'Going back discards the inbox scope'
       )
-      await control.command('waitFor', `[data-testid="stand-in-email-open-scope-${accountId}"]`)
+      await control.command('clickWhenEnabled', mailboxScope)
+      await control.command('clickWhenEnabled', mailbox)
       assert.deepEqual(
         await runtimeSettings(),
         verifiedSettings,
         'The inbox stays in the draft until saving'
-      )
-      await control.command(
-        'clickWhenEnabled',
-        `[data-testid="stand-in-email-open-scope-${accountId}"]`
       )
       await control.command(
         'clickWhenEnabled',
@@ -329,7 +334,13 @@ export function createDesktopScenario({
       )
       await captureScreenshot(control, '03-account-verified-connection-pending-save.png')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-primary-save"]', { visible: false })
+      await control.command('waitFor', `[data-testid="stand-in-email-open-scope-${accountId}"]`)
+      await control.command('waitFor', '[data-testid="stand-in-path-scope"]', { visible: false })
+      await captureScreenshot(control, '03b-account-scope-saved.png')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-profile-close"]')
+      await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
+        visible: false,
+      })
       const saved = await rpc(control, 'runtime.stand_in.personal.get', { userId: USER })
       assert.equal(saved.primary.connections[0].profile, accountId)
       assert.equal(saved.primary.connections[0].policy.immediate, true)
@@ -617,10 +628,13 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-processing-settings-toggle"]', {
         visible: false,
       })
-      await control.command('waitFor', `[data-testid="stand-in-email-remove-${accountId}"]`, {
-        enabled: true,
-      })
       await captureScreenshot(control, '14-unavailable-mailbox-scope.png')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-back"]')
+      await control.command(
+        'waitFor',
+        `[data-testid="stand-in-email-open-scope-${accountId}-remove"]`,
+        { enabled: true }
+      )
     },
     async cleanup() {
       await mail?.stop()

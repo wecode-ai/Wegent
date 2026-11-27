@@ -32,6 +32,21 @@ export function hasConnectionDraft(
   )
 }
 
+export function connectionConfigurationChanges(
+  original: Partial<ConnectionConfiguration> | undefined,
+  updated: Partial<ConnectionConfiguration>,
+  view: string
+): Partial<ConnectionConfiguration> {
+  if (view === 'projects') return { collaboration: updated.collaboration }
+  if (view === 'time') return { calendar: updated.calendar }
+  return {
+    connections: [
+      ...(original?.connections ?? []).filter(scope => scope.providerId !== view),
+      ...(updated.connections ?? []).filter(scope => scope.providerId === view),
+    ],
+  }
+}
+
 export interface ConnectionSettingsInput {
   api?: StandInExecutorApi
   deviceId: string

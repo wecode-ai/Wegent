@@ -1,4 +1,6 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useRef, useState } from 'react'
 import { expect, it, vi } from 'vitest'
 import { newStandInPrimaryRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import {
@@ -9,6 +11,10 @@ import {
 } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
+import {
+  StandInConnectionSettings,
+  type StandInConnectionNavigationHandle,
+} from './StandInConnectionSettings'
 import { createGitConnectionsModel } from './standInGitConnectionsModel'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
@@ -43,6 +49,62 @@ it('restores the saved project draft after undoing scope edits on legacy roles',
   expect(
     updateProjectSource(all, { excludedProjects: [...scoped.excludedProjects].reverse() }, scoped)
   ).toBe(scoped)
+})
+
+it('drops the active wizard on Back and changes the scope list only after Save', async () => {
+  const initial = newStandInPrimaryRole('local')
+  function Editor() {
+    const navigation = useRef<StandInConnectionNavigationHandle>(null)
+    const [draft, setDraft] = useState(initial)
+    const [saved, setSaved] = useState(initial)
+    return (
+      <>
+        <button type="button" onClick={() => navigation.current?.back()}>
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSaved(draft)
+            navigation.current?.returnToScopeList()
+          }}
+        >
+          Save
+        </button>
+        <StandInConnectionSettings
+          ref={navigation}
+          role={draft}
+          savedConfiguration={saved}
+          disabled={false}
+          deviceId="local"
+          localDeviceId="local"
+          projects={[]}
+          onChange={setDraft}
+        />
+      </>
+    )
+  }
+
+  const user = userEvent.setup()
+  render(<Editor />)
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  const add = () => user.click(screen.getByTestId('stand-in-project-add-scope'))
+  const all = () => user.click(screen.getByTestId('stand-in-all-projects'))
+  const row = 'stand-in-project-open-scope-projects'
+
+  await add()
+  await all()
+  await user.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.queryByTestId(row)).not.toBeInTheDocument()
+  await add()
+  await all()
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(screen.getByTestId(row)).toBeVisible()
+  await user.click(screen.getByTestId(`${row}-remove`))
+  expect(screen.getByTestId(`${row}-pending-removal`)).toBeVisible()
+  await user.click(screen.getByTestId(`${row}-undo-remove`))
+  expect(screen.getByTestId(row)).toBeVisible()
+  expect(screen.queryByTestId(`${row}-pending-removal`)).not.toBeInTheDocument()
 })
 
 it.each(['github', 'gitlab'])(

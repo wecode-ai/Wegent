@@ -144,6 +144,23 @@ export function StandInConnections({
   const setSource = (patch: Partial<ProjectSource>) => {
     onChange({ ...role, collaboration: updateProjectSource(source, patch, savedSource) })
   }
+  const savedScope = savedSource && effectiveProjectSource(savedSource)
+  const restoreScope = (
+    target: 'projects' | 'includeParticipatingIssues' | 'includeIndependentIssues'
+  ) => {
+    if (!savedScope) return
+    const restored =
+      target === 'projects'
+        ? {
+            ...scope,
+            allProjects: savedScope.allProjects,
+            projects: savedScope.projects,
+            excludedProjects: savedScope.excludedProjects,
+            projectTagFilters: savedScope.projectTagFilters,
+          }
+        : { ...scope, [target]: savedScope[target] }
+    onChange({ ...role, collaboration: updateProjectSource(restored, {}, savedSource) })
+  }
   const updateTags = (target: TagTarget, tags: string[]) => {
     if (target.project) {
       setSource({
@@ -164,6 +181,7 @@ export function StandInConnections({
         scope={
           <StandInProjectScope
             source={scope}
+            savedSource={savedScope}
             projects={projects}
             allowLocalProjects={allowLocalProjects}
             focusedProjectId={focusedProjectId}
@@ -175,6 +193,7 @@ export function StandInConnections({
             }}
             protectTagDraft={navigation.requestLeave}
             onChange={setSource}
+            onRestore={restoreScope}
           />
         }
         extra={

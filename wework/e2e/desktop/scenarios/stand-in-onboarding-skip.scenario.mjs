@@ -1,8 +1,4 @@
-import {
-  addAllProjectScopes,
-  clearProjectScopes,
-  openProjectScopeDetails,
-} from '../modules/stand-in-flows.mjs'
+import { addAllProjectScopes, openProjectScopeDetails } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { openStoryPrimary } from '../modules/stand-in-source-story-evidence.mjs'
@@ -77,6 +73,23 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         text: '助理详情 → 管理助理 → 运行环境',
       })
       await captureScreenshot(control, 'stand-in-first-use-model-and-help.png')
+      const beforeDeferring = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
+      await control.command('clickWhenEnabled', selector('stand-in-onboarding-close'))
+      await control.command('waitFor', selector('stand-in-onboarding'), { visible: false })
+      const resume = selector('stand-in-onboarding-resume')
+      await control.command('waitFor', resume, { text: '继续设置', enabled: true })
+      assert.deepEqual(
+        await rpc('runtime.stand_in.personal.get', { userId: USER_ID }),
+        beforeDeferring
+      )
+      assert.equal(
+        (await rpc('runtime.stand_in.onboarding.get', { userId: USER_ID })).state.completed,
+        false
+      )
+      await control.command('waitFor', CHAT, { visible: false })
+      await captureScreenshot(control, 'stand-in-onboarding-deferred.png')
+      await control.command('clickWhenEnabled', resume)
+      await control.command('waitFor', selector('stand-in-onboarding-model'))
       const catalog = (await rpc('runtime.runner.catalog', {})).models
       const defaultModel = catalog.find(
         candidate => candidate.runtime === 'codex' && candidate.is_default
@@ -125,45 +138,44 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selectedProject)
       await control.command('waitFor', `${selectedProject}[aria-checked="true"]`)
       const pending = selector('stand-in-connections-pending')
-      await control.command('waitFor', pending, { text: '此页的修改已暂存' })
+      await control.command('waitFor', selector('stand-in-onboarding-save-connections'), {
+        text: '保存接收范围',
+        enabled: true,
+      })
+      await control.command('waitFor', selector('stand-in-onboarding-complete'), { visible: false })
+      await control.command('waitFor', selector('stand-in-onboarding-navigation'), {
+        text: '协作项目',
+      })
+      await control.command('waitFor', `${selector('stand-in-path-scope')}[aria-current="page"]`)
       await control.command('waitFor', back)
-      assert.equal(await control.command('getAttribute', back, { value: 'aria-label' }), '返回')
+      await control.command('waitFor', back, { text: '返回协作项目', enabled: true })
       assert.equal(
-        await control.command(
-          'getElementCount',
-          `${selector('stand-in-onboarding')} button[aria-label="返回"]`
-        ),
+        await control.command('getElementCount', `${selector('stand-in-onboarding')} ${back}`),
         '1'
       )
-      await captureScreenshot(control, 'stand-in-onboarding-project-draft-and-back.png')
+      const drop = selector('stand-in-onboarding-drop-scope')
+      const scopeRow = selector('stand-in-project-open-scope-projects')
+      await control.command('waitFor', drop, { text: '放弃', enabled: true })
+      await captureScreenshot(control, 'stand-in-onboarding-project-save-or-discard.png')
       await control.command('clickWhenEnabled', back)
-      await control.command('waitFor', selector('stand-in-project-choose-projects'))
+      await control.command('waitFor', back, { text: '返回助理设置' })
+      await control.command('waitFor', selector('stand-in-project-add-scope'))
+      await control.command('waitFor', scopeRow, { visible: false })
+      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
+      await openProjectScopeDetails(control)
+      await control.command('waitFor', `${selectedProject}[aria-checked="false"]`)
+      await control.command('clickWhenEnabled', selectedProject)
+      await control.command('clickWhenEnabled', drop)
+      await control.command('waitFor', selector('stand-in-project-add-scope'))
+      await control.command('waitFor', scopeRow, { visible: false })
+      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
+      await captureScreenshot(control, 'stand-in-onboarding-project-discarded.png')
       await control.command('clickWhenEnabled', back)
-      await control.command('waitFor', selector('stand-in-project-open-scope-projects'))
-      await control.command('clickWhenEnabled', back)
-      await control.command('waitFor', pending, { text: '会一并保存连接设置' })
-      await control.command('waitFor', selector('stand-in-onboarding-complete'), {
-        text: '开始聊天',
-      })
-      await captureScreenshot(control, 'stand-in-onboarding-project-draft-and-start.png')
+      await control.command('waitFor', pending, { visible: false })
       await control.command('clickWhenEnabled', selector('stand-in-add-dingtalk-connection'))
       await control.command('waitFor', back)
       await control.command('waitFor', pending, { visible: false })
       await captureScreenshot(control, 'stand-in-onboarding-dingtalk-without-local-changes.png')
-      await control.command('clickWhenEnabled', back)
-      await control.command('waitFor', pending, { text: '会一并保存连接设置' })
-      await control.command('clickWhenEnabled', projects)
-      await openProjectScopeDetails(control)
-      await control.command('waitFor', `${selectedProject}[aria-checked="true"]`)
-      assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
-      await control.command('clickWhenEnabled', back)
-      await addAllProjectScopes(control)
-      await control.command('clickWhenEnabled', back)
-      await control.command('clickWhenEnabled', selector('stand-in-onboarding-close'))
-      await control.command('clickWhenEnabled', selector('stand-in-onboarding-keep-editing'))
-      await control.command('clickWhenEnabled', projects)
-      await control.command('waitFor', selector('stand-in-project-open-scope-projects'))
-      await clearProjectScopes(control)
       await control.command('clickWhenEnabled', back)
       await control.command('clickWhenEnabled', selector('stand-in-onboarding-complete'))
       await control.command('waitFor', selector('stand-in-onboarding'), { visible: false })
@@ -268,7 +280,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         visible: false,
       })
       await control.command('waitFor', selector('stand-in-source-tags-toggle'), { visible: false })
-      await addAllProjectScopes(control, { configure: true })
+      await addAllProjectScopes(control)
       await control.command('waitFor', selector('stand-in-processing-settings-toggle'), {
         text: '处理方式',
         visible: true,
@@ -315,13 +327,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selector('stand-in-connections-open'))
       await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
       await addAllProjectScopes(control)
+      await control.command('clickWhenEnabled', selector('stand-in-cancel'))
+      await control.command('waitFor', selector('stand-in-project-open-scope-projects'), {
+        visible: false,
+      })
       await control.command('clickWhenEnabled', selector('stand-in-connections-back'))
       await control.command('clickWhenEnabled', selector('stand-in-back'))
-      await control.command('waitFor', selector('stand-in-source-summary'), {
-        text: '协作项目',
-        visible: true,
-      })
-      await captureScreenshot(control, 'stand-in-role-source-draft-retained.png')
+      await captureScreenshot(control, 'stand-in-role-source-draft-discarded.png')
       await control.command('clickWhenEnabled', selector('stand-in-advanced-open'))
       await verifyProjectMenuDismissal(control, 'stand-in-path-advanced')
       await control.command('clickWhenEnabled', selector('stand-in-back'))
@@ -331,8 +343,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       )
       await control.command('clickWhenEnabled', selector('stand-in-connections-open'))
       await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
-      await control.command('waitFor', selector('stand-in-project-open-scope-projects'))
-      await control.command('clickWhenEnabled', selector('stand-in-cancel'))
+      await control.command('waitFor', selector('stand-in-project-open-scope-projects'), {
+        visible: false,
+      })
+      await control.command('clickWhenEnabled', selector('stand-in-close'))
       await control.command('clickWhenEnabled', selector('stand-in-discard'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-create-role')

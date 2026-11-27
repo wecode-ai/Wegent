@@ -17,8 +17,8 @@ import {
   profileInstance,
   resourceKey,
 } from './standInGitConnectionsModel'
-import { ConnectionScopeList, ConnectionScopeRow } from './ConnectionScopeList'
-import { useConnectionScopeBack, useConnectionScopeTitle } from './connectionScopeNavigation'
+import { ConnectionScopeList, ConnectionScopeRow, PendingScopeRemoval } from './ConnectionScopeList'
+import { useConnectionScopeList, useConnectionScopeTitle } from './connectionScopeNavigation'
 import { StandInConnectionForm } from './StandInConnectionForm'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
@@ -113,8 +113,21 @@ function StandInGitConnectionsContent({
   const rows = (role.connections ?? []).filter(row => row.providerId === provider.id)
   const profiles = new Set(accounts.map(account => account.profile))
   const currentRows = rows.filter(row => profiles.has(row.profile))
+  const savedKeys = new Set(
+    savedConnections?.filter(row => row.providerId === provider.id).map(resourceKey)
+  )
+  const currentKeys = new Set(currentRows.map(resourceKey))
+  const removedRows =
+    savedConnections?.filter(
+      row =>
+        row.providerId === provider.id &&
+        profiles.has(row.profile) &&
+        !currentKeys.has(resourceKey(row))
+    ) ?? []
   const otherRows = rows.filter(row => !profiles.has(row.profile))
   const personal = currentRows.filter(row => row.kind === 'personal')
+  const personalProfiles = new Set(personal.map(row => row.profile))
+  const canAddPersonal = accounts.some(account => !personalProfiles.has(account.profile))
   const repositories = currentRows.filter(row => row.kind === 'repository')
   const editedScope =
     editing === 'item' ? currentRows.find(row => resourceKey(row) === scopeKey) : undefined
@@ -140,15 +153,17 @@ function StandInGitConnectionsContent({
     setKind(value)
     openScope(value, scopeKindTitle(value))
   }
-  useConnectionScopeBack(
-    editing && canSelectScope
-      ? () => {
-          resetSearch()
-          if (editing === 'personal' || editing === 'repository') chooseScope()
-          else openScope(null, null)
-        }
-      : null
-  )
+  const addPersonal = () => {
+    const [account] = accounts
+    if (accounts.length !== 1) {
+      editKind('personal')
+      return
+    }
+    model.changeScope([], [account])
+    setScopeKey(resourceKey(account))
+    openScope('item', scopeKindTitle('personal'))
+  }
+  useConnectionScopeList(editing ? () => openScope(null, null) : null)
   const results = new Map([...state.items, ...repositories].map(row => [resourceKey(row), row]))
   const selected = new Set(repositories.map(resourceKey))
   return (
@@ -241,7 +256,9 @@ function StandInGitConnectionsContent({
             {canSelectScope && !editing && (
               <ConnectionScopeList
                 empty={
-                  currentRows.length ? undefined : t('standIn.workspace.connection_not_configured')
+                  currentRows.length || removedRows.length
+                    ? undefined
+                    : t('standIn.workspace.connection_not_configured')
                 }
                 disabled={disabled || busy}
                 testId="stand-in-git-add-scope"
@@ -261,6 +278,7 @@ function StandInGitConnectionsContent({
                     }
                     disabled={disabled || busy}
                     testId={`stand-in-git-open-scope-${row.kind}-${row.id}`}
+                    pending={!savedKeys.has(resourceKey(row))}
                     onRemove={() => model.changeScope([row])}
                     onClick={() => {
                       setScopeKey(resourceKey(row))
@@ -268,36 +286,32 @@ function StandInGitConnectionsContent({
                     }}
                   />
                 ))}
+                {removedRows.map(row => (
+                  <PendingScopeRemoval
+                    key={resourceKey(row)}
+                    name={row.name}
+                    testId={`stand-in-git-open-scope-${row.kind}-${row.id}`}
+                    disabled={disabled || busy}
+                    onRestore={() =>
+                      onChange({ ...role, connections: [...(role.connections ?? []), row] })
+                    }
+                  />
+                ))}
               </ConnectionScopeList>
             )}
-            {canSelectScope && editedScope && (
-              <div className="space-y-2">
-                {editedScope.configurationSummary && (
-                  <p className="text-sm text-text-secondary">{editedScope.configurationSummary}</p>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  disabled={disabled || busy}
-                  data-testid={`stand-in-git-remove-scope-${editedScope.id}`}
-                  onClick={() => {
-                    model.changeScope([editedScope])
-                    openScope(null, null)
-                  }}
-                >
-                  {t('standIn.workspace.connection_remove_scope')}
-                </Button>
-              </div>
+            {canSelectScope && editedScope?.configurationSummary && (
+              <p className="text-sm text-text-secondary">{editedScope.configurationSummary}</p>
             )}
             {canSelectScope && editing === 'choose' && (
               <ul className="divide-y divide-border">
-                <ConnectionScopeRow
-                  name={scopeKindTitle('personal')}
-                  testId="stand-in-git-kind-personal"
-                  disabled={disabled || busy}
-                  onClick={() => editKind('personal')}
-                />
+                {canAddPersonal && (
+                  <ConnectionScopeRow
+                    name={scopeKindTitle('personal')}
+                    testId="stand-in-git-kind-personal"
+                    disabled={disabled || busy}
+                    onClick={addPersonal}
+                  />
+                )}
                 <ConnectionScopeRow
                   name={scopeKindTitle('repository')}
                   testId="stand-in-git-kind-repository"

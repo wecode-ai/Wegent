@@ -52,7 +52,7 @@ it.each([
       const [title, setTitle] = useState<string | null>(null)
       const back = useRef<(() => void) | null>(null)
       return (
-        <ConnectionScopeNavigation value={{ back, setTitle }}>
+        <ConnectionScopeNavigation value={{ list: back, setTitle }}>
           <h2>{title ?? name}</h2>
           <button type="button" onClick={() => back.current?.()}>
             Back
@@ -78,6 +78,14 @@ it.each([
     await user.click(await screen.findByTestId('stand-in-git-add-scope'))
     expect(screen.getByRole('heading', { level: 2 })).not.toHaveTextContent(name)
     expect(screen.queryByTestId('stand-in-git-query')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-git-kind-personal'))
+    expect(draft.connections).toEqual([existing, expect.objectContaining(account)])
+    expect(screen.queryByTestId('stand-in-git-personal-personal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-processing-settings-toggle')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    await user.click(screen.getByTestId('stand-in-git-open-scope-personal-personal-remove'))
+    expect(draft.connections).toEqual([existing])
+    await user.click(screen.getByTestId('stand-in-git-add-scope'))
     await user.click(screen.getByTestId('stand-in-git-kind-repository'))
     await user.type(screen.getByTestId('stand-in-git-query'), 'repository')
     await user.click(screen.getByTestId('stand-in-git-search'))
@@ -86,8 +94,6 @@ it.each([
     expect(draft.connections).toEqual([existing, expect.objectContaining(repository)])
 
     const back = screen.getByRole('button', { name: 'Back' })
-    await user.click(back)
-    expect(screen.getByTestId('stand-in-git-kind-repository')).toBeInTheDocument()
     await user.click(back)
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(name)
     await user.click(screen.getByTestId('stand-in-git-open-scope-repository-42'))

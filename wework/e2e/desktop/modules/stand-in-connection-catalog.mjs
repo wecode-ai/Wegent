@@ -1,5 +1,4 @@
-import { addAllProjectScopes, clearProjectScopes } from './stand-in-flows.mjs'
-import { openStandInSettings } from './stand-in-profile-navigation.mjs'
+import { addAllProjectScopes } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { verifyProjectFieldFocus } from './project-create-focus-indicator.mjs'
@@ -37,21 +36,21 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
   await addAllProjectScopes(control)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]')
-  await clearProjectScopes(control)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-cancel"]')
+  await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+  await control.command('waitFor', '[data-testid="stand-in-project-open-scope-projects"]', {
+    visible: false,
+  })
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]', {
     visible: false,
   })
-  assert.equal(
-    await control.command('getElementCount', '[data-testid="stand-in-primary-save"]:disabled'),
-    '1',
-    'Restoring the original intake setting must clear the unsaved draft'
-  )
+  await control.command('waitFor', '[data-testid="stand-in-primary-save"]:disabled')
   await control.command('waitFor', '[data-testid="stand-in-source-projects"]', { visible: false })
   await addAllProjectScopes(control)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]')
   await captureScreenshot(control, 'connection-02-pending-scope.png', panel)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
-  await control.command('waitFor', panel, { visible: false })
+  await control.command('waitFor', '[data-testid="stand-in-project-open-scope-projects"]')
   const saved = await requestExecutor(
     control,
     'runtime.stand_in.personal.get',
@@ -60,8 +59,7 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   )
   assert.equal(saved.primary.collaboration.enabled, true)
   assert.equal(saved.primary.collaboration.allProjects, true)
-  await openStandInSettings(control)
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-connections-open"]')
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-back"]')
   await control.command('waitFor', dingtalk, { text: '迁移连接' })
   assert.equal(
     await control.command('getElementCount', '[data-testid="stand-in-connections-pending"]'),

@@ -28,7 +28,11 @@ import { StandInConnectionForm } from './StandInConnectionForm'
 import { ConnectionFixedTrigger } from './ConnectionScopeFields'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInConnections, type StandInProjectNavigationHandle } from './StandInConnections'
-import { createConnectionSettingsModel, hasConnectionDraft } from './standInConnectionSettingsModel'
+import {
+  connectionConfigurationChanges,
+  createConnectionSettingsModel,
+  hasConnectionDraft,
+} from './standInConnectionSettingsModel'
 import { EMAIL_PROVIDER, StandInEmailConnections } from './StandInEmailConnections'
 import { GIT_CONNECTION_PREFIX, StandInGitConnections } from './StandInGitConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
@@ -39,6 +43,7 @@ export interface StandInConnectionNavigationHandle extends AutomationNavigationH
   /** True means the source editor already confirmed discarding unsaved changes. */
   requestLeave(action: (discarded?: boolean) => void): void
   back(): void
+  returnToScopeList(): void
 }
 
 export function StandInConnectionSettings({
@@ -167,11 +172,22 @@ export function StandInConnectionSettings({
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
   const projectRef = useRef<StandInProjectNavigationHandle>(null)
-  const scopeBack = useRef<(() => void) | null>(null)
-  const scopeNavigation = useMemo(
-    () => ({ back: scopeBack, setTitle: model.setScopeTitle }),
-    [model]
-  )
+  const scopeList = useRef<(() => void) | null>(null)
+  const wizardStart = useRef<{ view: string; role: StandInRole } | null>(null)
+  const scopeNavigation = {
+    list: scopeList,
+    setTitle(title: string | null) {
+      if (title && view) {
+        wizardStart.current ??= { view, role }
+      } else if (wizardStart.current) {
+        const start = wizardStart.current
+        wizardStart.current = null
+        tagDraft?.set('')
+        onChange({ ...role, ...connectionConfigurationChanges(role, start.role, start.view) })
+      }
+      model.setScopeTitle(title)
+    },
+  }
   const requestLeave = (action: (discarded?: boolean) => void) => {
     const editor = calendarRef.current ?? emailRef.current
     if (projectRef.current) projectRef.current.requestLeave(action)
@@ -179,17 +195,25 @@ export function StandInConnectionSettings({
     else action(false)
   }
   useImperativeHandle(ref, () => ({
+    returnToScopeList() {
+      wizardStart.current = null
+      scopeList.current?.()
+    },
     back() {
       if (scheduleEditorOpen && calendarRef.current?.returnToList) {
         calendarRef.current.returnToList()
         return
       }
-      if (scopeBack.current) {
-        scopeBack.current()
+      if (scopeList.current) {
+        scopeList.current()
         return
       }
-      const back = () => setView(null)
-      requestLeave(back)
+      requestLeave(() => {
+        if (view && savedConfiguration && hasConnectionDraft(role, savedConfiguration, view)) {
+          onChange({ ...role, ...connectionConfigurationChanges(role, savedConfiguration, view) })
+        }
+        setView(null)
+      })
     },
     requestLeave(action) {
       requestLeave(action)
@@ -212,7 +236,7 @@ export function StandInConnectionSettings({
       : Boolean(view && role.connections?.some(row => row.providerId === view))
   const receiving = view === 'projects' ? collaboration.enabled : role.enabled
   const scopeStatus =
-    view && view !== 'time' && (!updatesCurrentScope || !hasScope)
+    view && view !== 'time' && !updatesCurrentScope
       ? !hasScope
         ? 'standIn.workspace.connection_not_configured'
         : !receiving
@@ -399,6 +423,7 @@ export function StandInConnectionSettings({
                       onDirtyChange={setEmailDirty}
                       key={deviceId}
                       role={role}
+                      savedConnections={savedConfiguration?.connections}
                       local={deviceId === localDeviceId}
                       canManageAccounts={Boolean(scheduling)}
                       disabled={disabled || loading}
@@ -421,6 +446,7 @@ export function StandInConnectionSettings({
                       key={`${deviceId}:${provider.id}`}
                       provider={provider}
                       role={role}
+                      savedConnections={savedConfiguration?.connections}
                       api={api}
                       deviceId={deviceId}
                       localDeviceId={localDeviceId}
