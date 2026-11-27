@@ -1,4 +1,5 @@
 import { SystemInformationProcessTable } from './system-information-process-table.js'
+import { MacosProcessTable } from './macos-process-table.js'
 import type { SystemProcessTable } from './system-process-table.js'
 
 export {
@@ -10,6 +11,13 @@ export {
   type RendererContentsLike,
 } from './electron-metrics.js'
 export { ProcessExplorerService, type ProcessExplorerServiceOptions } from './service.js'
+export {
+  MacosProcessTable,
+  parsePsLine,
+  type PsOutput,
+  type PsReader,
+} from './macos-process-table.js'
+export { resolveProcessName } from './process-name.js'
 export {
   describeError,
   type SystemProcessTable,
@@ -24,7 +32,9 @@ export {
   type SystemInformationProcessesReader,
 } from './system-information-process-table.js'
 
-/** Returns the cross-platform process table. */
-export function createSystemProcessTable(): SystemProcessTable {
-  return new SystemInformationProcessTable()
+/** Returns the process table for the platform, defaulting to the current one. */
+export function createSystemProcessTable(
+  platform: NodeJS.Platform = process.platform
+): SystemProcessTable {
+  return platform === 'darwin' ? new MacosProcessTable() : new SystemInformationProcessTable()
 }

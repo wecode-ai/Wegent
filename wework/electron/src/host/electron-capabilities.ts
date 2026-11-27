@@ -303,6 +303,9 @@ export interface ElectronE2EHost {
   processExplorerWindowSnapshot: () => Promise<ProcessExplorerWindowSnapshot>
   setProcessExplorerWindowSize: (width: number, height: number) => void
   closeProcessExplorerWindow: () => void
+  setProcessExplorerWindowHidden: (hidden: boolean) => void
+  spawnProcessExplorerFixture: () => Promise<{ pid: number }>
+  stopProcessExplorerFixture: () => Promise<{ stopped: boolean }>
   dockVisible: () => boolean
   getSystemDragContext: () => { conversationTitle: string | null; presentationId: number | null }
   runtimeDiagnostics: () => {
@@ -393,12 +396,19 @@ export function createElectronCapabilityRouter(
       windowHeight: 0,
       alwaysOnTop: false,
       menuBarVisible: false,
+      visibility: '',
+      summary: '',
+      rows: [],
       testIds: [],
       text: '',
       layout: { viewportWidth: 0, tableClientWidth: 0, tableScrollWidth: 0 },
     }),
     setProcessExplorerWindowSize: () => undefined,
     closeProcessExplorerWindow: () => undefined,
+    setProcessExplorerWindowHidden: () => undefined,
+    spawnProcessExplorerFixture: () =>
+      Promise.reject(new Error('The process explorer fixture is unavailable')),
+    stopProcessExplorerFixture: () => Promise.resolve({ stopped: false }),
     dockVisible: () => true,
     getSystemDragContext: () => ({ conversationTitle: null, presentationId: null }),
     runtimeDiagnostics: () => ({
@@ -923,6 +933,18 @@ export function createElectronCapabilityRouter(
   router.register('e2e.closeProcessExplorerWindow', () => {
     assertE2EEnabled('Process Explorer test controls')
     e2eHost.closeProcessExplorerWindow()
+  })
+  router.register('e2e.setProcessExplorerWindowHidden', params => {
+    assertE2EEnabled('Process Explorer test controls')
+    e2eHost.setProcessExplorerWindowHidden(booleanParam(params, 'hidden') ?? true)
+  })
+  router.register('e2e.spawnProcessExplorerFixture', () => {
+    assertE2EEnabled('Process Explorer test controls')
+    return e2eHost.spawnProcessExplorerFixture()
+  })
+  router.register('e2e.stopProcessExplorerFixture', () => {
+    assertE2EEnabled('Process Explorer test controls')
+    return e2eHost.stopProcessExplorerFixture()
   })
   router.register('e2e.setReducedMotion', async params => {
     const contents = e2eHost.captureTarget('main')

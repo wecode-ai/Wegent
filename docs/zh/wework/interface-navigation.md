@@ -152,7 +152,7 @@ Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也�
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
 | 文件路径菜单、IDE、终端、消息操作、Diff 审核、标签页                                | [工作台操作](./workbench.md#workspace-controls)                     |
 
-插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)；设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
+插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)。**插件 → 管理插件 → Codex 插件 → 插件名称** 与插件市场打开同一详情页。设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
 
 下表的内部路由仅用于版本维护和自动校验，不是网页网址。用户操作时按“点击路径”进入。
 
