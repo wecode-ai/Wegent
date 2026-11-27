@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -11,6 +12,48 @@ import pytest
 from fastapi import FastAPI, HTTPException
 
 from executor_manager.routers import wegent_e2b_proxy
+
+
+@pytest.mark.asyncio
+async def test_cancelled_proxy_waits_for_forwarded_workspace_write():
+    started = asyncio.Event()
+    published = asyncio.Event()
+
+    async def upload() -> httpx.Response:
+        started.set()
+        await published.wait()
+        return httpx.Response(200)
+
+    caller = asyncio.create_task(wegent_e2b_proxy._await_workspace_write(upload()))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        for _ in range(2):
+            caller.cancel()
+            await asyncio.sleep(0)
+            assert not caller.done()
+    finally:
+        published.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(caller, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_proxy_health_lookup_uses_the_selected_e2b_runtime(mocker):
+    selected = SimpleNamespace(sandbox_id="12345")
+    get_sandbox = mocker.AsyncMock(return_value=None)
+    manager = SimpleNamespace(get_sandbox=get_sandbox)
+    mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
+    mocker.patch.object(
+        wegent_e2b_proxy, "_find_sandbox_by_e2b_id", return_value=selected
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await wegent_e2b_proxy._get_sandbox_info("original-e2b-id")
+
+    assert exc_info.value.status_code == 404
+    get_sandbox.assert_awaited_once_with(
+        "12345", check_health=True, expected_runtime=selected
+    )
 
 
 @pytest.mark.asyncio

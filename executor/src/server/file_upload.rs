@@ -21,7 +21,7 @@ use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::{
     disk_usage_bytes, header_value, log_executor_event, resolve_envd_path, ByteUsage, EntryInfo,
-    HttpError, WorkspacePathQuery,
+    HttpError, WorkspacePathQuery, WORKSPACE_SNAPSHOT_LOCK,
 };
 
 // The Backend accepts attachment files up to 100 MiB. Include multipart framing overhead.
@@ -39,6 +39,7 @@ pub(super) async fn upload_envd_file(
     Query(query): Query<WorkspacePathQuery>,
     mut multipart: Multipart,
 ) -> Result<Json<Vec<EntryInfo>>, HttpError> {
+    let workspace_write = WORKSPACE_SNAPSHOT_LOCK.read().await;
     log_executor_event(
         "envd file upload request",
         &[
@@ -95,6 +96,7 @@ pub(super) async fn upload_envd_file(
     let destination = path.clone();
     let destination_dir = parent.to_path_buf();
     let size = tokio::task::spawn_blocking(move || {
+        let _workspace_write = workspace_write;
         let destination_dir = fs::canonicalize(&destination)
             .ok()
             .and_then(|path| path.parent().map(Path::to_path_buf))

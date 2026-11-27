@@ -16,10 +16,12 @@ For sandbox tasks (metadata.task_type == "sandbox"), requests are forwarded
 to the existing executor task dispatch endpoint (/api/tasks/execute).
 """
 
+import asyncio
 import json
 import os
 import time
 from contextlib import nullcontext
+from typing import Awaitable
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -116,7 +118,9 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
     # Find sandbox by e2b_sandbox_id
     sandbox = await _find_sandbox_by_e2b_id(manager, sandbox_id)
     if sandbox is not None:
-        sandbox = await manager.get_sandbox(sandbox.sandbox_id, check_health=True)
+        sandbox = await manager.get_sandbox(
+            sandbox.sandbox_id, check_health=True, expected_runtime=sandbox
+        )
     else:
         # Fallback: try direct lookup
         sandbox = await manager.get_sandbox(sandbox_id, check_health=True)
@@ -151,6 +155,24 @@ async def _touch_sandbox_activity(sandbox) -> None:
             status_code=503,
             detail={"code": "unavailable", "message": error},
         )
+
+
+async def _await_workspace_write(request: Awaitable[httpx.Response]) -> httpx.Response:
+    """Keep lease renewal running until a forwarded write settles."""
+    worker = asyncio.ensure_future(request)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
 
 
 @router.api_route(
@@ -239,18 +261,22 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         }
 
         # Make request to container
-        write_scope = (
-            get_sandbox_manager().sandbox_workspace_write(sandbox)
-            if workspace_write
-            else nullcontext()
-        )
-        async with write_scope, httpx.AsyncClient(timeout=proxy_timeout) as client:
-            response = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                content=body,
+        async def forward() -> httpx.Response:
+            write_scope = (
+                get_sandbox_manager().sandbox_workspace_write(sandbox)
+                if workspace_write
+                else nullcontext()
             )
+            async with write_scope, httpx.AsyncClient(timeout=proxy_timeout) as client:
+                return await client.request(
+                    method=request.method, url=target_url, headers=headers, content=body
+                )
+
+        response = (
+            await _await_workspace_write(forward())
+            if workspace_write
+            else await forward()
+        )
 
         # Check if response is streaming
         content_type = response.headers.get("content-type", "")

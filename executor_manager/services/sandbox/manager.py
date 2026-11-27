@@ -754,7 +754,11 @@ class SandboxManager(metaclass=SingletonMeta):
         return task
 
     async def get_sandbox(
-        self, sandbox_id: str, check_health: bool = True
+        self,
+        sandbox_id: str,
+        check_health: bool = True,
+        *,
+        expected_runtime: Sandbox | None = None,
     ) -> Optional[Sandbox]:
         """Get sandbox by sandbox_id.
 
@@ -769,7 +773,10 @@ class SandboxManager(metaclass=SingletonMeta):
             Sandbox if found, None otherwise
         """
         sandbox = self._repository.load_sandbox(sandbox_id)
-        if sandbox is None:
+        if sandbox is None or (
+            expected_runtime is not None
+            and not self._same_sandbox_runtime(expected_runtime, sandbox)
+        ):
             return None
         if sandbox.status in (SandboxStatus.TERMINATING, SandboxStatus.TERMINATED):
             return sandbox
@@ -2171,7 +2178,10 @@ class SandboxManager(metaclass=SingletonMeta):
             idle_seconds = time.time() - (refreshed.last_activity_at or 0)
             if not self._same_sandbox_runtime(sandbox, refreshed):
                 return
-            if idle_seconds < self._config.timeout.redis_ttl:
+            if (
+                refreshed.last_activity_at != sandbox.last_activity_at
+                or idle_seconds < self._config.timeout.redis_ttl
+            ):
                 logger.info(
                     "[SandboxManager] Sandbox %s became active during archiving; "
                     "skipping termination",

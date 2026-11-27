@@ -33,7 +33,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::{process::Command, sync::Semaphore, time::timeout};
+use tokio::{
+    process::Command,
+    sync::{RwLock, Semaphore},
+    time::timeout,
+};
 
 use crate::{
     agents::runtime_capabilities,
@@ -55,6 +59,9 @@ use crate::{
 pub use config::{ServerConfig, ServerConfigError};
 
 pub use wegent_execution_contracts::{RunnerResult, TaskRunner};
+
+// Permit concurrent workspace writes, but keep a snapshot out of partial publications.
+static WORKSPACE_SNAPSHOT_LOCK: RwLock<()> = RwLock::const_new(());
 
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
@@ -416,6 +423,7 @@ async fn connect_stat_path(
 async fn connect_make_dir(
     Json(payload): Json<ConnectMakeDirRequest>,
 ) -> Result<Json<ConnectMakeDirResponse>, HttpError> {
+    let _workspace_write = WORKSPACE_SNAPSHOT_LOCK.read().await;
     let path = resolve_envd_filesystem_path(&payload.path)?;
     log_executor_event(
         "envd filesystem make_dir request",
@@ -747,7 +755,9 @@ async fn archive_workspace(Json(request): Json<ArchiveRequest>) -> Result<Respon
         ),
         None => None,
     };
+    let snapshot = WORKSPACE_SNAPSHOT_LOCK.write().await;
     let archive = tokio::task::spawn_blocking(move || {
+        let _snapshot = snapshot;
         log_executor_event(
             "archive worker started",
             &[

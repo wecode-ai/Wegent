@@ -20,6 +20,23 @@ from executor_manager.services.sandbox.manager import _SandboxArchiveOutcome
 class TestSandboxManager:
     """Test cases for SandboxManager class."""
 
+    @pytest.mark.asyncio
+    async def test_get_sandbox_does_not_health_check_a_replacement(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        replacement = copy.copy(sample_sandbox)
+        replacement.created_at += 1
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=replacement
+        )
+        check = mocker.patch.object(manager._health_checker, "check_health_sync")
+
+        result = await manager.get_sandbox("12345", expected_runtime=sample_sandbox)
+
+        assert result is None
+        check.assert_not_called()
+
     @pytest.fixture(autouse=True)
     def reset_singletons(self):
         """Reset singleton instances before each test."""
