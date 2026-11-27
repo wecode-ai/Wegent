@@ -4,12 +4,21 @@ import { flushSync } from 'react-dom'
 import type { ConversationVirtualizer } from './useConversationVirtualizer'
 import type { VirtualMessageMeasurement } from './MessageList'
 import {
+  cancelSafeAnimationFrame,
+  requestSafeAnimationFrame,
+  type SafeAnimationFrameHandle,
+} from '../markdown/safeAnimationFrame'
+import {
   getConversationDiagnosticContext,
   isConversationDiagnosticsEnabled,
   recordConversationDiagnostic,
 } from './conversationDiagnostics'
 
 const initialBounds = new WeakMap<HTMLElement, DOMRect>()
+const MEASUREMENT_FRAME_BUDGET_MS = 8
+const MEASUREMENT_RUN_GAP_MS = 100
+const MEASUREMENT_WARNING_AFTER_MS = 2000
+const MEASUREMENT_WARNING_INTERVAL_MS = 30000
 
 /** TanStack owns the observer, resize batching, and the only size writer. */
 export function useMessageRowMeasure(
@@ -86,6 +95,14 @@ export function useMessageRowMeasurements(
   enabled: boolean
 ) {
   const pending = useRef<MeasurementBatch | null>(null)
+  const scheduledFrame = useRef<SafeAnimationFrameHandle | null>(null)
+  const measurementRun = useRef({
+    startedAt: 0,
+    frameStartedAt: 0,
+    lastBatchAt: 0,
+    batches: 0,
+    lastWarningAt: -Infinity,
+  })
   const initializedList = useRef<HTMLDivElement | null>(null)
   const measureRows = useCallback(
     (rows: HTMLElement[], onComplete?: () => void) => {
@@ -101,8 +118,15 @@ export function useMessageRowMeasurements(
         completions: new Set(onComplete ? [onComplete] : []),
       }
       pending.current = batch
+      const run = measurementRun.current
+      const now = performance.now()
+      if (now - run.lastBatchAt > MEASUREMENT_RUN_GAP_MS || run.startedAt === 0) {
+        run.startedAt = now
+        run.frameStartedAt = now
+        run.batches = 0
+      }
       // New rows can enter the range after every measurement. Finish the React
-      // commit before publishing sizes, while still correcting layout before paint.
+      // commit before publishing sizes, then yield between batches when needed.
       const measureBatch = () => {
         if (pending.current !== batch) return
         const list = listRef.current
@@ -112,7 +136,9 @@ export function useMessageRowMeasurements(
         }
         const attached = [...batch.rows].filter(row => list.contains(row))
         batch.rows.clear()
-        if (attached.length)
+        if (attached.length) {
+          const totalSizeBefore = virtualizer.getTotalSize()
+          const scrollOffsetBefore = virtualizer.scrollOffset
           flushSync(() => {
             if (batch.completions.size === 0) {
               measureAttachedRows(attached, list, virtualizer)
@@ -138,17 +164,50 @@ export function useMessageRowMeasurements(
               })
             }
           })
+          run.lastBatchAt = performance.now()
+          run.batches++
+          if (
+            run.lastBatchAt - run.startedAt >= MEASUREMENT_WARNING_AFTER_MS &&
+            run.lastBatchAt - run.lastWarningAt >= MEASUREMENT_WARNING_INTERVAL_MS
+          ) {
+            run.lastWarningAt = run.lastBatchAt
+            console.warn(
+              '[Wework] Conversation row measurement diagnostic ' +
+                JSON.stringify({
+                  durationMs: Math.round(run.lastBatchAt - run.startedAt),
+                  batches: run.batches,
+                  rows: attached.length,
+                  firstIndex: Number(attached[0].dataset.index),
+                  lastIndex: Number(attached[attached.length - 1].dataset.index),
+                  itemCount: virtualizer.options.count,
+                  scrollOffsetBefore,
+                  scrollOffsetAfter: virtualizer.scrollOffset,
+                  totalSizeBefore,
+                  totalSizeAfter: virtualizer.getTotalSize(),
+                })
+            )
+          }
+        }
         if (pending.current !== batch) return
         // Measurements can expose more rows in the synchronous commit. Keep the
         // same batch open until those rows have also been measured.
         if (batch.rows.size > 0) {
-          queueMicrotask(measureBatch)
+          scheduleBatch()
           return
         }
         pending.current = null
         batch.completions.forEach(complete => complete())
       }
-      queueMicrotask(measureBatch)
+      const scheduleBatch = () => {
+        if (performance.now() - run.frameStartedAt >= MEASUREMENT_FRAME_BUDGET_MS) {
+          scheduledFrame.current = requestSafeAnimationFrame(() => {
+            scheduledFrame.current = null
+            run.frameStartedAt = performance.now()
+            measureBatch()
+          })
+        } else queueMicrotask(measureBatch)
+      }
+      scheduleBatch()
     },
     [enabled, listRef, virtualizer]
   )
@@ -156,6 +215,8 @@ export function useMessageRowMeasurements(
   useLayoutEffect(
     () => () => {
       pending.current = null
+      if (scheduledFrame.current) cancelSafeAnimationFrame(scheduledFrame.current)
+      scheduledFrame.current = null
     },
     [enabled, virtualizer]
   )

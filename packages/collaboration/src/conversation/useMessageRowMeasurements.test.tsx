@@ -152,6 +152,11 @@ test.each([
         )
       )
       expect(onFirstLayout.mock.calls[0]).toEqual([firstSize])
+      for (let frame = 0; frame < 100 && onBatchLayout.mock.calls.length === 0; frame++) {
+        await act(
+          () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        )
+      }
       expect(container.querySelectorAll(rowSelector)).toHaveLength(viewportHeight / rowHeight + 2)
       expect(onBatchLayout).toHaveBeenCalledExactlyOnceWith(
         viewportHeight / rowHeight + 2,
