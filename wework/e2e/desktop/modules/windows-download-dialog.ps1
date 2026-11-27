@@ -104,6 +104,35 @@ function Find-ById($Window, [string]$Id, [System.Windows.Automation.ControlType]
     return $Window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
+function Set-SaveFilePath($Dialog, [string]$Path, [DateTime]$Deadline) {
+    $editor = Find-ById $Dialog '1001' ([System.Windows.Automation.ControlType]::Edit)
+    if ($null -eq $editor) { throw 'Could not find the native Save As filename edit control' }
+    $value = $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    $handle = [IntPtr]$Dialog.Current.NativeWindowHandle
+    $editor.SetFocus()
+    do {
+        $focused = $editor.Equals([System.Windows.Automation.AutomationElement]::FocusedElement)
+        if ($focused -and [DownloadDialogInput]::GetForegroundWindow() -eq $handle) { break }
+        Start-Sleep -Milliseconds 80
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    if ([DateTime]::UtcNow -ge $Deadline -or
+        -not $editor.Equals([System.Windows.Automation.AutomationElement]::FocusedElement) -or
+        [DownloadDialogInput]::GetForegroundWindow() -ne $handle) {
+        throw 'Could not focus the native Save As filename edit control in the foreground dialog'
+    }
+    # Enter the path through the dialog's keyboard handling so the shell
+    # processes the edit before the Save button is clicked.
+    $keys = [regex]::Replace($Path, '[+^%~(){}\[\]]', '{$0}')
+    [System.Windows.Forms.SendKeys]::SendWait('{HOME}+{END}' + $keys)
+    do {
+        $current = $value.Current.Value
+        if ($current -eq $Path) { return }
+        Start-Sleep -Milliseconds 80
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    throw "Native Save As did not accept the requested filename (observed=$([IO.Path]::GetFileName($current)))"
+}
+
+if ($Action -eq 'save') { Add-Type -AssemblyName System.Windows.Forms }
 $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
 if ($Action -eq 'list') {
     ConvertTo-Json -Compress -InputObject @(Find-SaveDialogs | ForEach-Object {
@@ -150,9 +179,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
         }
         if ($null -ne $button -and $button.Current.IsEnabled -and -not $button.Current.IsOffscreen -and $foreground) {
             if ($Action -eq 'save') {
-                $editor = Find-ById $dialog '1001'
-                if ($null -eq $editor) { throw 'Could not find the native Save As filename field' }
-                $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($env:WEWORK_E2E_DOWNLOAD_SAVE_PATH)
+                Set-SaveFilePath $dialog $env:WEWORK_E2E_DOWNLOAD_SAVE_PATH $deadline
             }
             $receipt = @{ windowId = [string]$dialog.Current.NativeWindowHandle; title = $dialog.Current.Name }
             $point = $button.GetClickablePoint()
