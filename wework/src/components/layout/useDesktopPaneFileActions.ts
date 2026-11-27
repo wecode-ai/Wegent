@@ -377,6 +377,7 @@ export function useDesktopPaneFileActions({
           }))
           openRightPanelTab('files')
         }
+        if (target && target.workspaceSource !== 'local') remindOnUse?.(target.deviceId)
         logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
           ...pathMetadata,
           hasLocalTarget: Boolean(localTarget),
@@ -401,6 +402,7 @@ export function useDesktopPaneFileActions({
       workspaceTarget,
       setOpenFileRequest,
       openRightPanelTab,
+      remindOnUse,
       t,
     ]
   )

@@ -6,12 +6,14 @@ import type { DeviceInfo } from '@/types/api'
 export function CloudDeviceRestartDialog({
   devices,
   upgrade = false,
+  sandboxBusy = false,
   overlayClassName,
   onCancel,
   onConfirm,
 }: {
   devices: DeviceInfo[]
   upgrade?: boolean
+  sandboxBusy?: boolean
   overlayClassName?: string
   onCancel: () => void
   onConfirm: () => void
@@ -21,7 +23,7 @@ export function CloudDeviceRestartDialog({
   if (!first) return null
 
   const deviceNames = devices.map(device => device.name?.trim() || device.device_id).join(', ')
-  const busy = isDeviceRunningTask(first)
+  const busy = isDeviceRunningTask(first) || sandboxBusy
   const description = t(
     upgrade
       ? busy

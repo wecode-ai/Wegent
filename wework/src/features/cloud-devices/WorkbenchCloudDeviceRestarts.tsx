@@ -5,6 +5,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import type { DeviceInfo } from '@/types/api'
 import { CloudDeviceRestartDialog } from './CloudDeviceRestartDialog'
 import { CloudDeviceRestartNotice } from './CloudDeviceRestartNotice'
+import { busyCloudSandboxIds } from './cloudDeviceUpgradeReminder'
 import { createCloudDeviceRestartSource } from './cloudDeviceRestartSource'
 import {
   CloudDeviceRestartContext,
@@ -45,6 +46,11 @@ export function WorkbenchCloudDeviceRestarts({
     [source, devices, refreshDevices, connection, reminderScope]
   )
   const { confirmation, progress, upgrade } = useSyncExternalStore(subscribe, source.getSnapshot)
+  const busySandboxes = useMemo(
+    () => (upgrade ? busyCloudSandboxIds(devices) : null),
+    [upgrade, devices]
+  )
+  const sandboxId = confirmation[0]?.cloud_config?.sandboxId
   const requestRestart = source.requestRestart
   const actions = useMemo(
     () => ({
@@ -72,6 +78,7 @@ export function WorkbenchCloudDeviceRestarts({
             : { ...target, status: 'offline' }
         })}
         upgrade={upgrade}
+        sandboxBusy={Boolean(sandboxId && busySandboxes?.has(sandboxId))}
         overlayClassName="z-[10001]"
         onCancel={source.cancel}
         onConfirm={source.confirm}

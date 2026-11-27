@@ -1,4 +1,5 @@
 import type { DeviceInfo } from '@/types/api'
+import { isDeviceRunningTask } from '@/lib/device-capabilities'
 
 export function cloudUpgradeReminder(device: DeviceInfo | null | undefined) {
   const reminder = device?.cloud_upgrade_reminder
@@ -9,6 +10,21 @@ export function cloudUpgradeReminder(device: DeviceInfo | null | undefined) {
     reminder.versions_behind >= 3
     ? reminder
     : null
+}
+
+export function busyCloudSandboxIds(devices: DeviceInfo[]) {
+  const busySandboxes = new Set<string>()
+  for (const device of devices) {
+    const sandboxId = device.cloud_config?.sandboxId
+    if (
+      sandboxId &&
+      device.device_type === 'cloud' &&
+      device.status !== 'offline' &&
+      isDeviceRunningTask(device)
+    )
+      busySandboxes.add(sandboxId)
+  }
+  return busySandboxes
 }
 
 export function claimDailyCloudUpgradeReminder(
