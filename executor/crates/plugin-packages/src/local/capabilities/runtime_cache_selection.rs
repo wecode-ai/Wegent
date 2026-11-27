@@ -134,7 +134,7 @@ fn owns_source(
         };
         let package = store.verified_plugin_package(hash)?;
         validate_package_identity(&package.path, &candidate)?;
-        if store.matches_managed_package_copy(contents, &candidate, &package.path)? {
+        if store.matches_managed_package_copy(contents, &candidate, &package.path, entry)? {
             return Ok(true);
         }
     }

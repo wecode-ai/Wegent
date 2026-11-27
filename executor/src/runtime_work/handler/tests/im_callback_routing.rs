@@ -33,7 +33,14 @@ fn queued_im_turn(task: &str, callback: &str) -> SpawnTurnRequest {
 async fn persisted_im_queue_routes_each_native_reply_to_its_own_callback() {
     let root = tempfile::tempdir().unwrap();
     let (event_tx, mut events) = broadcast::channel(64);
-    let mut handler = RuntimeWorkRpcHandler::with_event_sender("mac", "/bin/false", event_tx);
+    // Keep both turns on disk while the test drives their native replies manually.
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender_deferred_startup_recovery(
+        "mac",
+        "/bin/false",
+        event_tx,
+        None,
+        None,
+    );
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
     handler.turn_queue_path = Arc::new(root.path().join("queue.json"));

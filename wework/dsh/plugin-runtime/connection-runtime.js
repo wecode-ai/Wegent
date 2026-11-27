@@ -56,8 +56,8 @@ export function createConnectionRuntime({ dependencies, request, satisfies, befo
             }
             return groups.values()
           },
-          poll(input, signal) {
-            return collectObservation(registry, providerId, input, { signal })
+          poll(input, signal, publishProgress) {
+            return collectObservation(registry, providerId, input, { signal, publishProgress })
           },
           select: result => result,
         })

@@ -33,12 +33,20 @@ RUN mkdir -p be-server/src be-server/examples \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 
 FROM ${DEPS_IMAGE} AS build
-COPY shared/assets/codex-models /workspace/shared/assets/codex-models
-COPY backend-rs/be-server/src ./be-server/src
-COPY backend-rs/be-server/examples ./be-server/examples
-COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json
-RUN find be-server/src be-server/examples -type f -exec touch {} + \
-    && cargo build --release --locked --bin wegent-backend-rs \
+# Preserve mtimes of identical inputs so Cargo can reuse unchanged local crates.
+RUN apt-get -o APT::Update::Error-Mode=any update \
+    && apt-get install -y --no-install-recommends rsync \
+    && rm -rf /var/lib/apt/lists/*
+COPY shared/rust /source/shared/rust
+COPY shared/assets/calendars /source/shared/assets/calendars
+COPY --exclude=config --exclude=docs --exclude=init_data \
+    --exclude=migrations/reference --exclude=scripts backend-rs/ /source/backend-rs/
+COPY shared/assets/codex-models /source/shared/assets/codex-models
+COPY shared/data/builtin-connector-apps.json /source/shared/data/builtin-connector-apps.json
+RUN rsync -rlp --checksum --delete --exclude=/target/ /source/backend-rs/ ./ \
+    && rsync -rlp --checksum --delete /source/shared/ /workspace/shared/ \
+    && cargo build --release --locked --config 'profile.release.package.wegent-backend-rs.opt-level=0' \
+      --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e
 
 FROM scratch AS runtime

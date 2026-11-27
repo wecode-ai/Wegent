@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, writeFile } from 'node:fs/promises'
+import { availableParallelism, freemem, loadavg } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -26,8 +27,10 @@ import { waitForWorkbenchDebugState } from '../e2e/desktop/modules/workspace-flo
 import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 import { waitForValue } from '../e2e/desktop/modules/workspace-agent-setup.mjs'
 import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window-state.mjs'
+import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
+  resolveCpuProfileLocations,
   startPerformanceRecording,
   stopPerformanceRecording,
   writeDiagnosticFile,
@@ -87,7 +90,13 @@ export function installTurnUpdateProbe() {
     const status = payload.data?.status
     if (event !== 'runtime.turn.updated' || !payload.data?.task) return
     if (status !== 'started' && status !== 'settled') return
-    updates.push({ taskId: payload.taskId, status, observedAt: performance.now() })
+    const update = { taskId: payload.taskId, status, observedAt: performance.now() }
+    updates.push(update)
+    // The observer runs before the application handlers. Record the first
+    // microtask checkpoint after this event, within the same browser task.
+    queueMicrotask(() => {
+      update.afterDeliveryAt = performance.now()
+    })
     performance.mark?.(`wework-profile:turn-${status}`)
     if (status === 'settled') {
       settled.add(payload.taskId)
@@ -123,7 +132,7 @@ export function installTurnUpdateProbe() {
       let index = 0
       return updates
         .filter(update => update.taskId === taskId)
-        .map(({ status, observedAt }) => {
+        .map(({ status, observedAt, afterDeliveryAt }) => {
           while (
             longTasks[index] &&
             longTasks[index].startTime + longTasks[index].duration <= observedAt
@@ -131,13 +140,18 @@ export function installTurnUpdateProbe() {
             index++
           }
           const task = longTasks[index]
+          const longTask = task && task.startTime <= observedAt ? task : null
           const frame = longFrames.find(
             entry => entry.startTime <= observedAt && observedAt < entry.startTime + entry.duration
           )
           return {
             status,
             observedAt,
-            longTaskMs: task && task.startTime <= observedAt ? task.duration : 0,
+            longTaskMs: longTask?.duration ?? 0,
+            ...(longTask && {
+              longTaskStartMs: longTask.startTime,
+              afterDeliveryAt,
+            }),
             ...(frame && {
               frame: {
                 durationMs: frame.duration,
@@ -169,18 +183,24 @@ async function rendererPids(control) {
 }
 
 async function cpuSnapshot(pids) {
-  const { stdout } = await run('ps', ['-p', pids.join(','), '-o', 'time='])
-  const counters = stdout.trim().split(/\s+/)
-  assert.equal(counters.length, pids.length, 'A measured renderer exited')
+  const { stdout } = await run('ps', ['-p', pids.join(','), '-o', 'time=,utime=,stime='])
+  const rows = stdout
+    .trim()
+    .split('\n')
+    .map(row => row.trim().split(/\s+/))
+  assert.equal(rows.length, pids.length, 'A measured renderer exited')
   assert.ok(
-    counters.every(value => /^\d+(?::\d+)+\.\d+$/.test(value)),
+    rows.every(row => row.length === 3 && row.every(value => /^\d+(?::\d+)+\.\d+$/.test(value))),
     'Invalid macOS CPU counters'
   )
-  const seconds = counters.reduce(
-    (total, value) => total + value.split(':').reduce((sum, part) => sum * 60 + Number(part), 0),
-    0
-  )
-  return { seconds, time: performance.now() }
+  const totals = [0, 0, 0]
+  for (const row of rows) {
+    row.forEach((value, index) => {
+      totals[index] += value.split(':').reduce((sum, part) => sum * 60 + Number(part), 0)
+    })
+  }
+  const [seconds, userSeconds, systemSeconds] = totals
+  return { seconds, userSeconds, systemSeconds, time: performance.now() }
 }
 
 function cpuPercent(before, after) {
@@ -352,7 +372,7 @@ async function measureConcurrentTasks({
       getForegroundToolsSent,
       count => count >= sent,
       `Foreground task did not emit history batch ending at tool call ${sent}`,
-      uiTimeoutMs
+      offset === 0 ? modelResponseTimeoutMs : uiTimeoutMs
     )
   }
   await waitForValue(
@@ -512,7 +532,8 @@ export function createDesktopScenario({
   executorHome,
 }) {
   const capture = process.env.WEWORK_RENDERER_PROFILE_CAPTURE === 'true'
-  const measureProcesses = process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
+  const enforceBudgets = process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true'
+  const measureProcesses = capture || process.env.WEWORK_RENDERER_PROFILE_PROCESSES === 'true'
   const measureHistory = process.env.WEWORK_RENDERER_PROFILE_HISTORY === 'true'
   const samples = []
   const processSamples = []
@@ -522,6 +543,9 @@ export function createDesktopScenario({
   let finished = false
   let start
   let pids
+  let readSingleTaskRendererMetrics
+  let singleTaskStartMetrics
+  const singleModelRequest = Promise.withResolvers()
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
   const finishConcurrent = new Map()
@@ -678,6 +702,8 @@ export function createDesktopScenario({
       if (!ready || !body.includes(prompt)) return false
       if (started) return false
       started = true
+      singleModelRequest.resolve()
+      singleTaskStartMetrics = await readSingleTaskRendererMetrics?.()
       start = await cpuSnapshot(pids)
       await emitStream(response, 'wework-benchmark-response')
       finished = true
@@ -756,6 +782,11 @@ export function createDesktopScenario({
         processSamples.push({
           phase,
           at: snapshot.capturedAt,
+          system: {
+            availableParallelism: availableParallelism(),
+            freeMemoryBytes: freemem(),
+            loadAverage: loadavg(),
+          },
           incomplete: Boolean(snapshot.collectingSystemProcesses),
           degradation: snapshot.degraded?.map(entry => entry.code) ?? [],
           processes: snapshot.processes.map(process => ({
@@ -771,6 +802,9 @@ export function createDesktopScenario({
         })
       }
       let recording = false
+      let recordingTurnCpu = false
+      let turnCpuEvidence
+      const command = (method, params) => client({ action: 'command', target, method, params })
       let probingTurnUpdates = false
       try {
         if (measureHistory) {
@@ -831,6 +865,38 @@ export function createDesktopScenario({
         )
         await evaluate(`(${installTurnUpdateProbe.toString()})()`)
         probingTurnUpdates = true
+        let navigationStartUs
+        if (enforceBudgets) {
+          await command('Performance.enable', { timeDomain: 'timeTicks' })
+          const { metrics } = await command('Performance.getMetrics')
+          const navigationStart = metrics.find(metric => metric.name === 'NavigationStart')?.value
+          assert.ok(
+            Number.isFinite(navigationStart),
+            'The renderer did not report its navigation clock'
+          )
+          navigationStartUs = navigationStart * 1_000_000
+          await command('Profiler.enable')
+          await command('Profiler.setSamplingInterval', { interval: 2_000 })
+          await command('Profiler.start')
+          recordingTurnCpu = true
+          // Keep endpoint diagnostics outside the process CPU measurement window.
+          readSingleTaskRendererMetrics = async () => {
+            const system = { availableParallelism: availableParallelism(), loadAverage: loadavg() }
+            try {
+              const { metrics } = await withTimeout(
+                command('Performance.getMetrics'),
+                2000,
+                'The renderer did not report single-task CPU diagnostics'
+              )
+              return {
+                system,
+                renderer: Object.fromEntries(metrics.map(({ name, value }) => [name, value])),
+              }
+            } catch {
+              return { system, rendererMetricsUnavailable: true }
+            }
+          }
+        }
 
         const controller = new AbortController()
         const collect = async () => {
@@ -855,10 +921,18 @@ export function createDesktopScenario({
             ready = true
             await control.command('fill', composer, { value: prompt })
             await control.command('press', composer, { key: 'Enter' })
+            await withTimeout(
+              singleModelRequest.promise,
+              modelResponseTimeoutMs,
+              'The single-task renderer profile did not reach the isolated model service'
+            )
             await observeText(client, target, prefix, uiTimeoutMs)
             assert.ok(!finished, 'The first response text must appear while streaming')
             await observeText(client, target, suffix, textTimeoutMs)
-            return await cpuSnapshot(pids)
+            const end = await cpuSnapshot(pids)
+            controller.abort()
+            const endMetrics = await readSingleTaskRendererMetrics?.()
+            return { end, endMetrics }
           } finally {
             controller.abort()
           }
@@ -866,7 +940,7 @@ export function createDesktopScenario({
         const [interaction, sampling] = await Promise.allSettled([interact(), collect()])
         if (interaction.status === 'rejected') throw interaction.reason
         if (sampling.status === 'rejected') throw sampling.reason
-        const end = interaction.value
+        const { end, endMetrics } = interaction.value
         assert.ok(start, 'The isolated model stream did not start')
         await waitForBottom(control, 'The streamed conversation', uiTimeoutMs)
         const { taskId } = await waitForWorkbenchDebugState(
@@ -886,6 +960,22 @@ export function createDesktopScenario({
           `window.__weworkProfileTurnUpdates.stop(${JSON.stringify(taskId)})`
         )
         probingTurnUpdates = false
+        if (recordingTurnCpu) {
+          recordingTurnCpu = false
+          const { profile } = await command('Profiler.stop')
+          await command('Profiler.disable')
+          await command('Performance.disable')
+          const slowUpdates = turnUpdates.filter(
+            update => update.longTaskMs >= limits.maxTurnUpdateLongTaskMs
+          )
+          turnCpuEvidence = { navigationStartUs, slowUpdates, profile }
+          if (slowUpdates.length > 0) {
+            await writeDiagnosticFile(
+              join(resultDir, 'renderer-turn-long-task-profile.json'),
+              turnCpuEvidence
+            )
+          }
+        }
         assert.ok(
           turnUpdates.some(update => update.status === 'started'),
           'The profiled task did not receive a started runtime.turn.updated snapshot'
@@ -937,6 +1027,10 @@ export function createDesktopScenario({
         ].every(state => state.activity === 'foreground')
         const report = {
           measurements,
+          singleTaskWindow: {
+            start: { ...start, ...singleTaskStartMetrics },
+            end: { ...end, ...endMetrics },
+          },
           concurrentCpuPercent,
           turnUpdates,
           heapSamples: samples,
@@ -964,7 +1058,22 @@ export function createDesktopScenario({
           recording = false
           await stopPerformanceRecording(client, resultDir, target, reportPath)
         }
-        if (process.env.WEWORK_RENDERER_PROFILE_CHECK === 'true') {
+        if (enforceBudgets) {
+          if (
+            turnCpuEvidence &&
+            (turnCpuEvidence.slowUpdates.length > 0 ||
+              measurements.singleTaskCpuPercent >= limits.singleTaskCpuPercent)
+          ) {
+            const sourceMapEvidence = await resolveCpuProfileLocations(
+              client,
+              target,
+              turnCpuEvidence.profile
+            ).catch(error => ({ error: error.message }))
+            await writeDiagnosticFile(join(resultDir, 'renderer-turn-long-task-profile.json'), {
+              ...turnCpuEvidence,
+              sourceMapEvidence,
+            })
+          }
           assert.ok(
             report.withinLimits,
             'Renderer exceeds a limit; see renderer-threshold-measurements.json'
@@ -975,6 +1084,7 @@ export function createDesktopScenario({
           if (probingTurnUpdates) await evaluate('window.__weworkProfileTurnUpdates?.stop()')
         } finally {
           try {
+            if (recordingTurnCpu) await command('Profiler.stop').catch(() => {})
             if (recording) await stopPerformanceRecording(client, resultDir, target, reportPath)
           } finally {
             await client({ action: 'detach', target })

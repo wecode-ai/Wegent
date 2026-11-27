@@ -183,6 +183,13 @@ describe('shared comment execution using the real HTTP adapter', () => {
     expect(input.onError).toHaveBeenLastCalledWith('Gateway timeout')
     expect(post).toHaveBeenCalledOnce()
   })
+  it('releases the binding when the HTTP endpoint rejects the task before dispatch', async () => {
+    const { input, post, unbindTask, onError } = setup()
+    post.mockRejectedValueOnce(Object.assign(new Error('Model is unavailable'), { status: 403 }))
+    expect(await startTaskAiRun(input)).toBe(false)
+    expect(unbindTask).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenLastCalledWith('Model is unavailable')
+  })
   it('does not dispatch when a durable response cannot be established and undoes its binding', async () => {
     const { input, post, unbindTask } = setup()
     vi.mocked(input.client.startAgentResponse).mockRejectedValue(new Error('Activity unavailable'))

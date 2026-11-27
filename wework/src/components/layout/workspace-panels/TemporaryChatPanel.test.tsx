@@ -209,6 +209,7 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRetryTranscript,
     messageTarget,
     hideRequestUserInputBlocks,
+    isWaitingForAssistant,
   }: {
     messages: Array<{
       id: string
@@ -235,8 +236,13 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRetryTranscript?: () => void
     messageTarget?: { messageId: string; requestKey: string }
     hideRequestUserInputBlocks?: boolean
+    isWaitingForAssistant?: boolean
   }) => (
-    <div data-testid="mock-message-list" data-target-message={messageTarget?.messageId}>
+    <div
+      data-testid="mock-message-list"
+      data-target-message={messageTarget?.messageId}
+      data-waiting-for-assistant={isWaitingForAssistant}
+    >
       {messages.map(message => (
         <span key={message.id}>{message.content}</span>
       ))}
@@ -608,7 +614,10 @@ vi.mock('@/features/workbench/runtimeModelSelection', async importOriginal => {
 })
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
-  deriveRuntimePaneStatus: () => ({ isBusy: mocks.busy }),
+  deriveRuntimePaneStatus: () => ({
+    isBusy: mocks.busy,
+    isResponseActive: mocks.lifecycleSnapshot?.derived.isTurnActive ?? false,
+  }),
   isRuntimeTaskBusyError: () => mocks.busySendError,
 }))
 
@@ -3827,6 +3836,49 @@ describe('TemporaryChatPanel', () => {
       await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
     }
   )
+  it('stops waiting after the first visible reply even when processing is hidden without dots', async () => {
+    mocks.busy = true
+    mocks.lifecycleSnapshot = {
+      derived: { isRunning: true, isTurnActive: true },
+      turn: { id: 'active-turn' },
+    }
+    const request: WorkbenchMessage = {
+      id: 'request',
+      role: 'user',
+      content: 'Check the task',
+      status: 'done',
+    }
+    mocks.conversationMessages = [request]
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="hidden-processing-waiting"
+        nativeConversation
+        hideProcessing
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+        'data-waiting-for-assistant',
+        'true'
+      )
+    )
+    act(() => {
+      mocks.conversationMessages = [
+        request,
+        { id: 'reply', role: 'assistant', content: 'I checked the task', status: 'streaming' },
+      ]
+      for (const listener of mocks.conversationListeners) listener()
+    })
+    expect(screen.getByText('I checked the task')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+      'data-waiting-for-assistant',
+      'false'
+    )
+  })
+
   it('keeps a native send error visible across transcript synchronization', async () => {
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
     mocks.conversationMessages = [

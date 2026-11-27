@@ -4,11 +4,16 @@
 
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
+import {
+  createMessageSendQueue,
+  type PreparedChatSend,
+} from '@/features/tasks/session/messageSendQueue'
 import type { ContextItem } from '@/types/context'
 import type { TaskDetail, TaskType } from '@/types/api'
 
 const mockContextSendMessage = jest.fn()
 const mockToast = jest.fn()
+const mockMessageSendQueue = createMessageSendQueue<PreparedChatSend>()
 
 const selectedTaskDetailMock = {
   id: 42,
@@ -26,6 +31,7 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
     currentTaskId: 42,
+    messageSendQueue: mockMessageSendQueue,
     selectedTaskDetail: selectedTaskDetailMock,
     refreshTasks: jest.fn(),
     refreshSelectedTaskDetail: jest.fn(),

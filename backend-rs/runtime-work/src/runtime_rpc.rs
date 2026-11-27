@@ -257,6 +257,12 @@ pub async fn call(
                 &route.logical_device_id,
             ))
         })?;
+    if grant == TaskGrant::AssistantShareDefinition && payload["userId"].as_i64() != Some(user_id) {
+        return Err(CallFailure::Rpc(rpc_error(
+            "permission_denied",
+            "The requested assistant owner must match the connected account",
+        )));
+    }
     if grant == TaskGrant::StandInRole
         && let Some(source_route) = role_task_source(method, user_id, &payload)
             .map_err(|message| CallFailure::Rpc(rpc_error("permission_denied", message)))?
@@ -318,6 +324,9 @@ pub async fn call(
     match grant {
         TaskGrant::ProjectRead => request["appTaskAccessScope"] = json!("project-session"),
         TaskGrant::StandInRole => request["appTaskAccessScope"] = json!("stand-in-role-task"),
+        TaskGrant::AssistantShareDefinition => {
+            request["appTaskAccessScope"] = json!("assistant-share-definition")
+        }
         TaskGrant::Unscoped => {}
     }
     let ack = call_runtime_method_envelope(
@@ -338,19 +347,38 @@ pub async fn call(
     })?;
 
     let result = decode_response(ack).map_err(CallFailure::Rpc)?;
-    let Some(result) = result.as_object() else {
-        return Err(CallFailure::Rpc(RuntimeRpcError {
-            code: "runtime_rpc_invalid_response".to_string(),
-            message: "Runtime RPC returned an invalid response".to_string(),
-            retryable: None,
-            details: Some(json!({"deviceId": route.logical_device_id})),
-        }));
-    };
-    Ok(Value::Object(project_response_device_ids(
+    project_runtime_result(
         result,
         method,
         route.response_device_id(),
         &route.logical_device_id,
+    )
+    .map_err(|error| CallFailure::Rpc(*error))
+}
+
+fn project_runtime_result(
+    result: Value,
+    method: &str,
+    runtime_device_id: &str,
+    logical_device_id: &str,
+) -> Result<Value, Box<RuntimeRpcError>> {
+    // A proposal read returns null when the assistant has no pending suggestion.
+    if result.is_null() && method == "runtime.stand_in.proposal.get" {
+        return Ok(result);
+    }
+    let result = result.as_object().ok_or_else(|| {
+        Box::new(RuntimeRpcError {
+            code: "runtime_rpc_invalid_response".to_string(),
+            message: "Runtime RPC returned an invalid response".to_string(),
+            retryable: None,
+            details: Some(json!({"deviceId": logical_device_id})),
+        })
+    })?;
+    Ok(Value::Object(project_response_device_ids(
+        result,
+        method,
+        runtime_device_id,
+        logical_device_id,
     )))
 }
 

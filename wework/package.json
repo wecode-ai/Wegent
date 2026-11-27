@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.13-beta.4",
+  "version": "0.6.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -71,7 +71,7 @@
     "@headless-tree/core": "^1.7.0",
     "@headless-tree/react": "^1.7.0",
     "@modelcontextprotocol/ext-apps": "2.0.3",
-    "@pierre/diffs": "^1.6.4",
+    "@pierre/diffs": "1.6.4",
     "@pierre/trees": "1.0.0-beta.6",
     "@sentry/react": "^8.55.0",
     "@tailwindcss/typography": "^0.5.19",
@@ -117,6 +117,7 @@
     "remark-parse": "^11.0.0",
     "semver": "7.8.5",
     "tailwind-merge": "^3.6.0",
+    "undici": "7.27.2",
     "unified": "^11.0.5",
     "ws": "8.23.0",
     "yauzl": "3.4.0"

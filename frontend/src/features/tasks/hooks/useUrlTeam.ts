@@ -1,20 +1,25 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { teamApis } from '@/apis/team'
 import { useUser } from '@/features/common/UserContext'
 import type { Team } from '@/types/api'
 
 /** Resolve explicit navigation by identity, not by a changing paginated catalog. */
-export function useUrlTeam(id: string | null, enabled: boolean): Team | null {
+export function useUrlTeam(id: string | null, enabled: boolean) {
   const { user } = useUser()
   const userId = user?.id
   const teamId = id ? Number(id) : NaN
-  const key = `${userId}:${teamId}`
+  const isValidTeamId = Number.isSafeInteger(teamId) && teamId > 0
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt(previous => previous + 1), [])
+  const key = `${enabled}:${userId}:${teamId}:${attempt}`
   const [result, setResult] = useState<{ key: string; team: Team | null } | null>(null)
 
+  if (result && result.key !== key) setResult(null)
+
   useEffect(() => {
-    if (!enabled || userId === undefined || !Number.isSafeInteger(teamId) || teamId <= 0) return
+    if (!enabled || userId === undefined || !isValidTeamId) return
     const controller = new AbortController()
     void teamApis.getTeam(teamId, controller.signal).then(
       team => {
@@ -28,7 +33,10 @@ export function useUrlTeam(id: string | null, enabled: boolean): Team | null {
       }
     )
     return () => controller.abort()
-  }, [enabled, userId, teamId, key])
+  }, [enabled, userId, teamId, key, isValidTeamId])
 
-  return enabled && result?.key === key ? result.team : null
+  if (!enabled || id === null) return { team: null, failed: false, retry: null }
+  if (!isValidTeamId) return { team: null, failed: true, retry: null }
+  if (result?.key !== key) return { team: null, failed: false, retry: null }
+  return { team: result.team, failed: result.team === null, retry: result.team ? null : retry }
 }

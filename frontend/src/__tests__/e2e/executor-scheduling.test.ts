@@ -14,14 +14,13 @@ const independent = new Set([
   'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
+  'tasks/device-artifact-declaration.spec.ts',
   'tasks/device-ide.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
   'tasks/shell-reference-cancel.spec.ts',
 ])
 const expectedCounts: Record<string, number> = {
   'tasks/chat-sandbox-connector.spec.ts': 1,
-  'global-setup.ts': 1,
-  'global-teardown.ts': 1,
   'tasks/agent-conversation-regression.spec.ts': 26,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/device-ide.spec.ts': 1,
@@ -64,51 +63,58 @@ describe('Executor scheduling boundaries', () => {
     }
   })
 
-  it('discovers every registered Executor scenario exactly once through CI', () => {
+  it('discovers every registered Executor scenario exactly once across CI jobs', () => {
     const cli = join(dirname(require.resolve('@playwright/test/package.json')), 'cli.js')
-    const listed = spawnSync(
-      process.execPath,
-      [cli, 'test', '--project=executor-chromium', '--list', '--reporter=json'],
-      {
-        cwd: process.cwd(),
-        encoding: 'utf8',
-        env: {
-          // This is a separate Playwright discovery process, not a Jest worker.
-          ...process.env,
-          JEST_WORKER_ID: '',
-          CI: 'true',
-          E2E_BOOTSTRAP_ADMIN_PASSWORD: 'discovery-only-bootstrap',
-          E2E_ADMIN_PASSWORD: 'discovery-only-admin',
-        },
-      }
-    )
-    const report = JSON.parse(listed.stdout) as { errors: unknown[]; suites: ListedSuite[] }
-    expect(report.errors).toEqual([])
-    expect(listed.status).toBe(0)
     const identities = new Set<string>()
     const counts: Record<string, number> = {}
     function visit(suite: ListedSuite) {
       for (const spec of suite.specs || []) {
+        if (spec.file === 'global-setup.ts' || spec.file === 'global-teardown.ts') {
+          continue
+        }
         const key = `${spec.file}:${spec.title}`
         expect(identities.has(key)).toBe(false)
         identities.add(key)
         expect(spec.tests).toHaveLength(1)
         const test = spec.tests[0]
         expect(test.expectedStatus).toBe('passed')
-        const expectedProject =
-          spec.file === 'global-setup.ts'
-            ? 'setup'
-            : spec.file === 'global-teardown.ts'
-              ? 'cleanup'
-              : independent.has(spec.file)
-                ? 'executor-chromium'
-                : 'executor-device-chromium'
+        const expectedProject = independent.has(spec.file)
+          ? 'executor-chromium'
+          : 'executor-device-chromium'
         expect(test.projectName).toBe(expectedProject)
         counts[spec.file] = (counts[spec.file] || 0) + 1
       }
       for (const child of suite.suites || []) visit(child)
     }
-    for (const suite of report.suites) visit(suite)
+    for (const project of ['executor-device-chromium', 'executor-chromium']) {
+      const listed = spawnSync(
+        process.execPath,
+        [cli, 'test', `--project=${project}`, '--list', '--reporter=json'],
+        {
+          cwd: process.cwd(),
+          encoding: 'utf8',
+          env: {
+            // This is a separate Playwright discovery process, not a Jest worker.
+            ...process.env,
+            JEST_WORKER_ID: '',
+            CI: 'true',
+            E2E_EXECUTOR_PROJECT: project,
+            E2E_BOOTSTRAP_ADMIN_PASSWORD: 'discovery-only-bootstrap',
+            E2E_ADMIN_PASSWORD: 'discovery-only-admin',
+          },
+        }
+      )
+      const report = JSON.parse(listed.stdout) as { errors: unknown[]; suites: ListedSuite[] }
+      expect(report.errors).toEqual([])
+      expect(listed.status).toBe(0)
+      expect(
+        report.suites.filter(suite => suite.specs?.[0]?.file === 'global-setup.ts')
+      ).toHaveLength(1)
+      expect(
+        report.suites.filter(suite => suite.specs?.[0]?.file === 'global-teardown.ts')
+      ).toHaveLength(1)
+      for (const suite of report.suites) visit(suite)
+    }
     expect(identities.size).toBe(
       Object.values(expectedCounts).reduce((total, count) => total + count, 0)
     )

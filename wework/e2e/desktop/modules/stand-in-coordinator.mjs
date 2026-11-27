@@ -2,7 +2,7 @@ import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { verifyStandInScheduleActivity } from './stand-in-schedule-activity.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
@@ -12,18 +12,27 @@ import {
 } from './workspace-flows.mjs'
 import { selectE2EModel } from './shared.mjs'
 import { waitForElementWidth } from './layout-metrics.mjs'
+import { selectedToolCall } from './model-tool-calls.mjs'
+import { accountCommandResult } from './account-auth-command.mjs'
 import {
   assistantMessage,
   createSse,
+  modelMessageText,
   readRequestBody,
+  requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  selectShellToolCommand,
 } from './response-protocol.mjs'
 
 const USER = 9001
 const PROJECT = `负责人上下文验证-${process.pid}`
 const SCHEDULE = `已安排验证-${process.pid}`
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const CALENDAR_RISK_CALL = 'calendar-risk-delete'
+const CALENDAR_PROMPT = 'STAND_IN_SCHEDULE_VERIFY'
+const CALENDAR_RISK_FILE = 'calendar-ai-review-proof.txt'
+const CALENDAR_CONFIRM = '[data-testid="stand-in-calendar-policy-ask-before-act"]'
 
 /** Extends the registered profile checkpoint with project isolation and existing scheduling. */
 export function createStandInCoordinatorVerification({
@@ -32,18 +41,53 @@ export function createStandInCoordinatorVerification({
   uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
+  const proofFile = join(resultDir, CALENDAR_RISK_FILE)
+  let calendarRunActive = false
+  let calendarReviews = 0
   return {
+    reviewApproval(body) {
+      const calendarRisk =
+        calendarRunActive && JSON.stringify(body.input ?? []).includes(CALENDAR_RISK_FILE)
+      if (calendarRisk) calendarReviews++
+      return {
+        risk_level: calendarRisk ? 'high' : 'low',
+        user_authorization: calendarRisk ? 'low' : 'high',
+        outcome: calendarRisk ? 'deny' : 'allow',
+        rationale: calendarRisk
+          ? 'The calendar task has no authorization to delete this file.'
+          : 'Execute the action scoped to the isolated fixture.',
+      }
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
       const input = JSON.stringify(body.input ?? [])
-      if (
-        !input.includes('PROJECT_COORDINATOR_VERIFY') &&
-        !input.includes('STAND_IN_SCHEDULE_VERIFY')
-      )
-        return false
       const project = input.includes('PROJECT_COORDINATOR_VERIFY')
+      const latestUser = (body.input ?? []).findLast(item => item.role === 'user')
+      const calendar = calendarRunActive && modelMessageText(latestUser) === CALENDAR_PROMPT
+      if (!project && !calendar) return false
+      if (!project && !requestContainsToolOutput(body, CALENDAR_RISK_CALL)) {
+        const command =
+          process.platform === 'win32'
+            ? `Remove-Item -Recurse -Force -LiteralPath '${proofFile.replaceAll("'", "''")}'`
+            : `rm -rf -- '${proofFile.replaceAll("'", "'\\''")}'`
+        const id = `calendar-review-${Date.now()}`
+        const toolCall = selectShellToolCommand(body, command, undefined)
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([
+            responseCreated(id),
+            ...selectedToolCall(CALENDAR_RISK_CALL, toolCall),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
+      if (!project) {
+        const output = accountCommandResult(body.input, CALENDAR_RISK_CALL)?.output ?? ''
+        assert.match(output, /denied|reject|not authorized|declined/i)
+      }
       if (project) {
         assert.ok(
           input.includes('PROJECT_A_MEMORY_ONLY'),
@@ -95,6 +139,10 @@ export function createStandInCoordinatorVerification({
         'clickWhenEnabled',
         '[data-testid="stand-in-processing-settings-toggle"]'
       )
+      await control.command('waitFor', `${CALENDAR_CONFIRM}[aria-checked="false"]`)
+      await control.command('click', CALENDAR_CONFIRM)
+      await control.command('waitFor', `${CALENDAR_CONFIRM}[aria-checked="true"]`)
+      await control.command('click', CALENDAR_CONFIRM)
       await control.command('click', '[data-testid="stand-in-calendar-policy"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
@@ -112,7 +160,7 @@ export function createStandInCoordinatorVerification({
       await captureScreenshot(control, '22b-calendar-invalid-draft-preserved.png')
       await control.command('fill', '[data-testid="automation-name-input"]', { value: SCHEDULE })
       await control.command('fill', '[data-testid="automation-prompt-input"]', {
-        value: 'STAND_IN_SCHEDULE_VERIFY',
+        value: CALENDAR_PROMPT,
       })
       assert.equal(
         await control.command('getElementCount', '[data-testid="automation-model-select"]'),
@@ -129,7 +177,7 @@ export function createStandInCoordinatorVerification({
       await control.command('click', '[data-testid="automation-keep-editing"]')
       assert.equal(
         await control.command('getValue', '[data-testid="automation-prompt-input"]'),
-        'STAND_IN_SCHEDULE_VERIFY'
+        CALENDAR_PROMPT
       )
       await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]')
       await control.command('waitFor', '[data-testid="automation-save-button"]', { visible: false })
@@ -165,22 +213,23 @@ export function createStandInCoordinatorVerification({
       await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
       await control.command('waitFor', '[data-testid="automation-detail-panel"]', { text: '活跃' })
       const beforeRun = await rpc('runtime.stand_in.personal.get', { userId: USER })
-      const calendarPolicy = beforeRun.primary.calendar.policy
-      const saveCalendarPolicy = async policy => {
-        const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
-        settings.primary.calendar.policy = policy
-        await rpc('runtime.stand_in.personal.save', { userId: USER, settings })
+      assert.equal(beforeRun.primary.calendar.policy.askBeforeAct, false)
+      await writeFile(proofFile, 'Calendar AI review must preserve this file')
+      calendarRunActive = true
+      try {
+        await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
+        await control.command('click', '[data-testid="automation-run-now-button"]')
+        await control.command('waitFor', '[data-testid="automation-run-history"]', {
+          text: '已完成',
+          timeoutMs: modelResponseTimeoutMs,
+        })
+      } finally {
+        calendarRunActive = false
       }
-      await saveCalendarPolicy({ ...calendarPolicy, askBeforeAct: false })
-      await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
-      await control.command('click', '[data-testid="automation-run-now-button"]')
-      await control.command('waitFor', '[data-testid="automation-run-history"]', {
-        text: '已完成',
-        timeoutMs: modelResponseTimeoutMs,
-      })
       const runs = await rpc('runtime.automation_runs.list', { automationId: schedule.id })
       assert.ok(runs.items.some(row => row.status === 'succeeded'))
-      await saveCalendarPolicy(calendarPolicy)
+      assert.equal(calendarReviews, 1, 'The high-risk command must reach the native AI reviewer')
+      assert.equal(await readFile(proofFile, 'utf8'), 'Calendar AI review must preserve this file')
       await captureScreenshot(control, '24-schedule-executed.png')
       const run = runs.items.find(row => row.status === 'succeeded')
       const log = await readFile(join(resultDir, 'executor.log'), 'utf8')
@@ -190,6 +239,7 @@ export function createStandInCoordinatorVerification({
           .some(
             line =>
               line.includes(`codex source sandbox applied task_id=${run.taskId} `) &&
+              line.includes(':danger-full-access') &&
               line.includes(String.raw`reviewer="\"auto_review\""`)
           ),
         'The native Codex session must apply the saved Calendar AI approval policy'
@@ -203,6 +253,7 @@ export function createStandInCoordinatorVerification({
       await verifyStandInScheduleActivity(control, rpc, schedule, captureScreenshot)
 
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
       await openStandInSettings(control)
       const preferences = await control.command('getValue', '[data-testid="stand-in-preferences"]')
       await control.command('fill', '[data-testid="stand-in-preferences"]', {

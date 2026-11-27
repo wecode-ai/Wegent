@@ -155,6 +155,26 @@ where
         .await
 }
 
+/// Load one active connector from the system application catalog.
+pub(crate) async fn find_connector_app<M: Mysql>(
+    mysql: &M,
+    slug: &str,
+) -> MysqlResult<Option<KindRow>> {
+    mysql
+        .fetch_optional(
+            "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+             kinds.kind AS kinds_kind, kinds.name AS kinds_name, \
+             kinds.namespace AS kinds_namespace, kinds.json AS kinds_json, \
+             kinds.is_active AS kinds_is_active, kinds.created_at AS kinds_created_at, \
+             kinds.updated_at AS kinds_updated_at \
+             FROM kinds \
+             WHERE kinds.kind = 'ConnectorApp' AND kinds.namespace = 'system' \
+             AND kinds.user_id = 0 AND kinds.is_active = 1 AND kinds.name = ? LIMIT 1",
+            (slug,),
+        )
+        .await
+}
+
 /// Load one user's stored connector authorization, mirroring
 /// `ConnectorConnectionService.get`'s
 /// `Kind.kind/namespace/name/user_id/is_active` lookup.

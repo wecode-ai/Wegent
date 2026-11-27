@@ -193,12 +193,19 @@ export function parseComposerMarkdown(
           { start: node.start ?? 1 },
           node.children.map(block),
         );
-      case "listItem":
+      case "listItem": {
+        const content = node.children.map(block);
+        // ProseMirror list items always start with a paragraph. Markdown also
+        // permits empty items and items that start with another block.
+        if (content[0]?.type.name !== "paragraph") {
+          content.unshift(schema.node("paragraph"));
+        }
         return schema.node(
           "list_item",
           { checked: node.checked ?? null },
-          node.children.map(block),
+          content,
         );
+      }
       case "table":
         return schema.node(
           "table",

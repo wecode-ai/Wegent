@@ -48,6 +48,7 @@ function createPendingBindings() {
         task: runtimeContextAddress(update.task),
         project: projectSpaceRef(update.project),
         type: 'bound',
+        itemId: update.item.id,
       }
       publication = change
       try {

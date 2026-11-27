@@ -389,17 +389,8 @@ pub(super) fn has_encrypted_model_state(item: &Value) -> bool {
 }
 
 pub(super) fn rewrite_request_model(body: &[u8], model_id: &str) -> Result<Vec<u8>, HttpError> {
-    let mut request: Value = serde_json::from_slice(body).map_err(|error| HttpError {
+    wegent_protocol::map_request_model(body, model_id).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid local model proxy request: {error}"),
-    })?;
-    let object = request.as_object_mut().ok_or_else(|| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: "Local model proxy request body must be an object".to_owned(),
-    })?;
-    object.insert("model".to_owned(), Value::String(model_id.to_owned()));
-    serde_json::to_vec(&request).map_err(|error| HttpError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        detail: format!("Failed to encode local model proxy request: {error}"),
     })
 }

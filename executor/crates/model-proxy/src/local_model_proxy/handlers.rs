@@ -84,6 +84,7 @@ pub(super) async fn handle_harness_messages(
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
+        None,
         &request_url,
         &request_body,
         &headers,
@@ -289,6 +290,7 @@ pub(super) fn token_route_token(token: String, body: &[u8]) -> Result<String, Ht
 
 pub(super) struct AuthorizedRequest {
     pub upstream: LocalModelProxyUpstream,
+    gateway_credentials: Option<GatewayCredentials>,
     pub history: std::sync::Arc<history::CodexToolHistory>,
     pub model_routing: ModelRequestRouting,
     vision_sidecar: Option<VisionSidecarUpstream>,
@@ -305,10 +307,17 @@ pub(super) fn authorize_request(token: &str, body: &[u8]) -> Result<AuthorizedRe
         status: StatusCode::NOT_FOUND,
         detail: "unknown or expired local model proxy token".to_owned(),
     })?;
+    if route.active_references == 0 && route.gateway_credentials.is_some() {
+        return Err(HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "inactive model gateway route".to_owned(),
+        });
+    }
     authorize_task_thread(route, body)?;
     route.last_used = Instant::now();
     Ok(AuthorizedRequest {
         upstream: route.upstream.clone(),
+        gateway_credentials: route.gateway_credentials.clone(),
         vision_sidecar: route.vision_sidecar.clone(),
         history: route.history.clone(),
         foreign_history_keys: route.foreign_history_keys.clone(),
@@ -324,32 +333,21 @@ impl AuthorizedRequest {
         forked: bool,
     ) -> Result<request_policy::PreparedRequest, HttpError> {
         log_stale_requested_model(&self.upstream, body);
-        if self.upstream.uses_native_chatgpt_auth()
-            && self.upstream.codex_request_mode == CodexRequestMode::Passthrough
-            && self.upstream.model_id.is_none()
-            && !self.text_only
-            && !self.model_routing.model_switched
-            && self.foreign_history_keys.is_empty()
-            && !request_identity::request_contains_model_switch_marker(body)
-        {
-            return Ok(request_policy::PreparedRequest {
-                body: request_policy::strip_incompatible_responses_item_ids(body)?.into_owned(),
-                conversion: None,
-                expanded_browser_tools: HashSet::new(),
-                stripped_encrypted_content: 0,
-                normalized_reasoning_items: 0,
-                foreign_history_keys: HashSet::new(),
-            });
-        }
-        let body = if self.text_only {
-            text_only_request(body)?
+        let body = if self.upstream.codex_request_mode == CodexRequestMode::Passthrough {
+            std::borrow::Cow::Borrowed(body)
         } else {
-            body.to_vec()
+            let body = if self.text_only {
+                text_only_request(body)?
+            } else {
+                body.to_vec()
+            };
+            std::borrow::Cow::Owned(progressive_tools::prepare(&body).map_err(|error| {
+                HttpError {
+                    status: StatusCode::BAD_REQUEST,
+                    detail: format!("Invalid native Code Mode request: {error}"),
+                }
+            })?)
         };
-        let body = progressive_tools::prepare(&body).map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("Invalid native Code Mode request: {error}"),
-        })?;
         request_policy::prepare(
             &self.upstream,
             &body,
@@ -383,6 +381,7 @@ pub(super) async fn handle_for_token(
         .await?;
     let AuthorizedRequest {
         upstream,
+        gateway_credentials,
         history,
         model_routing,
         foreign_history_keys: known_foreign_history_keys,
@@ -398,7 +397,19 @@ pub(super) async fn handle_for_token(
             upstream.codex_request_mode.label().to_owned(),
         ),
         ("upstream", safe_url(&request_url)),
-        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "credential_source",
+            if gateway_credentials.is_some() {
+                "device_connection"
+            } else {
+                "model_configuration"
+            }
+            .to_owned(),
+        ),
+        (
+            "auth_present",
+            (gateway_credentials.is_some() || !upstream.api_key.is_empty()).to_string(),
+        ),
         (
             "default_headers",
             upstream.default_headers.len().to_string(),
@@ -449,10 +460,16 @@ pub(super) async fn handle_for_token(
     }
     log_executor_event("local model proxy request started", &request_log_fields);
 
-    let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let client = if gateway_credentials.is_some() {
+        // The device credential is scoped to the backend, outside model proxy configuration.
+        proxy_client_without_redirects(None)?
+    } else {
+        proxy_client(upstream.proxy_url.as_deref())?
+    };
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
+        gateway_credentials.as_ref(),
         &request_url,
         &request_body,
         &headers,
@@ -631,7 +648,10 @@ pub(super) async fn handle_for_token(
             )))
         }
         None if upstream.uses_native_chatgpt_auth()
-            && upstream.codex_request_mode == CodexRequestMode::Passthrough =>
+            && matches!(
+                upstream.codex_request_mode,
+                CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+            ) =>
         {
             Response::new(Body::from_stream(response_stream))
         }

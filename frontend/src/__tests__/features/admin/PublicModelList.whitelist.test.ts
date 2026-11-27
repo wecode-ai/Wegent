@@ -8,7 +8,7 @@ import {
   parseAllowedUsersInput,
   setPublicModelAllowedUsersEnabledInConfig,
   setPublicModelAllowedUsersInConfig,
-} from '@/features/admin/components/PublicModelList'
+} from '@/features/admin/components/publicModelConfig'
 
 describe('PublicModelList user whitelist config synchronization', () => {
   test('reads spec.allowedUsers from valid JSON', () => {

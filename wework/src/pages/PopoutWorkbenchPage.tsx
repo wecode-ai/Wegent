@@ -101,7 +101,7 @@ export function PopoutWorkbenchPage() {
               variant="unstyled"
               type="button"
               data-testid="popout-window-new-chat-button"
-              onClick={startNewChat}
+              onClick={() => startNewChat()}
               className="electron-titlebar-interactive-region inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
               aria-label={t('workbench.popout_window_new_chat')}
               title={t('workbench.popout_window_new_chat')}

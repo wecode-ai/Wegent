@@ -1,5 +1,6 @@
 import { readSavedMemories } from '../modules/stand-in-memory-context.mjs'
 import { openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
+import { openStoryPrimary } from '../modules/stand-in-source-story-evidence.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -202,8 +203,7 @@ export function createDesktopScenario({
       })
       try {
         await ensureExperimentalFeaturesEnabled(control)
-        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-        await control.command('waitFor', CHAT)
+        await openStoryPrimary(control)
         for (const name of Object.keys(PROMPTS)) {
           phase = name
           await control.command('fill', `${CHAT} [data-testid="chat-message-input"]`, {

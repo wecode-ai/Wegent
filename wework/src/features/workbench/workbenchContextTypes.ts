@@ -76,7 +76,6 @@ import type {
 } from '@/types/workbench'
 import type { ReactNode } from 'react'
 import type { RuntimeTaskStreamHandlers } from './runtimePaneMessages'
-import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 import type { WorkbenchServices } from './workbenchServices'
 
 export type ProjectMutationOptions = {
@@ -226,7 +225,6 @@ export interface WorkbenchContextValue {
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
-  runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     scopeKey: string
@@ -336,7 +334,7 @@ export interface WorkbenchContextValue {
     projectRoots?: string[],
     launchOptions?: WorkbenchWorkspaceLaunchOptions
   ) => Promise<void>
-  startNewChat: () => void
+  startNewChat: (options?: import('@/lib/workbenchComposerFocus').NewWorkbenchChatOptions) => void
   startNewSkillChat: (
     skillNames: string[],
     options?: { allowLocalSkills?: boolean }
@@ -541,7 +539,7 @@ export type WorkbenchPaneState = Pick<
 
 export type WorkbenchPaneContextValue = Omit<
   WorkbenchContextValue,
-  'state' | 'cloudWorkStatus' | 'runtimeTaskReminders' | 'updateUserPreferences'
+  'state' | 'cloudWorkStatus' | 'updateUserPreferences'
 > & {
   state: WorkbenchPaneState
 }

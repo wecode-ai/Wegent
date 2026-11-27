@@ -1,9 +1,11 @@
+import { isRuntimeChatStreamDebugEnabled } from '@/stream/runtimeStreamDiagnostics'
 import { createWorkbenchDeviceReconnect } from '@/features/workbench/workbenchDeviceReconnect'
 import {
   subscribeWorkbenchWindowActivity,
   type WorkbenchWindowActivity,
 } from '@/desktop/workbenchWindowActivity'
 import { createPaneSessionDiagnostics } from './workbenchPaneSessionDiagnostics'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { SetStateAction } from 'react'
 import type { RuntimeTranscriptLoader } from '@/types/workbench'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
@@ -530,6 +532,28 @@ export function createWorkbenchPaneSessionSource(
           streaming &&
           transcriptChanged &&
           isTranscriptOnlyStreamingUpdate(transcriptSnapshot, nextTranscript)
+        if (transcriptChanged) {
+          const tail = messages.at(-1)
+          const previousTail = transcriptSnapshot.messages.at(-1)
+          if (
+            tail?.role === 'assistant' &&
+            (previousTail?.id !== tail.id ||
+              previousTail.status !== tail.status ||
+              Boolean(previousTail.content) !== Boolean(tail.content) ||
+              Boolean(previousTail.blocks?.length) !== Boolean(tail.blocks?.length)) &&
+            isRuntimeChatStreamDebugEnabled()
+          ) {
+            logRuntimeTaskCreateStage('pane-assistant-published', {
+              taskId: current.lifecycleAddress?.taskId ?? null,
+              deviceId: current.lifecycleAddress?.deviceId ?? null,
+              turnId: tail.turnId ?? tail.subtaskId ?? null,
+              status: tail.status,
+              hasContent: Boolean(tail.content),
+              blockCount: tail.blocks?.length ?? 0,
+              windowActivity: presentationActivity(),
+            })
+          }
+        }
         transcriptSnapshot = nextTranscript
         if (!transcriptOnly)
           snapshot = createPaneSessionView(current, commands, search, attachmentCommands)
@@ -581,7 +605,10 @@ export function createWorkbenchPaneSessionSource(
           ? lifecycleStore.subscribeTask(address, () => {
               if (!isActive()) return
               reconcileGoal(frame())
-              publish()
+              // Publish lifecycle and transcript changes from the same turn together.
+              if (external.presentationActive && presentationActivity() === 'foreground')
+                publishConversation()
+              else publish()
             })
           : undefined
       }

@@ -37,6 +37,7 @@ import type { NotificationFeedRowProps } from './NotificationFeedRow'
 import { NotificationFeedRow } from './NotificationFeedRow'
 import {
   mergeNotificationPreferences,
+  notificationPreferenceAccountKey,
   OPEN_NOTIFICATION_SETTINGS_EVENT,
 } from './notificationPreferences'
 import type { IssueDispatchPersonalTaskAction } from './NotificationTaskSourceContext'
@@ -261,7 +262,7 @@ function ConnectedNotificationCenter({
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [category, setCategory] = useState<InboxCategory | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const accountKey = `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
+  const accountKey = notificationPreferenceAccountKey(baseUrl, userId)
   const [feed] = useState(() => createNotificationCenterFeed(accountKey))
   const subscribeFeed = useCallback(
     (listener: () => void) =>
@@ -292,8 +293,8 @@ function ConnectedNotificationCenter({
     inboxes.collaboration,
     taskSource,
     accountKey,
-    preferences.collaboration.in_app,
-    preferences.collaboration.system === true,
+    preferences.stand_in.in_app,
+    preferences.stand_in.system === true,
     userId
   )
   const [summary] = useState(createNotificationCenterSummary)
@@ -504,49 +505,51 @@ function ConnectedNotificationCenter({
     })
 
   const selectedCloudCategory =
-    category === 'collaboration' || category === 'general' ? category : null
+    anchor && (category === 'collaboration' || category === 'general') ? category : null
   const selectedCloudInbox =
     selectedCloudCategory === 'collaboration'
       ? { items: collaboration.items, next_offset: inboxes.collaboration?.next_offset ?? null }
       : selectedCloudCategory
         ? inboxes[selectedCloudCategory]
         : null
-  const categoryRows = [
-    {
-      id: 'tasks' as const,
-      title: t('notifications.category_tasks'),
-      preview: sortedTasks[0]?.task.title,
-      timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
-      unread: taskUnreadCount,
-      icon: CheckCircle2,
-    },
-    {
-      id: 'collaboration' as const,
-      title: t('notifications.category_collaboration'),
-      preview: collaboration.items[0]
-        ? notificationPreview(collaboration.items[0])
-        : api && !inboxes.collaboration && !error
-          ? t('notifications.loading')
-          : undefined,
-      timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
-      unread: collaboration.unreadCount,
-      icon: UsersRound,
-    },
-    {
-      id: 'general' as const,
-      title: t('notifications.category_general'),
-      preview: inboxes.general?.items[0]
-        ? notificationPreview(inboxes.general.items[0])
-        : api && !inboxes.general && !error
-          ? t('notifications.loading')
-          : undefined,
-      timestamp: inboxes.general?.items[0]
-        ? cloudTimestamp(inboxes.general.items[0].created_at)
-        : 0,
-      unread: inboxes.general?.unread_count ?? 0,
-      icon: Bell,
-    },
-  ]
+  const categoryRows = anchor
+    ? [
+        {
+          id: 'tasks' as const,
+          title: t('notifications.category_tasks'),
+          preview: sortedTasks[0]?.task.title,
+          timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
+          unread: taskUnreadCount,
+          icon: CheckCircle2,
+        },
+        {
+          id: 'collaboration' as const,
+          title: t('notifications.category_collaboration'),
+          preview: collaboration.items[0]
+            ? notificationPreview(collaboration.items[0])
+            : api && !inboxes.collaboration && !error
+              ? t('notifications.loading')
+              : undefined,
+          timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
+          unread: collaboration.unreadCount,
+          icon: UsersRound,
+        },
+        {
+          id: 'general' as const,
+          title: t('notifications.category_general'),
+          preview: inboxes.general?.items[0]
+            ? notificationPreview(inboxes.general.items[0])
+            : api && !inboxes.general && !error
+              ? t('notifications.loading')
+              : undefined,
+          timestamp: inboxes.general?.items[0]
+            ? cloudTimestamp(inboxes.general.items[0].created_at)
+            : 0,
+          unread: inboxes.general?.unread_count ?? 0,
+          icon: Bell,
+        },
+      ]
+    : []
   const selectedCategoryRow = categoryRows.find(row => row.id === category)
 
   return (

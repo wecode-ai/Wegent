@@ -103,3 +103,58 @@ describe.each(['button', 'autocomplete'] as const)('%s skill selection', entry =
     expect(sharedSkill.namespace).toBe('default')
   })
 })
+
+it.each(['{Enter}', ' '])('activates the focused skill after ArrowDown with %s', async key => {
+  const user = userEvent.setup()
+  const onSelect = jest.fn()
+  const secondSkill = { ...sharedSkill, id: 9, name: 'second-skill' }
+  render(
+    <SkillAutocomplete
+      skills={[sharedSkill, secondSkill]}
+      teamSkillNames={[sharedSkill.name, secondSkill.name]}
+      preloadedSkillNames={[]}
+      query=""
+      position={{ top: 0, left: 0 }}
+      isChatShell={false}
+      onSelect={onSelect}
+      onClose={jest.fn()}
+    />
+  )
+
+  await user.tab()
+  expect(screen.getByRole('button', { name: /ps-agent-recagent/ })).toHaveFocus()
+  await user.keyboard('{ArrowDown}')
+  expect(screen.getByRole('button', { name: /second-skill/ })).toHaveFocus()
+  await user.keyboard(key)
+  expect(onSelect).toHaveBeenCalledWith(secondSkill)
+})
+
+it('lets Enter activate a control outside the open skill menu', async () => {
+  const user = userEvent.setup()
+  const onSelect = jest.fn()
+  const onOutsideActivate = jest.fn()
+  render(
+    <>
+      <SkillAutocomplete
+        skills={[sharedSkill]}
+        teamSkillNames={[]}
+        preloadedSkillNames={[]}
+        query=""
+        position={{ top: 0, left: 0 }}
+        isChatShell={false}
+        onSelect={onSelect}
+        onClose={jest.fn()}
+      />
+      <button type="button" onClick={onOutsideActivate}>
+        Outside action
+      </button>
+    </>
+  )
+
+  await user.tab()
+  expect(screen.getByTestId('slash-skill-option')).toHaveFocus()
+  await user.tab()
+  await user.keyboard('{Enter}')
+  expect(onOutsideActivate).toHaveBeenCalledTimes(1)
+  expect(onSelect).not.toHaveBeenCalled()
+})

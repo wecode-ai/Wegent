@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import {
   QuickPhraseMenu as SharedQuickPhraseMenu,
   type QuickPhraseMenuProps,
@@ -9,7 +10,7 @@ import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreference
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 import { desktopFileUrl } from '../assistantMarkdownLinks'
 
-export function QuickPhraseMenu(
+export const QuickPhraseMenu = memo(function QuickPhraseMenu(
   props: Pick<QuickPhraseMenuProps, 'disabled' | 'compact' | 'projectPhrases' | 'onSelect'>
 ) {
   const { t } = useTranslation('common')
@@ -39,4 +40,4 @@ export function QuickPhraseMenu(
       }}
     />
   )
-}
+})

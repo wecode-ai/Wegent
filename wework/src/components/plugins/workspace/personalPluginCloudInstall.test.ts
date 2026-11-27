@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/desktop/localExecutor', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/localExecutor')>()),
   getKnownLocalExecutorDeviceId: () => mocks.device,
+  getKnownLocalExecutorRuntimeInstanceId: () => 'test-runtime',
   getInitializedBundledPluginMarketplace: () => ({ defaultPluginNames: ['bundled'] }),
 }))
 

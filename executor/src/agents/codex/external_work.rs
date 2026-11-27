@@ -121,6 +121,8 @@ pub(super) fn profile(request: &ExecutionRequest) -> Option<&'static str> {
             GIT_PROJECT_PROFILE
         } else if crate::runtime_work::stand_in_requires_confirmation(request) {
             SOURCE_READ_PROFILE
+        } else if crate::runtime_work::calendar_allows_full_access(request) {
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         } else {
             SOURCE_PROJECT_PROFILE
         }
@@ -411,23 +413,42 @@ mod tests {
     #[test]
     fn calendar_review_reuses_native_reviewer_and_preserves_target_requirements() {
         let launch = CodexLaunchConfig::default();
-        for (ask, expected) in [(false, "auto_review"), (true, "user")] {
+        for (ask, expected, profile) in [
+            (
+                false,
+                "auto_review",
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+            ),
+            (true, "user", SOURCE_READ_PROFILE),
+        ] {
             let independent: ExecutionRequest = serde_json::from_value(json!({
-                "origin":{"type":"stand_in_schedule","initiatedBy":"stand_in","askBeforeAct":ask}
+                "origin":{"type":"stand_in_schedule","initiatedBy":"stand_in","askBeforeAct":ask},
+                "standInSchedule":{"continuation":false,"askBeforeAct":ask}
             }))
             .unwrap();
+            let start = thread_start_params(&independent, &launch);
+            assert_eq!(start["approvalsReviewer"], expected);
+            assert_eq!(start["permissions"], profile);
             assert_eq!(
-                thread_start_params(&independent, &launch)["approvalsReviewer"],
-                expected
+                codex_runtime_approval_policy(&independent)["granular"]["sandbox_approval"],
+                true
             );
+            assert!(!codex_auto_approve_commands(&independent));
 
             let mut continuation: ExecutionRequest = serde_json::from_value(json!({
                 "standInSchedule":{"continuation":true,"askBeforeAct":ask}
             }))
             .unwrap();
-            assert_eq!(
-                turn_start_params("thread", &continuation, &launch, vec![])["approvalsReviewer"],
-                expected
+            let resume = turn_start_params("thread", &continuation, &launch, vec![]);
+            assert_eq!(resume["approvalsReviewer"], expected);
+            assert_eq!(resume["permissions"], profile);
+            continuation.extra.insert(
+                "origin".into(),
+                json!({"type":"connection_work","initiatedBy":"stand_in","askBeforeAct":false}),
+            );
+            assert_ne!(
+                turn_start_params("thread", &continuation, &launch, vec![])["permissions"],
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
             );
             continuation
                 .extra

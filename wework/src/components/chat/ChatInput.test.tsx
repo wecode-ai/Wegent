@@ -550,16 +550,25 @@ describe('ChatInput', () => {
     expect(
       screen.getByTestId('send-after-turn-option').querySelector('.lucide-clock-3')
     ).toBeInTheDocument()
+    const shortcutSelector = '[data-slot="menu-shortcut"]'
     const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
-    expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('guide-current-turn-option').querySelector('.lucide-corner-down-left')
-    ).not.toBeInTheDocument()
-    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent(/⇧|Shift/)
-    expect(
-      within(screen.getByTestId('interrupt-and-send-option')).getByLabelText('Enter')
-    ).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
+    const sendAfterTurnShortcuts = sendAfterTurnOption.querySelectorAll(shortcutSelector)
+    expect(sendAfterTurnShortcuts).toHaveLength(1)
+    expect(sendAfterTurnShortcuts[0]).toHaveTextContent(/↩|Enter/)
+    expect(sendAfterTurnOption).toHaveAttribute('aria-keyshortcuts', 'Enter')
+
+    const guideOption = screen.getByTestId('guide-current-turn-option')
+    expect(guideOption.querySelectorAll(shortcutSelector)).toHaveLength(0)
+    expect(guideOption).not.toHaveAttribute('aria-keyshortcuts')
+
+    const interruptOption = screen.getByTestId('interrupt-and-send-option')
+    const interruptShortcuts = interruptOption.querySelectorAll(shortcutSelector)
+    expect(interruptShortcuts).toHaveLength(1)
+    expect(interruptShortcuts[0]).toHaveTextContent(/⌘⇧↩|Ctrl\+Shift\+Enter/)
+    expect(interruptOption.getAttribute('aria-keyshortcuts')).toMatch(
+      /^(Meta|Control)\+Shift\+Enter$/
+    )
+    await userEvent.click(interruptOption)
 
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
   })

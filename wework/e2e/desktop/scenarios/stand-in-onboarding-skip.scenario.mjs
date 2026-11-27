@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { openStoryPrimary } from '../modules/stand-in-source-story-evidence.mjs'
 import { openExplicitModelMenu } from './stand-in-model-execution.scenario.mjs'
 
 const USER_ID = 9001
@@ -107,7 +108,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selector('stand-in-onboarding-skip'))
       await control.command('clickWhenEnabled', selector('stand-in-onboarding-discard'))
       await control.command('waitFor', selector('stand-in-onboarding'), { visible: false })
-      await control.command('waitFor', selector('stand-in-conversation'), { visible: true })
+      await control.command('waitFor', CHAT, { visible: true })
       assert.equal(
         (await rpc('runtime.stand_in.onboarding.get', { userId: USER_ID })).state.completed,
         true
@@ -144,9 +145,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       )
       await captureScreenshot(control, 'stand-in-chat-with-saved-model.png')
       await control.command('navigate', 'body', { value: '/' })
-      await control.command('waitFor', selector('personal-stand-in-button'), { visible: true })
-      await control.command('clickWhenEnabled', selector('personal-stand-in-button'))
-      await control.command('waitFor', selector('stand-in-conversation'), { visible: true })
+      await openStoryPrimary(control)
       assert.equal(await control.command('getElementCount', selector('stand-in-onboarding')), '0')
       const editor = `${CHAT} ${selector('chat-message-input')}`
       await control.command('fill', editor, { value: ONBOARDING_FOLLOWUP })

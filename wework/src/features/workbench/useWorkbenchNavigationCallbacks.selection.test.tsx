@@ -41,11 +41,38 @@ it('starts a blank chat without leaving the popout route', () => {
       ownershipKey: 'popout-navigation-review',
       workspaceTabId: undefined,
       user: { id: 7 } as User,
+      setDraftInputForScope: vi.fn(),
     })
   )
   act(result.current)
   expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'project_cleared' }))
   expect(navigateTo).not.toHaveBeenCalled()
+})
+
+it('seeds a separate draft when starting a new chat with initial input', () => {
+  const dispatch = vi.fn()
+  const setDraftInputForScope = vi.fn()
+  const { result } = renderHook(() =>
+    useStartNewChat({
+      canNavigateWorkspaceTab: () => true,
+      state: { ...state, standaloneChatKey: 4 },
+      dispatch,
+      ownershipKey: 'recovery-navigation-review',
+      workspaceTabId: undefined,
+      user: { id: 7 } as User,
+      setDraftInputForScope,
+    })
+  )
+
+  act(() => result.current({ initialInput: 'original conversation reference' }))
+
+  expect(setDraftInputForScope).toHaveBeenCalledExactlyOnceWith(
+    'blank:5',
+    'original conversation reference'
+  )
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ type: 'project_cleared', startFreshChat: true })
+  )
 })
 
 it.each([

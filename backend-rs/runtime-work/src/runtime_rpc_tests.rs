@@ -342,3 +342,20 @@ fn archived_items_keep_the_selected_installation_route() {
     );
     assert_eq!(projected["items"][1]["deviceId"], "another-host");
 }
+
+#[test]
+fn proposal_reads_can_return_null_without_accepting_invalid_runtime_responses() {
+    let proposal = "runtime.stand_in.proposal.get";
+    assert_eq!(
+        project_runtime_result(Value::Null, proposal, "runtime", "device").unwrap(),
+        Value::Null
+    );
+    for (result, method) in [(json!([]), proposal), (Value::Null, "runtime.tasks.get")] {
+        assert_eq!(
+            project_runtime_result(result, method, "runtime", "device")
+                .unwrap_err()
+                .code,
+            "runtime_rpc_invalid_response"
+        );
+    }
+}
