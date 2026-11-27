@@ -334,7 +334,11 @@ export async function selectCloudAgentModel(
     await control.command('getAttribute', modelOptions, { value: 'data-value' }),
     'The first listed cloud model must be selected before opening runtime settings'
   )
-  await control.command('nativePress', selector, { key: 'Escape' })
+  await control.command('setExpanded', selector, { value: 'false', timeoutMs })
+  await control.command('waitFor', '[data-testid="wework-agent-model-menu"]', {
+    visible: false,
+    timeoutMs,
+  })
   await selectAgentEnvironment(
     control,
     'wework-agent-environment',
