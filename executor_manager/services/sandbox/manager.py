@@ -374,13 +374,13 @@ class SandboxManager(metaclass=SingletonMeta):
         task_id = sandbox_metadata.get("task_id")
 
         if task_id is not None:
+            assert lease is not None
             # Check by task_id only (not subtask_id) to reuse sandbox across subtasks
             existing_sandbox = self._repository.load_sandbox(str(task_id))
             if (
                 existing_sandbox
                 and existing_sandbox.status is SandboxStatus.TERMINATING
             ):
-                assert lease is not None
                 success, error = await self._terminate_sandbox_locked(
                     str(task_id), lease, existing_sandbox
                 )
@@ -394,45 +394,24 @@ class SandboxManager(metaclass=SingletonMeta):
                         existing_sandbox.base_url,
                     )
                     if is_healthy:
-                        workspace_error = await self._ensure_sandbox_workspace(
-                            existing_sandbox
+                        return await self._reuse_healthy_sandbox(
+                            existing_sandbox,
+                            existing_sandbox.base_url,
+                            lease,
+                            timeout,
+                            sandbox_metadata,
+                            bot_config,
                         )
-                        if workspace_error:
-                            existing_sandbox.set_failed(workspace_error)
-                            self._repository.save_sandbox(existing_sandbox)
-                            return existing_sandbox, workspace_error
-
-                        logger.info(
-                            f"[SandboxManager] Reusing existing sandbox {existing_sandbox.sandbox_id} "
-                            f"for task {task_id} (health check passed)"
-                        )
-                        # Renew the healthy runtime before optional Skill preparation.
-                        # A Skill transport failure must not leave the physical
-                        # sandbox logically expired for other execution paths.
-                        existing_sandbox.extend_timeout(timeout)
-                        self._merge_activation_metadata(
-                            existing_sandbox, sandbox_metadata, bot_config
-                        )
-                        skill_error = await self._prepare_sandbox_skills(
-                            existing_sandbox, existing_sandbox.base_url
-                        )
-                        if skill_error:
-                            self._repository.save_sandbox(existing_sandbox)
-                            return existing_sandbox, skill_error
-                        self._repository.save_sandbox(existing_sandbox)
-                        return existing_sandbox, None
-                    else:
-                        # Container is dead, clean up and create new one
-                        logger.warning(
-                            f"[SandboxManager] Existing sandbox {existing_sandbox.sandbox_id} "
-                            f"failed health check, will create new sandbox"
-                        )
-                        assert lease is not None
-                        success, error = await self._terminate_sandbox_locked(
-                            str(task_id), lease, existing_sandbox
-                        )
-                        if not success:
-                            return existing_sandbox, error
+                    logger.warning(
+                        "[SandboxManager] Existing sandbox %s failed health check, "
+                        "will create new sandbox",
+                        existing_sandbox.sandbox_id,
+                    )
+                    success, error = await self._terminate_sandbox_locked(
+                        str(task_id), lease, existing_sandbox
+                    )
+                    if not success:
+                        return existing_sandbox, error
 
         # Create new sandbox
         if workspace_ref:
@@ -480,6 +459,34 @@ class SandboxManager(metaclass=SingletonMeta):
         )
 
         return sandbox, None
+
+    async def _reuse_healthy_sandbox(
+        self,
+        sandbox: Sandbox,
+        base_url: str,
+        lease: _TaskLifecycleLease,
+        timeout: int,
+        metadata: Dict[str, Any],
+        bot_config: Optional[Dict[str, Any]],
+    ) -> Tuple[Sandbox, Optional[str]]:
+        error = await self._ensure_sandbox_workspace(sandbox)
+        if error:
+            sandbox.set_failed(error)
+        else:
+            # A Skill transport failure must not leave a healthy runtime expired.
+            sandbox.extend_timeout(timeout)
+            self._merge_activation_metadata(sandbox, metadata, bot_config)
+            error = await self._prepare_sandbox_skills(sandbox, base_url)
+
+        # Workspace or skill preparation can outlive the lease while a new owner
+        # creates a replacement. Persist only if both ownership and identity hold.
+        if lease.lost.is_set() or not self._repository.save_sandbox(
+            sandbox, lease_owner=(lease.lock_name, lease.owner_token)
+        ):
+            return sandbox, SandboxLifecycleUnavailable(
+                f"Could not update sandbox {sandbox.sandbox_id} under its lifecycle lease"
+            )
+        return sandbox, error
 
     async def _start_sandbox_container(self, sandbox: Sandbox) -> Optional[str]:
         """Start the container for a sandbox.
@@ -813,6 +820,10 @@ class SandboxManager(metaclass=SingletonMeta):
                     sandbox.base_url,
                 )
                 return await self._recheck_unhealthy_sandbox(sandbox)
+            current = self._repository.load_sandbox(sandbox_id)
+            if current is None or not self._same_sandbox_runtime(sandbox, current):
+                return None
+            return current
 
         return sandbox
 
@@ -829,7 +840,9 @@ class SandboxManager(metaclass=SingletonMeta):
             if current.base_url and await asyncio.to_thread(
                 self._health_checker.check_health_sync, current.base_url
             ):
-                return current
+                return await self.get_sandbox(
+                    sandbox_id, check_health=False, expected_runtime=current
+                )
             success, reason = await self._terminate_sandbox_locked(
                 sandbox_id, lease, current
             )

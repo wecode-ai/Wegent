@@ -705,7 +705,9 @@ class TestSandboxManager:
         def load_sandbox(sandbox_id):
             return saved_sandboxes.get(str(sandbox_id))
 
-        def save_sandbox(sandbox):
+        def save_sandbox(sandbox, *, lease_owner=None):
+            if lease_owner is not None:
+                assert lease_owner[0] == "task-lifecycle:12345"
             saved_sandboxes[sandbox.sandbox_id] = sandbox
             return True
 
@@ -1208,7 +1210,9 @@ class TestSandboxManager:
         assert sandbox.status == SandboxStatus.RUNNING
         assert sandbox.metadata["skill_sync_status"] == "failed"
         assert sandbox.metadata["last_skill_sync_error"] == "connection reset"
-        save.assert_called_with(sample_sandbox)
+        save.assert_called_with(
+            sample_sandbox, lease_owner=("task-lifecycle:12345", mocker.ANY)
+        )
         start.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1253,6 +1257,36 @@ class TestSandboxManager:
         assert sandbox is sample_sandbox
         assert sandbox.expires_at > time.time()
         start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reuse_rejects_a_write_after_sandbox_lifecycle_changes(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        from executor_manager.services.sandbox.manager import (
+            SandboxLifecycleUnavailable,
+        )
+
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        mocker.patch.object(manager, "_ensure_sandbox_workspace", return_value=None)
+        mocker.patch.object(manager, "_prepare_sandbox_skills", return_value=None)
+        save = mocker.patch.object(
+            manager._repository, "save_sandbox", return_value=False
+        )
+
+        _, error = await manager.create_sandbox(
+            "ClaudeCode", 1, "test", metadata={"task_id": 12345}
+        )
+
+        assert isinstance(error, SandboxLifecycleUnavailable)
+        save.assert_called_once_with(
+            sample_sandbox, lease_owner=("task-lifecycle:12345", mocker.ANY)
+        )
 
     @pytest.mark.asyncio
     async def test_cold_sync_failure_keeps_healthy_container_for_retry(
@@ -1373,6 +1407,24 @@ class TestSandboxManager:
         terminate.assert_awaited_once()
         assert terminate.await_args.args[0] == "12345"
         assert terminate.await_args.args[2].sandbox_id == "12345"
+
+    @pytest.mark.asyncio
+    async def test_get_sandbox_discards_probe_result_if_runtime_was_replaced(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        replacement = copy.copy(sample_sandbox)
+        replacement.created_at += 1
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=[sample_sandbox, replacement],
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+
+        assert await manager.get_sandbox("12345") is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("lifecycle_busy", [False, True])
