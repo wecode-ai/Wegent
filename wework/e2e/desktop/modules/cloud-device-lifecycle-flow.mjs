@@ -27,7 +27,6 @@ const UPGRADE_REMINDER = '[data-testid="cloud-device-upgrade-reminder"]'
 const TERMINAL_PANEL = '[data-testid="settings-device-terminal-panel"]'
 const CONFIRM_RESTART = '[data-testid="confirm-restart-device-button"]'
 const CANCEL_RESTART = '[data-testid="cancel-restart-device-button"]'
-const BUSY_REMINDER = /同一沙箱仍有任务|work is still running in its sandbox/i
 const WAITING_ONLINE = /处于离线状态|is restarting and offline/i
 const RECOVERED = /重新在线|back online/i
 
@@ -154,29 +153,28 @@ async function verifyWorkspaceReminderActions(control, cloud, createProject) {
 }
 
 async function verifyBusyReminder(control, cloud) {
-  await waitForCondition(
-    async () => (await cloud.device(SANDBOX_SIBLING_ID))?.slot_used > 0,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The cloud device list did not expose the sibling as busy'
-  )
-  await control.command('navigate', 'body', { value: '/settings/general' })
-  await control.command('navigate', 'body', { value: '/cloud-work' })
+  // Native work is checked by the restart endpoint even when the list's legacy slots are idle.
   await useTerminal(control)
+  await control.command('waitFor', UPGRADE_REMINDER, {
+    text: CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+  })
+  await control.command('clickWhenEnabled', CONFIRM_RESTART)
   await waitForRestartStatus(
     control,
-    UPGRADE_REMINDER,
-    BUSY_REMINDER,
-    'The reminder did not show the busy sandbox'
+    `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`,
+    /Cloud device has running tasks/i,
+    'Confirming the reminder did not surface the Backend busy-sandbox rejection'
   )
-  await assert.rejects(control.command('click', CONFIRM_RESTART), /disabled/)
   assert.equal(
     cloud.sandboxRestartRequestCount(),
     0,
     'The busy reminder reached the restart provider'
   )
+  assert.equal((await cloud.device(CLOUD_DEVICE_ID))?.status, 'online')
+  assert.ok((await runtimeSettings(cloud, SANDBOX_SIBLING_ID)).active_tasks > 0)
   await captureVerificationScreenshot(control, 'cloud-device-reminder-busy.png')
-  await control.command('click', CANCEL_RESTART)
   await closeTerminal(control)
+  console.log('[cloud-device-lifecycle] Confirming the reminder preserved the active sibling task')
 }
 
 async function verifyReminderRestart(control, cloud) {
