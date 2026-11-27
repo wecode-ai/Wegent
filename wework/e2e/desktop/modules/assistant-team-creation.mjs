@@ -20,6 +20,8 @@ export async function verifyAssistantTeamCreation(control, rpc, settings, captur
   const create = async (name, teamId) => {
     const previous = new Set((await read()).map(role => role.id))
     await click('stand-in-create-role')
+    if (teamId)
+      await fill('stand-in-prompt', 'Discard this new-Team draft when referencing a Team.')
     await click('stand-in-create-team')
     await click('stand-in-create-team-option-' + (teamId ?? 'new'))
     await fill('stand-in-role-name', name)
@@ -68,6 +70,7 @@ export async function verifyAssistantTeamCreation(control, rpc, settings, captur
   assert.ok(original)
   const linked = await create('Desktop linked Team', source.id)
   assert.equal(linked.teamRef, source.id)
+  assert.ok(!linked.prompt.includes('Discard this new-Team draft'))
   await open(linked)
   const editedPrompt = 'Review this assistant’s release checklist.'
   await fill('stand-in-prompt', editedPrompt)

@@ -507,6 +507,7 @@ function StandInSettingsEditor({
         updateRole(role.id, current => ({
           ...current,
           executionDeviceId: value,
+          ...(!savedRole && current.teamRef ? { teamRef: null, prompt: '' } : {}),
           model: undefined,
           modelOptions: undefined,
           workspace: undefined,
@@ -641,6 +642,7 @@ function StandInSettingsEditor({
                   changeRole({
                     ...role,
                     teamRef: team?.id ?? null,
+                    prompt: team ? '' : role.prompt,
                     name: role.name.trim() || team?.name || '',
                   })
                 }}
