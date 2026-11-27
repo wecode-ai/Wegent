@@ -37,7 +37,10 @@ export function createAutomationPageSource(owner: Owner) {
     draftError: null,
     dismissedReadErrors: [],
   }
-  const observers = new Set<{ notify(): void; dirty?(value: boolean): void }>()
+  const observers = new Set<{
+    notify(): void
+    onEditorChange?(open: boolean, dirty: boolean): void
+  }>()
   let generation = 0
   let navigationVersion = 0
   let initialResolved = false
@@ -46,7 +49,8 @@ export function createAutomationPageSource(owner: Owner) {
     state = { ...state, ...change }
     if (previous.selectedAutomationId !== state.selectedAutomationId) navigationVersion++
     for (const observer of observers) {
-      if (previous.dirty !== state.dirty) observer.dirty?.(state.dirty)
+      if (previous.dirty !== state.dirty || Boolean(previous.draft) !== Boolean(state.draft))
+        observer.onEditorChange?.(Boolean(state.draft), state.dirty)
       observer.notify()
     }
   }
@@ -180,13 +184,13 @@ export function createAutomationPageSource(owner: Owner) {
     catalog,
     runsFor,
     getSnapshot: () => state,
-    subscribe(notify: () => void, onDirtyChange?: (dirty: boolean) => void) {
-      const observer = { notify, dirty: onDirtyChange }
+    subscribe(notify: () => void, onEditorChange?: (open: boolean, dirty: boolean) => void) {
+      const observer = { notify, onEditorChange }
       observers.add(observer)
-      onDirtyChange?.(state.dirty)
+      onEditorChange?.(Boolean(state.draft), state.dirty)
       return () => {
         observers.delete(observer)
-        onDirtyChange?.(false)
+        onEditorChange?.(false, false)
         queueMicrotask(() => {
           if (!observers.size) generation++
         })

@@ -48,6 +48,7 @@ export interface MessageCenterSnapshot {
   status:
     | 'unavailable'
     | 'disconnected'
+    | 'configured'
     | 'disabled'
     | 'active'
     | 'paused'

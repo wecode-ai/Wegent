@@ -5,7 +5,10 @@ import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { newStandInRole, type PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { PersonalAssistantAccountSetup } from './PersonalAssistantAccountSetup'
-import { personalAssistantDeviceSettings } from './personalAssistantDeviceSettings'
+import {
+  collectPersonalAssistantDefinitionBackups,
+  personalAssistantDeviceSettings,
+} from './personalAssistantDeviceSettings'
 
 const account: PersonalAssistantAccount = {
   defaultBotRef: { name: 'primary', namespace: 'personal-assistant' },
@@ -126,6 +129,64 @@ test('a failed cloud read cannot trigger initialization or local import', async 
   expect(screen.getByTestId('personal-assistant-account-setup')).toHaveTextContent('HTTP 404')
   expect(personalGet).not.toHaveBeenCalled()
   expect(initialize).not.toHaveBeenCalled()
+})
+
+test('keeps a conflicting device definition in the local backup and projects the cloud definition', async () => {
+  const original = {
+    ...newStandInRole('old-dev', 'default'),
+    name: 'Local name',
+    prompt: 'Local prompt',
+  }
+  const current = {
+    ...account,
+    definitions: [
+      {
+        roleId: original.id,
+        bot: {
+          metadata: { ...account.defaultBotRef, displayName: 'Cloud name' },
+          spec: { execution_policy: { mode: 'fixed', environment_id: 'old-dev' } },
+        },
+        ghost: { spec: { systemPrompt: 'Cloud prompt' } },
+      },
+    ],
+  }
+  const services = {
+    personalAssistantAccountApi: {},
+    standInApi: { personalGet: async () => ({ ...blank, version: 7, roles: [original] }) },
+  } as unknown as WorkbenchServices
+  const backendUrl = 'https://definition-backup.example/api'
+  const api = personalAssistantDeviceSettings(
+    services,
+    () => current,
+    vi.fn(),
+    backendUrl,
+    id => id === 'mac',
+    'mac'
+  ).standInApi!
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const projected = await api.personalGet(7, 'mac', { roleDirectory: true })
+    expect(projected.roles[0]).toMatchObject({
+      name: 'Cloud name',
+      prompt: 'Cloud prompt',
+      executionDeviceId: 'mac',
+    })
+  }
+  expect(collectPersonalAssistantDefinitionBackups(backendUrl, 7)).toEqual([
+    {
+      sourceDeviceId: 'mac',
+      profileVersion: 7,
+      cloudRevision: current.revision,
+      definitions: [
+        {
+          roleId: original.id,
+          name: original.name,
+          prompt: original.prompt,
+          executionDeviceId: 'old-dev',
+        },
+      ],
+    },
+  ])
+  expect(collectPersonalAssistantDefinitionBackups(backendUrl, 8)).toEqual([])
 })
 
 test('saving and retrying a new shared role never uploads a device-only profile', async () => {

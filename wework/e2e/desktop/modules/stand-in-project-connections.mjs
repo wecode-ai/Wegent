@@ -1,5 +1,9 @@
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
-import { openConnectionTypePicker } from './stand-in-flows.mjs'
+import {
+  openConnectionTypePicker,
+  openProjectScopeDetails,
+  saveRoleScopeAndReturn,
+} from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { createLocalCollaborationProject } from './workspace-flows.mjs'
@@ -14,21 +18,19 @@ export async function verifyRemoteStandInProjectScope(control, localProjectId, c
   await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
   await openConnectionTypePicker(control)
   await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
-  const source = '[data-testid="stand-in-source-collaboration"]'
-  if ((await control.command('getAttribute', source, { value: 'aria-checked' })) !== 'true')
-    await control.command('click', source)
+  await openProjectScopeDetails(control)
   const local = `[data-testid="stand-in-connect-project-${localProjectId}"]`
   const cloud = `[data-testid="stand-in-connect-project-${cloudProjectId}"]`
-  const all = '[data-testid="stand-in-all-projects"]'
-  await control.command('waitFor', `${all}[aria-checked="true"]`)
+  const rule = '[data-testid="stand-in-project-list-mode"]'
   await control.command('waitFor', local, { visible: false })
-  await control.command('waitFor', `${cloud}[aria-checked="true"]`)
-  await control.command('click', all)
+  await control.command('clickWhenEnabled', rule)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-include"]')
   await control.command('waitFor', `${cloud}[aria-checked="false"]`)
-  await control.command('click', all)
-  await control.command('waitFor', `${cloud}[aria-checked="true"]`)
+  await control.command('clickWhenEnabled', rule)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-project-list-mode-all"]')
+  await control.command('waitFor', cloud, { visible: false })
   await control.command('waitFor', local, { visible: false })
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+  await saveRoleScopeAndReturn(control)
 }
 
 /** Resolve saved project references to names in both personal connection editors. */
@@ -80,6 +82,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
   await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
   await control.command('waitFor', row, { text: name })
   await control.command('click', row)
+  await openProjectScopeDetails(control)
   await control.command('waitFor', `[data-testid="stand-in-connect-project-${project.id}"]`)
   assert.equal(
     await control.command(
@@ -91,8 +94,12 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
     ),
     name
   )
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-  await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
+  const scope = '[data-testid="stand-in-path-scope"]'
+  const back = '[data-testid="stand-in-connections-back"]'
+  await control.command('waitFor', '[data-testid="stand-in-save"]:disabled')
+  await control.command('clickWhenEnabled', back)
+  await control.command('waitFor', scope, { visible: false })
+  await control.command('clickWhenEnabled', back)
   await control.command('waitFor', row, { text: name })
   const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
   assert.deepEqual(
@@ -100,9 +107,12 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
     collaboration.projects
   )
   await control.command('click', row)
+  await openProjectScopeDetails(control)
   await control.command('click', `[data-testid="stand-in-connect-project-${project.id}"]`)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-  await control.command('clickWhenEnabled', CONNECTIONS_OPEN)
+  await control.command('waitFor', scope, { visible: false })
+  await control.command('waitFor', '[data-testid="stand-in-project-add-scope"]')
+  await control.command('clickWhenEnabled', back)
   await control.command('waitFor', row, { visible: false })
   assert.equal(
     await control.command('getElementCount', '[data-testid^="stand-in-connection-project-"]'),

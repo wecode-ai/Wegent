@@ -58,6 +58,7 @@ import { StandInWorkList } from './StandInWorkList'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
+import { resolveAssistantExecutionDevice } from './personalAssistantDeviceSettings'
 import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
@@ -73,6 +74,9 @@ export function StandInOverviewPage({
   onSelectLocation,
   initialSelectedRoleId,
   headerActions,
+  primarySettingsActions,
+  directoryError,
+  isKnownAssistantDevice,
   localDeviceId,
   entryRequestKey,
   entryRoute = '/stand-in',
@@ -82,6 +86,7 @@ export function StandInOverviewPage({
   onWorkspaceViewChange,
   account,
   onBindDevice,
+  onSelectAssistantDevice,
   ...props
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
@@ -93,6 +98,9 @@ export function StandInOverviewPage({
   onSelectLocation?(deviceId: string, roleId?: string, openSettings?: boolean): void
   initialSelectedRoleId?: string
   headerActions?: ReactNode
+  primarySettingsActions?: ReactNode
+  directoryError?: string
+  isKnownAssistantDevice?: (id: string) => boolean
   localDeviceId?: string
   entryRequestKey?: number
   entryRoute?: string
@@ -102,6 +110,7 @@ export function StandInOverviewPage({
   onWorkspaceViewChange(view: 'conversation' | 'messages'): void
   account?: PersonalAssistantAccount
   onBindDevice?(roleId: string, device: string): Promise<void>
+  onSelectAssistantDevice?(deviceId: string): Promise<void>
 }) {
   const { t } = useTranslation('common')
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
@@ -203,11 +212,7 @@ export function StandInOverviewPage({
     active,
     dingTalkInboxScope(saved?.primary?.delegation)
   )
-  const dingtalkSourceProblem = inbox.sourceErrors.find(
-    ({ source, error }) =>
-      source.delegated &&
-      (error.code === 'connector_auth_required' || error.code === 'dingtalk_permissions_required')
-  )?.error.code
+
   const observation = useMemo(
     () => ({
       api,
@@ -265,7 +270,16 @@ export function StandInOverviewPage({
   )
   const definition = account?.definitions.find(entry => entry.roleId === (roleId ?? '@primary'))
   const boundDevice = definition?.bot.spec?.execution_policy?.environment_id
-  const conversationDevice = (!conversationScope && boundDevice) || deviceId
+  const conversationDevice =
+    !conversationScope && definition && deviceId && isKnownAssistantDevice
+      ? resolveAssistantExecutionDevice(
+          boundDevice,
+          account?.definitions.find(entry => entry.roleId === '@primary')?.bot.spec
+            ?.execution_policy?.environment_id,
+          primaryDeviceId ?? deviceId,
+          isKnownAssistantDevice
+        )
+      : (!conversationScope && boundDevice) || deviceId
   const conversationUser = props.userId
   const [bindingPending, setBindingPending] = useState(false)
   const [bindingError, setBindingError] = useState('')
@@ -413,6 +427,15 @@ export function StandInOverviewPage({
     proposalError
   const overviewError =
     (profile === 'primary' ? null : state.error) || proposalFailureMessage || inbox.error
+  const visibleProfileError = !state.saved ? state.error : undefined
+  const visibleOverviewError = detailsAnchor ? overviewError : undefined
+  const visibleProposalError =
+    state.saved && !team && !shared && !viewedProposalId ? proposalFailureMessage : undefined
+  const showDirectoryError =
+    directoryError &&
+    directoryError !== visibleProfileError &&
+    directoryError !== visibleOverviewError &&
+    directoryError !== visibleProposalError
   const currentResult =
     resolvedProposal &&
     resolvedProposal.previous.userId === props.userId &&
@@ -445,9 +468,10 @@ export function StandInOverviewPage({
     </p>
   )
   const device = findWorkbenchDevice(props.devices, deviceId) ?? undefined
+  const currentDeviceName = t('standIn.current_device')
   const messageCenterApi = useMemo(
-    () => api && createDingTalkMessageCenterApi(api, { deviceName: device?.name }),
-    [api, device?.name]
+    () => api && createDingTalkMessageCenterApi(api, { deviceName: currentDeviceName }),
+    [api, currentDeviceName]
   )
   const processingFailure = standInProcessingFailure(
     processing.status,
@@ -608,7 +632,7 @@ export function StandInOverviewPage({
         )
       : undefined
   const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
-  const content = (
+  const content = (resumeSetup?: ReactNode) => (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
       data-testid="stand-in-overview"
@@ -695,6 +719,12 @@ export function StandInOverviewPage({
             </p>
           )}
         </header>
+        {showDirectoryError && (
+          <p role="alert" className="px-5 py-2 text-sm text-error">
+            {directoryError}
+          </p>
+        )}
+        {!showingMessageCenter && !roleId && !team && !shared && resumeSetup}
         {showingMessageCenter ? (
           <StandInMessageCenterHost
             api={messageCenterApi}
@@ -727,7 +757,7 @@ export function StandInOverviewPage({
           </div>
         ) : (
           <>
-            {api && conversationDevice ? (
+            {api && conversationDevice && (team || shared || roleId || !resumeSetup) ? (
               <StandInConversation
                 delegationPanelOpen={delegationPanelOpen}
                 sidebarTasks={
@@ -780,7 +810,8 @@ export function StandInOverviewPage({
             ) : null}
           </>
         )}
-        {!conversationAvailable && renderDetails?.([])}
+        {(!conversationAvailable || (resumeSetup && !team && !shared && !roleId)) &&
+          renderDetails?.([])}
         <StandInReviewDialog
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
@@ -974,7 +1005,10 @@ export function StandInOverviewPage({
                     ref={panelRef}
                     shortcuts={shortcuts}
                     footerLeading={
-                      !primaryDeviceId || deviceId === primaryDeviceId ? headerActions : undefined
+                      <>
+                        {(!primaryDeviceId || deviceId === primaryDeviceId) && headerActions}
+                        {primarySettingsActions}
+                      </>
                     }
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
@@ -1014,7 +1048,6 @@ export function StandInOverviewPage({
                       }
                       return saved ?? undefined
                     }}
-                    dingtalkSourceProblem={dingtalkSourceProblem}
                     error={bindingError || state.error}
                     onReload={state.reload}
                     api={api}
@@ -1075,12 +1108,12 @@ export function StandInOverviewPage({
         loading: state.loading,
         error: state.error,
         projects: props.projects,
-        localDeviceId: state.currentDeviceId,
+        localDeviceId: localDeviceId ?? state.currentDeviceId,
         devices: props.devices,
         services: props.services,
-        dingtalkSourceProblem,
+        executionDeviceId: onSelectAssistantDevice ? deviceId : undefined,
         onSelectDevice: primaryDeviceId
-          ? undefined
+          ? onSelectAssistantDevice
           : device => {
               if (onSelectLocation) onSelectLocation(device)
               else state.setDeviceId(device)
@@ -1112,6 +1145,6 @@ export function StandInOverviewPage({
       {content}
     </StandInOnboarding>
   ) : (
-    content
+    content()
   )
 }

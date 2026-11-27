@@ -3,6 +3,7 @@ import {
   openProjectStandIn,
   discardStandInDraft,
   editProjectSource,
+  saveRoleScopeAndReturn,
 } from '../modules/stand-in-flows.mjs'
 import { stopBoundStandIn } from '../modules/stand-in-instance-flows.mjs'
 import assert from 'node:assert/strict'
@@ -89,9 +90,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('fill', PROMPT, { value: 'Confirmed new settings' })
       await editProjectSource(control, true)
       assert.equal((await read()).enabled, false, 'Pending edits require explicit save and enable')
-      await control.command('clickWhenEnabled', SAVE)
+      await saveRoleScopeAndReturn(control)
       await control.command('waitFor', PROMPT)
-      await control.command('click', '[data-testid="stand-in-close"]')
+      await control.command('clickWhenEnabled', SAVE)
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       saved = await read()
       assert.equal(saved.enabled, true)
       assert.equal(saved.prompt, 'Confirmed new settings')

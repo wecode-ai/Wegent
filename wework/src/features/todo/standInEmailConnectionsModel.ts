@@ -68,14 +68,17 @@ export function createEmailConnectionsModel(initial: EmailInput) {
   let reportedDirty: boolean | undefined
   let dirtyCallback: EmailInput['onDirtyChange']
   const dirty = () => state.adding && JSON.stringify(state.form) !== JSON.stringify(state.baseline)
-  const read = () => ({
-    ...state,
-    accounts: input.local ? (accounts.getSnapshot().data ?? []) : [],
-    dirty: dirty(),
-    error:
-      state.error ??
-      (input.local && accounts.getSnapshot().status === 'error' ? 'email_unavailable' : null),
-  })
+  const read = () => {
+    const catalog = accounts.getSnapshot()
+    return {
+      ...state,
+      accounts: input.local ? (catalog.data ?? []) : [],
+      accountsReady: input.local && catalog.status === 'ready',
+      dirty: dirty(),
+      error:
+        state.error ?? (input.local && catalog.status === 'error' ? 'email_unavailable' : null),
+    }
+  }
   let snapshot = read()
   function releaseDirty() {
     if (dirtyCallback && dirtyOwners.get(dirtyCallback) === owner) {
@@ -87,7 +90,8 @@ export function createEmailConnectionsModel(initial: EmailInput) {
   }
   function reportDirty() {
     if (!listeners.size) return
-    const next = dirty()
+    // The mailbox editor has its own verification action while it is open.
+    const next = state.adding
     if (dirtyCallback !== input.onDirtyChange) releaseDirty()
     const callback = input.onDirtyChange
     const ownsCallback = callback ? dirtyOwners.get(callback) === owner : true
@@ -176,7 +180,6 @@ export function createEmailConnectionsModel(initial: EmailInput) {
         })
         if (!listeners.size) return
         const updated = Boolean(form.id || rows().some(row => row.profile === account.id))
-        if (!form.id) connect({ id: account.id, email: form.email.trim() })
         state = {
           ...state,
           baseline: initialEmailForm,

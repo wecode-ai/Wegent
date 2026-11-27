@@ -1,4 +1,5 @@
 import { subscribePersonalStandIn, type StandInRole } from '@/api/personalStandIn'
+import { isStandInDeviceUnreachable } from '@/lib/stand-in-error-message'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 
@@ -10,6 +11,7 @@ interface DirectoryState {
   scope: string
   roles: StandInRoleLocation[]
   failure?: { cause: unknown }
+  rootUnavailable?: boolean
 }
 export interface DirectoryRequest {
   devices: readonly string[]
@@ -49,15 +51,17 @@ export function createStandInRoleDirectoryResource(
       const loadedRoles = new Map<string, Set<string>>()
       let failure: DirectoryState['failure']
       let loaded = false
+      let rootUnavailable = data?.rootUnavailable
       while (pending.length) {
         signal.throwIfAborted()
         const devices = pending.splice(0, 4)
         await Promise.allSettled(
           devices.map(async device => {
             try {
-              const profile = await api.personalGet(userId, device)
+              const profile = await api.personalGet(userId, device, { roleDirectory: true })
               if (signal.aborted) return
               loaded = true
+              if (device === rootDevice) rootUnavailable = false
               for (const route of profile.delegationRoutes ?? []) {
                 if (discovered.has(route.executionDeviceId)) continue
                 discovered.add(route.executionDeviceId)
@@ -86,12 +90,14 @@ export function createStandInRoleDirectoryResource(
             } catch (cause) {
               if (signal.aborted) return
               failure = { cause }
+              if (device === rootDevice) rootUnavailable = isStandInDeviceUnreachable(cause)
             }
             if (!signal.aborted)
               publish({
                 scope,
                 roles: roles.size || loaded ? [...roles.values()] : (data?.roles ?? []),
                 failure,
+                rootUnavailable,
               })
           })
         )

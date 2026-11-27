@@ -1,4 +1,5 @@
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import { dequal } from 'dequal'
 import type {
   RuntimeCommandApprovalMode,
   RuntimePermissionMode,
@@ -66,6 +67,13 @@ export interface StandInProjectPolicy extends StandInProjectRef {
   policy: StandInHandlingPolicy
 }
 
+export type StandInProjectTrigger = 'both' | 'assignment' | 'mention'
+export type StandInProjectScopeKind = 'projects' | 'participating' | 'independent'
+
+export interface StandInProjectTagFilter extends StandInProjectRef {
+  tags: string[]
+}
+
 export interface StandInTaskPermissions {
   permissionMode: RuntimePermissionMode
   commandApproval?: RuntimeCommandApprovalMode
@@ -78,11 +86,23 @@ export interface StandInIdentity extends Partial<
   selfLearningEnabled?: boolean
   prompt: string
   preferences: string
-  taskPermissions?: StandInTaskPermissions
   delegation?: StandInDingTalkDelegation
+  dingTalkConnectionMode?: 'confirmed'
+  taskPermissions?: StandInTaskPermissions
   calendar?: { policy: StandInHandlingPolicy }
   connections?: StandInSourceConnection[]
   collaboration?: StandInRole['collaboration']
+}
+
+export function primaryWithConnectionMode<T extends StandInIdentity>(
+  previous: StandInIdentity | undefined,
+  next: T
+): T {
+  const dingtalk = (identity: StandInIdentity | undefined) =>
+    (identity?.connections ?? []).filter(source => source.providerId === STAND_IN_DINGTALK_PROVIDER)
+  return dequal(dingtalk(previous), dingtalk(next))
+    ? next
+    : { ...next, dingTalkConnectionMode: 'confirmed' }
 }
 
 export interface StandInRole extends WorkspaceStandInSettings {
@@ -99,9 +119,13 @@ export interface StandInRole extends WorkspaceStandInSettings {
     allProjects: boolean
     includeIndependentIssues?: boolean
     includeParticipatingIssues?: boolean
+    projectTrigger?: StandInProjectTrigger
+    participatingTrigger?: StandInProjectTrigger
     projects: StandInProjectRef[]
     excludedProjects: StandInProjectRef[]
     tags: string[]
+    tagFilters?: Partial<Record<StandInProjectScopeKind, string[]>>
+    projectTagFilters?: StandInProjectTagFilter[]
     policy?: StandInHandlingPolicy
     projectPolicies?: StandInProjectPolicy[]
   }
@@ -298,6 +322,16 @@ export function roleSelectsProject(
   )
 }
 
+export function standInProjectTags(
+  source: StandInRole['collaboration'],
+  project: StandInProjectRef
+): string[] {
+  const filter = source.projectTagFilters?.find(
+    row => row.id === project.id && row.store === project.store
+  )
+  return filter?.tags ?? source.tagFilters?.projects ?? source.tags
+}
+
 export function standInRoleName(role: StandInRole, index: number, fallback: string): string {
   return role.name?.trim() || `${fallback}${index ? ` ${index + 1}` : ''}`
 }
@@ -323,6 +357,9 @@ export function disconnectStandInProject(
       ...source,
       projects,
       excludedProjects,
+      ...(source.projectTagFilters && {
+        projectTagFilters: source.projectTagFilters.filter(row => !matches(row)),
+      }),
     },
   }
 }

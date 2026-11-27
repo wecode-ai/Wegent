@@ -1,4 +1,4 @@
-import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
+import { standInPolicy, standInProjectTags, type StandInRole } from '@/api/personalStandIn'
 import { formatNotificationTime } from '@/features/notifications/notificationTime'
 import { StandInProposalCard } from '@/features/todo/StandInProposalCard'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -207,7 +207,9 @@ export function AssistantHome({
         endpointRef: endpoint.id,
         displayName: roleName,
         enabled: true,
-        capabilityTags: configuredRole?.collaboration.tags ?? [],
+        capabilityTags: configuredRole
+          ? standInProjectTags(configuredRole.collaboration, { id: project.id, store: 'cloud' })
+          : [],
         autonomyPolicy: policy as unknown as Record<string, unknown>,
         availability: endpoint.availability,
         ...(saved ? { version: saved.version } : {}),

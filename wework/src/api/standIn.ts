@@ -31,7 +31,7 @@ export interface StandInBindingTarget {
 
 export interface StandInInstanceBinding {
   version: number
-  status: 'unbound' | 'active' | 'stopping' | 'stopped'
+  status: 'unbound' | 'activating' | 'active' | 'stopping' | 'stopped'
   target: StandInBindingTarget | null
 }
 
@@ -425,7 +425,14 @@ export interface StandInExecutorApi {
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   binding(
     deviceId: string,
-    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
+    operation?:
+      | 'get'
+      | 'bind'
+      | 'beginStop'
+      | 'completeStop'
+      | 'prepareBind'
+      | 'prepareReplacement'
+      | 'completeActivation',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>
@@ -605,7 +612,7 @@ export interface StandInExecutorApi {
   personalGet(
     userId: number,
     deviceId: string,
-    options?: { deviceSettingsOnly?: boolean }
+    options?: { deviceSettingsOnly?: boolean; roleDirectory?: boolean }
   ): Promise<PersonalStandInSettings>
   personalSave(
     userId: number,
