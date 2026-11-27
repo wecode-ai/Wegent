@@ -5,6 +5,7 @@ import {
   type StandInShareEntry,
   type StandInTeam,
 } from '@/api/personalStandIn'
+import type { MessageCenterSource } from '@/api/standInMessageCenter'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
 import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
@@ -38,6 +39,8 @@ import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
+import { createDingTalkMessageCenterApi } from './dingTalkMessageCenterApi'
+import { StandInMessageCenterHost } from './StandInMessageCenterHost'
 import { StandInOnboarding } from './StandInOnboarding'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
@@ -75,6 +78,8 @@ export function StandInOverviewPage({
   entryRoute = '/stand-in',
   primaryDeviceId,
   roleLocations,
+  workspaceView,
+  onWorkspaceViewChange,
   account,
   onBindDevice,
   ...props
@@ -93,6 +98,8 @@ export function StandInOverviewPage({
   entryRoute?: string
   primaryDeviceId?: string
   roleLocations?: StandInRoleLocation[]
+  workspaceView: 'conversation' | 'messages'
+  onWorkspaceViewChange(view: 'conversation' | 'messages'): void
   account?: PersonalAssistantAccount
   onBindDevice?(roleId: string, device: string): Promise<void>
 }) {
@@ -131,6 +138,7 @@ export function StandInOverviewPage({
   )
   const setDetailsAnchor = (anchor: null) => setDetailsTarget(anchor)
   const detailsTrigger = useRef<HTMLButtonElement>(null)
+  const messageCenterSettingsTrigger = useRef<HTMLButtonElement>(null)
   const profileTrigger = useRef<HTMLElement | null>(null)
   const rememberProfileTrigger = useCallback(
     (trigger?: HTMLElement) => {
@@ -177,6 +185,7 @@ export function StandInOverviewPage({
   const teamScope = team ? (`team:${team.id}` as const) : undefined
   const teamLead = team?.leadId === '@primary' ? undefined : team?.leadId
   const openTeam = (team: StandInTeam) => {
+    onWorkspaceViewChange('conversation')
     setSelectedShare(null)
     setSelectedTeam({ owner: teamOwner, id: team.id })
     setDetailsTarget(null)
@@ -251,6 +260,9 @@ export function StandInOverviewPage({
   const { roleId, profile, calendarRequest, exampleDraft } = view
   const conversationRole = shared ? undefined : team ? teamLead : roleId
   const conversationScope = sharedScope ?? teamScope
+  const showingMessageCenter = Boolean(
+    api && !roleId && !team && !shared && workspaceView === 'messages'
+  )
   const definition = account?.definitions.find(entry => entry.roleId === (roleId ?? '@primary'))
   const boundDevice = definition?.bot.spec?.execution_policy?.environment_id
   const conversationDevice = (!conversationScope && boundDevice) || deviceId
@@ -268,10 +280,20 @@ export function StandInOverviewPage({
     rememberProfileTrigger(trigger)
     setProfile(target)
   }
+  const openMessageCenterSettings = (
+    source: MessageCenterSource | undefined,
+    trigger: HTMLElement
+  ) => {
+    rememberProfileTrigger(trigger)
+    setCalendarRequest(0)
+    setProfile('primary', source ?? true)
+  }
   const focusTarget = useMemo(
     () => ({
       get current() {
-        return profileTrigger.current?.isConnected ? profileTrigger.current : detailsTrigger.current
+        return profileTrigger.current?.isConnected
+          ? profileTrigger.current
+          : (messageCenterSettingsTrigger.current ?? detailsTrigger.current)
       },
     }),
     []
@@ -298,6 +320,18 @@ export function StandInOverviewPage({
       setProfile(null)
       setDetailsAnchor(null)
       open()
+    })
+  const openMessageCenter = () =>
+    leavePanel(() => {
+      onWorkspaceViewChange('messages')
+      setSelectedTeam(null)
+      setSelectedShare(null)
+      setRoleId(undefined)
+      setDetailsAnchor(null)
+      setProfile(null)
+      if (primaryDeviceId && deviceId !== primaryDeviceId && onSelectLocation) {
+        onSelectLocation(primaryDeviceId)
+      }
     })
   const openMemory = useStableEvent(() => leavePanel(() => openProfile('memory')))
   const [delegationPanelScope, setDelegationPanelScope] = useState<string | null>(null)
@@ -345,6 +379,7 @@ export function StandInOverviewPage({
   })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
+      onWorkspaceViewChange('conversation')
       setSelectedTeam(null)
       setSelectedShare(null)
       const target =
@@ -410,6 +445,10 @@ export function StandInOverviewPage({
     </p>
   )
   const device = findWorkbenchDevice(props.devices, deviceId) ?? undefined
+  const messageCenterApi = useMemo(
+    () => api && createDingTalkMessageCenterApi(api, { deviceName: device?.name }),
+    [api, device?.name]
+  )
   const processingFailure = standInProcessingFailure(
     processing.status,
     processing.error,
@@ -578,6 +617,9 @@ export function StandInOverviewPage({
         <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2">
           <StandInNavigation
             conversationName={shared ? `${shared.name} · ${shared.owner_name}` : team?.name}
+            messageCenter={
+              api ? { onOpen: openMessageCenter, selected: showingMessageCenter } : undefined
+            }
             roles={roles}
             projects={props.projects}
             roleId={roleId}
@@ -603,12 +645,13 @@ export function StandInOverviewPage({
               beforeOpen={openAssistantDialog}
               onOpenTeam={openTeam}
               onOpenShare={entry => {
+                onWorkspaceViewChange('conversation')
                 setSelectedTeam(null)
                 setSelectedShare({ owner: teamOwner, entry })
               }}
             />
           )}
-          {!shared && api && deviceId && saved && (
+          {!shared && !showingMessageCenter && api && deviceId && saved && (
             <Tooltip label={t('standIn.delegation.panel')} side="bottom" align="end">
               <ControlButton
                 variant="unstyled"
@@ -625,7 +668,7 @@ export function StandInOverviewPage({
               </ControlButton>
             </Tooltip>
           )}
-          {!team && !shared && (
+          {!team && !shared && !showingMessageCenter && (
             <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
               <ControlButton
                 variant="unstyled"
@@ -646,13 +689,25 @@ export function StandInOverviewPage({
               </ControlButton>
             </Tooltip>
           )}
-          {!team && !shared && (
+          {!team && !shared && !showingMessageCenter && (
             <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
               {t('standIn.workspace.role_help')}
             </p>
           )}
         </header>
-        {state.loading && !state.saved ? (
+        {showingMessageCenter ? (
+          <StandInMessageCenterHost
+            api={messageCenterApi}
+            scope={
+              deviceId && deviceId === state.currentDeviceId
+                ? { userId: props.userId, deviceId }
+                : null
+            }
+            onOpenSettings={(source, trigger) => openMessageCenterSettings(source, trigger)}
+            settingsTriggerRef={messageCenterSettingsTrigger}
+            onOpenComponents={() => navigateTo('/settings/connections')}
+          />
+        ) : state.loading && !state.saved ? (
           <p role="status" className="p-5 text-text-secondary">
             {t('standIn.loading')}
           </p>
@@ -923,6 +978,7 @@ export function StandInOverviewPage({
                     }
                     key={`${state.draft.executionDeviceId}:${calendarRequest}`}
                     initialCalendar={calendarRequest > 0}
+                    initialConnections={view.openConnectionSettings}
                     settings={state.draft}
                     saving={state.saving || bindingPending}
                     loading={state.loading}
@@ -1034,8 +1090,10 @@ export function StandInOverviewPage({
       }}
       guideOpen={guideOpen}
       onGuideClose={() => setGuideOpen(false)}
+      onOpenConversation={() => onWorkspaceViewChange('conversation')}
       onExampleSelect={text =>
         leavePanel(() => {
+          onWorkspaceViewChange('conversation')
           setRoleId(undefined)
           setDetailsAnchor(null)
           setProfile(null)

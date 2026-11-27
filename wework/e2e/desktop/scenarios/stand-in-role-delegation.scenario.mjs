@@ -30,6 +30,7 @@ import {
 
 const USER = 9001
 const ROOT = '[data-testid="stand-in-overview"]'
+const PRIMARY = `${ROOT} [data-testid="stand-in-primary-open"]`
 const CHAT = `${ROOT} [data-testid="stand-in-conversation"]`
 const EDITOR = `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`
 const CARD = `${CHAT} [data-testid="stand-in-delegated-work"]`
@@ -503,6 +504,7 @@ export function createDesktopScenario({
       })
       try {
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', CHAT)
         await control.command(
           'clickWhenEnabled',
@@ -520,7 +522,7 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-profile-panel"]', {
           visible: false,
         })
-        await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', EDITOR)
         const executorLog = join(resultDir, 'executor.log')
         const waitForNativeProfile = (taskId, profile, fromOffset = 0) =>
@@ -787,6 +789,7 @@ export function createDesktopScenario({
         await captureScreenshot(control, '06-specialist-task-open.png')
 
         await control.command('navigate', 'body', { value: '/stand-in' })
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
         await send(CANCEL_REQUEST)
         await waitForReply('两项核对已分派。')
@@ -942,6 +945,7 @@ export function createDesktopScenario({
         await captureScreenshot(control, '16-ordinary-task-open.png')
 
         await control.command('navigate', 'body', { value: '/stand-in' })
+        await control.command('clickWhenEnabled', PRIMARY)
         await control.command('waitFor', EDITOR, { visible: true, timeoutMs: uiTimeoutMs })
         await control.command(
           'scrollToRatioAsUser',

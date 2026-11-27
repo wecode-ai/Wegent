@@ -235,8 +235,8 @@ test('delegated collection accepts a page containing an image without text', asy
     assert.deepEqual(
       result.events.map(event => [event.id, event.textMessage]),
       [
-        ['image', false],
         ['ask', true],
+        ['image', false],
       ]
     )
     assert.deepEqual(result.nextCheckpoint, {
