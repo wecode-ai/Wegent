@@ -837,48 +837,62 @@ class TestDockerExecutor:
 
         mock_delete_container.assert_not_called()
 
-    @patch.dict(
-        os.environ,
-        {
-            "VALIDATION_KEEP_FAILED_CONTAINER": "true",
-        },
-        clear=False,
-    )
-    def test_check_container_health_keeps_failed_validation_container_when_enabled(
-        self, executor, mock_subprocess
+    @pytest.mark.parametrize("keep_failed", [False, True])
+    def test_validation_startup_exit_cleans_up_container_and_binding(
+        self,
+        executor,
+        mock_subprocess,
+        callback_repository,
+        mocker,
+        monkeypatch,
+        keep_failed,
     ):
-        """Validation health check should not remove exited container when debug flag is enabled."""
+        monkeypatch.setenv(
+            "VALIDATION_KEEP_FAILED_CONTAINER", "true" if keep_failed else "false"
+        )
         task = {
             "task_id": 123,
             "subtask_id": 1,
             "type": "validation",
+            "executor_callback_token": "issued-token",
+            "executor_image": "test/executor:latest",
             "validation_params": {"validation_id": "vid-1"},
         }
 
         mock_subprocess.run.side_effect = [
+            MagicMock(returncode=0, stdout="validation-container-id\n"),
             MagicMock(returncode=0, stdout="exited\n"),  # container status
             MagicMock(returncode=0, stdout="executor crashed\n"),  # logs
             MagicMock(returncode=0, stdout="1\n"),  # exit code
         ]
+        mocker.patch.object(executor, "_get_base_image_from_task", return_value="base")
+        mocker.patch.object(executor, "_ensure_executor_binary_updated")
+        mocker.patch.object(
+            executor, "_prepare_docker_command", return_value=["docker", "run", "base"]
+        )
+        mocker.patch.object(executor, "_report_validation_stage")
+        mocker.patch.object(docker_executor_module.time, "sleep")
+        delete = mocker.patch.object(
+            docker_executor_module,
+            "delete_container",
+            return_value={"status": "success"},
+        )
 
-        with (
-            patch("executor_manager.executors.docker.executor.time.sleep"),
-            patch.object(
-                executor,
-                "_report_validation_stage",
-            ),
-        ):
-            with pytest.raises(RuntimeError, match="Container exited immediately"):
-                executor._check_container_health(
-                    task, "validation-executor", is_validation_task=True
-                )
+        with pytest.raises(RuntimeError, match="Container exited immediately"):
+            executor.create_instance(
+                task, executor._extract_task_info(task), "validation-executor"
+            )
 
-        rm_calls = [
-            call_args
-            for call_args in mock_subprocess.run.call_args_list
-            if call_args[0][0][:3] == ["docker", "rm", "-f"]
-        ]
-        assert len(rm_calls) == 0
+        if keep_failed:
+            delete.assert_not_called()
+            callback_repository.delete_executor_binding.assert_not_called()
+        else:
+            delete.assert_called_once_with("validation-container-id")
+            callback_repository.delete_executor_binding.assert_called_once_with(
+                123,
+                expected_executor_name="validation-executor",
+                expected_callback_token="issued-token",
+            )
 
     @patch.dict(
         os.environ,

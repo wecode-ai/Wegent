@@ -457,7 +457,11 @@ class DockerExecutor(Executor):
                 raise
 
     def _cleanup_failed_start(
-        self, container_id: str, task_id: int, executor_name: str, callback_token: str
+        self,
+        container_id: str,
+        task_id: int,
+        executor_name: str,
+        callback_token: Optional[str],
     ) -> None:
         from executor_manager.services.sandbox.repository import get_sandbox_repository
 
@@ -466,11 +470,12 @@ class DockerExecutor(Executor):
                 "Could not remove executor %s after startup failure", executor_name
             )
             return
-        get_sandbox_repository().delete_executor_binding(
-            task_id,
-            expected_executor_name=executor_name,
-            expected_callback_token=callback_token,
-        )
+        if callback_token:
+            get_sandbox_repository().delete_executor_binding(
+                task_id,
+                expected_executor_name=executor_name,
+                expected_callback_token=callback_token,
+            )
 
     def create_instance(
         self, task: Dict[str, Any], task_info: Dict[str, Any], executor_name: str
@@ -535,7 +540,16 @@ class DockerExecutor(Executor):
             # Check if container is still running after a short delay
             # This catches cases where the container exits immediately (e.g., binary incompatibility)
             if base_image:
-                self._check_container_health(task, executor_name, is_validation_task)
+                try:
+                    self._check_container_health(
+                        task, executor_name, is_validation_task
+                    )
+                except RuntimeError:
+                    if not self._should_keep_failed_validation_container(task):
+                        self._cleanup_failed_start(
+                            container_id, int(task_id), executor_name, callback_token
+                        )
+                    raise
             return container_id
 
         except subprocess.CalledProcessError as e:
@@ -874,23 +888,6 @@ class DockerExecutor(Executor):
                         error_message=error_msg,
                         valid=False,
                     )
-
-                    # Clean up the failed container
-                    if self._should_keep_failed_validation_container(task):
-                        logger.info(
-                            "Keeping exited validation container %s for debugging "
-                            "(VALIDATION_KEEP_FAILED_CONTAINER=true)",
-                            executor_name,
-                        )
-                    else:
-                        try:
-                            self.subprocess.run(
-                                ["docker", "rm", "-f", executor_name],
-                                capture_output=True,
-                                timeout=10,
-                            )
-                        except Exception:
-                            pass
 
                     # Raise exception to mark task as failed
                     raise RuntimeError(f"Container exited immediately: {error_msg}")
