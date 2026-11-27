@@ -75,6 +75,7 @@ import {
 } from './weworkCollaborationRuntime'
 import type { WeworkSharedProjectProps } from './weworkCollaborationTypes'
 export function WeworkSharedProject({
+  workspaceActive,
   api,
   projectCatalogApi,
   detailServices,
@@ -714,6 +715,7 @@ export function WeworkSharedProject({
 
   const renderIssueDetail = (context: CollaborationIssueDetailRenderContext) => (
     <IssueConversationDrawers
+      active={workspaceActive}
       embedded={Boolean(personalIssue)}
       key={context.issue.id}
       label={createCollaborationTranslator(locale)('todo.issue_details')}

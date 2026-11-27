@@ -5,6 +5,7 @@ import { collaborationTestIds } from '../testIds'
 
 interface IssueConversationDrawersProps {
   embedded?: boolean
+  active?: boolean
   label: string
   children: (close: () => void) => ReactNode
   conversation: ReactNode
@@ -17,6 +18,7 @@ interface IssueConversationDrawersProps {
 /** One overlay owns both panes, so the conversation cannot fall behind its Issue. */
 export function IssueConversationDrawers({
   embedded = false,
+  active = true,
   label,
   children,
   conversation,
@@ -72,7 +74,7 @@ export function IssueConversationDrawers({
     }
   }, [hasConversation, dismissing, onClose])
   useFocusRequest(containerRef, conversationKey, {
-    enabled: hasConversation,
+    enabled: active && hasConversation,
     selector: '[data-testid="ai-chat-modal-close"]',
     preventScroll: true,
     restoreFocus: true,
@@ -82,6 +84,7 @@ export function IssueConversationDrawers({
   return (
     <DialogSurface
       active={!embedded}
+      suspended={!active}
       modal={false}
       initialFocus={() =>
         containerRef.current?.querySelector<HTMLElement>(
