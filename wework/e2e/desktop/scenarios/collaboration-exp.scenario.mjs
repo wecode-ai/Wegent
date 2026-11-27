@@ -3,6 +3,12 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
+  assertCollaborationExpMigratedAccount,
+  createCollaborationExpCloudRequest,
+  migrateCollaborationExpAssistant,
+  pauseCollaborationExpAccountReads,
+} from '../modules/collaboration-exp-account-setup.mjs'
+import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
@@ -39,72 +45,6 @@ const PUBLIC = 'COLLABORATION_EXP_EXPLICIT_EDITED_SHARED_CONCLUSION'
 const PRIVATE_INPUT = `${APP} [data-testid="collaboration-exp-private-conversation"] [data-testid="chat-message-input"]`
 const testId = id => `${APP} [data-testid=${JSON.stringify(id)}]`
 
-/** Complete real account onboarding before testing management of a native-only team. */
-export async function migrateCollaborationExpAssistant({
-  control,
-  request,
-  settings,
-  returnRoute,
-  nativeTaskIdentities,
-  localIssueIdentities,
-}) {
-  const tasks = await nativeTaskIdentities()
-  const issues = await localIssueIdentities()
-  assert.equal((await request('/api/v1/personal-assistant')).assistant, null)
-  await control.command('navigate', 'body', { value: '/stand-in' })
-  const confirm = '[data-testid="personal-assistant-account-migrate-confirm"]'
-  await control.command('waitFor', confirm, { visible: true })
-  await control.command('clickWhenEnabled', confirm)
-  await control.command('waitFor', '[data-testid="personal-assistant-account-setup"]', {
-    visible: false,
-  })
-  await control.command('waitFor', '[data-testid="stand-in-overview"]', { visible: true })
-  const { assistant } = await request('/api/v1/personal-assistant')
-  assert.ok(assistant, 'The confirmed migration must initialize the real cloud account')
-  assert.deepEqual(
-    assistant.definitions.map(definition => definition.roleId).sort(),
-    ['@primary', ...settings.roles.map(role => role.id)].sort(),
-    'Cloud migration must preserve every native role ID'
-  )
-  for (const role of settings.roles) {
-    const definition = assistant.definitions.find(definition => definition.roleId === role.id)
-    assert.deepEqual(
-      {
-        name: definition.bot.metadata.displayName,
-        prompt: definition.ghost.spec.systemPrompt,
-        device: definition.bot.spec.execution_policy,
-      },
-      {
-        name: role.name,
-        prompt: role.prompt,
-        device: { mode: 'fixed', environment_id: role.executionDeviceId },
-      },
-      'Cloud migration must preserve the role definition'
-    )
-  }
-  const primary = assistant.definitions.find(definition => definition.roleId === '@primary')
-  assert.deepEqual(assistant.defaultBotRef, {
-    name: primary.bot.metadata.name,
-    namespace: primary.bot.metadata.namespace,
-  })
-  assert.equal(primary.ghost.spec.systemPrompt, settings.primary?.prompt ?? '')
-  assert.deepEqual(primary.bot.spec.execution_policy, {
-    mode: 'fixed',
-    environment_id: settings.executionDeviceId,
-  })
-  assert.deepEqual(
-    await nativeTaskIdentities(),
-    tasks,
-    'Cloud migration must preserve native task identities'
-  )
-  assert.deepEqual(
-    await localIssueIdentities(),
-    issues,
-    'Cloud migration must preserve local Issue identities'
-  )
-  await control.command('navigate', 'body', { value: returnRoute })
-}
-
 export const COLLABORATION_EXP_USER_STORIES = [
   'default-off-preserves-baseline-and-makes-no-targeted-business-requests',
   'deliberate-beta-toggle-and-fixed-tab-survive-reload',
@@ -136,6 +76,11 @@ export function createDesktopScenario({
   const captureScreenshot = (control, name) =>
     captureSurface(control, name, 'body', { surface: 'primary-view' })
   let cloud
+  let cloudRequest
+  let accountStartup
+  let rhythm
+  let preparedTeam
+  let nativeRolePreparedAt
   let cloudRuntime
   let cloudProject
   let cloudIssue
@@ -162,20 +107,7 @@ export function createDesktopScenario({
     if (!response.writableEnded) response.end(createSse(finish))
     heldPrivateResponse = undefined
   }
-  async function request(path, body, options = {}) {
-    const response = await fetch(`${cloud.backendUrl}${path}`, {
-      method: options.method ?? (body === undefined ? 'GET' : 'POST'),
-      headers: {
-        Authorization: `Bearer ${options.token ?? cloud.authToken}`,
-        'Content-Type': 'application/json',
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(uiTimeoutMs),
-    })
-    const text = await response.text()
-    assert.ok(response.ok, `${path}: ${response.status} ${text}`)
-    return text ? JSON.parse(text) : null
-  }
+  const request = (path, body, options) => cloudRequest(path, body, options)
   const route = issue =>
     `/collaboration-exp?${new URLSearchParams({
       view: 'tasks',
@@ -225,6 +157,7 @@ export function createDesktopScenario({
     requiresRemoteExecutor: false,
     async prepareCloud(environment) {
       cloud = environment
+      cloudRequest = createCollaborationExpCloudRequest(cloud, uiTimeoutMs)
       await request('/api/admin/setup-complete', {})
       cloudUser = await request('/api/users/me')
       const ownerName = `collaboration-exp-owner-${process.pid}`
@@ -260,6 +193,41 @@ export function createDesktopScenario({
         title: `Collaboration exp cloud Issue ${process.pid}`,
         assignee_user_id: cloudUser.id,
       })
+      accountStartup = await pauseCollaborationExpAccountReads(cloud)
+    },
+    prepareApp({ appEnvironment }) {
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = accountStartup.backendUrl
+    },
+    async beforeWorkbenchSetup(control) {
+      const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+      rhythm = createCollaborationExpRhythmFixture(rpc, modelResponseTimeoutMs)
+      try {
+        await accountStartup.prepareNative(control, async () => {
+          await waitForValue(
+            () => rpc('runtime.stand_in.binding', { operation: 'get' }),
+            binding => (!binding.target || binding.target.userId === cloudUser.id) && binding,
+            'Early native preparation must use the original cloud account owner',
+            uiTimeoutMs
+          )
+          localProject = await rpc('projects.create', {
+            name: `Collaboration exp local ${process.pid}`,
+          })
+          preparedTeam = await rhythm.prepareRole(localProject, cloudUser.id, uiTimeoutMs)
+          assert.equal(
+            preparedTeam.userId,
+            cloudUser.id,
+            'Native preparation must retain the original cloud user'
+          )
+          assert.match(preparedTeam.executionDeviceId, /^electron-/)
+          nativeRolePreparedAt = new Date().toISOString()
+        })
+      } catch (error) {
+        await rhythm.cleanup()
+        throw error
+      }
+    },
+    cleanup() {
+      return accountStartup?.cleanup()
     },
     setCloudEnvironment(environment) {
       cloudRuntime = environment
@@ -307,7 +275,6 @@ export function createDesktopScenario({
       let previousSize
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const gates = runtimeTransportGates(control)
-      const rhythm = createCollaborationExpRhythmFixture(rpc, modelResponseTimeoutMs)
       const comments = () =>
         rpc('todos.comment.list', { project_id: localProject.id, task_id: localIssue.id })
       const localIssueIdentities = async () => {
@@ -329,6 +296,19 @@ export function createDesktopScenario({
           .sort()
       }
       try {
+        assert.ok(
+          preparedTeam,
+          'Startup must prepare the native role before account initialization'
+        )
+        accountStartup.release()
+        await migrateCollaborationExpAssistant({
+          control,
+          request,
+          settings: preparedTeam,
+          returnRoute: '/settings',
+          nativeTaskIdentities,
+          localIssueIdentities,
+        })
         await control.command('setAppPreferences', 'body', {
           value: JSON.stringify({
             collaborationExperienceEnabled: false,
@@ -340,9 +320,7 @@ export function createDesktopScenario({
             startupWorkspaceTabId: 'fixed-task',
           }),
         })
-        localProject = await rpc('projects.create', {
-          name: `Collaboration exp local ${process.pid}`,
-        })
+        assert.ok(localProject, 'Startup must prepare the original local project')
         localIssue = await rpc('todos.create', {
           project_id: localProject.id,
           todo: {
@@ -747,14 +725,10 @@ export function createDesktopScenario({
         assert.equal(runningRole.name, 'Integration assistant')
         assert.equal(runningRole.prompt, COLLABORATION_EXP_RHYTHM_MARKER)
         assert.equal(runningRole.executionDeviceId, runningAddress.deviceId)
-        await migrateCollaborationExpAssistant({
-          control,
-          request,
-          settings,
-          returnRoute: route(),
-          nativeTaskIdentities,
-          localIssueIdentities,
-        })
+        assertCollaborationExpMigratedAccount(
+          (await request('/api/v1/personal-assistant')).assistant,
+          settings
+        )
 
         const logPath = join(resultDir, 'app.log')
         const logOffset = (await readFile(logPath, 'utf8')).length
@@ -977,7 +951,16 @@ export function createDesktopScenario({
       }
     },
     diagnostics() {
-      return { localProject, localIssue, secondIssue, cloudProject, cloudIssue, conversation }
+      return {
+        localProject,
+        localIssue,
+        secondIssue,
+        cloudProject,
+        cloudIssue,
+        conversation,
+        nativeRolePreparedAt,
+        accountRequests: accountStartup?.proxy.requests,
+      }
     },
   }
 }

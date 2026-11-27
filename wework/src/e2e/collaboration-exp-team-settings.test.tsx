@@ -7,7 +7,10 @@ import {
 import { newStandInRole } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { PersonalAssistantAccountSetup } from '@/features/todo/PersonalAssistantAccountSetup'
-import { migrateCollaborationExpAssistant } from '../../e2e/desktop/scenarios/collaboration-exp.scenario.mjs'
+import {
+  createCollaborationExpCloudRequest,
+  migrateCollaborationExpAssistant,
+} from '../../e2e/desktop/modules/collaboration-exp-account-setup.mjs'
 import {
   COLLABORATION_EXP_RHYTHM_ROLE,
   COLLABORATION_EXP_RHYTHM_MARKER,
@@ -206,6 +209,7 @@ async function migrateAndManage(fault?: MigrationFault) {
   const imports: unknown[] = []
   const applicationFetch: typeof fetch = async (input, init) => {
     expect(String(input)).toBe('http://127.0.0.1:43112/api/v1/personal-assistant')
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer migration-contract-token')
     if (init?.method === 'POST') {
       const payload = JSON.parse(String(init.body))
       imports.push(payload)
@@ -251,7 +255,10 @@ async function migrateAndManage(fault?: MigrationFault) {
     return Response.json({ assistant: account })
   }
   const api = createPersonalAssistantAccountApi(
-    createHttpClient({ baseUrl: 'http://127.0.0.1:43112/api', getToken: () => null })
+    createHttpClient({
+      baseUrl: 'http://127.0.0.1:43112/api',
+      getToken: () => 'migration-contract-token',
+    })
   )
   vi.stubGlobal('fetch', applicationFetch)
   const services = {
@@ -273,10 +280,10 @@ async function migrateAndManage(fault?: MigrationFault) {
   }
   await migrateCollaborationExpAssistant({
     control,
-    request: async (path: string) => {
-      expect(path).toBe('/api/v1/personal-assistant')
-      return { assistant: await api.get() }
-    },
+    request: createCollaborationExpCloudRequest(
+      { backendUrl: 'http://127.0.0.1:43112', authToken: 'migration-contract-token' },
+      10000
+    ),
     settings,
     returnRoute: '/collaboration-exp?view=assistant',
     ...identities,

@@ -15,10 +15,72 @@ export function createCollaborationExpRhythmFixture(rpc, timeoutMs) {
   let runningIssue
   let taskId
   return {
-    async prepare(project, completedIssue, fallbackOwnerId) {
+    async prepareRole(project, fallbackOwnerId, setupTimeoutMs = timeoutMs) {
+      assert.equal(original, undefined, 'The native role must be prepared only once')
       const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
       ownerId = binding.target?.userId ?? fallbackOwnerId
       original = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
+      const identity = await rpc('runtime.stand_in.device_identity', {})
+      assert.equal(original.userId, ownerId)
+      assert.equal(original.executionDeviceId, identity.deviceId)
+      const model = await waitForValue(
+        () => rpc('runtime.runner.catalog', {}),
+        catalog => catalog.models.find(model => model.runtime === 'codex' && model.is_default),
+        'The real runner must expose its configured E2E model',
+        setupTimeoutMs
+      )
+      const target = {
+        projectId: project.id,
+        projectStore: 'local',
+        userId: ownerId,
+        standInId: COLLABORATION_EXP_RHYTHM_ROLE,
+      }
+      const settings = await rpc('runtime.stand_in.get', target)
+      const saved = await rpc('runtime.stand_in.save', {
+        ...target,
+        settings: {
+          ...settings,
+          enabled: true,
+          name: 'Integration assistant',
+          prompt: COLLABORATION_EXP_RHYTHM_MARKER,
+          model,
+        },
+      })
+      assert.equal(saved.enabled, true)
+      assert.equal(saved.id, COLLABORATION_EXP_RHYTHM_ROLE)
+      assert.equal(saved.executionDeviceId, original.executionDeviceId)
+      const configured = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
+      const role = configured.roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
+      assert.ok(role, 'The project-addressed configuration must persist in the real personal team')
+      if (configured.roles[0]?.id !== role.id)
+        await rpc('runtime.stand_in.personal.save', {
+          userId: ownerId,
+          settings: {
+            ...configured,
+            roles: [role, ...configured.roles.filter(candidate => candidate.id !== role.id)],
+          },
+        })
+      const prepared = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
+      assert.equal(prepared.executionDeviceId, original.executionDeviceId)
+      return prepared
+    },
+    async prepare(project, completedIssue, fallbackOwnerId) {
+      if (!original) await this.prepareRole(project, fallbackOwnerId)
+      const binding = await rpc('runtime.stand_in.binding', { operation: 'get' })
+      assert.equal(
+        binding.target?.userId ?? fallbackOwnerId,
+        ownerId,
+        'The prepared role owner must remain unchanged'
+      )
+      const prepared = await rpc('runtime.stand_in.personal.get', { userId: ownerId })
+      assert.equal(
+        prepared.executionDeviceId,
+        original.executionDeviceId,
+        'The prepared execution device must remain unchanged'
+      )
+      assert.equal(prepared.userId, ownerId)
+      const identity = await rpc('runtime.stand_in.device_identity', {})
+      assert.equal(prepared.executionDeviceId, identity.deviceId)
       const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(model, 'The real runner must expose its configured E2E model')

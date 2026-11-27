@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import { waitForDesktopScenarioStartup } from '../e2e/desktop/modules/desktop-scenario-startup.mjs'
+import { pauseCollaborationExpAccountReads } from '../e2e/desktop/modules/collaboration-exp-account-setup.mjs'
+import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
 
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 
@@ -32,4 +37,192 @@ test('desktop readiness that arrived before the wait is returned immediately', a
   server.readyCount = 2
   server.ready = { windowLabel: 'main' }
   assert.equal(await server.awaitReadyAfter(1, 10), server.ready)
+})
+
+async function serve(t, handler) {
+  const server = createServer(handler)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => {
+    server.closeAllConnections()
+    return new Promise(resolve => server.close(resolve))
+  })
+  return { server, url: 'http://127.0.0.1:' + server.address().port }
+}
+
+async function controlPost(control, route, body) {
+  const response = await fetch(control.controlUrl + '/' + route, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  assert.equal(response.status, 200)
+  return response.json()
+}
+
+test('initial controller readiness prepares the native role before releasing the real cloud account GET', async t => {
+  const deviceId = 'electron-controller-fixture'
+  let role
+  const seen = []
+  const native = await serve(t, async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const rpc = JSON.parse(Buffer.concat(chunks).toString())
+    assert.equal(request.url, '/wework/executor/v1/rpc')
+    assert.equal(rpc.method, 'runtime.stand_in.personal.save')
+    assert.equal(rpc.params.userId, 7)
+    role = rpc.params.settings.roles[0]
+    seen.push('native-role-saved')
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify({ ok: true, result: rpc.params.settings }))
+  })
+  const cloud = await serve(t, (request, response) => {
+    assert.equal(request.url, '/api/v1/personal-assistant')
+    assert.equal(request.method, 'GET')
+    assert.equal(request.headers.authorization, 'Bearer controller-fixture-token')
+    seen.push('cloud-account-get')
+    assert.equal(
+      role?.executionDeviceId,
+      deviceId,
+      'The native role must exist before the first account load'
+    )
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify({ assistant: null }))
+  })
+  const gate = await pauseCollaborationExpAccountReads({ backendUrl: cloud.url })
+  t.after(() => gate.cleanup())
+  const control = new DesktopE2EServer('/workspace')
+  await control.start()
+  t.after(() => control.close())
+  const intercepted = once(gate.proxy.server, 'request')
+  const accountRead = fetch(gate.backendUrl + '/api/v1/personal-assistant', {
+    headers: { Authorization: 'Bearer controller-fixture-token' },
+    signal: AbortSignal.timeout(3000),
+  })
+  const readFailure = accountRead.catch(() => undefined)
+  await intercepted
+  const startup = waitForDesktopScenarioStartup({
+    control,
+    waitForReady: () => control.awaitReady(),
+    scenario: {
+      beforeWorkbenchSetup: target =>
+        gate.prepareNative(target, async target => {
+          await requestExecutor(
+            target,
+            'runtime.stand_in.personal.save',
+            {
+              userId: 7,
+              settings: {
+                userId: 7,
+                executionDeviceId: deviceId,
+                version: 1,
+                roles: [
+                  {
+                    id: 'collaboration-exp-rhythm',
+                    name: 'Integration assistant',
+                    prompt: 'COLLABORATION_EXP_REAL_RUNNING_WORK',
+                    executionDeviceId: deviceId,
+                  },
+                ],
+              },
+            },
+            1000,
+            { origin: native.url }
+          )
+        }),
+    },
+  })
+  await controlPost(control, 'ready', {
+    windowLabel: 'main',
+    clientId: 'main',
+    location: native.url,
+  })
+  const ready = startup.then(
+    value => ({ value }),
+    error => ({ error })
+  )
+  const queued = Promise.race([
+    fetch(control.controlUrl + '/commands?clientId=main&wait=1').then(response => response.json()),
+    ready.then(result => {
+      if (result.error) throw result.error
+      assert.ok(role, 'Controller startup returned before native role preparation')
+      return null
+    }),
+  ])
+  const command = await queued
+  assert.equal(command.action, 'fetchLocalRuntime')
+  const input = JSON.parse(command.value)
+  await controlPost(control, 'started', {
+    id: command.id,
+    clientId: 'main',
+    action: command.action,
+    value: command.value,
+  })
+  const nativeReply = await fetch(input.url, {
+    method: input.method,
+    headers: input.headers,
+    body: input.body,
+  })
+  await controlPost(control, 'results', {
+    id: command.id,
+    clientId: 'main',
+    ok: true,
+    value: JSON.stringify({
+      status: nativeReply.status,
+      headers: Object.fromEntries(nativeReply.headers),
+      body: await nativeReply.text(),
+    }),
+  })
+  const result = await ready
+  if (result.error) throw result.error
+  assert.deepEqual(
+    seen,
+    ['native-role-saved'],
+    'Account loading must remain paused through common startup UI setup'
+  )
+  gate.release()
+  assert.deepEqual(await (await accountRead).json(), { assistant: null })
+  await readFailure
+  assert.deepEqual(seen, ['native-role-saved', 'cloud-account-get'])
+})
+
+test('the optional startup preparation preserves default readiness when absent', async t => {
+  const control = new DesktopE2EServer('/workspace')
+  await control.start()
+  t.after(() => control.close())
+  const startup = waitForDesktopScenarioStartup({
+    control,
+    waitForReady: () => control.awaitReady(),
+  })
+  await controlPost(control, 'ready', {
+    windowLabel: 'main',
+    clientId: 'main',
+    location: 'http://127.0.0.1:43110/',
+  })
+  assert.equal(await startup, control.ready)
+  assert.equal(control.commandHistory.length, 0)
+})
+
+test('failed native preparation cancels the initial account request without forwarding it', async t => {
+  let forwarded = 0
+  const cloud = await serve(t, (_request, response) => {
+    forwarded++
+    response.end('{}')
+  })
+  const gate = await pauseCollaborationExpAccountReads({ backendUrl: cloud.url })
+  t.after(() => gate.cleanup())
+  const intercepted = once(gate.proxy.server, 'request')
+  const accountRead = fetch(gate.backendUrl + '/api/v1/personal-assistant', {
+    signal: AbortSignal.timeout(1000),
+  })
+  const rejection = assert.rejects(accountRead)
+  await intercepted
+  await assert.rejects(
+    () =>
+      gate.prepareNative({}, async () => {
+        throw Error('native preparation failed')
+      }),
+    /native preparation failed/
+  )
+  await rejection
+  assert.equal(forwarded, 0)
 })

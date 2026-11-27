@@ -10,6 +10,7 @@ import { launchWindowsOwnedApplication } from '../windows-owned-process.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
+import { waitForDesktopScenarioStartup } from './desktop-scenario-startup.mjs'
 import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
 import { readInspectorEndpoint } from './inspect-before-start.mjs'
 
@@ -1750,23 +1751,22 @@ async function main() {
 
     const readiness = control.awaitReady()
     // Release-pair diagnostics retain their previously certified startup deadline.
-    const ready =
-      usesReleasePackageRuntimeAssets && !usesDefaultUserData
-        ? await waitForColdPackageStartup(readiness, appLogPath, {
-            phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
-          })
-        : await withTimeout(
-            readiness,
-            ownedApplicationStartupDeadline === null
-              ? DESKTOP_READY_TIMEOUT_MS
-              : Math.max(0, ownedApplicationStartupDeadline - Date.now()),
-            'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
-          )
-    assert.match(
-      String(ready.location ?? ''),
-      /^https?:/,
-      'The Electron desktop controller did not connect from its local renderer origin'
-    )
+    const ready = await waitForDesktopScenarioStartup({
+      control,
+      scenario: desktopScenario,
+      waitForReady: async () =>
+        usesReleasePackageRuntimeAssets && !usesDefaultUserData
+          ? await waitForColdPackageStartup(readiness, appLogPath, {
+              phaseTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
+            })
+          : await withTimeout(
+              readiness,
+              ownedApplicationStartupDeadline === null
+                ? DESKTOP_READY_TIMEOUT_MS
+                : Math.max(0, ownedApplicationStartupDeadline - Date.now()),
+              'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
+            ),
+    })
     if (usesNativeCloudInspector) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(

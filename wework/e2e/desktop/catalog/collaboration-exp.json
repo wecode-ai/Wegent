@@ -3,9 +3,15 @@
   "scenario": "./scenarios/collaboration-exp.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
-    "core": { "order": 23030, "shard": 8, "position": 14030 }
+    "core": {
+      "order": 23030,
+      "shard": 8,
+      "position": 14030
+    }
   },
   "paths": [
+    "wework/e2e/desktop/modules/collaboration-exp-account-setup.mjs",
+    "wework/e2e/desktop/modules/desktop-scenario-startup.mjs",
     "wework/e2e/desktop/modules/collaboration-exp-rhythm.mjs",
     "wework/e2e/desktop/modules/collaboration-exp-state-motion.mjs",
     "wework/e2e/desktop/modules/collaboration-exp-pane-verification.mjs",

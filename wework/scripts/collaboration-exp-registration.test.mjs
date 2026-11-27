@@ -9,6 +9,7 @@ import {
   assertNoStateAnimation,
   assertUnchangedGeometry,
   COLLABORATION_EXP_RHYTHM_ROLE,
+  COLLABORATION_EXP_RHYTHM_MARKER,
   createCollaborationExpRhythmFixture,
 } from '../e2e/desktop/modules/collaboration-exp-rhythm.mjs'
 import { readTeam } from '../e2e/desktop/modules/collaboration-exp-state-motion.mjs'
@@ -17,7 +18,22 @@ function rhythmProtocol() {
   const calls = []
   const issue = { id: 'LOCAL-1', status: 'in_progress', version: 2, created_by_user_id: 0 }
   const binding = { loop_item_id: issue.id, device_id: 'local-device', task_id: 'native-task' }
-  const settings = { version: 1, roles: [{ id: COLLABORATION_EXP_RHYTHM_ROLE, enabled: true }] }
+  const settings = {
+    userId: 7,
+    executionDeviceId: 'local-device',
+    version: 1,
+    roles: [
+      {
+        id: 'existing-role',
+        name: 'Existing assistant',
+        prompt: 'Preserve this role',
+        executionDeviceId: 'local-device',
+        enabled: false,
+      },
+    ],
+  }
+  let configured = structuredClone(settings)
+  const state = { ownerId: 7, catalogs: [[{ runtime: 'codex', is_default: true }]] }
   const task = {
     taskId: binding.task_id,
     status: 'running',
@@ -37,12 +53,37 @@ function rhythmProtocol() {
   const bindings = [[], [binding]]
   const tasks = [{ ...task, status: 'queued', running: false }, task]
   const handlers = {
-    'runtime.stand_in.binding': () => ({ target: { userId: 7 } }),
-    'runtime.stand_in.personal.get': () => settings,
-    'runtime.stand_in.personal.save': input => input.settings,
-    'runtime.runner.catalog': () => ({ models: [{ runtime: 'codex', is_default: true }] }),
-    'runtime.stand_in.get': () => ({ id: COLLABORATION_EXP_RHYTHM_ROLE }),
-    'runtime.stand_in.save': input => input.settings,
+    'runtime.stand_in.binding': () => ({ target: { userId: state.ownerId } }),
+    'runtime.stand_in.personal.get': () => structuredClone(configured),
+    'runtime.stand_in.personal.save': input => {
+      configured = { ...input.settings, version: configured.version + 1 }
+      return structuredClone(configured)
+    },
+    'runtime.stand_in.device_identity': () => ({ deviceId: 'local-device' }),
+    'runtime.runner.catalog': () => ({
+      models: state.catalogs.length > 1 ? state.catalogs.shift() : state.catalogs[0],
+    }),
+    'runtime.stand_in.get': input => {
+      assert.equal(input.projectId, 'local-project')
+      assert.equal(input.projectStore, 'local')
+      return structuredClone(
+        configured.roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE) ?? {
+          id: COLLABORATION_EXP_RHYTHM_ROLE,
+          executionDeviceId: configured.executionDeviceId,
+        }
+      )
+    },
+    'runtime.stand_in.save': input => {
+      assert.equal(input.projectId, 'local-project')
+      assert.equal(input.projectStore, 'local')
+      const role = structuredClone(input.settings)
+      configured = {
+        ...configured,
+        version: configured.version + 1,
+        roles: [...configured.roles.filter(existing => existing.id !== role.id), role],
+      }
+      return role
+    },
     'runtime.stand_in.run': () => ({ success: true }),
     'todos.create': () => ({ ...issue, status: 'inbox' }),
     'todos.bindings': () => (bindings.length > 1 ? bindings.shift() : bindings[0]),
@@ -58,7 +99,18 @@ function rhythmProtocol() {
     assert.ok(handlers[method], `Unexpected fixture RPC: ${method}`)
     return handlers[method](input)
   }
-  return { rpc, calls, issue, binding, settings, task, bindings, tasks }
+  return {
+    rpc,
+    calls,
+    issue,
+    binding,
+    settings,
+    task,
+    bindings,
+    tasks,
+    state,
+    current: () => configured,
+  }
 }
 
 test('collaboration experiment acceptance uses the existing core runner and owns its prerequisites', () => {
@@ -71,6 +123,7 @@ test('collaboration experiment acceptance uses the existing core runner and owns
   assert.ok(catalog.ci.core_shards.some(shard => shard.split(',').includes('collaboration-exp')))
   for (const helper of [
     'collaboration-exp-rhythm',
+    'collaboration-exp-account-setup',
     'collaboration-exp-state-motion',
     'collaboration-exp-pane-verification',
     'collaboration-exp-viewport-flows',
@@ -162,9 +215,14 @@ test('rhythm waits for the bound native task without requiring a robot execution
   const methods = protocol.calls.map(call => call.method)
   assert.ok(methods.indexOf('todos.bindings') < methods.indexOf('runtime.tasks.get'))
   assert.ok(methods.indexOf('runtime.tasks.get') < methods.indexOf('todos.get'))
+  const version = protocol.current().version
   await fixture.cleanup()
   assert.equal(protocol.calls.at(-1).method, 'runtime.stand_in.personal.save')
-  assert.deepEqual(protocol.calls.at(-1).input, { userId: 7, settings: protocol.settings })
+  assert.deepEqual(protocol.calls.at(-1).input, {
+    userId: 7,
+    settings: { ...protocol.settings, version },
+  })
+  assert.deepEqual(protocol.current().roles, protocol.settings.roles)
 })
 
 test('rhythm rejects an in-progress Issue when its bound native task is not running', async () => {
@@ -210,6 +268,78 @@ test('rhythm requires one binding and the exact local Issue origin', async () =>
   )
   assert.equal(
     otherIssue.calls.some(call => call.method === 'todos.get'),
+    false
+  )
+})
+
+test('early native role preparation creates no Issue or execution and late dispatch preserves its owner/device and original team', async () => {
+  const protocol = rhythmProtocol()
+  const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
+  const prepared = await fixture.prepareRole({ id: 'local-project' }, 99)
+  assert.equal(prepared.userId, 7)
+  assert.equal(prepared.executionDeviceId, 'local-device')
+  const role = prepared.roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
+  assert.equal(role.name, 'Integration assistant')
+  assert.equal(role.prompt, COLLABORATION_EXP_RHYTHM_MARKER)
+  assert.equal(role.executionDeviceId, prepared.executionDeviceId)
+  assert.equal(
+    protocol.calls.some(
+      call => call.method.startsWith('todos.') || call.method === 'runtime.stand_in.run'
+    ),
+    false
+  )
+  const execution = await fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99)
+  assert.equal(execution.ownerId, prepared.userId)
+  assert.equal(execution.address.deviceId, prepared.executionDeviceId)
+  await fixture.cleanup()
+  assert.deepEqual(protocol.current().roles, protocol.settings.roles)
+})
+
+for (const fault of ['owner', 'device'])
+  test('late dispatch rejects a changed prepared ' + fault, async () => {
+    const protocol = rhythmProtocol()
+    const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
+    await fixture.prepareRole({ id: 'local-project' }, 99)
+    if (fault === 'owner') protocol.state.ownerId = 8
+    else protocol.current().executionDeviceId = 'another-device'
+    await assert.rejects(
+      () => fixture.prepare({ id: 'local-project' }, { id: 'LOCAL-2' }, 99),
+      /must remain unchanged/
+    )
+    assert.equal(
+      protocol.calls.some(
+        call => call.method === 'todos.create' || call.method === 'runtime.stand_in.run'
+      ),
+      false
+    )
+  })
+
+test('early preparation waits for the actual default model within its startup deadline', async () => {
+  const protocol = rhythmProtocol()
+  protocol.state.catalogs.unshift([])
+  const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
+  await fixture.prepareRole({ id: 'local-project' }, 99, 1000)
+  assert.equal(protocol.calls.filter(call => call.method === 'runtime.runner.catalog').length, 2)
+  const role = protocol.current().roles.find(role => role.id === COLLABORATION_EXP_RHYTHM_ROLE)
+  assert.equal(role.model.is_default, true)
+  assert.equal(role.executionDeviceId, 'local-device')
+})
+
+test('missing default model fails at the startup deadline before saving a role or creating work', async () => {
+  const protocol = rhythmProtocol()
+  protocol.state.catalogs = [[]]
+  const fixture = createCollaborationExpRhythmFixture(protocol.rpc, 1000)
+  await assert.rejects(
+    () => fixture.prepareRole({ id: 'local-project' }, 99, 20),
+    /configured E2E model/
+  )
+  assert.equal(
+    protocol.calls.some(
+      call =>
+        call.method === 'runtime.stand_in.save' ||
+        call.method.startsWith('todos.') ||
+        call.method === 'runtime.stand_in.run'
+    ),
     false
   )
 })
