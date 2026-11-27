@@ -267,13 +267,14 @@ def get_running_task_details(
 
         # Format to get task_id, subtask_id, subtask_next_id and container name
         # Using go template formatting to get multiple fields
-        template = '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}'
         cmd.extend(
             [
                 "--format",
-                template + "|{{.ID}}" if include_stopped else template,
+                '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}',
             ]
         )
+        if include_stopped:
+            cmd[-1] += "|{{.ID}}"
 
         result = subprocess.run(
             cmd,
