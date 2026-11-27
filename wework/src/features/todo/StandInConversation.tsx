@@ -97,6 +97,8 @@ export function StandInConversation({
   const workbench = useContext(WorkbenchContext)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const { items: taskReminderItems } = useWorkbenchTaskReminders()
+  const showModelSelector = scope === 'collaboration'
+  const hasComposerModel = showModelSelector || Boolean(settings?.model)
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
     {
@@ -106,9 +108,8 @@ export function StandInConversation({
       prompt: '',
       version: 0,
     },
-    active
+    active && hasComposerModel
   )
-  const showModelSelector = scope === 'collaboration'
   const conversationModelControls =
     !showModelSelector && modelControls.unavailable
       ? {
@@ -278,7 +279,10 @@ export function StandInConversation({
         showExecutionTools={false}
         showModelSelector={showModelSelector}
         composerHeader={
-          !showModelSelector && modelControls.unavailable && !modelControls.loading ? (
+          !showModelSelector &&
+          hasComposerModel &&
+          modelControls.unavailable &&
+          !modelControls.loading ? (
             <Button
               type="button"
               variant="ghost"
@@ -298,7 +302,7 @@ export function StandInConversation({
           definition ? { assistantPrompt: definition.ghost.spec.systemPrompt } : undefined
         }
         allowMessagesDuringApproval
-        modelControls={conversationModelControls}
+        modelControls={hasComposerModel ? conversationModelControls : undefined}
         expanded
         active={active}
         placeholder={t(
@@ -332,7 +336,7 @@ export function StandInConversation({
           options.onRuntimeTaskOptimisticOpen(target)
           try {
             const result = await api.conversation(userId, deviceId, message, roleId, {
-              ...options.executionModel,
+              ...(showModelSelector ? options.executionModel : {}),
               ...(scope ? { conversationScope: scope } : {}),
               ...(definition ? { assistantPrompt: definition.ghost.spec.systemPrompt } : {}),
               attachments: localRuntimeAttachments(options.attachments),
