@@ -25,6 +25,7 @@ const pane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane=
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
+  const observerJoined = Promise.withResolvers()
   const calls = []
   const releases = new Map()
   const post = (path, body) =>
@@ -72,6 +73,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         )
         return true
       }
+      await observerJoined.promise
       res.end(
         createSse([responseCreated(id), assistantMessage(replies[turn]), responseCompleted(id)])
       )
@@ -178,11 +180,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           releases.get(turn)()
           releases.delete(turn)
         }
-        await waitResult(0)
         const join = await socket
           .timeout(uiTimeoutMs)
           .emitWithAck('task:join', { task_id: first.taskId })
         assert.ok(join && !join.error, 'Platform observer could not subscribe to the device task')
+        observerJoined.resolve()
+        await waitResult(0)
         const owner = await requestJson(cloud.backendUrl, cloud.authToken, '/api/users/me')
         await control.command('openWeworkScheme', 'body', {
           value: `wework://platform-tasks/${encodeURIComponent(`${cloud.backendUrl}/api`)}/${owner.id}/${first.taskId}`,
@@ -237,6 +240,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         assert.deepEqual(completedIds(), expectedIds)
         await captureScreenshot(control, 'platform-task-continuation.png', pane)
       } finally {
+        observerJoined.resolve()
         for (const release of releases.values()) release()
         socket.disconnect()
       }
