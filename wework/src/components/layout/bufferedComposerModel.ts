@@ -208,7 +208,8 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
     if (clearOnSubmit && submittedDraft.trim()) {
       draftRef.current = ''
       cancelPendingFlush()
-      setDraftState({ scopeKey, sourceValue: '', draft: '' })
+      // Keep the local draft tied to the owner's value until it acknowledges the edit.
+      setDraftState({ ...draftState, draft: '' })
       setComposerValue('', 0)
       // The parent may already hold an empty value from before the local edit.
       publishDraft('', true)
@@ -220,7 +221,7 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
       if (draftRef.current) return
       draftRef.current = submittedDraft
       cancelPendingFlush()
-      setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
+      setDraftState({ ...draftState, draft: submittedDraft })
       setComposerValue(submittedDraft, submittedDraft.length)
       publishDraft(submittedDraft)
     }

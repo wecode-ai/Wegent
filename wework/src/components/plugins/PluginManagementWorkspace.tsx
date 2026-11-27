@@ -26,14 +26,8 @@ import type { ReactNode } from 'react'
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
-import {
-  isCloudManagedInstalledPlugin,
-  isWegentManagedStorePlugin,
-  linkedCloudPluginId,
-} from './installedPluginMerge'
+import { isWegentManagedStorePlugin, linkedCloudPluginId } from './installedPluginMerge'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
-import { PluginDetailView } from './PluginDetailView'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { InstalledPluginRow } from './PluginManagementRows'
@@ -50,7 +44,6 @@ import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
   marketplaceItemOwnsLocalCreatedPackage,
-  resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 
 function tryPluginInChat(plugin: InstalledPlugin) {
@@ -135,7 +128,6 @@ function PluginManagementWorkspaceContent({
     marketplaceItems,
     publishedMarketplaceItems,
     isLoadingPlugins,
-    selectedPluginId,
     pendingUninstall,
     uninstallingPluginIds,
     pluginOperationNotice,
@@ -150,12 +142,10 @@ function PluginManagementWorkspaceContent({
     workspaceSource.getSnapshot
   )
   const {
-    setSelectedPluginId,
     setPendingUninstall,
     setPluginOperationNotice,
     setActiveTab,
     toggleInstalledPlugin,
-    togglePluginComponent,
     requestUninstallPlugin,
     confirmUninstallPlugin,
     copyMarketplacePlugin,
@@ -195,14 +185,6 @@ function PluginManagementWorkspaceContent({
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),
     [marketplaceItems]
   )
-  const selectedPlugin = useMemo(
-    () =>
-      selectedPluginId === null
-        ? null
-        : (installedPlugins.find(plugin => String(plugin.id) === String(selectedPluginId)) ?? null),
-    [installedPlugins, selectedPluginId]
-  )
-
   const createdPluginSlug = (plugin: InstalledPluginItem) =>
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
@@ -224,41 +206,15 @@ function PluginManagementWorkspaceContent({
       (typeof plugin.raw.spec.pluginId === 'number'
         ? marketplaceById.get(String(plugin.raw.spec.pluginId))
         : undefined) ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
-    if (marketplaceItem && !marketplaceItemOwnsLocalCreatedPackage(marketplaceItem)) {
-      navigateTo(
-        buildPluginDetailRoute({
-          pluginName: marketplaceItem.name || plugin.raw.spec.source.pluginKey,
-          marketplaceName:
-            marketplaceItemMarketplaceId(marketplaceItem) ||
-            installedPluginMarketplaceId(plugin.raw) ||
-            INTERNAL_DEVICE_MARKETPLACE_ID,
-        })
-      )
-      return
-    }
-    const packableCreated =
-      findPackableCreatedPlugin(installedPlugins, [
-        plugin.raw.spec.source.pluginKey,
-        createdPluginSlug(plugin),
-        plugin.name,
-      ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
-    if (packableCreated?.origin === 'created') {
-      setSelectedPluginId(packableCreated.id)
-      return
-    }
-    if (marketplaceItem || isCloudManagedInstalledPlugin(plugin.raw)) {
-      navigateTo(
-        buildPluginDetailRoute({
-          pluginName: marketplaceItem?.name || plugin.raw.spec.source.pluginKey,
-          marketplaceName:
-            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
-            installedPluginMarketplaceId(plugin.raw) ||
-            INTERNAL_DEVICE_MARKETPLACE_ID,
-        })
-      )
-      return
-    }
-    setSelectedPluginId(plugin.id)
+    navigateTo(
+      buildPluginDetailRoute({
+        pluginName: marketplaceItem?.name || plugin.raw.spec.source.pluginKey,
+        marketplaceName:
+          (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+          installedPluginMarketplaceId(plugin.raw) ||
+          INTERNAL_DEVICE_MARKETPLACE_ID,
+      })
+    )
   }
 
   const openOwnerPublicationDetail = (plugin: InstalledPluginItem) => {
@@ -297,94 +253,6 @@ function PluginManagementWorkspaceContent({
       onDismiss={() => setPluginOperationNotice(null)}
     />
   ) : null
-
-  if (selectedPlugin) {
-    const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
-    const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
-    const associatedListing =
-      ownedMarketplace ?? findMarketplaceItemForInstalled(selectedPlugin, marketplaceItems) ?? null
-    const packableCreated =
-      associatedListing && !marketplaceItemOwnsLocalCreatedPackage(associatedListing)
-        ? null
-        : (findPackableCreatedPlugin(installedPlugins, [
-            selectedPlugin.raw.spec.source.pluginKey,
-            createdPluginSlug(selectedPlugin),
-            selectedPlugin.name,
-            ownedMarketplace?.name,
-            ownedMarketplace?.displayName,
-          ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null))
-    const ownerActions = resolvePluginOwnerActions({
-      isLocalCreated: Boolean(packableCreated),
-      ownedListing: associatedListing,
-    })
-    const continueEditingKey = resolveContinueEditingPluginKey({
-      packableCreated,
-      currentPlugin: selectedPlugin,
-      ownedListingName: ownedMarketplace?.name,
-      listing: associatedListing,
-    })
-    const submissionStatus =
-      typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
-        ? (selectedPlugin.raw.spec.sourcePayload.submissionStatus as
-            | 'uploading'
-            | 'scanning'
-            | 'pending'
-            | 'approved'
-            | 'rejected'
-            | 'cancelled')
-        : null
-    const submissionReviewNote =
-      typeof selectedPlugin.raw.spec.sourcePayload?.submissionReviewNote === 'string'
-        ? selectedPlugin.raw.spec.sourcePayload.submissionReviewNote
-        : null
-    const openOwnerShare = () => openOwnerPublicationDetail(selectedPlugin)
-    return (
-      <>
-        <PluginDetailView
-          plugin={selectedPlugin}
-          backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
-          usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
-          primaryActionLabel={
-            isUninstalling
-              ? t('workbench.plugins_uninstalling', '正在卸载')
-              : t('workbench.plugins_try_now', '立即试用')
-          }
-          primaryActionDisabled={isUninstalling}
-          showUninstall={!isUninstalling}
-          accessRole={associatedListing?.accessRole}
-          pluginVisibility={associatedListing?.visibility ?? null}
-          shareRecipient={associatedListing?.accessRole === 'recipient'}
-          shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
-          shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
-          manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
-          onManageAccess={ownerActions.canManageAccess ? openOwnerShare : undefined}
-          submissionStatus={submissionStatus}
-          submissionReviewNote={submissionReviewNote}
-          onBack={() => setSelectedPluginId(null)}
-          editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
-          onEditAction={
-            continueEditingKey
-              ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
-              : undefined
-          }
-          onToggle={() => tryPluginInChat(selectedPlugin.raw)}
-          onComponentToggle={(componentKey, enabled) =>
-            togglePluginComponent(selectedPlugin.id, componentKey, enabled)
-          }
-          onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
-        />
-        {pluginOperationNoticeOverlay}
-        {pendingUninstall && (
-          <UninstallPluginDialog
-            pluginName={pendingUninstall.name}
-            scope={pendingUninstall.scope}
-            onCancel={() => setPendingUninstall(null)}
-            onConfirm={confirmUninstallPlugin}
-          />
-        )}
-      </>
-    )
-  }
 
   return (
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
@@ -576,7 +444,10 @@ function PluginManagementWorkspaceContent({
                         shareLabel={t('workbench.plugins_manage_access', '管理权限')}
                         onCopy={
                           marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
-                            ? () => void copyMarketplacePlugin(marketplaceItem)
+                            ? async () => {
+                                const copied = await copyMarketplacePlugin(marketplaceItem)
+                                if (copied) openInstalledPluginDetail(copied)
+                              }
                             : undefined
                         }
                         onToggle={() => toggleInstalledPlugin(plugin.id)}
