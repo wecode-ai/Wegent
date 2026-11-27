@@ -3,11 +3,6 @@ use crate::local::app_ipc::AppIpcError;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-mod delivery;
-pub(crate) use delivery::{
-    prepare_delegated_reply, verify_delegated_reply, PreparedDelegatedReply,
-};
-
 pub(crate) async fn reply(
     source: &Value,
     message: &Value,

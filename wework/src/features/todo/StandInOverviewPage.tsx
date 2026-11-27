@@ -8,7 +8,6 @@ import {
 } from '@/api/personalStandIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
-import { dingTalkInboxScope } from '@/features/collaboration-exp/stand-in/dingtalkDelegation'
 import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -39,7 +38,6 @@ import { StandInDetailsPopover } from './StandInDetailsPopover'
 import type { activeStandInBranchRows } from './standInDelegatedBranches'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
-import { StandInImConnections } from './StandInImConnections'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInOnboarding } from './StandInOnboarding'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
@@ -166,7 +164,6 @@ export function StandInOverviewPage({
   } = overview
   const [review, setReview] = useState<{ proposalId: string } | 'status' | 'work' | null>(null)
   const [guideOpen, setGuideOpen] = useState(false)
-  const [imDialogOpen, setImDialogOpen] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
     requestLeave: action => (panelRef.current ? panelRef.current.requestLeave(action) : action()),
@@ -200,13 +197,7 @@ export function StandInOverviewPage({
     deviceId ?? '',
     active && !!deviceId
   )
-  const inbox = useStandInInbox(
-    api,
-    props.userId,
-    deviceId,
-    active,
-    dingTalkInboxScope(saved?.primary?.delegation)
-  )
+  const inbox = useStandInInbox(api, props.userId, deviceId, active)
 
   const observation = useMemo(
     () => ({
@@ -260,7 +251,6 @@ export function StandInOverviewPage({
   const { roleId, profile, calendarRequest, exampleDraft } = view
   const conversationRole = shared ? undefined : team ? teamLead : roleId
   const conversationScope = sharedScope ?? teamScope
-
   const definition = account?.definitions.find(entry => entry.roleId === (roleId ?? '@primary'))
   const boundDevice = definition?.bot.spec?.execution_policy?.environment_id
   const conversationDevice =
@@ -472,33 +462,6 @@ export function StandInOverviewPage({
     processingFailure.message ??
     (processing.status?.awaitingUser ? t('standIn.processing.needs_input') : null)
   const shortcuts: StandInSettingsShortcut[] = []
-  if (active && deviceId && (profile === 'primary' || profile === 'role')) {
-    shortcuts.push({
-      id: 'im',
-      testId: 'stand-in-im-channels-toggle',
-      containerTestId: 'stand-in-im-channels',
-      label: t('standIn.im.title'),
-      description: t('standIn.im.settings_help'),
-      content: (
-        <StandInImConnections
-          services={props.services}
-          devices={props.devices}
-          deviceId={deviceId}
-          roleId={profile === 'role' ? roleId : undefined}
-          name={
-            profile === 'role' && role
-              ? standInRoleName(
-                  role,
-                  Math.max(0, roles.indexOf(role)),
-                  t('standIn.personal.unnamed_assistant')
-                )
-              : t('standIn.personal.default_role')
-          }
-          onOpenChange={setImDialogOpen}
-        />
-      ),
-    })
-  }
   if (api && saved) {
     shortcuts.push({
       id: 'memory',
@@ -890,26 +853,21 @@ export function StandInOverviewPage({
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{value.source.name}</p>
-                  <p
-                    role={value.error.code === 'dingtalk_delegation_gap' ? 'status' : 'alert'}
-                    className="mt-1 text-sm text-text-secondary"
-                  >
+                  <p role="alert" className="mt-1 text-sm text-text-secondary">
                     {getStandInErrorMessage(value.error)}
                   </p>
                 </div>
                 <ControlButton
                   variant="unstyled"
                   type="button"
-                  data-testid={`stand-in-source-${value.error.code === 'dingtalk_delegation_gap' ? 'acknowledge' : 'retry'}-${value.source.id}`}
+                  data-testid={`stand-in-source-retry-${value.source.id}`}
                   className="min-h-11 shrink-0 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
                   aria-busy={
                     sameOwner && view.retryingSources.has(standInOverviewSourceKey(value.source))
                   }
                   onClick={() => void overview.retrySource(value.source)}
                 >
-                  {value.error.code === 'dingtalk_delegation_gap'
-                    ? t('standIn.dingtalk_delegation.dismiss_gap')
-                    : t('standIn.reload')}
+                  {t('standIn.reload')}
                 </ControlButton>
               </div>
             ))}
@@ -935,7 +893,6 @@ export function StandInOverviewPage({
               }}
             >
               <DialogSurface
-                suspended={imDialogOpen}
                 onClose={closeProfile}
                 render={
                   <aside

@@ -224,10 +224,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
       assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
       await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
-      await control.command('waitFor', selector('stand-in-im-channels'), {
-        text: '从聊天工具联系助理',
-        visible: true,
-      })
+      assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-execution-toggle"]')

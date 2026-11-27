@@ -93,9 +93,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 配置助理运行环境                | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 运行环境                        | 默认助理在运行环境页选择执行设备，选择后立即生效，点击运行环境行可配置模型、思考档位和工作目录。见[助理档案逐项操作](./personal-stand-in.md#role-execution-device)                                                                                                                                                          |
 | 迁移助理 | 左侧栏 → 我的助理 → 待处理的旧档案或旧设备 | 有可用目标设备时显示迁移流程。目标助理准备成功后开放对话，并收起该流程。见[执行设备与旧档案恢复](./personal-stand-in.md#instance-binding-and-stopping)。 |
 | 下载助理定义备份 | 左侧栏 → 我的助理 → 默认助理 → 助理详情 → 管理助理 → 下载助理定义备份 | 登录云端后导出此实例发现的冲突定义。见[执行设备与旧档案恢复](./personal-stand-in.md#instance-binding-and-stopping)。 |
-| 连接 IM / 改绑助理 | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 从聊天工具联系助理 | 在聊天渠道页直接选择钉钉、Telegram、Discord 或微博。需登录云端账号，点击连接立即保存。见[连接 IM 对话](./personal-stand-in.md#im-conversations)。 |
+| 从 IM 联系助理 | 已登记的机器人私聊 → 发送 `/standin` | 使用账号的默认助理。见[连接 IM 对话](./personal-stand-in.md#im-conversations)。 |
 | 连接钉钉 | 我的助理 → 选择助理 → 助理详情 → 管理助理 → 连接 → 钉钉 | 首次引导也使用同一连接界面。选择全部消息或筛选来源后保存，见[连接钉钉](./personal-stand-in.md#dingtalk-delegation)。 |
-| 核查钉钉投递或接管 | 我的助理 → 默认助理 → 助理详情 → 近期活动 → 对应钉钉工作 | 结果未知且有渠道任务时可核查，仍需处理的工作可点击「我来处理」。见[钉钉代管](./personal-stand-in.md#dingtalk-delegation)。 |
 | 接收钉钉群聊的每条新消息 | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 添加接收范围 → 群聊 | 选好群聊范围后，在触发条件中选「每条新消息」，再保存。见[群消息接收范围](./personal-stand-in.md#dingtalk-group-message-scope)。 |
 | 排除钉钉群聊或联系人 | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 添加接收范围 → 群聊或私聊 | 在范围规则中选择「排除所选」，勾选要排除的来源，再保存。见[排除钉钉来源](./personal-stand-in.md#dingtalk-blacklist)。 |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                                                                    | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                                                                                                          |

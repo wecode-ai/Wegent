@@ -77,7 +77,18 @@ fn confirmed_all_messages_persists_both_scopes_and_keeps_mentions_separate() {
         "enabled":true, "prompt":"", "preferences":"", "dingTalkConnectionMode":"confirmed",
         "connections":[&groups, &direct]
     });
-    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let mut retired = direct.clone();
+    retired["id"] = json!("former-peer");
+    retired.as_object_mut().unwrap().remove("scope");
+    retired["delegated"] = json!(true);
+    settings["primary"]["delegation"] = json!({"authorized":true,"paused":false,"version":1});
+    settings["primary"]["connections"]
+        .as_array_mut()
+        .unwrap()
+        .push(retired);
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    assert_eq!(saved["primary"]["connections"].as_array().unwrap().len(), 2);
+    assert!(saved["primary"].get("delegation").is_none());
     drop(store);
     let store = LocalTaskStore::open(path).unwrap();
     let saved = store.personal_stand_in(7, "mac").unwrap();

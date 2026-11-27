@@ -106,7 +106,6 @@ export function StandInPrimaryProfile({
     const separatePrompt = usesSeparatePrompt(primary)
     return {
       ...primary,
-      delegation: primary.delegation,
       dingTalkConnectionMode: primary.dingTalkConnectionMode,
       collaboration: primary.collaboration ?? defaultCollaboration,
       calendar: primary.calendar,
