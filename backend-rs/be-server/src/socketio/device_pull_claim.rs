@@ -120,6 +120,13 @@ impl ClaimPreparation {
         }
     }
 
+    fn assigned_title(&self) -> Option<&str> {
+        self.intent["origin_context"]["workflow_task_title"]
+            .as_str()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+    }
+
     fn binding_task_id(&self) -> String {
         if self.intent["runtime_selection"]["executor_kind"] == "collaboration_group_dispatch" {
             format!("{}-manager-initial", self.runtime_task_id)
@@ -361,10 +368,10 @@ async fn bind_issue_task(
             });
         }
         tx.execute(
-            "UPDATE loop_items SET task_title=?, metadata=JSON_MERGE_PATCH(
+            "UPDATE loop_items SET task_title=COALESCE(?, NULLIF(task_title,''), ?), metadata=JSON_MERGE_PATCH(
                     IF(JSON_TYPE(metadata)='OBJECT',metadata,JSON_OBJECT()), CAST(? AS JSON))
                     WHERE id=?",
-            (issue.title.as_str(), metadata.to_string(), id),
+            (prepared.assigned_title(), issue.title.as_str(), metadata.to_string(), id),
         )
         .await?;
         return Ok(());
@@ -375,7 +382,7 @@ async fn bind_issue_task(
         json!({
             "cloud_project_id": issue.cloud_project_id, "loop_item_id": issue.id,
             "task_user_id": command.owner_user_id, "device_id": command.runtime_device_id,
-            "task_id": task_id, "task_title": issue.title,
+            "task_id": task_id, "task_title": prepared.assigned_title().unwrap_or(&issue.title),
             "linked_by_user_id": command.owner_user_id,
             "linked_at": chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
             "metadata": metadata
@@ -811,7 +818,10 @@ mod tests {
     #[test]
     fn member_binding_retains_the_delivery_source_assignment() {
         let intent = json!({"origin_context":{"dispatch_role":"member","dispatch_id":"dispatch",
-            "coordination_round_id":"round","assignment_id":"assignment"}});
+            "coordination_round_id":"round","assignment_id":"assignment",
+            "workflow_task_title":"Collect runtime evidence"}});
+        let prepared = claim_preparation(17, intent.clone(), None);
+        assert_eq!(prepared.assigned_title(), Some("Collect runtime evidence"));
         assert_eq!(
             binding_metadata(&intent, "runner"),
             json!({"workspace_device_id":"runner",
