@@ -392,6 +392,7 @@ async fn resolve_team_bots_reads_one_cached_bot_per_member() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -495,6 +496,7 @@ async fn resolve_team_group_branch_returns_none_when_the_group_is_absent() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };

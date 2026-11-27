@@ -186,7 +186,10 @@ pub async fn load_task_detail(
         let namespace = team_ref.namespace();
         let kinds = KindStore {
             mysql: &state.mysql,
-            redis: state.cache.kinds_cache(),
+            redis: state
+                .cache
+                .kinds_cache()
+                .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
         };
         // `resolve_task_ref_team`: an explicit `teamRef.user_id` (even 0)
         // queries the `kinds` table directly; a null/missing one runs
@@ -200,6 +203,7 @@ pub async fn load_task_detail(
         let team_access = crate::task_skills::kinds::KindCacheStore {
             mysql: &state.mysql,
             redis: state.cache.kinds_cache(),
+            use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
             erp: Some(state.erp.as_ref()),
             resolvers: Some(&state.entity_resolvers),
         };
@@ -231,7 +235,10 @@ pub async fn load_task_detail(
     // teamRef, whose `user_id` is only the lookup owner.
     let kinds = KindStore {
         mysql: &state.mysql,
-        redis: state.cache.kinds_cache(),
+        redis: state
+            .cache
+            .kinds_cache()
+            .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
     };
     let team_record = match resolved_team_id {
         Some(team_id) => kinds.get_by_id("Team", team_id).await.map_err(kind_error)?,
@@ -450,6 +457,7 @@ mod tests {
             crate::task_skills::kinds::KindCacheStore {
                 mysql: &mysql,
                 redis: None,
+                use_kind_cache: false,
                 erp: None,
                 resolvers: None,
             };

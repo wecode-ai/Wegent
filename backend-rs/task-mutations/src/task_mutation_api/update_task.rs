@@ -334,6 +334,7 @@ async fn resolve_team_id(
         let cache = wegent_capabilities::task_skills::kinds::KindCacheStore {
             mysql: &state.views.mysql,
             redis: state.views.redis.as_ref(),
+            use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
             erp: Some(state.views.erp.as_ref()),
             resolvers: Some(&state.views.entity_resolvers),
         };
@@ -349,7 +350,11 @@ async fn resolve_team_id(
         // with that owner instead of the viewer's cached reader.
         let kinds = wegent_capabilities::kind_store::KindStore {
             mysql: &state.views.mysql,
-            redis: state.views.redis.as_ref(),
+            redis: state
+                .views
+                .redis
+                .as_ref()
+                .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
         };
         kinds
             .get_team_by_owner(

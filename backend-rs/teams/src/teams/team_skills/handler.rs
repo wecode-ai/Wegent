@@ -114,7 +114,10 @@ async fn team_skills(
 
     let kinds: KindStore<'_, brz_mysql::MysqlService, brz_redis::RedisService> = KindStore {
         mysql: &state.mysql,
-        redis: state.redis.as_ref(),
+        redis: state
+            .redis
+            .as_ref()
+            .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
     };
 
     // `team_share_service.get_resource_for_use` -> `_get_resource`: a direct
@@ -252,6 +255,7 @@ async fn check_team_access(
         KindCacheStore {
             mysql: &state.mysql,
             redis: state.redis.as_ref(),
+            use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
             erp: Some(state.erp.as_ref()),
             resolvers: Some(&state.entity_resolvers),
         };

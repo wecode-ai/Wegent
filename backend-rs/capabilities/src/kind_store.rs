@@ -53,6 +53,15 @@ pub struct KindRecord {
     pub updated_at: chrono::NaiveDateTime,
 }
 
+/// The base Python reader uses SQL. Its optional service extension owns the
+/// Redis index and row invalidations for Kind writes in a hybrid deployment.
+pub fn deployment_kind_cache_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("SERVICE_EXTENSION").is_ok_and(|module| !module.trim().is_empty())
+    })
+}
+
 /// Kinds access through MySQL plus the Redis read-through cache.
 pub struct KindStore<'a, M: Mysql, R: Redis> {
     pub mysql: &'a M,

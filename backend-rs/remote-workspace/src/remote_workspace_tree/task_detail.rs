@@ -376,6 +376,7 @@ where
                 crate::task_skills::kinds::KindCacheStore {
                     mysql,
                     redis: kinds.redis,
+                    use_kind_cache: kinds.redis.is_some(),
                     erp: Some(erp.erp),
                     resolvers: Some(resolvers),
                 }

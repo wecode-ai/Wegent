@@ -114,7 +114,10 @@ async fn stream_file(
 ) -> Result<HttpResponse<Binary>, ApiError> {
     let kinds = KindStore {
         mysql: &deps.mysql,
-        redis: deps.kinds_redis.as_ref(),
+        redis: deps
+            .kinds_redis
+            .as_ref()
+            .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
     };
     let erp = wegent_access::group_membership::ErpContext {
         erp: deps.erp.as_ref(),

@@ -53,6 +53,7 @@ async fn null_team_ref_runs_the_source_step_order() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -86,6 +87,7 @@ async fn anonymous_viewer_resolves_only_the_public_team() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -196,6 +198,7 @@ async fn group_is_public_reads_the_namespace_when_the_cache_misses() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -219,6 +222,7 @@ async fn group_member_role_reads_the_namespace_when_the_cache_misses() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -378,6 +382,7 @@ async fn group_team_cache_miss_reads_through_the_request_handle() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -410,6 +415,7 @@ async fn team_cache_miss_reads_through_the_request_handle() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };
@@ -474,6 +480,7 @@ async fn team_cache_hit_issues_no_sql() {
     let store: KindCacheStore<'_, _, HitRedis> = KindCacheStore {
         mysql: &mysql,
         redis: Some(&redis),
+        use_kind_cache: true,
         erp: None,
         resolvers: None,
     };
@@ -487,6 +494,20 @@ async fn team_cache_hit_issues_no_sql() {
     assert_eq!(team.kinds_name, "wegent-chat");
     assert!(sql.calls().is_empty(), "{:?}", sql.calls());
     assert!(mysql.queries().is_empty(), "{:?}", mysql.queries());
+
+    // Without a writer-side extension the same Redis document can outlive
+    // a deleted Kind. The public reader must observe the SQL deletion.
+    let public = KindCacheStore {
+        use_kind_cache: false,
+        ..store
+    };
+    let retired = public
+        .cached_kinds()
+        .get_personal_team_on(&mut sql, 2630, "default", "wegent-chat")
+        .await
+        .expect("SQL lookup succeeds");
+    assert!(retired.is_none());
+    assert_eq!(sql.calls().len(), 1);
 }
 
 /// The Bot lookup the create flow issues (the recorded `kinds.user_id = ?
@@ -499,6 +520,7 @@ async fn bot_cache_miss_reads_through_the_request_handle() {
     let store: KindCacheStore<'_, _> = KindCacheStore {
         mysql: &mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };

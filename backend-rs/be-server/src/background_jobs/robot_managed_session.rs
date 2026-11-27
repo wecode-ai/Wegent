@@ -65,6 +65,7 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &app.mysql,
         redis: app.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(directory),
         resolvers: Some(&resolvers),
     };

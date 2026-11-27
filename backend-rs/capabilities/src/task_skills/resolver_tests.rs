@@ -33,6 +33,7 @@ fn capture_store(
     KindCacheStore {
         mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     }

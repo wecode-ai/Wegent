@@ -499,6 +499,7 @@ async fn coordinate_member_skills_resolve_in_the_team_owner_and_group_scope() {
     let cache = crate::task_skills::kinds::KindCacheStore::<_, brz_redis::RedisService> {
         mysql: &fixture.mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };

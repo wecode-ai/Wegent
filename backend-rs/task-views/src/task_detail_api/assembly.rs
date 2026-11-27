@@ -160,13 +160,17 @@ pub async fn build_task_detail(
     let mysql = &state.mysql;
     let kinds = KindStore {
         mysql,
-        redis: state.redis.as_ref(),
+        redis: state
+            .redis
+            .as_ref()
+            .filter(|_| wegent_capabilities::kind_store::deployment_kind_cache_enabled()),
     };
     // `resolve_task_ref_team`'s `kindReader.get_by_name_and_namespace` branch
     // resolves the Team through the same clients the cached reader uses.
     let team_access = KindCacheStore {
         mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(state.erp.as_ref()),
         resolvers: Some(&state.entity_resolvers),
     };

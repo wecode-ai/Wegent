@@ -470,6 +470,7 @@ async fn is_deep_research_protocol(
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(state.erp.as_ref()),
         resolvers: Some(&state.entity_resolvers),
     };
@@ -1306,6 +1307,7 @@ pub async fn handle(
             let cache = crate::task_skills::kinds::KindCacheStore {
                 mysql: &state.mysql,
                 redis: state.redis.as_ref(),
+                use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
                 erp: Some(state.erp.as_ref()),
                 resolvers: Some(&state.entity_resolvers),
             };
@@ -2396,6 +2398,7 @@ mod tests {
             crate::task_skills::kinds::KindCacheStore {
                 mysql: &mysql,
                 redis: None,
+                use_kind_cache: false,
                 erp: None,
                 resolvers: None,
             };
@@ -2424,6 +2427,7 @@ mod tests {
             crate::task_skills::kinds::KindCacheStore {
                 mysql: &mysql,
                 redis: None,
+                use_kind_cache: false,
                 erp: None,
                 resolvers: None,
             };

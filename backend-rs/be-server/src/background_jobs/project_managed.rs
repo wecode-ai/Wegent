@@ -263,6 +263,7 @@ pub(crate) async fn request_for_task(
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(directory),
         resolvers: Some(&resolvers),
     };

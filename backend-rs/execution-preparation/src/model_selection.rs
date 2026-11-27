@@ -393,6 +393,7 @@ mod tests {
         let store: KindCacheStore<'_, _> = KindCacheStore {
             mysql: &mysql,
             redis: None,
+            use_kind_cache: false,
             erp: None,
             resolvers: None,
         };
@@ -419,6 +420,7 @@ mod tests {
         let store: KindCacheStore<'_, _> = KindCacheStore {
             mysql: &mysql,
             redis: None,
+            use_kind_cache: false,
             erp: None,
             resolvers: None,
         };
@@ -443,6 +445,7 @@ mod tests {
         let store: KindCacheStore<'_, _> = KindCacheStore {
             mysql: &mysql,
             redis: None,
+            use_kind_cache: false,
             erp: None,
             resolvers: None,
         };
@@ -474,6 +477,7 @@ mod tests {
         let store: KindCacheStore<'_, _> = KindCacheStore {
             mysql: &mysql,
             redis: None,
+            use_kind_cache: false,
             erp: None,
             resolvers: None,
         };
@@ -505,6 +509,7 @@ mod tests {
         let store: KindCacheStore<'_, _> = KindCacheStore {
             mysql: &mysql,
             redis: None,
+            use_kind_cache: false,
             erp: None,
             resolvers: None,
         };

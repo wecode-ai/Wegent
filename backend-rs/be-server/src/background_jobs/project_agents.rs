@@ -82,6 +82,7 @@ pub(crate) async fn readiness(
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(directory),
         resolvers: Some(&resolvers),
     };
@@ -259,6 +260,7 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(directory),
         resolvers: Some(&resolvers),
     };

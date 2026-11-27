@@ -104,6 +104,8 @@ static NOOP_ERP: crate::erp_provider::NoopErpProvider = crate::erp_provider::Noo
 pub struct KindCacheStore<'a, M: Mysql, R: Redis = brz_redis::RedisService> {
     pub mysql: &'a M,
     pub redis: Option<&'a R>,
+    /// Whether Kind writes in this deployment invalidate the shared row and name cache.
+    pub use_kind_cache: bool,
     /// ERP employee directory for the native group-role pass of
     /// `TeamShareService.check_permission`.
     pub erp: Option<&'a dyn crate::erp_provider::ErpProvider<R>>,
@@ -339,7 +341,7 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
     fn cached_kinds(&self) -> KindStore<'_, M, R> {
         KindStore {
             mysql: self.mysql,
-            redis: self.redis,
+            redis: self.redis.filter(|_| self.use_kind_cache),
         }
     }
 

@@ -66,6 +66,7 @@ pub(crate) async fn authorize_pipeline(
         let cache = crate::task_skills::kinds::KindCacheStore {
             mysql: &state.mysql,
             redis: state.redis.as_ref(),
+            use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
             erp: Some(state.erp.as_ref()),
             resolvers: Some(&state.entity_resolvers),
         };

@@ -819,6 +819,7 @@ pub async fn resolve_task_ref_team<M: Mysql>(
     let cache = KindCacheStore::<M, brz_redis::RedisService> {
         mysql,
         redis: None,
+        use_kind_cache: false,
         erp: None,
         resolvers: None,
     };

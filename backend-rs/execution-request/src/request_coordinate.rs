@@ -72,6 +72,7 @@ pub(super) async fn members(
     let cache = KindCacheStore {
         mysql: state.mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(state.erp),
         resolvers: Some(state.entity_resolvers),
     };

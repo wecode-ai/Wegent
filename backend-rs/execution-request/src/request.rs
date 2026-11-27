@@ -753,6 +753,7 @@ async fn build_request_with_runtime(
     let kinds_cache = wegent_capabilities::task_skills::kinds::KindCacheStore {
         mysql: state.mysql,
         redis: state.redis.as_ref(),
+        use_kind_cache: wegent_capabilities::kind_store::deployment_kind_cache_enabled(),
         erp: Some(state.erp),
         resolvers: Some(state.entity_resolvers),
     };
