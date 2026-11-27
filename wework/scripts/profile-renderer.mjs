@@ -251,7 +251,7 @@ async function observeText(client, target, text, timeoutMs) {
   assert.equal(result.result?.value, true, `Timed out waiting for the assistant text ${text}`)
 }
 
-async function emitStream(response, id, pieces = streamPieces, onPiece) {
+async function emitStream(response, id, { pieces = streamPieces, beforeCompletion } = {}) {
   const { itemId, start } = streamingEvents(id)
   response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
   let text = prefix
@@ -266,8 +266,8 @@ async function emitStream(response, id, pieces = streamPieces, onPiece) {
           : ' streamed words'
     response.write(sse(textDeltaEvents(itemId, delta, text.length)))
     text += delta
-    onPiece?.(i)
   }
+  if (beforeCompletion) await beforeCompletion
   response.end(sse(streamingEvents(id, text).finish))
 }
 
@@ -548,6 +548,7 @@ export function createDesktopScenario({
   let readSingleTaskRendererMetrics
   let singleTaskStartMetrics
   const singleModelRequest = Promise.withResolvers()
+  const singleStreamCompletion = Promise.withResolvers()
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
   const finishConcurrent = new Map()
@@ -679,11 +680,11 @@ export function createDesktopScenario({
               response.end(sse([reply, responseCompleted(id, [reasoning, reply.item])]))
             }
           } else if (!response.destroyed)
-            await emitStream(
-              response,
-              `wework-benchmark-${index}`,
-              batches ? concurrentStreamPieces - measuredToolPieces.at(-1) : concurrentStreamPieces
-            )
+            await emitStream(response, `wework-benchmark-${index}`, {
+              pieces: batches
+                ? concurrentStreamPieces - measuredToolPieces.at(-1)
+                : concurrentStreamPieces,
+            })
         } finally {
           if (index === concurrentClockTask) {
             for (const milestone of streamMilestones.values()) milestone.resolve(false)
@@ -715,7 +716,9 @@ export function createDesktopScenario({
       singleModelRequest.resolve()
       singleTaskStartMetrics = await readSingleTaskRendererMetrics?.()
       start = await cpuSnapshot(pids)
-      await emitStream(response, 'wework-benchmark-response')
+      await emitStream(response, 'wework-benchmark-response', {
+        beforeCompletion: singleStreamCompletion.promise,
+      })
       finished = true
       return true
     },
@@ -954,11 +957,14 @@ export function createDesktopScenario({
             await observeText(client, target, prefix, uiTimeoutMs)
             assert.ok(!finished, 'The first response text must appear while streaming')
             await observeText(client, target, suffix, textTimeoutMs)
+            // Keep terminal processing outside the streaming CPU window. The
+            // turn-update probe stays active through the subsequent settlement.
             const end = await cpuSnapshot(pids)
             controller.abort()
             const endMetrics = await readSingleTaskRendererMetrics?.()
             return { end, endMetrics }
           } finally {
+            singleStreamCompletion.resolve()
             controller.abort()
           }
         }
