@@ -535,12 +535,9 @@ export function createDesktopScenario({
         mail,
         model
       )
-      const openMailboxSettings = async () => {
+      const openMailboxSettings = async (connections = 'stand-in-primary-connections-open') => {
         await openStandInSettings(control)
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="stand-in-primary-connections-open"]'
-        )
+        await control.command('clickWhenEnabled', `[data-testid="${connections}"]`)
         await openConnectionTypePicker(control)
         await control.command(
           'clickWhenEnabled',
@@ -603,6 +600,27 @@ export function createDesktopScenario({
       await control.command('waitFor', manageAccounts, { visible: false })
       assert.deepEqual(await backend(control, 'emailAccounts'), [])
       await captureScreenshot(control, '13-mailbox-account-removed.png')
+
+      const otherRole = (await runtimeSettings()).roles.find(item => item.id === role.id)
+      assert.ok(
+        otherRole?.connections?.some(row => row.profile === accountId),
+        'Deleting local credentials must not silently rewrite another assistant’s saved scopes'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-cancel"]')
+      await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${role.id}"]`)
+      await openMailboxSettings('stand-in-connections-open')
+      await control.command('waitFor', savedScope, { text: '邮箱账号不可用' })
+      await control.command('clickWhenEnabled', savedScope)
+      await control.command('waitFor', '[data-testid="stand-in-email-connections"]', {
+        text: '重新添加邮箱账号后，请为助理选择新的接收范围',
+      })
+      await control.command('waitFor', '[data-testid="stand-in-processing-settings-toggle"]', {
+        visible: false,
+      })
+      await control.command('waitFor', `[data-testid="stand-in-email-remove-${accountId}"]`, {
+        enabled: true,
+      })
+      await captureScreenshot(control, '14-unavailable-mailbox-scope.png')
     },
     async cleanup() {
       await mail?.stop()

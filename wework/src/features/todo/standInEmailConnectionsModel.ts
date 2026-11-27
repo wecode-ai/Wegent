@@ -68,14 +68,17 @@ export function createEmailConnectionsModel(initial: EmailInput) {
   let reportedDirty: boolean | undefined
   let dirtyCallback: EmailInput['onDirtyChange']
   const dirty = () => state.adding && JSON.stringify(state.form) !== JSON.stringify(state.baseline)
-  const read = () => ({
-    ...state,
-    accounts: input.local ? (accounts.getSnapshot().data ?? []) : [],
-    dirty: dirty(),
-    error:
-      state.error ??
-      (input.local && accounts.getSnapshot().status === 'error' ? 'email_unavailable' : null),
-  })
+  const read = () => {
+    const catalog = accounts.getSnapshot()
+    return {
+      ...state,
+      accounts: input.local ? (catalog.data ?? []) : [],
+      accountsReady: input.local && catalog.status === 'ready',
+      dirty: dirty(),
+      error:
+        state.error ?? (input.local && catalog.status === 'error' ? 'email_unavailable' : null),
+    }
+  }
   let snapshot = read()
   function releaseDirty() {
     if (dirtyCallback && dirtyOwners.get(dirtyCallback) === owner) {

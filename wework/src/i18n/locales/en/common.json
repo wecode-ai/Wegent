@@ -6736,6 +6736,8 @@
       "title": "Email",
       "help": "Connect your inbox to process only mail received after enabling this connection. Before sending or replying, review the recipient, subject and complete body in the work conversation.",
       "local_device": "Configure mailbox accounts on this stand-in’s execution device.",
+      "scope_account_missing": "Mailbox account unavailable",
+      "scope_account_missing_help": "Receiving is paused for this scope. Add the mailbox account again and choose a new receive scope for this stand-in.",
       "add_account": "Add mailbox account",
       "email": "Email address",
       "username": "Username (optional; defaults to email address)",

@@ -80,7 +80,8 @@ function StandInEmailConnectionsContent({
     [model, input]
   )
   const state = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
-  const { accounts, form, adding, busy, error, saved, removing, pendingNavigation } = state
+  const { accounts, accountsReady, form, adding, busy, error, saved, removing, pendingNavigation } =
+    state
   const setForm = (value: Parameters<typeof model.set<'form'>>[1]) => model.set('form', value)
   const setBaseline = (value: typeof initialForm) => model.set('baseline', value)
   const setAdding = (value: boolean | ((current: boolean) => boolean)) => model.set('adding', value)
@@ -96,6 +97,9 @@ function StandInEmailConnectionsContent({
   const [inboxId, setInboxId] = useState<string | null>(null)
   const setScopeTitle = useConnectionScopeTitle()
   const editedInbox = rows.find(row => row.profile === inboxId)
+  const accountIds = new Set(accounts.map(account => account.id))
+  const missingAccount = (profile: string) => accountsReady && !accountIds.has(profile)
+  const editedAccountMissing = editedInbox && missingAccount(editedInbox.profile)
   const availableInboxes = local
     ? accounts.filter(account => !rows.some(row => row.profile === account.id))
     : []
@@ -451,6 +455,11 @@ function StandInEmailConnectionsContent({
                   <ConnectionScopeRow
                     key={row.profile}
                     name={row.name}
+                    description={
+                      missingAccount(row.profile)
+                        ? t('standIn.email.scope_account_missing')
+                        : undefined
+                    }
                     testId={`stand-in-email-open-scope-${row.profile}`}
                     disabled={disabled || busy}
                     onClick={() => {
@@ -472,13 +481,18 @@ function StandInEmailConnectionsContent({
         trigger={
           !adding &&
           editedInbox && (
-            <p className="text-sm text-text-secondary">
-              {t('standIn.workspace.connection_mail_trigger')}
+            <p role="status" className="text-sm text-text-secondary">
+              {t(
+                editedAccountMissing
+                  ? 'standIn.email.scope_account_missing_help'
+                  : 'standIn.workspace.connection_mail_trigger'
+              )}
             </p>
           )
         }
         processing={
           !adding &&
+          !editedAccountMissing &&
           editedInbox && (
             <StandInProcessingSettings
               compact
