@@ -37,6 +37,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
       return [];
     const fallbackTimestamp = runtimeTurnFallbackTimestamp(turn);
     const items: RuntimeConversationItem[] = [];
+    let clientUserMessageId: string | undefined;
     for (const item of turn.items) {
       if (!item || typeof item.id !== "string" || !item.id.trim()) continue;
       const position =
@@ -47,6 +48,10 @@ export function runtimeTranscriptTurnsToConversationTurns(
         case "user_message": {
           const message = runtimeMessageToWorkbenchMessage(item.message);
           if (message.role === "user") {
+            clientUserMessageId ??= message.id;
+            // A guidance correction continues the conversation from the
+            // revised content without becoming a second user message.
+            if (message.suppressedUserMessage === true) break;
             items.push({
               id: item.id,
               position,
@@ -98,8 +103,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
         position:
           turn.position ??
           items.find((item) => item.position !== undefined)?.position,
-        clientUserMessageId: items.find((item) => item.type === "user_message")
-          ?.message.id,
+        clientUserMessageId,
         runtimeMessageIndex:
           typeof turn.messageIndex === "number" ? turn.messageIndex : undefined,
         itemMerge: turn.itemMerge,
@@ -207,6 +211,10 @@ export function runtimeMessageToWorkbenchMessage(
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),
     runtimeGuidance:
       message.runtimeGuidance ?? message.runtime_guidance ?? undefined,
+    suppressedUserMessage:
+      message.suppressedUserMessage ??
+      message.suppressed_user_message ??
+      undefined,
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: normalizeTurnFileChanges(
       message.fileChanges ?? message.file_changes,

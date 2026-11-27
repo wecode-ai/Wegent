@@ -171,6 +171,7 @@ async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
   )
   const database = new DatabaseSync(join(sqliteHome, 'state_5.sqlite'))
   try {
+    database.exec('PRAGMA busy_timeout = 10000')
     const result = database
       .prepare("UPDATE threads SET history_mode = 'legacy' WHERE id = ?")
       .run(threadId)

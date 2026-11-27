@@ -1,4 +1,5 @@
 export type {
+  ExitedProcessRecord,
   HostProcessDescriptor,
   HostProcessProvider,
   ProcessDegradation,

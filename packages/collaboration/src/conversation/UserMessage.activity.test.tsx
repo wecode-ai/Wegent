@@ -219,3 +219,36 @@ it('historical event receipts without source metadata do not expose continuation
   expect(container.textContent).toContain('已收到连接事件')
   expect(container.textContent).not.toContain(content)
 })
+
+it('opens the correction editor and enables submission for attachment-only guidance', () => {
+  const guidance = {
+    id: 'guidance-attachment',
+    role: 'user',
+    status: 'done',
+    content: '',
+    createdAt: '2026-11-25T09:00:00Z',
+    runtimeGuidance: true,
+    attachments: [
+      {
+        id: 11,
+        filename: 'guidance-notes.txt',
+        mime_type: 'text/plain',
+        file_extension: '.txt',
+        file_size: 12,
+        status: 'ready',
+        local_path: '/tmp/guidance-notes.txt',
+      },
+    ],
+  } satisfies WorkbenchMessage
+
+  render(
+    <UserMessage message={guidance} services={{ images }} editing onSubmitEdit={vi.fn()} />
+  )
+
+  expect(container.querySelector('[data-testid="edit-user-message-form"]')).not.toBeNull()
+  expect(
+    container
+      .querySelector('[data-testid="submit-edit-user-message-button"]')
+      ?.hasAttribute('disabled')
+  ).toBe(false)
+})

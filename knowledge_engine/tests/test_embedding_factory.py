@@ -49,6 +49,7 @@ def test_create_embedding_model_uses_runtime_model_name_when_model_id_missing(
         api_key=None,
         dimensions=None,
         encoding_format="float",
+        supports_batch_input=True,
     )
 
 
@@ -140,6 +141,109 @@ def test_custom_embedding_omits_unconfigured_output_format(
     ]
 
 
+@pytest.mark.parametrize("protocol", ["openai", "cohere", "jina", "custom"])
+def test_embedding_factory_preserves_scalar_requests(
+    mocker: MockerFixture, protocol: str
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {"data": [{"embedding": [1.0, 2.0]}]}
+    embedding = create_embedding_model_from_runtime_config(
+        RuntimeEmbeddingModelConfig(
+            model_name="synthetic",
+            resolved_config={
+                "protocol": protocol,
+                "base_url": "https://api.example.com/v1",
+                "custom_headers": {"X-Test": "synthetic"},
+            },
+        )
+    )
+
+    assert embedding.get_query_embedding("north") == [1.0, 2.0]
+    if protocol != "openai":
+        assert embedding.get_text_embedding_batch(["north", "south"]) == [
+            [1.0, 2.0],
+            [1.0, 2.0],
+        ]
+        assert [call.kwargs["json"]["input"] for call in post.call_args_list] == [
+            "north",
+            "north",
+            "south",
+        ]
+    else:
+        assert post.call_args.kwargs["json"]["input"] == "north"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_custom_embedding_batches_requests_and_aligns_returned_indices(
+    mocker: MockerFixture, use_async: bool
+) -> None:
+    vectors = {"north": [1.0, 2.0], "south": [3.0, 4.0], "west": [5.0, 6.0]}
+
+    def respond(*args, **kwargs):
+        inputs = kwargs["json"]["input"]
+        inputs = [inputs] if isinstance(inputs, str) else inputs
+        response = mocker.Mock()
+        response.json.return_value = {
+            "data": [
+                {"index": index, "embedding": vectors[text]}
+                for index, text in reversed(list(enumerate(inputs)))
+            ],
+        }
+        return response
+
+    post = mocker.patch(
+        "knowledge_engine.embedding.custom.requests.post", side_effect=respond
+    )
+    embedding = create_embedding_model_from_runtime_config(
+        RuntimeEmbeddingModelConfig(
+            model_name="synthetic",
+            resolved_config={
+                "protocol": "openai",
+                "base_url": "https://api.example.com/v1",
+                "custom_headers": {"X-Test": "synthetic"},
+                "dimensions": 2,
+            },
+        )
+    )
+    embedding.embed_batch_size = 2
+
+    result = (
+        await embedding.aget_text_embedding_batch(list(vectors))
+        if use_async
+        else embedding.get_text_embedding_batch(list(vectors))
+    )
+    assert result == list(vectors.values())
+    assert [call.kwargs["json"]["input"] for call in post.call_args_list] == [
+        ["north", "south"],
+        ["west"],
+    ]
+    assert all(
+        call.kwargs["headers"]["X-Test"] == "synthetic" for call in post.call_args_list
+    )
+
+
+@pytest.mark.parametrize("indices", [[0], [0, 0], [0, 2], [0, True]])
+def test_custom_embedding_rejects_unaligned_batch_without_retry(
+    mocker: MockerFixture, indices: list[int]
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {
+        "data": [{"index": index, "embedding": [1.0, 2.0]} for index in indices]
+    }
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="custom-embedding-model",
+        dimensions=2,
+        supports_batch_input=True,
+    )
+
+    with pytest.raises(EmbeddingResponseFormatError, match="embedding (count|index)"):
+        embedding.get_text_embedding_batch(["north", "south"])
+
+    assert post.call_count == 1
+
+
 def test_custom_embedding_decodes_base64_float_response(
     mocker: MockerFixture,
 ) -> None:
@@ -156,6 +260,56 @@ def test_custom_embedding_decodes_base64_float_response(
     result = embedding.get_text_embedding("release plan")
 
     assert result == pytest.approx([0.1, 0.2, 0.3])
+
+
+def test_custom_embedding_rejects_invalid_base64_in_batch_without_retry(
+    mocker: MockerFixture,
+) -> None:
+    encoded = base64.b64encode(struct.pack("<2f", 1.0, 2.0)).decode()
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {
+        "data": [
+            {"index": 0, "embedding": encoded},
+            {"index": 1, "embedding": "invalid!"},
+        ]
+    }
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="synthetic",
+        dimensions=2,
+        encoding_format="base64",
+        supports_batch_input=True,
+    )
+
+    with pytest.raises(EmbeddingResponseFormatError, match="Invalid base64"):
+        embedding.get_text_embedding_batch(["north", "south"])
+
+    assert post.call_count == 1
+
+
+@pytest.mark.parametrize("dimensions", [None, 2])
+def test_custom_embedding_rejects_mixed_batch_dimensions_without_retry(
+    mocker: MockerFixture, dimensions: int | None
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {
+        "data": [
+            {"index": 0, "embedding": [1.0, 2.0]},
+            {"index": 1, "embedding": [3.0]},
+        ]
+    }
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="synthetic",
+        dimensions=dimensions,
+        supports_batch_input=True,
+    )
+
+    with pytest.raises(EmbeddingDimensionMismatchError) as error:
+        embedding.get_text_embedding_batch(["north", "south"])
+
+    assert (error.value.expected, error.value.actual) == (2, 1)
+    assert post.call_count == 1
 
 
 @pytest.mark.parametrize(

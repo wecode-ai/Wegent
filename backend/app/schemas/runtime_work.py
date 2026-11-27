@@ -237,6 +237,11 @@ class NormalizedRuntimeMessage(BaseModel):
         default=None, alias="clientUserMessageId"
     )
     runtime_guidance: Optional[bool] = Field(default=None, alias="runtimeGuidance")
+    suppressed_user_message: Optional[bool] = Field(
+        default=None,
+        alias="suppressedUserMessage",
+        exclude_if=lambda value: value is None,
+    )
     turn_id: Optional[str] = Field(default=None, alias="turnId")
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""
@@ -652,6 +657,15 @@ class RuntimeIMQuestionAnswer(BaseModel):
     question_id: str = Field(..., alias="questionId", min_length=1)
 
 
+class RuntimeGuidanceCorrection(BaseModel):
+    """Display update for an existing guidance message in the continued task."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    client_guidance_id: str = Field(..., alias="clientGuidanceId", pattern=r"\S")
+    content: str
+
+
 class RuntimeSendRequest(BaseModel):
     """Request to continue a native runtime task."""
 
@@ -669,6 +683,9 @@ class RuntimeSendRequest(BaseModel):
     client_user_message_id: Optional[str] = Field(
         default=None,
         alias="clientUserMessageId",
+    )
+    guidance_correction: Optional[RuntimeGuidanceCorrection] = Field(
+        default=None, alias="guidanceCorrection"
     )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     model_selection: Optional[RuntimeModelSelection] = Field(

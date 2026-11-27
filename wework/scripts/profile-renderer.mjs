@@ -42,6 +42,8 @@ const run = promisify(execFile)
 const prompt = 'WEWORK_CPU_BENCHMARK_SINGLE_TASK'
 const prefix = 'RENDERER_CPU_BENCHMARK_STREAM_STARTED'
 const suffix = 'RENDERER_CPU_BENCHMARK_STREAM_FINISHED'
+const warmupPrompt = 'WEWORK_CPU_BENCHMARK_WARMUP'
+const warmupText = 'RENDERER_CPU_BENCHMARK_WARMUP_COMPLETE'
 const idleSamples = 7
 const sampleIntervalMs = 1000
 const streamPieces = 120
@@ -700,7 +702,7 @@ async function observeText(client, target, text, timeoutMs) {
   assert.equal(result.result?.value, true, `Timed out waiting for the assistant text ${text}`)
 }
 
-async function emitStream(response, id, pieces = streamPieces, onPiece) {
+async function emitStream(response, id, { pieces = streamPieces, beforeCompletion } = {}) {
   const { itemId, start } = streamingEvents(id)
   response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
   let text = prefix
@@ -715,8 +717,8 @@ async function emitStream(response, id, pieces = streamPieces, onPiece) {
           : ' streamed words'
     response.write(sse(textDeltaEvents(itemId, delta, text.length)))
     text += delta
-    onPiece?.(i)
   }
+  if (beforeCompletion) await beforeCompletion
   response.end(sse(streamingEvents(id, text).finish))
 }
 
@@ -999,6 +1001,7 @@ export function createDesktopScenario({
   let singleTaskStartMetrics
   let markSingleTask
   const singleModelRequest = Promise.withResolvers()
+  const singleStreamCompletion = Promise.withResolvers()
   const concurrentResponses = new Map()
   const startConcurrent = Promise.withResolvers()
   const finishConcurrent = new Map()
@@ -1047,10 +1050,18 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
         return false
-      if (!ready && !historyIndex) return false
       const body = await readRawRequestBody(request)
+      if (!ready && !historyIndex && !body.includes(warmupPrompt)) return false
       const modelRequest = JSON.parse(body)
       if (handleModelMaintenanceRequest(modelRequest, response)) return true
+      if (body.includes(warmupPrompt)) {
+        const id = 'wework-profile-warmup'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([responseCreated(id), assistantMessage(warmupText), responseCompleted(id)])
+        )
+        return true
+      }
       const index =
         body.match(new RegExp(`${concurrentPrompt}(\\d{2})`))?.[1] ??
         body.match(/renderer-profile-command-(\d{2})-/)?.[1]
@@ -1122,11 +1133,11 @@ export function createDesktopScenario({
               response.end(sse([reply, responseCompleted(id, [reasoning, reply.item])]))
             }
           } else if (!response.destroyed)
-            await emitStream(
-              response,
-              `wework-benchmark-${index}`,
-              batches ? concurrentStreamPieces - measuredToolPieces.at(-1) : concurrentStreamPieces
-            )
+            await emitStream(response, `wework-benchmark-${index}`, {
+              pieces: batches
+                ? concurrentStreamPieces - measuredToolPieces.at(-1)
+                : concurrentStreamPieces,
+            })
         } finally {
           if (index === concurrentClockTask) {
             for (const milestone of streamMilestones.values()) milestone.resolve(false)
@@ -1159,7 +1170,9 @@ export function createDesktopScenario({
       if (markSingleTask) await markSingleTask('single-task-start')
       singleTaskStartMetrics = await readSingleTaskRendererMetrics?.()
       start = await cpuSnapshot(pids)
-      await emitStream(response, 'wework-benchmark-response')
+      await emitStream(response, 'wework-benchmark-response', {
+        beforeCompletion: singleStreamCompletion.promise,
+      })
       finished = true
       return true
     },
@@ -1304,6 +1317,21 @@ export function createDesktopScenario({
             await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
           }
         }
+        await control.command('fill', composer, { value: warmupPrompt })
+        await control.command('press', composer, { key: 'Enter' })
+        await observeText(client, target, warmupText, textTimeoutMs)
+        await waitForWorkbenchDebugState(
+          control,
+          ({ isBusy }) => isBusy === false,
+          'The renderer warmup turn did not settle',
+          textTimeoutMs,
+          'pane-activity'
+        )
+        await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', composer, { visible: true, timeoutMs: uiTimeoutMs })
         const before = await windowState()
         assert.equal(before.activity, 'foreground', 'Measure the foreground presentation path')
         const running = await requestExecutor(
@@ -1395,12 +1423,15 @@ export function createDesktopScenario({
             await observeText(client, target, prefix, uiTimeoutMs)
             assert.ok(!finished, 'The first response text must appear while streaming')
             await observeText(client, target, suffix, textTimeoutMs)
+            // Keep terminal processing outside the streaming CPU window. The
+            // turn-update probe stays active through the subsequent settlement.
             const end = await cpuSnapshot(pids)
             controller.abort()
             if (markSingleTask) await markSingleTask('single-task-end')
             const endMetrics = await readSingleTaskRendererMetrics?.()
             return { end, endMetrics }
           } finally {
+            singleStreamCompletion.resolve()
             controller.abort()
           }
         }

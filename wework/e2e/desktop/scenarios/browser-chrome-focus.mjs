@@ -126,8 +126,8 @@ async function verifySearchOverlay(
     if (onWindows) return moveWindowsWindowPointer(control, point)
     return command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
   }
-  const pressAndRelease = point => {
-    if (linuxWindow) return clickLinuxPointer()
+  const pressAndRelease = (point, waitForLinuxPress) => {
+    if (linuxWindow) return clickLinuxPointer(1, waitForLinuxPress)
     if (onWindows) return moveWindowsWindowPointer(control, point, true)
     return clickPoint(command, point)
   }
@@ -233,12 +233,14 @@ async function verifySearchOverlay(
       5_000
     )
     console.info('[embedded-browser] search trigger pointer ready', JSON.stringify(ready))
+    // Wait for the trusted host press before sending the release; keep the
+    // original native acknowledgement deadline and release-error diagnostics.
     if (linuxWindow) {
       let pressError
       try {
         await pressLinuxPointer()
         await waitForValue(
-          () => read('window.__weworkSearchTriggerMotion.clicks.pointerdown'),
+          () => read('window.__weworkSearchTriggerMotion.clicks.pointerdown ?? null'),
           event =>
             event?.trusted &&
             event.target === 'runtime-search-button' &&
