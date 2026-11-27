@@ -2543,12 +2543,13 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("delete_status", "revoked", "lease_lost"),
+        ("delete_status", "revoked", "lease_lost", "saved"),
         [
-            ("success", True, False),
-            ("success", False, False),
-            ("failed", False, False),
-            ("success", False, True),
+            ("success", True, False, True),
+            ("success", False, False, True),
+            ("failed", False, False, True),
+            ("success", False, True, True),
+            ("success", False, False, False),
         ],
     )
     async def test_handle_executor_dead_terminates_sandbox(
@@ -2560,6 +2561,7 @@ class TestSandboxManager:
         delete_status,
         revoked,
         lease_lost,
+        saved,
     ):
         """Test marks sandbox as failed and cleans up when executor dies."""
         manager = sandbox_manager_with_mock_redis
@@ -2595,11 +2597,18 @@ class TestSandboxManager:
             manager._repository, "delete_executor_binding", return_value=revoked
         )
         untrack = mocker.patch.object(manager._repository, "remove_from_active_set")
+        if not saved:
+            mocker.patch.object(manager._repository, "save_sandbox", return_value=False)
 
         await manager._handle_executor_dead(sandbox, lease)
 
         # Verify heartbeat key was deleted
         mock_heartbeat.delete_heartbeat.assert_called_once()
+        if not saved:
+            mock_executor.delete_executor.assert_not_called()
+            revoke.assert_not_called()
+            untrack.assert_not_called()
+            return
         # Verify container deletion was attempted
         mock_executor.delete_executor.assert_called_once()
         if delete_status == "success" and not lease_lost:

@@ -1816,7 +1816,13 @@ class SandboxManager(metaclass=SingletonMeta):
         if lease.lost.is_set():
             return
         sandbox.set_failed("Sandbox crashed")
-        self._repository.save_sandbox(sandbox)
+        if not self._repository.save_sandbox(sandbox):
+            logger.warning(
+                "[SandboxManager] Could not persist failed sandbox %s; "
+                "deferring runtime cleanup",
+                sandbox_id,
+            )
+            return
         logger.info(
             f"[SandboxManager] Marked sandbox {sandbox_id} as failed, "
             "data preserved for client polling"
