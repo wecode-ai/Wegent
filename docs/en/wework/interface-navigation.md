@@ -145,7 +145,7 @@ If the Issue summary above the composer cannot read its task count, use its retr
 | Project menus, members, assignment, archive all chats, archive/restore, boards, execution environments                    | [Project operations](./projects.md#project-controls)                                    |
 | File path menus, IDE, terminal, message actions, Diff review, tabs                                                        | [Workbench operations](./workbench.md#workspace-controls)                               |
 
-For installation, individual Skills and authorization, see [Plugins and Skills](./plugins-and-skills.md); for device management, [Devices and cloud work](./devices.md); for roles and sources, [My assistants](./personal-stand-in.md). Detailed workflows stay in their owning topics rather than being duplicated here.
+For installation, individual Skills and authorization, see [Plugins and Skills](./plugins-and-skills.md). **Plugins → Manage plugins → Codex plugins → plugin name** opens the same detail page as the marketplace. For device management, see [Devices and cloud work](./devices.md); for roles and sources, [My assistants](./personal-stand-in.md). Detailed workflows stay in their owning topics rather than being duplicated here.
 
 Internal routes below support version maintenance and automated checks; they are not website URLs. Use the click paths for navigation.
 
