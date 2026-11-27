@@ -115,6 +115,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         { timeoutMs: uiTimeoutMs }
       )
       await control.command('clickWhenEnabled', confirmMigration, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-dashboard-open"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
       const assistant = await readCloudAssistant()
       const primary = assistant.definitions.find(definition => definition.roleId === '@primary')
@@ -201,6 +204,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           }
         )
       }
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await openStandInSettings(control)
       await control.command(
         'clickWhenEnabled',

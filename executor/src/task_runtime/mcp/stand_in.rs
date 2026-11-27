@@ -314,7 +314,9 @@ fn profile_settings_schema() -> Value {
     let connection = json!({"type":"object","properties":{
         "providerId":{"type":"string"},"profile":{"type":"string"},
         "kind":{"type":"string"},"id":{"type":"string"},"name":{"type":"string"},
-        "scope":{"type":"string","enum":["all"]},"policy":policy
+        "scope":{"type":"string","enum":["all"]},
+        "collectionKey":{"type":"string","description":"Preserve any existing collection key. For a specific DingTalk group, use all-messages only when the user explicitly asks to receive every new message. Omit the field for mentions-only intake."},
+        "policy":policy
     },"required":["providerId","profile","kind","id","name","policy"]});
     let identity = json!({"type":"object","properties":{
         "enabled":{"type":"boolean","description":"Desired state AFTER the user confirms the draft. Use true when asked to enable the new role; drafting never enables it before confirmation."},"prompt":{"type":"string"},

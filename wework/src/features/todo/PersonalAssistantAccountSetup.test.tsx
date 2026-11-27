@@ -341,3 +341,48 @@ test('saving and retrying a new shared role never uploads a device-only profile'
     },
   ])
 })
+
+test('applying a conversation proposal publishes only the changed shared definition', async () => {
+  const local = newStandInRole('mac', 'local')
+  const shared = { ...newStandInRole('mac', 'shared'), name: 'Device name', prompt: 'Old duties' }
+  const current = {
+    ...account,
+    definitions: [
+      {
+        roleId: 'shared',
+        team: makeTeam('Account name'),
+        bot: { metadata: account.defaultTeamRef },
+        ghost: { spec: { systemPrompt: 'Old duties' } },
+      },
+    ],
+  }
+  const updateDefinitions = vi.fn(async () => current)
+  const api = personalAssistantDeviceSettings(
+    {
+      personalAssistantAccountApi: { updateDefinitions },
+      standInApi: {
+        personalGet: async () => ({ ...blank, roles: [local, shared] }),
+        resolveProposal: async () => ({
+          ...blank,
+          roles: [
+            { ...local, prompt: 'Private work' },
+            { ...shared, prompt: 'New duties' },
+          ],
+        }),
+      },
+    } as unknown as WorkbenchServices,
+    () => current,
+    vi.fn()
+  ).standInApi!
+
+  await api.resolveProposal(7, 'mac', 'proposal', true)
+
+  expect(updateDefinitions).toHaveBeenCalledExactlyOnceWith(current.revision, [
+    {
+      roleId: 'shared',
+      name: 'Account name',
+      prompt: 'New duties',
+      executionDeviceId: 'mac',
+    },
+  ])
+})

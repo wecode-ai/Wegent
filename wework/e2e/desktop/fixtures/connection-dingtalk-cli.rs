@@ -175,6 +175,18 @@ fn main() {
             read_scoped_messages("selected-group-mentions")
         }
         ["chat", "message", "search-advanced", ..]
+            if option(&arguments, "--profile") == Some(SCOPED_PROFILE)
+                && option(&arguments, "--conversation-ids") == Some("scoped-group") =>
+        {
+            record("selected-group-messages");
+            if let Some(path) = env::var_os("WEWORK_E2E_DINGTALK_GROUP_MESSAGES") {
+                let payload = fs::read_to_string(path).unwrap();
+                print!("{payload}");
+                return;
+            }
+            (EMPTY_MESSAGES, 0)
+        }
+        ["chat", "message", "search-advanced", ..]
             if option(&arguments, "--profile") == Some(SCOPED_PROFILE) =>
         {
             assert_eq!(

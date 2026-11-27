@@ -69,15 +69,17 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       assert.ok(project, 'The project chooser should have a real local project to select')
       await control.command('clickWhenEnabled', selector('workspace-tab-select-fixed-task'))
       await control.command('clickWhenEnabled', selector('personal-stand-in-button'))
+      const advanced = selector('stand-in-welcome-advanced')
+      await control.command('waitFor', selector('stand-in-welcome'))
+      await control.command('clickWhenEnabled', advanced)
       await control.command('waitFor', selector('stand-in-onboarding-model-help'), {
-        text: '助理详情 → 管理助理 → 运行环境',
+        text: '助理详情 → 管理助理 → 高级模式 → 运行环境',
       })
       await captureScreenshot(control, 'stand-in-first-use-model-and-help.png')
       const beforeDeferring = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       await control.command('clickWhenEnabled', selector('stand-in-onboarding-close'))
       await control.command('waitFor', selector('stand-in-onboarding'), { visible: false })
-      const resume = selector('stand-in-onboarding-resume')
-      await control.command('waitFor', resume, { text: '继续设置', enabled: true })
+      await control.command('waitFor', advanced, { text: '高级模式', enabled: true })
       assert.deepEqual(
         await rpc('runtime.stand_in.personal.get', { userId: USER_ID }),
         beforeDeferring
@@ -89,7 +91,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', CHAT, { visible: false })
       await control.command('waitFor', selector('stand-in-message-center-open'), { visible: false })
       await captureScreenshot(control, 'stand-in-onboarding-deferred.png')
-      await control.command('clickWhenEnabled', resume)
+      await control.command('clickWhenEnabled', advanced)
       await control.command('waitFor', selector('stand-in-onboarding-model'))
       const catalog = (await rpc('runtime.runner.catalog', {})).models
       const defaultModel = catalog.find(
@@ -224,6 +226,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
       assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
       await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-chat-advanced'))
       assert.equal(await control.command('getElementCount', selector('stand-in-im-channels')), '0')
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
@@ -258,6 +261,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await captureScreenshot(control, 'stand-in-chat-after-profile-model-change.png')
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
       await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-chat-advanced'))
       await control.command('clickWhenEnabled', selector('stand-in-primary-execution-toggle'))
       await verifyProjectMenuDismissal(control, 'stand-in-path-advanced')
       await control.command(
@@ -268,9 +272,13 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', selector('stand-in-preferences'), { visible: true })
       await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
-      assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-details-open')
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'stand-in-chat-advanced'
+      )
       await control.command('clickWhenEnabled', selector('stand-in-details-open'))
       await control.command('clickWhenEnabled', selector('stand-in-settings-open'))
+      await control.command('clickWhenEnabled', selector('stand-in-chat-advanced'))
       await control.command('clickWhenEnabled', selector('stand-in-primary-connections-open'))
       await control.command('waitFor', selector('stand-in-available-list'), { visible: true })
       await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
@@ -316,6 +324,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), updated)
       await control.command('clickWhenEnabled', selector('stand-in-create-role'))
+      await control.command('clickWhenEnabled', selector('stand-in-chat-advanced'))
       await control.command('waitFor', `${selector('stand-in-role-name')}:not([disabled])`, {
         visible: true,
       })
@@ -347,7 +356,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('clickWhenEnabled', selector('stand-in-close'))
       await control.command('clickWhenEnabled', selector('stand-in-discard'))
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
-      assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-create-role')
+      assert.equal(
+        await control.command('getActiveElementTestId', 'body'),
+        'stand-in-chat-advanced'
+      )
       assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), updated)
     },
   }

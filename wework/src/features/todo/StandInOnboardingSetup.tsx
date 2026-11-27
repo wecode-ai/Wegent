@@ -39,6 +39,7 @@ import type { DeviceInfo } from '@/types/api'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInSettingsError } from './StandInSettingsLayout'
 import { useStandInModels } from './useStandInModels'
+import { standInSettingsForChat } from './personalStandInSettingsResource'
 
 export interface StandInOnboardingConfiguration {
   settings: PersonalStandInSettings | null
@@ -64,6 +65,7 @@ export function StandInOnboardingSetup({
   backLabel,
   footerSlot,
   onScopeTitleChange,
+  runtimeOnly = false,
   ref,
 }: {
   configuration: StandInOnboardingConfiguration
@@ -73,6 +75,7 @@ export function StandInOnboardingSetup({
   backSlot?: HTMLElement | null
   backLabel?: string
   footerSlot?: HTMLElement | null
+  runtimeOnly?: boolean
   onScopeTitleChange?(connectionTitle: string | null, pageTitle: string | null): void
   ref?: Ref<Pick<StandInSettingsHandle, 'requestLeave'>>
 }) {
@@ -164,25 +167,19 @@ export function StandInOnboardingSetup({
     onBusyChange(true)
     setError(null)
     try {
-      const next: PersonalStandInSettings = {
-        ...baseline,
-        primary: primaryWithConnectionMode(baseline.primary, {
-          enabled: false,
-          prompt: '',
-          preferences: '',
-          ...baseline.primary,
-          ...(chatting && model
-            ? {
-                enabled: true,
-                model,
-                ...(role.modelOptions === undefined ? {} : { modelOptions: role.modelOptions }),
-              }
-            : {}),
-          ...(!chatting && detail
-            ? connectionConfigurationChanges(baseline.primary, role, detail)
-            : {}),
-        }),
-      }
+      const next =
+        chatting && model
+          ? standInSettingsForChat(baseline, model, role.modelOptions)
+          : {
+              ...baseline,
+              primary: primaryWithConnectionMode(baseline.primary, {
+                enabled: false,
+                prompt: '',
+                preferences: '',
+                ...baseline.primary,
+                ...(detail ? connectionConfigurationChanges(baseline.primary, role, detail) : {}),
+              }),
+            }
       if (!dequal(next, baseline)) {
         const saved = await configuration.onSave(next)
         if (!saved) return
@@ -352,7 +349,7 @@ export function StandInOnboardingSetup({
           />
         </div>
       )}
-      {role && baseline ? (
+      {!runtimeOnly && role && baseline ? (
         <section className={detail ? 'space-y-3' : 'space-y-3 border-t border-border pt-4'}>
           {!detail && (
             <div>

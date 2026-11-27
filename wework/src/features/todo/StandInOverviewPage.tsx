@@ -39,7 +39,12 @@ import type { activeStandInBranchRows } from './standInDelegatedBranches'
 import type { PersonalAssistantAccount } from '@/api/personalAssistantAccount'
 import { StandInGhostRevisionPanel } from './StandInGhostRevisionPanel'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
-import { StandInOnboarding } from './StandInOnboarding'
+import { StandInOnboarding, type StandInLaunch } from './StandInOnboarding'
+import {
+  StandInConversationTemplates,
+  StandInWelcome,
+  type StandInStarterRequest,
+} from './StandInWelcome'
 import { createStandInOverviewSource, standInOverviewSourceKey } from './standInOverviewSource'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { standInProcessingFailure } from './standInProcessingFailure'
@@ -65,6 +70,10 @@ type SettingsProps = ComponentProps<typeof StandInSettingsPage>
 export function StandInOverviewPage({
   onOpenTask,
   initialPrimaryProfile = false,
+  starterHome = false,
+  pendingStarter,
+  onStarterRequestChange,
+  onOpenDashboard,
   initialWorkView = 'work',
   settingsRequestKey,
   active = true,
@@ -87,6 +96,10 @@ export function StandInOverviewPage({
 }: Omit<SettingsProps, 'ref'> & {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   initialPrimaryProfile?: boolean
+  starterHome?: boolean
+  pendingStarter?: StandInStarterRequest
+  onStarterRequestChange?(request?: StandInStarterRequest): void
+  onOpenDashboard?(): void
   initialWorkView?: 'work' | 'scheduled'
   settingsRequestKey?: string
   active?: boolean
@@ -163,6 +176,14 @@ export function StandInOverviewPage({
     requestNavigation,
   } = overview
   const [review, setReview] = useState<{ proposalId: string } | 'status' | 'work' | null>(null)
+  const [welcome, setWelcome] = useState(starterHome && !initialSelectedRoleId)
+  const [keepConversationMounted, setKeepConversationMounted] = useState(false)
+  const [chatIntent, setChatIntent] = useState<'create' | 'manage'>()
+  const starterAttempt = useRef<StandInStarterRequest>(undefined)
+  const clearStarter = () => {
+    starterAttempt.current = undefined
+    onStarterRequestChange?.()
+  }
   const [guideOpen, setGuideOpen] = useState(false)
   const panelRef = useRef<StandInSettingsHandle>(null)
   useImperativeHandle(ref, () => ({
@@ -187,6 +208,9 @@ export function StandInOverviewPage({
   const teamScope = team ? (`team:${team.id}` as const) : undefined
   const teamLead = team?.leadId === '@primary' ? undefined : team?.leadId
   const openTeam = (team: StandInTeam) => {
+    clearStarter()
+    setWelcome(false)
+    setChatIntent(undefined)
     setSelectedShare(null)
     setSelectedTeam({ owner: teamOwner, id: team.id })
     setDetailsTarget(null)
@@ -369,6 +393,9 @@ export function StandInOverviewPage({
   })
   const chooseRole = (id?: string, executionDevice?: string) =>
     leavePanel(() => {
+      clearStarter()
+      setWelcome(false)
+      setChatIntent(undefined)
       setSelectedTeam(null)
       setSelectedShare(null)
       const target =
@@ -387,6 +414,43 @@ export function StandInOverviewPage({
       setDetailsAnchor(null)
       setProfile(null)
     })
+  const openStarter = () =>
+    leavePanel(() => {
+      clearStarter()
+      if (primaryDeviceId && deviceId !== primaryDeviceId && onSelectLocation) {
+        onSelectLocation(primaryDeviceId)
+        return
+      }
+      setDetailsAnchor(null)
+      setReview(null)
+      setProfile(null)
+      setSelectedTeam(null)
+      setSelectedShare(null)
+      setRoleId(undefined)
+      setChatIntent(undefined)
+      setKeepConversationMounted(true)
+      setWelcome(true)
+    })
+  const continueFromStarter = (request = pendingStarter) => {
+    clearStarter()
+    setWelcome(false)
+    setRoleId(undefined)
+    setChatIntent(request?.intent)
+    if (request?.prompt) overview.draftExample(request.prompt)
+  }
+  const startFromWelcome = async (launch: StandInLaunch, request: StandInStarterRequest) => {
+    if (launch.busy) return
+    starterAttempt.current = request
+    onStarterRequestChange?.(request)
+    if ((await launch.start()) && starterAttempt.current === request) continueFromStarter(request)
+  }
+  const applyProposal = async (accept: boolean) => {
+    const applied = await resolveProposal(accept)
+    if (!accept || !applied || !saved || chatIntent !== 'create') return
+    const existing = new Set(saved.roles.map(role => role.id))
+    const added = applied.roles.filter(role => !existing.has(role.id))
+    if (added.length === 1) chooseRole(added[0].id, added[0].executionDeviceId)
+  }
   const currentProposal = proposal && (proposal.roleId ?? undefined) === roleId ? proposal : null
   const viewedProposalId = typeof review === 'object' ? review?.proposalId : undefined
   const closeReview = () => {
@@ -398,8 +462,9 @@ export function StandInOverviewPage({
     setReview({ proposalId })
   }
   const proposalFailureMessage =
-    (proposalSaveError?.id === currentProposal?.id ? proposalSaveError?.message : null) ||
-    proposalError
+    (proposalSaveError?.id === currentProposal?.id || proposalSaveError?.appliedLocally
+      ? proposalSaveError?.message
+      : null) || proposalError
   const overviewError =
     (profile === 'primary' ? null : state.error) || proposalFailureMessage || inbox.error
   const visibleProfileError = !state.saved ? state.error : undefined
@@ -433,7 +498,9 @@ export function StandInOverviewPage({
         projects={props.projects}
         current={saved}
         busy={resolving}
-        onResolve={resolveProposal}
+        onResolve={applyProposal}
+        api={active ? api : undefined}
+        deviceId={deviceId}
       />
     ) : currentResult ? (
       <StandInProposalCard
@@ -442,7 +509,7 @@ export function StandInOverviewPage({
         current={currentResult.previous}
         result={currentResult.result}
         busy={false}
-        onResolve={resolveProposal}
+        onResolve={applyProposal}
       />
     ) : null
   const proposalFailure = proposalFailureMessage && (
@@ -545,12 +612,17 @@ export function StandInOverviewPage({
             onSettings={() => {
               setDetailsAnchor(null)
               setCalendarRequest(0)
-              openProfile(role ? 'role' : 'primary', detailsAnchor)
+              if (starterHome && !showWelcome && saved) setChatIntent('manage')
+              else openProfile(role ? 'role' : 'primary', detailsAnchor)
             }}
-            onGuide={() => {
-              setDetailsAnchor(null)
-              setGuideOpen(true)
-            }}
+            onGuide={
+              starterHome
+                ? undefined
+                : () => {
+                    setDetailsAnchor(null)
+                    setGuideOpen(true)
+                  }
+            }
             onAllActivity={() => {
               setDetailsAnchor(null)
               setReview('work')
@@ -583,13 +655,36 @@ export function StandInOverviewPage({
         )
       : undefined
   const conversationAvailable = api && deviceId && (state.saved || (!state.loading && !state.error))
-  const content = (resumeSetup?: ReactNode) => (
+  const showWelcome = welcome && !profile && Boolean(state.saved || !state.error)
+  const content: ComponentProps<typeof StandInOnboarding>['children'] = (resumeSetup, launch) => (
     <section
       className="relative flex h-full min-h-0 min-w-0 bg-background text-base text-text-primary"
       data-testid="stand-in-overview"
     >
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-start gap-2 border-b border-border px-5 py-2">
+          {starterHome && !welcome && (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="stand-in-welcome-open"
+              className="min-h-11 rounded-md px-2 hover:bg-muted md:min-h-8"
+              onClick={openStarter}
+            >
+              {t('standIn.welcome.home')}
+            </ControlButton>
+          )}
+          {onOpenDashboard && (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="stand-in-dashboard-open"
+              className="min-h-11 rounded-md px-2 hover:bg-muted md:min-h-8"
+              onClick={() => leavePanel(onOpenDashboard)}
+            >
+              {t('standIn.welcome.dashboard')}
+            </ControlButton>
+          )}
           <StandInNavigation
             conversationName={shared ? `${shared.name} · ${shared.owner_name}` : team?.name}
             roles={roles}
@@ -598,11 +693,26 @@ export function StandInOverviewPage({
             deviceId={deviceId}
             retiredRoles={retiredRoles}
             matchDevice={!!roleLocations}
-            chooseRole={chooseRole}
+            chooseRole={(id, target) => {
+              if (!welcome || id || !launch) {
+                chooseRole(id, target)
+                return
+              }
+              void startFromWelcome(launch, {})
+            }}
             onCreate={trigger =>
               leavePanel(() => {
                 setCalendarRequest(0)
-                openProfile('create', trigger)
+                if (!starterHome || (primaryDeviceId && deviceId !== primaryDeviceId)) {
+                  openProfile('create', trigger)
+                  return
+                }
+                if (welcome && launch) {
+                  void startFromWelcome(launch, { intent: 'create' })
+                } else {
+                  chooseRole()
+                  setChatIntent('create')
+                }
               })
             }
           />
@@ -617,6 +727,9 @@ export function StandInOverviewPage({
               beforeOpen={openAssistantDialog}
               onOpenTeam={openTeam}
               onOpenShare={entry => {
+                clearStarter()
+                setWelcome(false)
+                setChatIntent(undefined)
                 setSelectedTeam(null)
                 setSelectedShare({ owner: teamOwner, entry })
               }}
@@ -639,7 +752,7 @@ export function StandInOverviewPage({
               </ControlButton>
             </Tooltip>
           )}
-          {!team && !shared && (
+          {!showWelcome && !team && !shared && (
             <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
               <ControlButton
                 variant="unstyled"
@@ -660,7 +773,7 @@ export function StandInOverviewPage({
               </ControlButton>
             </Tooltip>
           )}
-          {!team && !shared && (
+          {!welcome && !team && !shared && (
             <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
               {t('standIn.workspace.role_help')}
             </p>
@@ -672,79 +785,146 @@ export function StandInOverviewPage({
           </p>
         )}
         {!roleId && !team && !shared && resumeSetup}
-        {state.loading && !state.saved ? (
-          <p role="status" className="p-5 text-text-secondary">
-            {t('standIn.loading')}
-          </p>
-        ) : state.error && !state.saved ? (
-          <div role="alert" className="p-5 text-error">
-            <p>{state.error}</p>
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="stand-in-overview-retry"
-              onClick={reload}
-              className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
-            >
-              {t('standIn.reload')}
-            </ControlButton>
-            {deviceId === primaryDeviceId && headerActions}
-          </div>
-        ) : (
-          <>
-            {api && conversationDevice && (team || shared || roleId || !resumeSetup) ? (
-              <StandInConversation
-                delegationPanelOpen={delegationPanelOpen}
-                sidebarTasks={
-                  team || shared
-                    ? undefined
-                    : {
-                        items: roleItems,
-                        inbox: visibleInbox,
-                        onAllActivity: () => setReview('work'),
-                      }
-                }
-                renderDetails={team || shared ? undefined : renderDetails}
-                contentFooter={
-                  !team && !shared && !viewedProposalId && (proposalCard || proposalFailure) ? (
-                    <>
-                      {proposalCard}
-                      {proposalFailure}
-                    </>
-                  ) : null
-                }
-                draftRequest={!team && !shared && !roleId ? exampleDraft : undefined}
-                onDraftRequestConsumed={id =>
-                  setExampleDraft(current => (current?.id === id ? undefined : current))
-                }
-                active={active}
-                key={JSON.stringify([
-                  conversationDevice,
-                  standInConversationTaskId(conversationUser, conversationRole, conversationScope),
-                ])}
-                api={api}
-                userId={conversationUser}
-                deviceId={conversationDevice}
-                roleId={conversationRole}
-                scope={conversationScope}
-                definition={
-                  conversationScope
-                    ? undefined
-                    : account?.definitions.find(item => item.roleId === (roleId ?? '@primary'))
-                }
-                settings={
-                  conversationDevice !== deviceId
-                    ? undefined
-                    : conversationRole
-                      ? saved?.roles.find(role => role.id === conversationRole)
-                      : saved?.primary
-                }
-                services={props.services}
-                onOpenTask={onOpenTask}
-              />
-            ) : null}
-          </>
+        {showWelcome && launch && (
+          <StandInWelcome
+            active={active}
+            busy={launch.busy}
+            error={launch.error}
+            selectedPrompt={pendingStarter?.prompt}
+            onStart={prompt => void startFromWelcome(launch, { prompt })}
+            onAdvanced={() => {
+              clearStarter()
+              launch.openAdvanced()
+            }}
+          />
         )}
+        {!(showWelcome && launch) &&
+          (state.loading && !state.saved ? (
+            <p role="status" className="p-5 text-text-secondary">
+              {t('standIn.loading')}
+            </p>
+          ) : state.error && !state.saved ? (
+            <div role="alert" className="p-5 text-error">
+              <p>{state.error}</p>
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="stand-in-overview-retry"
+                onClick={reload}
+                className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
+              >
+                {t('standIn.reload')}
+              </ControlButton>
+              {deviceId === primaryDeviceId && headerActions}
+            </div>
+          ) : null)}
+        {(!showWelcome || keepConversationMounted) &&
+          (state.saved || (!state.loading && !state.error)) && (
+            <div className={showWelcome ? 'hidden' : 'contents'} inert={showWelcome}>
+              {api && conversationDevice && (team || shared || roleId || !resumeSetup) ? (
+                <StandInConversation
+                  delegationPanelOpen={delegationPanelOpen}
+                  sidebarTasks={
+                    team || shared
+                      ? undefined
+                      : {
+                          items: roleItems,
+                          inbox: visibleInbox,
+                          onAllActivity: () => setReview('work'),
+                        }
+                  }
+                  renderDetails={team || shared ? undefined : renderDetails}
+                  contentFooter={
+                    !team && !shared && !viewedProposalId && (proposalCard || proposalFailure) ? (
+                      <>
+                        {proposalCard}
+                        {proposalFailure}
+                      </>
+                    ) : null
+                  }
+                  starterActions={
+                    starterHome &&
+                    !team &&
+                    !shared &&
+                    (chatIntent ? (
+                      <div className="flex flex-wrap items-center gap-2 px-1">
+                        <p className="basis-full text-sm text-text-secondary">
+                          {t('standIn.welcome.' + chatIntent + '_hint')}
+                        </p>
+                        <ControlButton
+                          type="button"
+                          variant="outline"
+                          data-testid="stand-in-chat-intent-template"
+                          onClick={() =>
+                            overview.draftExample(t('standIn.welcome.' + chatIntent + '_prompt'))
+                          }
+                        >
+                          {t('standIn.welcome.' + chatIntent + '_label')}
+                        </ControlButton>
+                        <ControlButton
+                          type="button"
+                          variant="unstyled"
+                          data-testid="stand-in-chat-intent-cancel"
+                          onClick={() => setChatIntent(undefined)}
+                        >
+                          {t('standIn.cancel')}
+                        </ControlButton>
+                        <ControlButton
+                          type="button"
+                          variant="unstyled"
+                          data-testid="stand-in-chat-advanced"
+                          onClick={event =>
+                            openProfile(
+                              chatIntent === 'create' ? 'create' : role ? 'role' : 'primary',
+                              event.currentTarget
+                            )
+                          }
+                        >
+                          {t('standIn.welcome.advanced')}
+                        </ControlButton>
+                      </div>
+                    ) : (
+                      <StandInConversationTemplates onSelect={overview.draftExample} />
+                    ))
+                  }
+                  draftRequest={
+                    !team && !shared && exampleDraft?.roleId === roleId ? exampleDraft : undefined
+                  }
+                  onDraftRequestConsumed={id =>
+                    setExampleDraft(current => (current?.id === id ? undefined : current))
+                  }
+                  active={active && !showWelcome}
+                  key={JSON.stringify([
+                    conversationDevice,
+                    standInConversationTaskId(
+                      conversationUser,
+                      conversationRole,
+                      conversationScope
+                    ),
+                  ])}
+                  api={api}
+                  userId={conversationUser}
+                  deviceId={conversationDevice}
+                  roleId={conversationRole}
+                  scope={conversationScope}
+                  definition={
+                    conversationScope
+                      ? undefined
+                      : account?.definitions.find(item => item.roleId === (roleId ?? '@primary'))
+                  }
+                  settings={
+                    conversationDevice !== deviceId
+                      ? undefined
+                      : conversationRole
+                        ? saved?.roles.find(role => role.id === conversationRole)
+                        : saved?.primary
+                  }
+                  services={props.services}
+                  onOpenTask={onOpenTask}
+                />
+              ) : null}
+            </div>
+          )}
         {(!conversationAvailable || (resumeSetup && !team && !shared && !roleId)) &&
           renderDetails?.([])}
         <StandInReviewDialog
@@ -1082,6 +1262,8 @@ export function StandInOverviewPage({
         onSave: state.save,
         onReload: state.reload,
       }}
+      startOnDemand={starterHome}
+      onOpenConversation={starterHome ? continueFromStarter : undefined}
       guideOpen={guideOpen}
       onGuideClose={() => setGuideOpen(false)}
       onExampleSelect={text =>

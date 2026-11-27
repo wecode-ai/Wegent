@@ -234,10 +234,69 @@ export function personalAssistantDeviceSettings(
   const executor = services.standInApi
   const cloud = services.personalAssistantAccountApi
   if (!executor || !cloud) return services
+  const syncDefinitions = async (
+    account: PersonalAssistantAccount,
+    saved: PersonalStandInSettings,
+    definitions: ReturnType<typeof definitionInputs>
+  ) => {
+    if (matchesDefinitions(account, definitions))
+      return applyDefinitions(saved, account, isKnownDevice, false, bindingDevice)
+    try {
+      const updated = await cloud.updateDefinitions(account.revision, [...definitions.values()])
+      publish(updated)
+      return applyDefinitions(saved, updated, isKnownDevice, false, bindingDevice)
+    } catch (cause) {
+      const latest = await cloud.get().catch(() => null)
+      if (latest) {
+        publish(latest)
+        if (matchesDefinitions(latest, definitions))
+          return applyDefinitions(saved, latest, isKnownDevice, false, bindingDevice)
+      }
+      throw new PersonalAssistantDefinitionSaveError(
+        applyDefinitions(saved, account, isKnownDevice, false, bindingDevice),
+        cause
+      )
+    }
+  }
   return {
     ...services,
     standInApi: {
       ...executor,
+      async resolveProposal(userId, deviceId, proposalId, accept, undoVersion) {
+        const account = readAccount()
+        if (!accept || !account)
+          return executor.resolveProposal(userId, deviceId, proposalId, accept, undoVersion)
+        const before = await executor.personalGet(userId, deviceId)
+        const saved = await executor.resolveProposal(
+          userId,
+          deviceId,
+          proposalId,
+          accept,
+          undoVersion
+        )
+        const definitions = definitionInputs(account)
+        const primary = definitions.get('@primary')
+        if (primary && saved.primary && before.primary?.prompt !== saved.primary.prompt)
+          primary.prompt = saved.primary.prompt
+        const previous = new Map(before.roles.map(role => [role.id, role]))
+        const retired = new Set(account.retiredRoleIds)
+        for (const role of saved.roles) {
+          const old = previous.get(role.id)
+          previous.delete(role.id)
+          const existing = definitions.get(role.id)
+          if ((old && !existing) || (!old && existing)) continue
+          if (retired.has(role.id) || (old?.name === role.name && old.prompt === role.prompt))
+            continue
+          definitions.set(role.id, {
+            roleId: role.id,
+            name: existing && old?.name === role.name ? existing.name : role.name,
+            prompt: existing && old?.prompt === role.prompt ? existing.prompt : role.prompt,
+            executionDeviceId: existing?.executionDeviceId ?? role.executionDeviceId,
+          })
+        }
+        for (const id of previous.keys()) definitions.delete(id)
+        return syncDefinitions(account, saved, definitions)
+      },
       async personalGet(userId, deviceId, options) {
         const settings = await executor.personalGet(userId, deviceId)
         const account = readAccount()
@@ -318,25 +377,11 @@ export function personalAssistantDeviceSettings(
           deviceId,
           transferRoleId
         )
-        const definitions = updateDefinitionInputs(account, settings, definitionChange)
-        if (matchesDefinitions(account, definitions))
-          return applyDefinitions(saved, account, isKnownDevice, false, bindingDevice)
-        try {
-          const current = await cloud.updateDefinitions(account.revision, [...definitions.values()])
-          publish(current)
-          return applyDefinitions(saved, current, isKnownDevice, false, bindingDevice)
-        } catch (cause) {
-          const latest = await cloud.get().catch(() => null)
-          if (latest) {
-            publish(latest)
-            if (matchesDefinitions(latest, definitions))
-              return applyDefinitions(saved, latest, isKnownDevice, false, bindingDevice)
-          }
-          throw new PersonalAssistantDefinitionSaveError(
-            applyDefinitions(saved, account, isKnownDevice, false, bindingDevice),
-            cause
-          )
-        }
+        return syncDefinitions(
+          account,
+          saved,
+          updateDefinitionInputs(account, settings, definitionChange)
+        )
       },
     },
   }

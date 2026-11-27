@@ -1,4 +1,8 @@
-import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
+import {
+  primaryWithConnectionMode,
+  type PersonalStandInSettings,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
@@ -29,6 +33,24 @@ export function personalStandInSettingsError(error: ErrorState): string | null {
   return typeof error === 'string' || error === null
     ? error
     : getStandInErrorMessage(error.cause, error.operation)
+}
+
+export function standInSettingsForChat(
+  settings: PersonalStandInSettings,
+  model: NonNullable<StandInRole['model']>,
+  modelOptions?: StandInRole['modelOptions']
+): PersonalStandInSettings {
+  return {
+    ...settings,
+    primary: primaryWithConnectionMode(settings.primary, {
+      prompt: '',
+      preferences: '',
+      ...settings.primary,
+      enabled: true,
+      model,
+      ...(modelOptions === undefined ? {} : { modelOptions }),
+    }),
+  }
 }
 
 function appendedRole(

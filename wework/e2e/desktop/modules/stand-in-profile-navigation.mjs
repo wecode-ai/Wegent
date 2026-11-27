@@ -49,6 +49,9 @@ export async function verifyReadOnlyWorkActivity(control, taskId, captureScreens
 export async function openStandInSettings(control) {
   await openStandInDetails(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-settings-open"]')
+  const advanced = '[data-testid="stand-in-chat-advanced"]'
+  if ((await control.command('getElementCount', advanced)) !== '0')
+    await control.command('clickWhenEnabled', advanced)
   await control.command('waitFor', '[data-testid="stand-in-profile-panel"]')
 }
 

@@ -1,6 +1,7 @@
 import type { CollaborationProject } from '@wegent/collaboration'
 import { dequal } from 'dequal'
 import type { StandInIdentity, StandInHandlingPolicy, StandInRole } from '@/api/personalStandIn'
+import type { ConnectionProviderDescriptor } from '@/api/standIn'
 import { standInProjectTags } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -10,10 +11,12 @@ export function StandInProposalSources({
   identity,
   previous,
   projects,
+  dingTalkAccount,
 }: {
   identity: Sources
   previous?: Sources
   projects: CollaborationProject[]
+  dingTalkAccount?: ConnectionProviderDescriptor['availability']
 }) {
   const { t } = useTranslation('common')
   const projectName = (id: string, store: string) =>
@@ -33,9 +36,20 @@ export function StandInProposalSources({
       : t('standIn.workspace.inherited_policy')
   const sourceKey = (row: NonNullable<Sources['connections']>[number]) =>
     JSON.stringify([row.providerId, row.profile, row.kind, row.id])
+  const isDingTalk = (row: NonNullable<Sources['connections']>[number]) =>
+    !row.providerId || row.providerId === '@wegent/dsh-connection-dingtalk/dingtalk'
+  const accountLabel = (profile: string) =>
+    (dingTalkAccount?.profile === profile &&
+      [dingTalkAccount.accountName, dingTalkAccount.organizationName]
+        .filter(Boolean)
+        .join(' · ')) ||
+    profile
   const configuration = (row?: NonNullable<Sources['connections']>[number]) =>
+    row &&
     [
-      row?.configurationSummary ?? t('standIn.workspace.connection_default_configuration'),
+      isDingTalk(row) && row.profile
+        ? t('standIn.workspace.proposal_account', { account: accountLabel(row.profile) })
+        : (row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')),
       ...(row?.excludedResources?.length
         ? [
             `${t('standIn.workspace.connection_blacklist')}: ${row.excludedResources.map(item => item.name).join(', ')}`,
@@ -111,14 +125,19 @@ export function StandInProposalSources({
             <span className="text-text-secondary">
               {' '}
               ·{' '}
-              {row.providerId && row.providerId !== '@wegent/dsh-connection-dingtalk/dingtalk'
+              {!isDingTalk(row)
                 ? row.kind
                 : t(
                     row.kind === 'group'
-                      ? 'standIn.workspace.group_mentions'
+                      ? row.collectionKey === 'all-messages'
+                        ? 'standIn.workspace.group_all_new_messages'
+                        : 'standIn.workspace.group_mentions'
                       : 'standIn.workspace.direct_messages'
                   )}{' '}
-              · {policyName(row.policy)}
+              ·{' '}
+              {isDingTalk(row) && row.policy?.automatic && row.policy.askBeforeAct
+                ? t('standIn.workspace.proposal_dingtalk_confirm')
+                : policyName(row.policy)}
             </span>
           </p>
           <p

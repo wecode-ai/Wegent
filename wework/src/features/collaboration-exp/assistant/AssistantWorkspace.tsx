@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { Button } from '@/components/ui/button'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInBindingTarget } from '@/api/standIn'
 import { StandInOnboarding } from '@/features/todo/StandInOnboarding'
@@ -35,6 +36,7 @@ interface AssistantWorkspaceProps {
   localDeviceId: string
   devices: DeviceInfo[]
   onSelectDevice(deviceId: string): Promise<void>
+  onOpenWelcome?(): void
   onClose(): void
 }
 
@@ -70,6 +72,7 @@ export default function AssistantWorkspace(props: AssistantWorkspaceProps) {
             deviceId={props.binding.deviceId}
             active={props.active}
             bypass={Boolean(
+              props.onOpenWelcome ||
               props.conversation ||
               (props.localDeviceId && props.binding.deviceId !== props.localDeviceId)
             )}
@@ -107,12 +110,14 @@ function AssistantWorkspaceContent({
   active,
   binding,
   conversation,
+  onOpenWelcome,
   services: assistantServices,
 }: AssistantWorkspaceProps) {
   const { state, services } = useWorkbench()
   const tabs = useOptionalWorkspaceTabs()
   const cloud = useOptionalCloudConnection()
   const { t, i18n } = useTranslation('collaborationExp')
+  const { t: common } = useTranslation('common')
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
   const sources = useExperienceSources(services, state.user, cloud.isConnected, locale)
   const viewer = Number(state.user?.id ?? binding.userId)
@@ -157,7 +162,22 @@ function AssistantWorkspaceContent({
       scroll: false,
       minWidth: 280,
       defaultWidth: 900,
-      actions: <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />,
+      actions: (
+        <>
+          {onOpenWelcome && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              data-testid="stand-in-dashboard-welcome"
+              onClick={onOpenWelcome}
+            >
+              {common('standIn.welcome.home')}
+            </Button>
+          )}
+          <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />
+        </>
+      ),
       content: (
         <AssistantHome
           active={active}

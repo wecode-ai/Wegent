@@ -46,6 +46,7 @@ import { StandInHomeSetup } from './StandInHomeSetup'
 import { StandInHomeWorkspace } from './StandInHomeWorkspace'
 import { StandInMigration } from './StandInMigration'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import type { StandInStarterRequest } from './StandInWelcome'
 import { StandInRouteFailure, StandInRouteLoading } from './StandInRouteState'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { useStandInEntry } from './useStandInEntry'
@@ -257,12 +258,15 @@ function AccountStandInWorkspace({
       settingsRequest,
     ]
   )
+  const [dashboardOpen, setDashboardOpen] = useState(false)
+  const [pendingStarter, setPendingStarter] = useState<StandInStarterRequest>()
+  const starterHome = !embedded && !scheduled && entry.kind === 'home'
   const showAssistantExperience =
     experienceEnabled &&
     !embedded &&
     !scheduled &&
     !settingsRequest &&
-    (entry.kind === 'home' ||
+    ((starterHome && dashboardOpen) ||
       entry.kind === 'conversation' ||
       verifiedRole?.profileId === '@primary')
   const api = useMemo(
@@ -593,13 +597,14 @@ function AccountStandInWorkspace({
               localDeviceId={localDeviceId}
               devices={devices}
               onSelectDevice={configureCloudDestination}
+              onOpenWelcome={starterHome ? () => setDashboardOpen(false) : undefined}
               onClose={onClose}
             />
           </Suspense>
         </CollaborationExpErrorBoundary>
       ) : api ? (
         <>
-          {experienceEnabled && (
+          {experienceEnabled && !starterHome && (
             <Button
               type="button"
               variant="ghost"
@@ -642,6 +647,12 @@ function AccountStandInWorkspace({
             onSelectAssistantDevice={configureCloudDestination}
             initialProfileId={roleLocation?.settings ? roleLocation.roleId : undefined}
             initialSelectedRoleId={roleLocation?.roleId}
+            starterHome={starterHome}
+            pendingStarter={pendingStarter}
+            onStarterRequestChange={setPendingStarter}
+            onOpenDashboard={
+              starterHome && experienceEnabled ? () => setDashboardOpen(true) : undefined
+            }
             initialDeviceId={selectedDevice}
             primaryDeviceId={deviceId}
             roleLocations={directory?.roles}

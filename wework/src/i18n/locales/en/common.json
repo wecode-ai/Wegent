@@ -5786,6 +5786,30 @@
     "connect": "Connect to the cloud to view notifications"
   },
   "standIn": {
+    "welcome": {
+      "title": "What can your assistant help with today?",
+      "try": "Try this",
+      "advanced": "Advanced mode",
+      "home": "Assistant home",
+      "dashboard": "Work overview",
+      "templates": "Conversation templates",
+      "create_label": "Fill in the creation template",
+      "create_hint": "Describe what the new assistant should handle in this conversation, or start with the template.",
+      "create_prompt": "I'd like to add an assistant. Ask me what it should handle and which work it should receive, then show me the proposed configuration to confirm.",
+      "manage_label": "Fill in the settings template",
+      "manage_hint": "Describe what should change. The assistant will show the proposed responsibilities and sources for confirmation.",
+      "manage_prompt": "I'd like to update the work you handle. Ask me which responsibilities and sources to change, then show me the proposed changes.",
+      "examples": {
+        "dingtalk_reply": {
+          "title": "Connect DingTalk and watch the launch group",
+          "prompt": "We’re launching this week, and I’ll be on customer calls during the day. Connect my work account in DingTalk and create a Launch Follow-up assistant for the Product Launch group. Have it follow every new message in that group. Show me the account, group, and intake policy before enabling it. If the group name differs, ask me which one to use.\n\nFlag a change to the launch window, a test blocker, or a decision someone needs from me. Include what happened, who is waiting, and the original message. If someone asks about an agreed launch time or acceptance process, draft an answer based on the confirmed plan for me to approve. For date changes or customer commitments, explain the impact and let me decide."
+        },
+        "meeting_prep": {
+          "title": "The meeting is soon and I haven’t read the material",
+          "prompt": "My launch review is about to start and I have five minutes to prepare. Make a one-page briefing from the related conversations, notes, and release checklist I provide. Start with the decision the meeting needs to make. List confirmed items, conflicting records, and the three questions I should ask. For each question, say who to ask and why it matters now. Cite the source for each conclusion.\n\nDeliver the briefing in this conversation. If I haven’t shared the material yet, tell me what to provide."
+        }
+      }
+    },
     "preference_loading": "Loading assistant preferences…",
     "preference_error": "Couldn't load assistant preferences",
     "preference_retry": "Try again",
@@ -6382,6 +6406,9 @@
       "group_message_scope": "Receive",
       "group_message_scope_for": "Message intake for {{name}}",
       "group_all_messages": "All messages",
+      "group_all_new_messages": "Group · Every new message",
+      "proposal_dingtalk_confirm": "Reads and analyzes automatically, then asks before taking action",
+      "proposal_account": "DingTalk account {{account}}",
       "select_results": "Select current results",
       "resource_selected": "Selected",
       "select_resource": "Select",
@@ -6795,7 +6822,7 @@
       "device_label": "Execution device",
       "switching_device": "Switching execution device…",
       "model_required": "Chat model (required)",
-      "model_help": "Choose a model to start chatting. You can change it later under Assistant details → Manage assistant → Execution environment.",
+      "model_help": "Choose a model to start chatting. You can change it later under Assistant details → Manage assistant → Advanced mode → Execution environment.",
       "exit": "Set up later"
     },
     "authorization": {
