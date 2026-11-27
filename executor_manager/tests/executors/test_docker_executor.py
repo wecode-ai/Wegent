@@ -765,17 +765,19 @@ class TestDockerExecutor:
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_delete_executor_success(self, mock_run, executor):
         """Test deleting executor successfully"""
-        # Mock subprocess.run calls:
-        # 1. check_container_ownership
-        # 2. delete_container (shell command)
         mock_run.side_effect = [
-            MagicMock(stdout="test-executor\n", returncode=0),  # ownership check
-            MagicMock(returncode=0),  # delete command
+            MagicMock(stdout="test-executor\n", returncode=0),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0),
         ]
 
         result = executor.delete_executor("test-executor")
 
         assert result["status"] == "success"
+        assert [entry.args[0] for entry in mock_run.call_args_list[1:]] == [
+            ["docker", "stop", "--", "test-executor"],
+            ["docker", "rm", "--", "test-executor"],
+        ]
 
     @patch("executor_manager.executors.docker.utils.check_container_ownership")
     def test_delete_executor_unauthorized(self, mock_check, executor):

@@ -14,11 +14,21 @@ This service handles:
 import asyncio
 import os
 import time
-from contextlib import suppress
-from dataclasses import dataclass, field
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+)
 
 import httpx
 
@@ -72,6 +82,7 @@ SANDBOX_TASK_LOCK_WAIT_TIMEOUT = float(
 SANDBOX_TASK_LOCK_RETRY_INTERVAL = float(
     os.getenv("SANDBOX_TASK_LOCK_RETRY_INTERVAL", "0.2")
 )
+EXECUTION_ADMISSION_TIMEOUT_SECONDS = 60
 
 
 @dataclass
@@ -96,6 +107,10 @@ class SandboxLifecycleUnavailable(str):
 
 class SandboxRuntimeNotFound(str):
     """The runtime selected by the caller is no longer present."""
+
+
+class SandboxWorkspaceWriteUnavailable(RuntimeError):
+    """The selected runtime cannot safely accept a proxied workspace write."""
 
 
 _DeletionResult = TypeVar("_DeletionResult")
@@ -1097,29 +1112,6 @@ class SandboxManager(metaclass=SingletonMeta):
         if dry_run:
             return {**result, "skipped": True, "reason": "dry_run"}
 
-        archive = None
-        archived_activity = sandbox.last_activity_at if sandbox is not None else None
-        if (
-            sandbox is not None
-            and archive_before_delete
-            and (
-                not sandbox.cleanup_container_removed
-                or sandbox.cleanup_archive is not None
-            )
-        ):
-            archive = await self._archive_sandbox_before_cleanup(sandbox)
-            result["archived"] = archive is _SandboxArchiveOutcome.ARCHIVED
-            if (
-                archive is _SandboxArchiveOutcome.FAILED
-                and not delete_on_archive_failure
-            ):
-                logger.warning(
-                    "[SandboxManager] Skipping sandbox deletion after archive "
-                    "failure: task_id=%s",
-                    task_id,
-                )
-                return {**result, "skipped": True, "reason": "archive_failed"}
-
         lease = await self._try_acquire_task_lifecycle_lease(sandbox_id)
         if lease is None:
             return {**result, "skipped": True, "reason": "lifecycle_busy"}
@@ -1132,16 +1124,29 @@ class SandboxManager(metaclass=SingletonMeta):
             ):
                 return {**result, "skipped": True, "reason": "sandbox_replaced"}
             if current is not None:
-                if (
-                    archive
-                    in (_SandboxArchiveOutcome.ARCHIVED, _SandboxArchiveOutcome.EMPTY)
-                    and current.last_activity_at != archived_activity
+                archive = None
+                if archive_before_delete and (
+                    not current.cleanup_container_removed or current.cleanup_archive
                 ):
-                    return {
-                        **result,
-                        "skipped": True,
-                        "reason": "sandbox_became_active",
-                    }
+                    archive = await self._archive_sandbox_before_cleanup(current)
+                    result["archived"] = archive is _SandboxArchiveOutcome.ARCHIVED
+                    if (
+                        archive is _SandboxArchiveOutcome.FAILED
+                        and not delete_on_archive_failure
+                    ):
+                        return {**result, "skipped": True, "reason": "archive_failed"}
+                    refreshed = self._repository.load_sandbox(sandbox_id)
+                    if refreshed is None or not self._same_sandbox_runtime(
+                        current, refreshed
+                    ):
+                        return {**result, "skipped": True, "reason": "sandbox_replaced"}
+                    if refreshed.last_activity_at != current.last_activity_at:
+                        return {
+                            **result,
+                            "skipped": True,
+                            "reason": "sandbox_became_active",
+                        }
+                    current = refreshed
                 if not self._prepare_sandbox_termination(current, lease, archive):
                     return {**result, "skipped": True, "reason": "delete_failed"}
             return await self._await_sandbox_deletion(
@@ -1468,6 +1473,28 @@ class SandboxManager(metaclass=SingletonMeta):
         finally:
             await self._release_task_lifecycle_lease(lease)
 
+    @asynccontextmanager
+    async def sandbox_workspace_write(self, sandbox: Sandbox) -> AsyncIterator[None]:
+        """Keep a proxied workspace write ordered with cleanup snapshots."""
+        sandbox_id = sandbox.sandbox_id
+        lease, error = await self._acquire_task_lifecycle_lease(sandbox_id)
+        if lease is None:
+            raise SandboxWorkspaceWriteUnavailable(error)
+        try:
+            active, error = self._refresh_sandbox_activity_locked(
+                sandbox_id, lease=lease, expected_runtime=sandbox, require_active=False
+            )
+            if active is None:
+                raise SandboxWorkspaceWriteUnavailable(error)
+            yield
+            active, error = self._refresh_sandbox_activity_locked(
+                sandbox_id, lease=lease, expected_runtime=sandbox, require_active=False
+            )
+            if active is None:
+                raise SandboxWorkspaceWriteUnavailable(error)
+        finally:
+            await self._release_task_lifecycle_lease(lease)
+
     def _refresh_sandbox_activity_locked(
         self,
         sandbox_id: str,
@@ -1633,7 +1660,7 @@ class SandboxManager(metaclass=SingletonMeta):
             )
 
         # Create execution
-        exec_metadata = metadata or {}
+        exec_metadata = dict(metadata or {})
         exec_metadata["timeout"] = timeout
         # Extract task_id from sandbox_id for metadata
         task_id = int(sandbox_id)
@@ -1654,6 +1681,11 @@ class SandboxManager(metaclass=SingletonMeta):
             if sandbox is None:
                 return None, error
             exec_metadata["sandbox_id"] = sandbox.sandbox_id
+            exec_metadata["admitted_runtime_created_at"] = sandbox.created_at
+            exec_metadata["admitted_runtime_container"] = sandbox.container_name
+            exec_metadata["admission_deadline"] = (
+                time.time() + EXECUTION_ADMISSION_TIMEOUT_SECONDS
+            )
             execution = Execution.create(
                 sandbox_id=sandbox.sandbox_id,
                 prompt=prompt,
@@ -1775,7 +1807,7 @@ class SandboxManager(metaclass=SingletonMeta):
             execution = self._repository.load_execution(task_id, subtask_id)
             if execution:
                 logger.info(f"[SandboxManager] Found execution by task_id={task_id}")
-                return execution
+                return self._reconcile_pending_admission(execution)
             logger.info(
                 f"[SandboxManager] No execution found for task_id={task_id}, subtask_id={subtask_id}"
             )
@@ -1805,12 +1837,56 @@ class SandboxManager(metaclass=SingletonMeta):
                         f"[SandboxManager] Found matching sandbox, task_id={task_id}"
                     )
                     if task_id:
-                        return self._repository.load_execution(int(task_id), subtask_id)
+                        execution = self._repository.load_execution(
+                            int(task_id), subtask_id
+                        )
+                        return (
+                            self._reconcile_pending_admission(execution, sandbox)
+                            if execution
+                            else None
+                        )
 
         logger.info(
             f"[SandboxManager] No matching sandbox found for sandbox_id={sandbox_id}"
         )
         return None
+
+    def _reconcile_pending_admission(
+        self, execution: Execution, sandbox: Sandbox | None = None
+    ) -> Execution:
+        deadline = execution.metadata.get("admission_deadline")
+        if (
+            execution.status is not ExecutionStatus.PENDING
+            or not isinstance(deadline, (int, float))
+            or time.time() < deadline
+        ):
+            return execution
+
+        if sandbox is None:
+            sandbox = self._repository.load_sandbox(execution.sandbox_id)
+        if (
+            sandbox is None
+            or sandbox.created_at
+            != execution.metadata.get("admitted_runtime_created_at")
+            or sandbox.container_name
+            != execution.metadata.get("admitted_runtime_container")
+        ):
+            return execution
+
+        failed = replace(execution)
+        failed.set_failed(
+            "Sandbox execution did not start before its admission deadline"
+        )
+        if self._repository.save_execution(
+            failed, expected_runtime=sandbox, expected_status=ExecutionStatus.PENDING
+        ):
+            return failed
+        return (
+            self._repository.load_execution(
+                execution.metadata["task_id"], execution.metadata["subtask_id"]
+            )
+            or execution
+        )
 
     async def list_executions(
         self, sandbox_id: str
@@ -1829,7 +1905,9 @@ class SandboxManager(metaclass=SingletonMeta):
             executions, error = self._repository.list_executions(sandbox_id)
             # If found data or explicit error, return it
             if executions or error != f"Sandbox {sandbox_id} not found":
-                return executions, error
+                return [
+                    self._reconcile_pending_admission(item) for item in executions
+                ], error
         except ValueError:
             pass
 
@@ -1841,7 +1919,11 @@ class SandboxManager(metaclass=SingletonMeta):
                 # Found matching sandbox, list executions by its task_id
                 task_id = sandbox.metadata.get("task_id")
                 if task_id:
-                    return self._repository.list_executions(str(task_id))
+                    executions, error = self._repository.list_executions(str(task_id))
+                    return [
+                        self._reconcile_pending_admission(item, sandbox)
+                        for item in executions
+                    ], error
 
         return [], f"Sandbox {sandbox_id} not found"
 

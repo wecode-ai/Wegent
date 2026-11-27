@@ -17,6 +17,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from executor_manager.common.config import ROUTE_PREFIX
+from executor_manager.executors.docker.constants import DOCKER_CLEANUP_TIMEOUT_SECONDS
 from shared.logger import setup_logger
 from shared.models.openai_converter import get_metadata_field
 from shared.utils.ip_util import get_host_ip, is_ip_address
@@ -109,9 +110,13 @@ def delete_container(container_name: str) -> dict:
         dict: Result with status and optional error message
     """
     try:
-        # Stop and remove container in one command
-        cmd = f"docker stop {container_name} && docker rm {container_name}"
-        subprocess.run(cmd, shell=True, check=True, capture_output=True)
+        for action in ("stop", "rm"):
+            subprocess.run(
+                ["docker", action, "--", container_name],
+                check=True,
+                capture_output=True,
+                timeout=DOCKER_CLEANUP_TIMEOUT_SECONDS,
+            )
         logger.info(f"Deleted Docker container '{container_name}'")
         return {"status": "success"}
     except subprocess.CalledProcessError as e:
@@ -270,7 +275,13 @@ def get_running_task_details(
             ]
         )
 
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_CLEANUP_TIMEOUT_SECONDS,
+        )
 
         # Process container information
         containers = []

@@ -19,6 +19,7 @@ to the existing executor task dispatch endpoint (/api/tasks/execute).
 import json
 import os
 import time
+from contextlib import nullcontext
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -26,7 +27,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
-from executor_manager.services.sandbox.manager import SandboxLifecycleUnavailable
+from executor_manager.services.sandbox.manager import (
+    SandboxLifecycleUnavailable,
+    SandboxWorkspaceWriteUnavailable,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -38,6 +42,7 @@ SANDBOX_PROXY_CONNECT_TIMEOUT_SECONDS = 10.0
 SANDBOX_PROCESS_START_DEFAULT_READ_SECONDS = 1800.0
 SANDBOX_PROCESS_START_RESPONSE_GRACE_SECONDS = 5.0
 PROCESS_START_PATH = "process.Process/Start"
+WORKSPACE_WRITE_PATHS = {"files", "filesystem.Filesystem/MakeDir"}
 
 
 def _sandbox_proxy_timeout(path: str, deadline_ms: str = "") -> httpx.Timeout:
@@ -186,7 +191,9 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
     try:
         # Get sandbox info including metadata
         base_url, sandbox = await _get_sandbox_info(sandbox_id)
-        await _touch_sandbox_activity(sandbox)
+        workspace_write = request.method == "POST" and path in WORKSPACE_WRITE_PATHS
+        if not workspace_write:
+            await _touch_sandbox_activity(sandbox)
 
         # Check if this is a sandbox task
         task_type = sandbox.metadata.get("task_type")
@@ -232,7 +239,12 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         }
 
         # Make request to container
-        async with httpx.AsyncClient(timeout=proxy_timeout) as client:
+        write_scope = (
+            get_sandbox_manager().sandbox_workspace_write(sandbox)
+            if workspace_write
+            else nullcontext()
+        )
+        async with write_scope, httpx.AsyncClient(timeout=proxy_timeout) as client:
             response = await client.request(
                 method=request.method,
                 url=target_url,
@@ -271,6 +283,11 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
 
     except HTTPException:
         raise
+    except SandboxWorkspaceWriteUnavailable as e:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "unavailable", "message": str(e)},
+        ) from e
     except httpx.ConnectError as e:
         logger.error(f"[SandboxProxy] Connection failed to sandbox {sandbox_id}: {e}")
         raise HTTPException(

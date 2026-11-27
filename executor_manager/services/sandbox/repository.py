@@ -70,8 +70,23 @@ if ARGV[7] ~= "" then
         return 0
     end
 else
-    local execution = redis.call("HGET", KEYS[1], ARGV[4])
-    if not execution or cjson.decode(execution).execution_id ~= cjson.decode(ARGV[5]).execution_id then
+    local current_raw = redis.call("HGET", KEYS[1], ARGV[4])
+    if not current_raw then
+        return 0
+    end
+    local current = cjson.decode(current_raw)
+    local updated = cjson.decode(ARGV[5])
+    if current.execution_id ~= updated.execution_id
+        or (ARGV[8] ~= "" and current.status ~= ARGV[8]) then
+        return 0
+    end
+    if updated.status == "running" and current.status ~= "pending"
+        and (current.status ~= "running" or current.started_at ~= updated.started_at) then
+        return 0
+    end
+    if updated.status == "running" and current.status == "pending"
+        and type(current.metadata) == "table" and type(current.metadata.admission_deadline) == "number"
+        and tonumber(redis.call("TIME")[1]) >= current.metadata.admission_deadline then
         return 0
     end
 end
@@ -608,6 +623,7 @@ class SandboxRepository(metaclass=SingletonMeta):
         expected_runtime: Sandbox | None = None,
         lease_owner: tuple[str, str] | None = None,
         raise_on_storage_error: bool = False,
+        expected_status: ExecutionStatus | None = None,
     ) -> bool:
         """Save execution to session Hash with field {subtask_id}.
 
@@ -661,6 +677,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                     data,
                     ttl,
                     owner,
+                    expected_status.value if expected_status is not None else "",
                 ):
                     return False
 

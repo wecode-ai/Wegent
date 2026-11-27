@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -118,7 +119,10 @@ async def test_proxy_transport_error_returns_typed_bad_gateway(mocker):
         "_get_sandbox_info",
         new=mocker.AsyncMock(return_value=("http://sandbox:8080", sandbox)),
     )
-    mocker.patch.object(wegent_e2b_proxy, "_touch_sandbox_activity")
+    manager = SimpleNamespace(
+        sandbox_workspace_write=mocker.Mock(return_value=nullcontext())
+    )
+    mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
     mocker.patch.object(
         wegent_e2b_proxy.httpx,
         "AsyncClient",
@@ -136,6 +140,7 @@ async def test_proxy_transport_error_returns_typed_bad_gateway(mocker):
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail["code"] == "sandbox_transport_error"
     assert "ReadError" in exc_info.value.detail["message"]
+    manager.sandbox_workspace_write.assert_called_once_with(sandbox)
 
 
 @pytest.mark.asyncio
@@ -161,7 +166,10 @@ async def test_proxy_preserves_upstream_response(mocker):
         "_get_sandbox_info",
         new=mocker.AsyncMock(return_value=("http://sandbox:8080", sandbox)),
     )
-    mocker.patch.object(wegent_e2b_proxy, "_touch_sandbox_activity")
+    manager = SimpleNamespace(
+        sandbox_workspace_write=mocker.Mock(return_value=nullcontext())
+    )
+    mocker.patch.object(wegent_e2b_proxy, "get_sandbox_manager", return_value=manager)
     mocker.patch.object(
         wegent_e2b_proxy.httpx,
         "AsyncClient",

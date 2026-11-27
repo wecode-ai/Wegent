@@ -2691,7 +2691,9 @@ class TestSandboxManager:
         renewed = copy.copy(sample_sandbox)
         renewed.last_activity_at += 1
         mocker.patch.object(
-            manager._repository, "load_sandbox", side_effect=[sample_sandbox, renewed]
+            manager._repository,
+            "load_sandbox",
+            side_effect=[sample_sandbox, sample_sandbox, renewed],
         )
         mocker.patch.object(
             manager,
@@ -2706,6 +2708,77 @@ class TestSandboxManager:
         assert result["skipped"] is True
         assert result["archived"] is False
         delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_task_cleanup_defers_archive_until_workspace_upload_finishes(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        manager = sandbox_manager_with_mock_redis
+        mutex = Lock()
+        mocker.patch.object(
+            manager._lifecycle_lock,
+            "acquire_owned",
+            side_effect=lambda *_: "owner" if mutex.acquire(blocking=False) else None,
+        )
+        mocker.patch.object(
+            manager._lifecycle_lock,
+            "release_owned",
+            side_effect=lambda *_: mutex.release(),
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        archive = mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            return_value=_SandboxArchiveOutcome.ARCHIVED,
+        )
+        delete = mocker.patch.object(
+            manager, "_delete_task_sandbox", return_value={"deleted": True}
+        )
+
+        async with manager.sandbox_workspace_write(sample_sandbox):
+            result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+            assert result["reason"] == "lifecycle_busy"
+            archive.assert_not_awaited()
+            delete.assert_not_called()
+
+        result = await manager.cleanup_sandbox_by_task_id(task_id=12345)
+        assert result["deleted"]
+        archive.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_poll_reconciles_expired_admission_for_the_same_runtime(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, sample_execution, mocker
+    ):
+        from executor_manager.models.sandbox import ExecutionStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_execution.metadata.update(
+            admission_deadline=time.time() - 1,
+            admitted_runtime_created_at=sample_sandbox.created_at,
+            admitted_runtime_container=sample_sandbox.container_name,
+        )
+        mocker.patch.object(
+            manager._repository, "load_execution", return_value=sample_execution
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        save = mocker.patch.object(
+            manager._repository, "save_execution", return_value=True
+        )
+
+        recovered = await manager.get_execution("12345", 1)
+
+        assert recovered.status is ExecutionStatus.FAILED
+        assert recovered.execution_id == sample_execution.execution_id
+        assert sample_execution.status is ExecutionStatus.PENDING
+        save.assert_called_once_with(
+            recovered,
+            expected_runtime=sample_sandbox,
+            expected_status=ExecutionStatus.PENDING,
+        )
 
     # ----- Scheduler Integration Tests -----
 

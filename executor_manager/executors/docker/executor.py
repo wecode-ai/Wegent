@@ -36,6 +36,7 @@ from executor_manager.executors.docker.constants import (
     DEFAULT_RUNTIME_PORT,
     DEFAULT_TASK_ID,
     DEFAULT_TIMEZONE,
+    DOCKER_CLEANUP_TIMEOUT_SECONDS,
     DOCKER_SOCKET_PATH,
     WORKSPACE_MOUNT_PATH,
 )
@@ -1295,10 +1296,12 @@ class DockerExecutor(Executor):
                         "container",
                         "--format",
                         '{{.Id}}|{{index .Config.Labels "owner"}}',
+                        "--",
                         executor_name,
                     ],
                     capture_output=True,
                     text=True,
+                    timeout=DOCKER_CLEANUP_TIMEOUT_SECONDS,
                 )
                 if inspected.returncode:
                     status = (
@@ -1679,18 +1682,28 @@ class DockerExecutor(Executor):
 
             # Remove the immutable container ID observed before the final lease check.
             deleted_containers = []
+            errors = []
             for container in containers:
                 container_id = container.get("container_id")
-                if not container_id or (can_delete is not None and not can_delete()):
+                if can_delete is not None and not can_delete():
                     return {
                         "status": "failed",
                         "error_msg": "Container deletion could not be fenced",
                     }
+                if not container_id:
+                    errors.append("Container lookup did not return an ID")
+                    continue
                 delete_result = delete_container(container_id)
-                if delete_result.get("status") != "success":
-                    return delete_result
-                deleted_containers.append(container["container_name"])
-            return {"status": "success", "deleted_containers": deleted_containers}
+                if delete_result.get("status") == "success":
+                    deleted_containers.append(container["container_name"])
+                else:
+                    errors.append(
+                        delete_result.get("error_msg") or "Container removal failed"
+                    )
+            result = {"status": "success", "deleted_containers": deleted_containers}
+            if errors:
+                result.update(status="failed", error_msg="; ".join(errors))
+            return result
 
         except Exception as e:
             logger.error(f"Error deleting containers by task_id '{task_id}': {e}")
