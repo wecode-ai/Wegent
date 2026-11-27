@@ -1,3 +1,4 @@
+import { encodeSseEvent } from './model-sse.mjs'
 import { modelToolOutputText } from './model-tool-output.mjs'
 import {
   functionCall,
@@ -66,7 +67,7 @@ function createSse(events) {
               },
             }
           : event
-      return `event: ${normalizedEvent.type}\ndata: ${JSON.stringify(normalizedEvent)}\n\n`
+      return encodeSseEvent(normalizedEvent)
     })
     .join('')
 }

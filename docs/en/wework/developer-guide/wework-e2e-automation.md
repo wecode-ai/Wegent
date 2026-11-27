@@ -249,6 +249,56 @@ Shared runner capacity can still introduce external queues, and expansion adds
 setup costs. Historical timing replay predicts only the test stage, not a measured
 speedup from a new CI run.
 
+### Reusing desktop E2E infrastructure
+
+- Launch the app through the checkpoint runner. Use `prepareApp` for
+  pre-launch configuration and the function provided through
+  `setRestartDesktopApp` for restarts. The restart waits for the controller to
+  reconnect and checks the device identity. Ordinary cold starts of release
+  packages use phased readiness checks.
+- Use `createLocalCollaborationProject` from
+  `e2e/desktop/modules/workspace-flows.mjs` to prepare an existing local
+  project, or `completeLocalCollaborationFolderImport` to drive folder import
+  through the UI. They share isolated Git repository setup. For a cloud
+  collaboration project, `createWorkspaceAndProject` in
+  `workspace-agent-setup.mjs` creates the project and waits for its board.
+- Record a cleanup action as soon as its resource is acquired. Pass the actions
+  in dependency order to `collectCleanupErrors` from
+  `e2e/desktop/modules/cleanup.mjs`. It runs every action and returns the
+  failures. Report each cleanup failure, preserve any existing scenario error,
+  and fail the checkpoint if cleanup alone fails. The scenario's `cleanup`
+  hook runs while the controller, proxies, and Backend are still available.
+
+#### Model fixtures
+
+- Use the runner's loopback model endpoint for ordinary scenarios. The scenario's
+  `handleHttp` hook can supply scenario-specific model responses while the app,
+  runtime, and tool calls continue through their real paths.
+- Import `sse(events)` from `e2e/desktop/modules/model-sse.mjs` to encode a
+  batch or use `writeSseEvents(response, events)` to write frames individually.
+  Use `createSse` from `response-protocol.mjs` when a Responses stream needs the
+  existing terminal-output merge.
+- Import `createModelResponseGates()` from
+  `e2e/desktop/modules/model-response-gates.mjs` and call `gates.pause()` for
+  each stage that needs a pause. Await `gate.promise` after writing a partial
+  response and call `gate.resolve()` once the scenario observes the expected
+  state. Call `gates.cleanup()` during teardown to release all pending responses.
+
+#### Waiting for observable state
+
+- For UI visibility, actionability, or a refreshed view, use the desktop
+  controller's `waitFor` or `clickWhenEnabled`, or the existing `waitForSnapshot`.
+- To repeatedly read API or runtime state, import
+  `waitForValue(load, predicate, message, timeoutMs)` from
+  `e2e/desktop/modules/wait.mjs`. Returning `true` from the predicate yields the
+  current value. The predicate can also return a match directly, as in
+  `items => items.find(item => item.id === taskId)`. A polling failure includes
+  the last read, so read only state that is safe to write to CI logs.
+- For an event you have subscribed to or an asynchronous operation already
+  underway, use `withTimeout(promise, timeoutMs, message)` from the same module.
+  Subscribe before triggering the event. The timeout ends the wait. The scenario
+  owns cancellation and cleanup.
+
 ### Test-only polling and retry timing
 
 - `stand-in`, `stand-in-cloud` and `stand-in-assignment-notifications` default to

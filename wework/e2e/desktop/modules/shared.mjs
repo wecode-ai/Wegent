@@ -37,6 +37,7 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
+import { withTimeout } from './wait.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const DESKTOP_READY_TIMEOUT_MS = readPositiveTimeout(
@@ -965,14 +966,6 @@ switch ($Action) {
       `---\nname: desktop-e2e-skill\ndescription: Verifies the installed plugin can be used in chat.\n---\n\nUse this skill to verify the Wework desktop plugin flow.\n`
     ),
   ])
-}
-
-function withTimeout(promise, timeoutMs, message) {
-  let timeout
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
-  })
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout))
 }
 
 async function isExecutable(path) {
