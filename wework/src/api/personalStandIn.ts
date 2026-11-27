@@ -211,6 +211,7 @@ export type StandInConversationScope =
   | `shared:${number}:${StandInShareDefinition['kind']}:${string}`
 
 export interface PersonalStandInSettings {
+  teamCopyVersion?: number
   teamImportVersion?: number
   portableTeam?: { name: string; collaboration_model: string; bot: Record<string, unknown>[] }
   bindableTeams?: { id: string; name: string }[]

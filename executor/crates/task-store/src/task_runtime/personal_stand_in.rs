@@ -663,6 +663,7 @@ pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
 pub struct VerifiedPersonalSettings<'a> {
     pub account: Option<&'a Value>,
     pub workspace_owner: bool,
+    pub copy_team_role_id: Option<&'a str>,
     pub owned_team: Option<&'a Value>,
 }
 
@@ -805,7 +806,7 @@ impl LocalTaskStore {
         user: i64,
         device: &str,
         backend: Option<&str>,
-        value: Value,
+        mut value: Value,
         verified: VerifiedPersonalSettings<'_>,
     ) -> Result<Value, TaskRuntimeError> {
         if value["primary"]["delegation"]["action"] == "prepare" && verified.account.is_none() {
@@ -815,6 +816,9 @@ impl LocalTaskStore {
         }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(role_id) = verified.copy_team_role_id {
+            execution_team::copy_referenced_role(&connection, user, device, role_id, &mut value)?;
+        }
         if let Some(team) = verified.owned_team {
             let role_id = team["roleId"].as_str().ok_or_else(|| {
                 TaskRuntimeError::Invalid("Missing personal role identity".into())
@@ -980,6 +984,7 @@ impl LocalTaskStore {
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
             object.remove("bindableTeams");
+            object.remove("teamCopyVersion");
             object.remove("teamImportVersion");
             object.remove("portableTeam");
             object.remove("autoSelect");
@@ -1035,6 +1040,12 @@ impl LocalTaskStore {
             if value["primary"].get("teamRef").is_none() {
                 value["primary"]["teamRef"] = previous["primary"]["teamRef"].clone();
             }
+            execution_team::update_owned_definition(
+                connection,
+                user,
+                &previous["primary"],
+                &value["primary"],
+            )?;
             stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
             dots_delegation::save_delegation(
                 &mut value["primary"],
@@ -1069,6 +1080,9 @@ impl LocalTaskStore {
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
+            if let Some(before) = before {
+                execution_team::update_owned_definition(connection, user, before, role)?;
+            }
             stamp_stand_in_connections(role, before.unwrap_or(&Value::Null));
             role["version"] = json!(version + 1);
             stamp_project_enabled(role, before.unwrap_or(&Value::Null));

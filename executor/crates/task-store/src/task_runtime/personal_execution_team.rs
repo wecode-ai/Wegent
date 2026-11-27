@@ -201,6 +201,81 @@ fn portable(value: &Value) -> Result<Value, TaskRuntimeError> {
     Ok(definition)
 }
 
+/// Fork the currently referenced local definition within the settings save transaction.
+pub(super) fn copy_referenced_role(
+    connection: &Connection,
+    user: i64,
+    device: &str,
+    role_id: &str,
+    settings: &mut Value,
+) -> Result<(), TaskRuntimeError> {
+    let invalid = || TaskRuntimeError::Invalid("Referenced assistant Team changed".into());
+    let previous = read_personal(connection, user, device)?;
+    let before = stand_in_identities(&previous)
+        .into_iter()
+        .find(|role| role["id"] == role_id && role["executionDeviceId"] == device)
+        .ok_or_else(invalid)?;
+    let source = before["teamRef"]
+        .as_str()
+        .filter(|r| r.starts_with("LA-"))
+        .ok_or_else(invalid)?;
+    let role = if role_id == "@primary" {
+        &mut settings["primary"]
+    } else {
+        settings["roles"]
+            .as_array_mut()
+            .and_then(|roles| roles.iter_mut().find(|r| r["id"] == role_id))
+            .ok_or_else(invalid)?
+    };
+    if role["teamRef"] != source {
+        return Err(invalid());
+    }
+    let reference = identity_ref(user, role_id, &before);
+    let mut team = definition(connection, user, source)?;
+    team["id"] = json!(reference);
+    team["imported"] = json!(true);
+    apply_identity_edit(&mut team, &before, role);
+    write_definition(connection, user, &reference, &team)?;
+    role["teamRef"] = json!(reference);
+    Ok(())
+}
+
+fn apply_identity_edit(team: &mut Value, before: &Value, role: &Value) {
+    if before["name"] != role["name"] && role["name"].is_string() {
+        team["name"] = role["name"].clone();
+    }
+    if before["prompt"] != role["prompt"] {
+        team["system_prompt"] = role["prompt"].clone();
+    }
+}
+
+/// Keep subsequent edits on an owned multi-Bot definition without rebuilding it as Solo.
+pub(super) fn update_owned_definition(
+    connection: &Connection,
+    user: i64,
+    before: &Value,
+    role: &Value,
+) -> Result<(), TaskRuntimeError> {
+    if before["prompt"] == role["prompt"] && before["name"] == role["name"] {
+        return Ok(());
+    }
+    let Some(reference) = role["teamRef"]
+        .as_str()
+        .filter(|r| r.starts_with("stand-in-team-") && before["teamRef"] == *r)
+    else {
+        return Ok(());
+    };
+    let Some(record) = get_item_from(connection, reference, "local_team")? else {
+        return Ok(());
+    };
+    if record.created_by_user_id == user && record.metadata["imported"] == true {
+        let mut team = record.metadata;
+        apply_identity_edit(&mut team, before, role);
+        write_definition(connection, user, reference, &team)?;
+    }
+    Ok(())
+}
+
 pub(super) fn owned_role_reference(
     user: i64,
     device: &str,
@@ -454,6 +529,58 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("stand-in-team-"));
+    }
+
+    #[test]
+    fn copying_an_assistant_team_saves_the_edit_and_preserves_its_source() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let source = store.create_chat_agent(DEFAULT_WORK_ITEM_PROJECT_ID,
+            serde_json::from_value(json!({"name":"Reviewer","runtime":"codex","created_by_user_id":7,
+                "system_prompt":"Shared instructions","mcp_servers":{"tools":{"url":"https://example.invalid/mcp"}}})).unwrap()).unwrap();
+        let mut settings = store.personal_stand_in(7, "device").unwrap();
+        let mut role = empty_role("review", "device");
+        role["teamRef"] = json!(source.id);
+        settings["roles"] = json!([role]);
+        let mut settings = store.save_personal_stand_in(7, "device", settings).unwrap();
+        let original = store.personal_execution_team(7, &source.id).unwrap();
+        let save_copy = |settings| {
+            store.save_verified_personal_settings(
+                7,
+                "device",
+                None,
+                settings,
+                VerifiedPersonalSettings {
+                    copy_team_role_id: Some("review"),
+                    ..Default::default()
+                },
+            )
+        };
+        settings["roles"][0]["prompt"] = json!("Independent review");
+        let mut stale = settings.clone();
+        stale["version"] = json!(-1);
+        assert!(save_copy(stale).is_err());
+        assert_eq!(
+            store.personal_stand_in(7, "device").unwrap()["roles"][0]["teamRef"],
+            source.id
+        );
+        let saved = save_copy(settings).unwrap();
+        let reference = saved["roles"][0]["teamRef"].as_str().unwrap();
+        assert_ne!(reference, source.id);
+        let copied = store.personal_execution_team(7, reference).unwrap();
+        assert_eq!(copied["bot"], original["bot"]);
+        assert_eq!(copied["system_prompt"], "Independent review");
+        let mut edited = saved.clone();
+        edited["roles"][0]["prompt"] = json!("Second independent review");
+        let edited = store.save_personal_stand_in(7, "device", edited).unwrap();
+        assert_eq!(edited["roles"][0]["teamRef"], reference);
+        let second = store.personal_execution_team(7, reference).unwrap();
+        assert_eq!(second["system_prompt"], "Second independent review");
+        assert_eq!(second["bot"], original["bot"]);
+        assert_eq!(
+            store.personal_execution_team(7, &source.id).unwrap(),
+            original
+        );
     }
 
     #[test]

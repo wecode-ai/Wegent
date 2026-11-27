@@ -649,6 +649,17 @@ impl RuntimeWorkRpcHandler {
                         json!({"roleId":id,"definition":definition});
                 }
             }
+            let copy_team_role_id = payload
+                .get("copyTeamRoleId")
+                .map(|role| {
+                    role.as_str().filter(|id| !id.is_empty()).ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Invalid assistant Team copy")
+                    })
+                })
+                .transpose()?;
+            if copy_team_role_id.is_some() {
+                self.verify_local_stand_in_owner(user)?;
+            }
             let owned_team = payload.get("ownedTeam");
             if owned_team.is_some() {
                 self.verify_local_stand_in_owner(user)?;
@@ -680,7 +691,7 @@ impl RuntimeWorkRpcHandler {
             self.prepare_connection_boundaries(&mut settings, &previous)
                 .await?;
             let connection = self.backend_connection_snapshot()?;
-            let saved = store
+            let mut saved = store
                 .save_verified_personal_settings(
                     user,
                     &self.device_id,
@@ -690,14 +701,17 @@ impl RuntimeWorkRpcHandler {
                         account: verified_account.as_ref(),
                         workspace_owner,
                         owned_team,
+                        copy_team_role_id,
                     },
                 )
                 .map_err(settings_error)?;
+            saved["teamCopyVersion"] = json!(1);
             Ok(saved)
         } else {
             let mut settings = store
                 .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)?;
+            settings["teamCopyVersion"] = json!(1);
             settings["teamImportVersion"] = json!(1);
             if let Some(role_id) = payload["exportTeamRoleId"].as_str() {
                 // A stopped installation-local identity can migrate to its connected account.

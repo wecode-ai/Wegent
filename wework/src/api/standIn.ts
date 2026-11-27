@@ -624,7 +624,7 @@ export interface StandInExecutorApi {
     settings: PersonalStandInSettings,
     deviceId: string,
     transferRoleId?: string,
-    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string },
+    definitionChange?: { kind: 'create' | 'update' | 'delete'; roleId: string; copyTeam?: boolean },
     portableTeam?: PersonalStandInSettings['portableTeam']
   ): Promise<PersonalStandInSettings>
   saveDelegationRoute(
@@ -1035,7 +1035,7 @@ export function createStandInExecutorApi(
       publishPersonalStandIn(saved)
       return saved
     },
-    personalSave: async (userId, settings, deviceId, transferRoleId, _change, portableTeam) => {
+    personalSave: async (userId, settings, deviceId, transferRoleId, change, portableTeam) => {
       const configuration = { ...settings }
       delete configuration.bindableTeams
       delete configuration.portableTeam
@@ -1045,11 +1045,18 @@ export function createStandInExecutorApi(
           code: 'stand_in_team_import_unsupported',
         })
       }
+      if (change?.copyTeam && !settings.teamCopyVersion) {
+        throw Object.assign(new Error('The target Executor cannot copy an assistant Team'), {
+          code: 'stand_in_team_copy_unsupported',
+        })
+      }
+      delete configuration.teamCopyVersion
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
         {
           userId,
           settings: configuration,
+          ...(change?.copyTeam ? { copyTeamRoleId: change.roleId } : {}),
           ...(transferRoleId !== undefined ? { transferRoleId } : {}),
           ...(portableTeam ? { portableTeam } : {}),
         },
