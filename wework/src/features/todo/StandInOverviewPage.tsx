@@ -809,7 +809,8 @@ export function StandInOverviewPage({
             ) : null}
           </>
         )}
-        {!conversationAvailable && renderDetails?.([])}
+        {(!conversationAvailable || (resumeSetup && !team && !shared && !roleId)) &&
+          renderDetails?.([])}
         <StandInReviewDialog
           open={active && review === 'work'}
           title={t('standIn.workspace.details_activity')}
