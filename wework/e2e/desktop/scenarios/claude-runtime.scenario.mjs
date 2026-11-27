@@ -403,7 +403,7 @@ export async function createDesktopScenario({
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
       const body = await readJson(request)
-      if (assistants.handleModel(body, response)) return true
+      if (assistants.handleModel(body, response, request.headers)) return true
       if (concurrentHomes.handleModel(body, response)) return true
       if (sharedSkills.handleModel(body, response)) return true
       if (codexSkills.handleModel(body, response)) return true

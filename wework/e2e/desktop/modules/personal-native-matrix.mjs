@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isCollaborationSubagentRequest } from './subagent-request.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { standInRoleFixture } from './stand-in-role-fixture.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
@@ -22,14 +23,17 @@ export function personalNativeMatrix({
   writeToolCall,
 }) {
   let cell
-  function handleModel(body, response) {
+  function handleModel(body, response, headers) {
     if (!cell || isReplyPredictionRequest(body)) return false
     const input = JSON.stringify(body.input ?? [])
     const instructions = JSON.stringify(body.instructions ?? '')
     const request = JSON.stringify(body)
     if (!request.includes(cell.id)) return false
     const child =
-      cell.mode === 'coordinate' && input.includes(cell.assignment) && !input.includes(cell.prompt)
+      cell.mode === 'coordinate' &&
+      (cell.runtime === 'codex'
+        ? isCollaborationSubagentRequest(headers)
+        : input.includes(cell.assignment) && !input.includes(cell.prompt))
     if (
       child ||
       (cell.mode === 'pipeline' && request.includes(cell.second) && input.includes(cell.handoff))
@@ -174,9 +178,10 @@ export function personalNativeMatrix({
         await captureScreenshot(control, id + '-delivery.png', chat)
         const taskId = `stand-in-chat-${userId}-role-${id}`
         const { task } = await rpc('runtime.tasks.get', { taskId })
+        assert.equal(task.taskId, taskId)
         assert.equal(task.runtime, runtime)
         evidence.push({
-          taskId,
+          taskId: task.taskId,
           teamRef: saved.roles.find(row => row.id === id).teamRef,
           mode,
           runtime: task.runtime,

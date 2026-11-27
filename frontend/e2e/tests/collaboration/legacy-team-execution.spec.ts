@@ -577,6 +577,7 @@ test('dispatches six native Team configurations in one collaboration group', asy
     await initializeProjectExecutionEnvironment(page)
     const { leader } = await createLeader(projectId)
     await verifyGroupNativeMatrix({
+      leaderName,
       page,
       request,
       info: testInfo,

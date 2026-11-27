@@ -113,7 +113,7 @@ function extractText(value: unknown): string {
 
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>
-    return ['body', 'messages', 'system', 'input', 'content', 'text', 'prompt']
+    return ['body', 'messages', 'system', 'instructions', 'input', 'content', 'text', 'prompt']
       .map(key => extractText(obj[key]))
       .join(' ')
   }

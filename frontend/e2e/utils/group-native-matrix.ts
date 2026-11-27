@@ -28,6 +28,7 @@ interface Context {
   info: TestInfo
   projectId: string
   projectPath: string
+  leaderName: string
   leader: { id: string; wegentTeamId: number }
   suffix: string
   cleanup: string[]
@@ -83,6 +84,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       const instructions = `Carry out ${name}`
       const leadPrompt = `Lead native execution for ${name}`
       const workerPrompt = `Handle delegated work for ${name}`
+      const assignment = `Inspect the release notes for ${name}`
       const workerResult = `Worker delivery ${name}`
       const final = `Finished ${name}`
       const bots = []
@@ -137,7 +139,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
                     arguments: {
                       task_name: 'review',
                       agent_type: type,
-                      message: 'Inspect the release notes.',
+                      message: assignment,
                       fork_turns: 'none',
                     },
                   },
@@ -149,7 +151,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
           { responseContent: final },
         ])
         await scenario(
-          workerPrompt,
+          claude ? workerPrompt : assignment,
           [{ responseContent: workerResult }],
           claude ? undefined : { 'x-openai-subagent': 'collab_spawn' }
         )
@@ -164,6 +166,7 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
         instructions,
         leadPrompt,
         workerPrompt,
+        assignment,
         workerResult,
         final,
         bots,
@@ -272,6 +275,10 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       expect(modelRequestText(await getScenarioModelBodies(request, cell.leadPrompt))).toContain(
         cell.workerResult
       )
+    if (cell.mode === 'coordinate' && cell.shell === 'Codex')
+      expect(modelRequestText(await getScenarioModelBodies(request, cell.assignment))).toContain(
+        cell.workerPrompt
+      )
     evidence.push({
       shell: cell.shell,
       mode: cell.mode,
@@ -288,17 +295,31 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     'in_review',
     { timeout: 60000 }
   )
-  await expect(page.getByText('Native deliveries accepted.', { exact: true }).first()).toBeVisible()
+  const signoff = page
+    .locator('[data-testid^="cloud-task-activity-card-"]')
+    .filter({ hasText: ctx.leaderName })
+    .filter({ hasText: 'Native deliveries accepted.' })
+  await expect(signoff).toHaveCount(1)
+  await expect(signoff).toBeVisible()
+  await expect
+    .poll(async () =>
+      (await ctx.executions(issue.id))
+        .filter(row => row.agentId === leader.id)
+        .map(row => row.status)
+    )
+    .toEqual(['completed'])
+  const [manager] = (await ctx.executions(issue.id)).filter(row => row.agentId === leader.id)
+  expect(manager.backendTaskId).toBeGreaterThan(0)
   const receipts = modelRequestText((await getScenarioModelBodies(request, title)).slice(2))
   for (const cell of cases) {
     expect(receipts).toContain(cell.mode === 'pipeline' ? cell.workerResult : cell.final)
   }
   await info.attach('native-group-signed', {
-    body: await page.screenshot(),
+    body: await signoff.screenshot(),
     contentType: 'image/png',
   })
   await info.attach('native-group-executions', {
-    body: JSON.stringify({ groupId, issueId: issue.id, evidence }),
+    body: JSON.stringify({ groupId, issueId: issue.id, manager, evidence }),
     contentType: 'application/json',
   })
 }

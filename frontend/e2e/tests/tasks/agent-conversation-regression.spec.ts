@@ -874,6 +874,7 @@ test.describe('Agent conversation regression', () => {
     const name = `e2e-coordinate-${Date.now()}`
     const prompt = `Delegate the review for ${name}`
     const workerInstruction = `Review documents using the policy ${name}`
+    const assignment = `Inspect the document for ${name}`
     const childResult = `Reviewed by worker ${name}`
     const result = `Review complete ${name}`
     const cleanup: string[] = []
@@ -921,7 +922,7 @@ test.describe('Agent conversation regression', () => {
               arguments: {
                 task_name: 'review',
                 agent_type: role,
-                message: 'Review the document.',
+                message: assignment,
                 fork_turns: 'none',
               },
             },
@@ -930,7 +931,7 @@ test.describe('Agent conversation regression', () => {
         { toolCalls: [{ toolName: 'wait_agent', arguments: { timeout_ms: 10000 } }] },
         { responseContent: result },
       ])
-      await configureToolScenario(request, workerInstruction, [{ responseContent: childResult }], {
+      await configureToolScenario(request, assignment, [{ responseContent: childResult }], {
         'x-openai-subagent': 'collab_spawn',
       })
       await openTaskPage(page, '/chat', teamId, 'chat')
@@ -950,6 +951,13 @@ test.describe('Agent conversation regression', () => {
       })
       await waitForBackendTerminal(request, taskId)
       const captures = await loadCapturedModelRequests(request)
+      expect(
+        captures.some(
+          ({ body }) =>
+            JSON.stringify(body).includes(assignment) &&
+            JSON.stringify(body).includes(workerInstruction)
+        )
+      ).toBe(true)
       expect(captures.some(capture => JSON.stringify(capture.body).includes(childResult))).toBe(
         true
       )
