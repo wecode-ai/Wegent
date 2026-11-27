@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
-import { access, mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { SourceMap } from 'node:module'
 import { availableParallelism, freemem, loadavg } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -30,6 +31,8 @@ import { waitForClosedStartupSplash } from '../e2e/desktop/modules/native-window
 import { withTimeout } from '../e2e/desktop/modules/shared.mjs'
 import {
   createDevtoolsClient,
+  readLocalSourceMap,
+  readProtocolStream,
   startPerformanceRecording,
   stopPerformanceRecording,
   writeDiagnosticFile,
@@ -86,6 +89,8 @@ const rendererTimingEvents = new Set([
   'MinorGC',
 ])
 const rendererTimingMarkers = new Set([
+  'wework-profile:idle-start',
+  'wework-profile:idle-end',
   'wework-profile:single-task-start',
   'wework-profile:single-task-end',
   'wework-profile:turn-started',
@@ -105,8 +110,14 @@ export function formatRendererThreadTiming(trace, rendererPids) {
   const end = markers.findLast(({ name }) => name === 'wework-profile:single-task-end')?.ts
   const turnStart = markers.find(({ name }) => name === 'wework-profile:turn-started')?.ts
   const turnEnd = markers.findLast(({ name }) => name === 'wework-profile:turn-settled')?.ts
+  const idleStart = markers.find(({ name }) => name === 'wework-profile:idle-start')?.ts
+  const idleEnd = markers.findLast(({ name }) => name === 'wework-profile:idle-end')?.ts
   const evidenceStart = turnStart === undefined ? start : Math.min(turnStart, start ?? turnStart)
   const evidenceEnd = turnEnd === undefined ? end : Math.max(turnEnd, end ?? turnEnd)
+  const windows = [
+    [idleStart, idleEnd],
+    [evidenceStart, evidenceEnd],
+  ].filter(([first, last]) => Number.isFinite(first) && Number.isFinite(last) && last > first)
   const traceEvents = rendererEvents.flatMap(({ name, ph, pid, tid, ts, dur, tdur, tts, args }) => {
     if (!Number.isInteger(tid)) return []
     if (ph === 'M' && name === 'thread_name' && rendererThreadName.test(args?.name))
@@ -118,10 +129,8 @@ export function formatRendererThreadTiming(trace, rendererPids) {
       (!rendererTimingEvents.has(name) && !/^V8\.GC[A-Z0-9_a-z]+$/.test(name)) ||
       !Number.isFinite(ts) ||
       !Number.isFinite(dur) ||
-      evidenceStart === undefined ||
-      evidenceEnd === undefined ||
-      ts + dur < evidenceStart ||
-      ts > evidenceEnd
+      dur < 0 ||
+      !windows.some(([first, last]) => ts + dur >= first && ts <= last)
     )
       return []
     return [
@@ -138,7 +147,380 @@ export function formatRendererThreadTiming(trace, rendererPids) {
       },
     ]
   })
-  return { singleTaskWindowUs: { start: start ?? null, end: end ?? null }, traceEvents }
+  return {
+    idleWindowUs: { start: idleStart ?? null, end: idleEnd ?? null },
+    singleTaskWindowUs: { start: start ?? null, end: end ?? null },
+    traceEvents,
+  }
+}
+
+// The names and source contents in a profile/map may contain arbitrary values.
+// Identify functions by verified repository locations, never by raw V8 names/URLs.
+async function repositorySource(source, repositoryRoot) {
+  if (typeof source !== 'string' || /[?#\0]/.test(source)) return null
+  let path = source.replaceAll('\\', '/')
+  if (path.startsWith('file:')) {
+    try {
+      path = fileURLToPath(path)
+    } catch {
+      return null
+    }
+  } else if (/^[a-z]+:/i.test(path)) return null
+  if (!isAbsolute(path)) {
+    path = path.replace(/^(?:\.\.\/)+/, '')
+    if (path.startsWith('src/')) path = 'wework/' + path
+    path = resolve(repositoryRoot, path)
+  }
+  try {
+    const actual = await realpath(path)
+    const within = relative(repositoryRoot, actual).replaceAll('\\', '/')
+    if (
+      !/^(?:wework\/(?:src|scripts|e2e)\/|packages\/[\w-]+\/)[\w./-]+\.[cm]?[jt]sx?$/.test(
+        within
+      ) ||
+      within.split('/').includes('..')
+    )
+      return null
+    return within
+  } catch {
+    return null
+  }
+}
+
+async function rendererFunctionMaps(
+  client,
+  target,
+  profile,
+  metadata,
+  root,
+  deadline,
+  applicationUrl
+) {
+  const maps = new Map()
+  const used = new Set(profile?.nodes?.map(node => node.callFrame?.scriptId) ?? [])
+  const scripts = new Map(
+    metadata
+      .filter(event => event.method === 'Debugger.scriptParsed')
+      .map(event => [event.params.scriptId, event.params])
+  )
+  const frames = new Map(
+    metadata
+      .filter(event => event.method === 'Runtime.executionContextCreated')
+      .map(event => [event.params.context.id, event.params.context.auxData?.frameId])
+  )
+  let unavailable = 0
+  let loaded = 0
+  const sourceCache = new Map()
+  for (const id of used) {
+    if (!id || id === '0') continue
+    const script = scripts.get(id)
+    if (!script?.sourceMapURL) {
+      unavailable++
+      continue
+    }
+    if (loaded >= 32 || performance.now() >= deadline) {
+      unavailable++
+      continue
+    }
+    loaded++
+    try {
+      const url = new URL(script.sourceMapURL, script.url)
+      let text
+      if (url.protocol === 'data:' && url.href.length < 16_000_000) {
+        const comma = url.href.indexOf(',')
+        text = /;base64,/.test(url.href)
+          ? Buffer.from(url.href.slice(comma + 1), 'base64').toString('utf8')
+          : decodeURIComponent(url.href.slice(comma + 1))
+      } else if (url.protocol === 'file:') {
+        text = await readLocalSourceMap(url, root)
+      } else {
+        const base = new URL(script.url)
+        const ownedOrigin = applicationUrl && new URL(applicationUrl).origin === url.origin
+        if (
+          !['http:', 'https:'].includes(url.protocol) ||
+          (!ownedOrigin && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) ||
+          url.origin !== base.origin ||
+          url.username ||
+          url.password ||
+          url.search ||
+          url.hash ||
+          !/\/assets\/[\w.-]+\.js\.map$/.test(url.pathname)
+        )
+          throw new Error('Unavailable map')
+        const boundedCommand = (method, params) =>
+          withTimeout(
+            client({ action: 'command', target, method, params }),
+            Math.max(1, deadline - performance.now()),
+            'Renderer source map unavailable'
+          )
+        const { resource } = await boundedCommand('Network.loadNetworkResource', {
+          frameId: frames.get(script.executionContextId),
+          url: url.href,
+          options: { disableCache: false, includeCredentials: false },
+        })
+        if (!resource.success || !resource.stream) throw new Error('Unavailable map')
+        text = await readProtocolStream(boundedCommand, resource.stream)
+      }
+      const payload = JSON.parse(text)
+      const sources = []
+      for (const original of payload.sources ?? []) {
+        const source = (payload.sourceRoot ?? '') + original
+        if (!sourceCache.has(source) && performance.now() < deadline)
+          sourceCache.set(source, await repositorySource(source, root))
+        sources.push(sourceCache.get(source) ?? '')
+      }
+      // Omit sourcesContent and original names even from the in-memory mapping.
+      maps.set(
+        script.scriptId,
+        new SourceMap({ version: 3, sources, names: [], mappings: payload.mappings })
+      )
+    } catch {
+      unavailable++
+    }
+  }
+  return { maps, unavailable }
+}
+
+export function summarizeRendererFunctions(trace, rendererPids, profile, maps = new Map()) {
+  const timing = formatRendererThreadTiming(trace, rendererPids)
+  const nodes = new Map(
+    (Array.isArray(profile?.nodes) ? profile.nodes : []).map(node => [node.id, node])
+  )
+  const valid =
+    profile &&
+    Number.isFinite(profile.startTime) &&
+    Number.isFinite(profile.endTime) &&
+    profile.endTime > profile.startTime &&
+    Array.isArray(profile.samples) &&
+    Array.isArray(profile.timeDeltas) &&
+    profile.samples.length === profile.timeDeltas.length &&
+    Array.isArray(profile.nodes) &&
+    nodes.size === profile.nodes.length &&
+    profile.timeDeltas.every(delta => Number.isFinite(delta) && delta >= 0) &&
+    profile.samples.every(id => nodes.has(id))
+  const parents = new Map()
+  for (const node of nodes.values())
+    for (const child of node.children ?? []) parents.set(child, node.id)
+  const location = frame => {
+    if (
+      !frame ||
+      !Number.isInteger(frame.lineNumber) ||
+      frame.lineNumber < 0 ||
+      !Number.isInteger(frame.columnNumber) ||
+      frame.columnNumber < 0
+    )
+      return null
+    const entry = maps.get(String(frame.scriptId))?.findEntry(frame.lineNumber, frame.columnNumber)
+    if (
+      !entry?.originalSource ||
+      !/^(?:wework\/(?:src|scripts|e2e)\/|packages\/[\w-]+\/)[\w./-]+\.[cm]?[jt]sx?$/.test(
+        entry.originalSource
+      ) ||
+      entry.originalSource.split('/').includes('..')
+    )
+      return null
+    return {
+      source: entry.originalSource,
+      line: entry.originalLine + 1,
+      column: entry.originalColumn + 1,
+    }
+  }
+  const phases = {}
+  for (const [phase, window] of Object.entries({
+    idle: timing.idleWindowUs,
+    singleTask: timing.singleTaskWindowUs,
+  })) {
+    const { start, end } = window
+    const status =
+      !Number.isFinite(start) || !Number.isFinite(end) || end <= start
+        ? 'missing-window'
+        : !profile
+          ? 'no-profile'
+          : !valid
+            ? 'invalid-profile'
+            : profile.startTime > start || profile.endTime < end
+              ? 'stale-profile'
+              : 'available'
+    const costs = new Map()
+    let samples = 0
+    let repoSamples = 0
+    let unmappedCalls = 0
+    const cost = loc => {
+      const key = `${loc.source}:${loc.line}:${loc.column}`
+      if (!costs.has(key))
+        costs.set(key, {
+          ...loc,
+          samples: 0,
+          sampledSelfMs: 0,
+          sampledInclusiveMs: 0,
+          calls: 0,
+          callWallMs: 0,
+          callThreadMs: 0,
+          callsWithoutThreadTime: 0,
+        })
+      return costs.get(key)
+    }
+    if (status === 'available') {
+      let clock = profile.startTime
+      for (const [index, id] of profile.samples.entries()) {
+        const next = clock + profile.timeDeltas[index]
+        const duration = Math.max(0, Math.min(next, end) - Math.max(clock, start))
+        clock = next
+        if (!duration) continue
+        samples++
+        let cursor = id
+        const visited = new Set()
+        const locations = new Set()
+        while (cursor !== undefined && !visited.has(cursor)) {
+          visited.add(cursor)
+          const loc = location(nodes.get(cursor)?.callFrame)
+          if (loc) {
+            const row = cost(loc)
+            const key = `${loc.source}:${loc.line}:${loc.column}`
+            if (!locations.has(key)) row.sampledInclusiveMs += duration / 1000
+            locations.add(key)
+            if (cursor === id) {
+              row.samples++
+              row.sampledSelfMs += duration / 1000
+              repoSamples++
+            }
+          }
+          cursor = parents.get(cursor)
+        }
+      }
+    }
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      for (const event of trace.traceEvents) {
+        if (
+          !rendererPids.includes(event.pid) ||
+          event.ph !== 'X' ||
+          event.name !== 'FunctionCall' ||
+          !Number.isFinite(event.ts) ||
+          !Number.isFinite(event.dur) ||
+          event.dur < 0 ||
+          event.ts < start ||
+          event.ts + event.dur > end
+        )
+          continue
+        const data = event.args?.data
+        const loc = location({
+          scriptId: data?.scriptId,
+          lineNumber: data?.lineNumber - 1,
+          columnNumber: data?.columnNumber - 1,
+        })
+        if (!loc) {
+          unmappedCalls++
+          continue
+        }
+        const row = cost(loc)
+        row.calls++
+        row.callWallMs += event.dur / 1000
+        if (Number.isFinite(event.tdur)) row.callThreadMs += event.tdur / 1000
+        else row.callsWithoutThreadTime++
+      }
+    }
+    phases[phase] = {
+      status,
+      samples,
+      repoSamples,
+      unmappedSamples: samples - repoSamples,
+      unmappedCalls,
+      functions: [...costs.values()].sort((a, b) => b.sampledSelfMs - a.sampledSelfMs).slice(0, 40),
+    }
+  }
+  return phases
+}
+
+/** Consume the existing stop/export seam; no recorder is started or extended here. */
+export async function stopRendererThreadTiming(
+  client,
+  directory,
+  target,
+  outputPath,
+  rendererPids,
+  idleCpuWindow,
+  repositoryRoot = resolve(fileURLToPath(new URL('../..', import.meta.url))),
+  applicationUrl
+) {
+  const state = JSON.parse(await readFile(join(directory, `performance-${target}.json`), 'utf8'))
+  assert.equal(state.target, target, 'The recording belongs to another renderer')
+  const metadata = [...(state.metadata ?? [])]
+  let profile
+  let maps = new Map()
+  let sourceMapsUnavailable = 0
+  let protocolLostEvents = state.lostEvents ?? 0
+  let debuggerEnabled = false
+  let mappingDeadline
+  const recordingClient = async input => {
+    const result = await client(input)
+    if (input.method === 'Profiler.stop') profile = result.profile
+    if (input.method === 'Tracing.end' && Array.isArray(profile?.nodes)) {
+      mappingDeadline = performance.now() + 4000
+      try {
+        debuggerEnabled = true
+        await withTimeout(
+          client({ action: 'command', target, method: 'Debugger.enable' }),
+          Math.max(1, mappingDeadline - performance.now()),
+          'Renderer source map metadata unavailable'
+        )
+      } catch {
+        sourceMapsUnavailable++
+      }
+    }
+    if (input.action === 'events') {
+      protocolLostEvents += result.lost ?? 0
+      metadata.push(
+        ...result.events.filter(event =>
+          ['Debugger.scriptParsed', 'Runtime.executionContextCreated'].includes(event.method)
+        )
+      )
+    }
+    if (input.method === 'IO.close' && Array.isArray(profile?.nodes)) {
+      const loaded = await rendererFunctionMaps(
+        client,
+        target,
+        profile,
+        metadata,
+        await realpath(repositoryRoot),
+        mappingDeadline,
+        applicationUrl
+      )
+      maps = loaded.maps
+      sourceMapsUnavailable += loaded.unavailable
+    }
+    return result
+  }
+  try {
+    return await stopPerformanceRecording(
+      recordingClient,
+      directory,
+      target,
+      outputPath,
+      trace => ({
+        ...formatRendererThreadTiming(trace, rendererPids),
+        idleCpuWindow: idleCpuWindow ?? null,
+        functions: summarizeRendererFunctions(trace, rendererPids, profile, maps),
+        evidence: {
+          protocolLostEvents,
+          metadataLostEvents: state.metadataLostEvents ?? 0,
+          sourceMapsUnavailable,
+        },
+        notes: [
+          'Function identities are repository locations. Samples are not invocation counts.',
+          'Sampled and nested call costs must not be summed; missing thread time is reported separately.',
+          'Capture is diagnostic and cannot establish a passing performance budget.',
+        ],
+      })
+    )
+  } finally {
+    profile = undefined
+    if (debuggerEnabled)
+      await withTimeout(
+        client({ action: 'command', target, method: 'Debugger.disable' }),
+        1000,
+        'Renderer debugger cleanup unavailable'
+      ).catch(() => {})
+  }
 }
 
 export function installTurnUpdateProbe() {
@@ -852,14 +1234,20 @@ export function createDesktopScenario({
         resultDir,
         threadTiming ? 'renderer-performance-timing.json' : 'renderer-performance.json'
       )
+      let idleCpuWindow
       const finishRecording = () =>
-        stopPerformanceRecording(
-          client,
-          resultDir,
-          target,
-          reportPath,
-          threadTiming ? trace => formatRendererThreadTiming(trace, pids) : undefined
-        )
+        threadTiming
+          ? stopRendererThreadTiming(
+              client,
+              resultDir,
+              target,
+              reportPath,
+              pids,
+              idleCpuWindow,
+              undefined,
+              targets.find(entry => entry.id === target)?.url
+            )
+          : stopPerformanceRecording(client, resultDir, target, reportPath)
       const sampleProcesses = async phase => {
         const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
         processSamples.push({
@@ -939,6 +1327,7 @@ export function createDesktopScenario({
           await delay(sampleIntervalMs)
         }
         const idleEnd = await cpuSnapshot(pids)
+        idleCpuWindow = { start: idleStart, end: idleEnd }
         await mark('idle-end')
         if (measureProcesses) await sampleProcesses('idle')
         assert.ok(
@@ -1090,6 +1479,7 @@ export function createDesktopScenario({
         ].every(state => state.activity === 'foreground')
         const report = {
           measurements,
+          idleCpuWindow,
           singleTaskWindow: {
             start: { ...start, ...singleTaskStartMetrics },
             end: { ...end, ...endMetrics },
