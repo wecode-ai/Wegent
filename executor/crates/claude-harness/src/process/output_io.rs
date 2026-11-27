@@ -394,7 +394,8 @@ where
         }) else {
             continue;
         };
-        if value["type"] == "result" {
+        async_tasks.observe(&value);
+        if value["type"] == "result" && !async_tasks.has_active_task() {
             permission.take();
         } else if let Some(permission) = permission.as_mut() {
             permission.observe(&value);
@@ -403,7 +404,6 @@ where
             session.observe(&value);
         }
         diagnostics.observe(&value, &task_id, &subtask_id);
-        async_tasks.observe(&value);
         let value = match partial_messages.normalize(value) {
             Ok(Some(value)) => value,
             Ok(None) => continue,

@@ -1607,11 +1607,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             set_runtime_task_title(&mut request, &link.title);
-        }
-        if let Some(link) = existing_link.as_ref() {
             mark_runtime_model_switch(&mut request, link, &payload);
-        }
-        if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
             if let Some(attempt) = role_retry_attempt {
@@ -1622,6 +1618,7 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(super::stand_in_role_delegation::denied)?;
                 delegation["attempt"] = json!(attempt);
             }
+            restore_personal_conversation_team(&mut request, link);
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.apply_shared_stand_in_prompt(&mut request, payload["assistantPrompt"].as_str())?;
             self.refresh_shared_conversation_request(&mut request)

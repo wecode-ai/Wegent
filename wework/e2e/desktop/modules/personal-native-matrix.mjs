@@ -60,7 +60,18 @@ export function personalNativeMatrix({
       const spawn = !cell.spawned
       cell.spawned = true
       if (cell.runtime === 'claude_code') {
-        assert.ok(spawn, 'Claude Agent must return the worker result to the manager')
+        if (!spawn) {
+          const launch = body.input.find(
+            item => item.type === 'function_call_output' && item.call_id === cell.id + '-delegate'
+          )
+          const agentId = launch?.output.match(
+            /Async agent launched successfully[\s\S]*?agentId:\s*([\w-]+)/
+          )?.[1]
+          assert.ok(agentId, 'Expected the native Claude background agent launch receipt')
+          cell.backgroundAgentId = agentId
+          writeText(response, cell.id + '-waiting', 'Waiting for the reviewer.')
+          return true
+        }
         const name = body.tools.find(tool => ['Agent', 'Task'].includes(tool.name))?.name
         assert.ok(name, 'Claude must advertise the native delegation tool')
         writeToolCall(response, cell.id, cell.id + '-delegate', name, {
@@ -88,6 +99,23 @@ export function personalNativeMatrix({
         instructions.includes(cell.first) || input.includes(cell.first),
         'The saved lead Bot must run'
       )
+      if (cell.backgroundAgentId) {
+        const completed = body.input.some(
+          item =>
+            item.role === 'user' &&
+            item.content?.some(part =>
+              [
+                ...(part.text ?? '').matchAll(/<task-notification>[\s\S]*?<\/task-notification>/g),
+              ].some(
+                ([notice]) =>
+                  notice.includes('<task-id>' + cell.backgroundAgentId + '</task-id>') &&
+                  notice.includes('<status>completed</status>') &&
+                  notice.includes(cell.handoff)
+              )
+            )
+        )
+        assert.ok(completed, 'Expected a completed notification from the delegated Claude agent')
+      }
       writeText(response, cell.id + '-lead', cell.mode === 'pipeline' ? cell.handoff : cell.result)
     }
     return true
