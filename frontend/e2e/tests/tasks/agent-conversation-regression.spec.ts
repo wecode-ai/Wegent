@@ -77,6 +77,7 @@ type RuntimeCheckResponse = {
 }
 
 type CapturedModelRequest = {
+  headers: Record<string, string>
   url: string
   body: unknown
 }
@@ -951,15 +952,40 @@ test.describe('Agent conversation regression', () => {
       })
       await waitForBackendTerminal(request, taskId)
       const captures = await loadCapturedModelRequests(request)
+      const worker = captures.findIndex(
+        capture =>
+          isOpenAIResponsesRequest(capture) &&
+          capture.headers['x-openai-subagent'] === 'collab_spawn' &&
+          JSON.stringify(capture.body).includes(assignment) &&
+          JSON.stringify(capture.body).includes(workerInstruction)
+      )
+      expect(worker).toBeGreaterThanOrEqual(0)
       expect(
-        captures.some(
-          ({ body }) =>
-            JSON.stringify(body).includes(assignment) &&
-            JSON.stringify(body).includes(workerInstruction)
-        )
+        captures
+          .slice(worker + 1)
+          .some(
+            capture =>
+              isOpenAIResponsesRequest(capture) &&
+              !capture.headers['x-openai-subagent'] &&
+              JSON.stringify(capture.body).includes(prompt) &&
+              JSON.stringify(capture.body).includes(childResult)
+          )
       ).toBe(true)
-      expect(captures.some(capture => JSON.stringify(capture.body).includes(childResult))).toBe(
-        true
+      const detail = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(detail.ok()).toBe(true)
+      const task = await detail.json()
+      expect(task.device_id).toBeFalsy()
+      expect(task.subtasks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            team_id: teamId,
+            role: 'ASSISTANT',
+            status: 'COMPLETED',
+            executor_name: expect.stringMatching(/^wegent-task-/),
+          }),
+        ])
       )
       await testInfo.attach('coordinate-codex-delivery', {
         body: await page.screenshot(),

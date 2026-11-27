@@ -260,6 +260,8 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       subtasks: Array<{
         id: number
         team_id: number
+        executor_name: string
+        bots: Array<{ id: number; shell_type: string }>
         bot_ids: number[]
         role: string
         status: string
@@ -267,9 +269,12 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
     }>(`/api/tasks/${run.backendTaskId}`)
     const turns = task.subtasks.filter(row => row.role === 'ASSISTANT')
     expect(turns.length).toBeGreaterThan(0)
-    for (const turn of turns)
+    for (const turn of turns) {
       expect(turn).toMatchObject({ team_id: cell.teamId, status: 'COMPLETED' })
-    if (cell.mode === 'pipeline')
+      expect(turn.executor_name).toMatch(/^wegent-task-/)
+      expect(turn.bots.map(bot => bot.shell_type)).toEqual(turn.bot_ids.map(() => cell.shell))
+    }
+    if (cell.mode === 'pipeline' || cell.mode === 'solo')
       expect(turns.map(turn => turn.bot_ids)).toEqual(cell.bots.map(bot => [bot.bot_id]))
     if (cell.mode === 'coordinate')
       expect(modelRequestText(await getScenarioModelBodies(request, cell.leadPrompt))).toContain(
@@ -285,7 +290,14 @@ export async function verifyGroupNativeMatrix(ctx: Context) {
       teamId: cell.teamId,
       taskId: task.id,
       executionId: run.id,
-      turns,
+      turns: turns.map(({ bots, ...turn }) => ({
+        id: turn.id,
+        teamId: turn.team_id,
+        botIds: turn.bot_ids,
+        status: turn.status,
+        executorName: turn.executor_name,
+        shells: bots.map(bot => bot.shell_type),
+      })),
     })
   }
   expect(new Set(evidence.map(row => row.taskId)).size).toBe(cases.length)
