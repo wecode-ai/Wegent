@@ -133,6 +133,7 @@ pub(super) fn extract_plugin_zip(
     let extraction_result = (|| -> Result<(), CapabilitySyncError> {
         let paths = directories
             .iter()
+            .filter(|path| !executable_modes.contains_key(*path))
             .map(|path| (path, None))
             .chain(entries.iter().map(|(path, bytes)| (path, Some(bytes))));
         for (path, bytes) in paths {
@@ -889,6 +890,8 @@ mod tests {
         for directory in [
             "package/skills/",
             "package/assets/empty/",
+            "package/.codex-plugin/plugin.json/",
+            "package/.claude-plugin/plugin.json/",
             "outside/",
             "package/__MACOSX/empty/",
         ] {
@@ -898,12 +901,18 @@ mod tests {
             .start_file("package/.codex-plugin/plugin.json", options)
             .unwrap();
         archive.write_all(b"{\"name\":\"example\"}").unwrap();
+        archive
+            .start_file("package/.claude-plugin/plugin.json", options)
+            .unwrap();
+        archive.write_all(b"{\"name\":\"example\"}").unwrap();
         let bytes = archive.finish().unwrap().into_inner();
 
         extract_plugin_zip(&bytes, &installed).unwrap();
 
         assert!(installed.join("skills").is_dir());
         assert!(installed.join("assets/empty").is_dir());
+        assert!(installed.join(CODEX_PLUGIN_MANIFEST_PATH).is_file());
+        assert!(installed.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file());
         assert!(!installed.join("outside").exists());
         assert!(!installed.join("__MACOSX").exists());
     }

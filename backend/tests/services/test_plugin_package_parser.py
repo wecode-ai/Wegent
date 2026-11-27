@@ -151,6 +151,24 @@ def test_quoted_skill_description_decodes_escaped_quotes() -> None:
     assert skill.description == description
 
 
+def test_nested_frontmatter_metadata_cannot_override_skill_identity() -> None:
+    buffer = io.BytesIO(_skill_plugin_zip({"manifest": {"name": "example"}}))
+    with zipfile.ZipFile(buffer, "a") as archive:
+        archive.writestr(
+            "SKILL.md",
+            "---\nname: actual-name\ndescription: Public description\n"
+            "metadata:\n  name: internal-id\n  description: Internal description\n---\n",
+        )
+
+    parser = PluginPackageParser()
+    parsed, normalized = parser.normalize_and_parse(buffer.getvalue())
+
+    skill = parsed.components.skills[0]
+    assert skill.name == "actual-name"
+    assert skill.description == "Public description"
+    assert parser.parse_package(normalized).components == parsed.components
+
+
 def test_normalized_duplicate_skill_paths_are_rejected() -> None:
     case = {
         "manifest": {"name": "example", "skills": "review"},

@@ -129,7 +129,11 @@ def _read_skill_frontmatter(archive: ZipFile, path: str) -> dict[str, str]:
         line = frontmatter[index]
         index += 1
         key, separator, value = line.partition(":")
-        if not separator or key.strip() not in {"name", "description"}:
+        if (
+            line[:1].isspace()
+            or not separator
+            or key.strip() not in {"name", "description"}
+        ):
             continue
         value = value.strip()
         if value.startswith(("|", ">")):

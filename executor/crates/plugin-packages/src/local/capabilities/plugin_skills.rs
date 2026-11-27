@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fs,
     path::{Component, Path, PathBuf},
 };
 
 use serde_json::{json, Value};
 
-use crate::local::local_skills::parse_frontmatter_content;
+use crate::local::local_skills::{parse_frontmatter, parse_frontmatter_content};
 
 use super::{
     runtime_recovery::safe_managed_path,
@@ -19,6 +19,21 @@ use super::{
 
 /// Keep the recursive default scan additive to the effective manifest's selections.
 pub(crate) fn scan_plugin_skills(plugin_path: &Path) -> Result<Vec<Value>, CapabilitySyncError> {
+    scan_plugin_skills_with_inventory(plugin_path, None)
+}
+
+/// Local inventory owns only its nearest manifest root and preserves lossy metadata reads.
+pub(crate) fn scan_local_plugin_skills(
+    plugin_path: &Path,
+    manifest_roots: &HashSet<PathBuf>,
+) -> Result<Vec<Value>, CapabilitySyncError> {
+    scan_plugin_skills_with_inventory(plugin_path, Some(manifest_roots))
+}
+
+fn scan_plugin_skills_with_inventory(
+    plugin_path: &Path,
+    inventory: Option<&HashSet<PathBuf>>,
+) -> Result<Vec<Value>, CapabilitySyncError> {
     let manifest = skill_manifest(plugin_path)?;
     let declarations = manifest
         .as_ref()
@@ -27,7 +42,7 @@ pub(crate) fn scan_plugin_skills(plugin_path: &Path) -> Result<Vec<Value>, Capab
     safe_managed_path(plugin_path, &default, false)?;
     let mut pending = vec![default.clone()];
     let mut files = BTreeSet::new();
-    for directory in declared_skill_directories(plugin_path, declarations)? {
+    for directory in declared_skill_directories(plugin_path, declarations, inventory)? {
         let skill = directory.join("SKILL.md");
         safe_managed_path(plugin_path, &skill, false)?;
         if skill.is_file() {
@@ -43,7 +58,7 @@ pub(crate) fn scan_plugin_skills(plugin_path: &Path) -> Result<Vec<Value>, Capab
             files.insert(skill);
         }
     }
-    collect_skill_files(plugin_path, pending, &mut files)?;
+    collect_skill_files(plugin_path, pending, &mut files, inventory)?;
     let root_name = manifest
         .as_ref()
         .and_then(|manifest| manifest["name"].as_str());
@@ -51,8 +66,20 @@ pub(crate) fn scan_plugin_skills(plugin_path: &Path) -> Result<Vec<Value>, Capab
     files.sort_by_cached_key(|path| path.to_string_lossy().replace('\\', "/"));
     files
         .iter()
-        .map(|path| read_plugin_skill(plugin_path, path, root_name))
+        .map(|path| read_plugin_skill(plugin_path, path, root_name, inventory.is_some()))
         .collect()
+}
+
+fn owned_by_child_plugin(
+    plugin_path: &Path,
+    path: &Path,
+    inventory: Option<&HashSet<PathBuf>>,
+) -> bool {
+    inventory.is_some_and(|roots| {
+        path.ancestors()
+            .take_while(|ancestor| *ancestor != plugin_path)
+            .any(|ancestor| roots.contains(ancestor))
+    })
 }
 
 fn skill_manifest(plugin_path: &Path) -> Result<Option<Value>, CapabilitySyncError> {
@@ -71,6 +98,7 @@ fn skill_manifest(plugin_path: &Path) -> Result<Option<Value>, CapabilitySyncErr
 fn declared_skill_directories(
     plugin_path: &Path,
     declarations: Option<&Value>,
+    inventory: Option<&HashSet<PathBuf>>,
 ) -> Result<BTreeSet<PathBuf>, CapabilitySyncError> {
     let Some(declarations) = declarations else {
         return Ok(BTreeSet::new());
@@ -87,6 +115,9 @@ fn declared_skill_directories(
     let mut directories = BTreeSet::new();
     for value in paths {
         let directory = plugin_path.join(skill_directory_path(value)?);
+        if owned_by_child_plugin(plugin_path, &directory, inventory) {
+            continue;
+        }
         safe_managed_path(plugin_path, &directory, false)?;
         if directory.exists() && !directory.is_dir() {
             return Err(CapabilitySyncError::invalid_payload(
@@ -136,9 +167,13 @@ fn collect_skill_files(
     plugin_path: &Path,
     mut pending: Vec<PathBuf>,
     files: &mut BTreeSet<PathBuf>,
+    inventory: Option<&HashSet<PathBuf>>,
 ) -> Result<(), CapabilitySyncError> {
     let mut visited = BTreeSet::new();
     while let Some(directory) = pending.pop() {
+        if owned_by_child_plugin(plugin_path, &directory, inventory) {
+            continue;
+        }
         safe_managed_path(plugin_path, &directory, false)?;
         if !visited.insert(directory.clone()) {
             continue;
@@ -150,6 +185,9 @@ fn collect_skill_files(
         };
         for entry in sorted_dir_entries(&scan_directory)? {
             let path = directory.join(entry.file_name());
+            if owned_by_child_plugin(plugin_path, &path, inventory) {
+                continue;
+            }
             safe_managed_path(plugin_path, &path, false)?;
             let kind = entry.file_type()?;
             if kind.is_dir() {
@@ -166,6 +204,7 @@ fn read_plugin_skill(
     plugin_path: &Path,
     path: &Path,
     root_name: Option<&str>,
+    local_inventory: bool,
 ) -> Result<Value, CapabilitySyncError> {
     safe_managed_path(plugin_path, path, false)?;
     let directory = path.parent().ok_or_else(|| {
@@ -178,7 +217,11 @@ fn read_plugin_skill(
         })?
         .to_string_lossy()
         .replace('\\', "/");
-    let metadata = parse_frontmatter_content(&fs::read_to_string(path)?);
+    let metadata = if local_inventory {
+        parse_frontmatter(path)
+    } else {
+        parse_frontmatter_content(&fs::read_to_string(path)?)
+    };
     let name = metadata
         .get("name")
         .filter(|name| !name.is_empty())
@@ -229,6 +272,25 @@ mod tests {
             let skills = scan_plugin_skills(temporary.path()).unwrap();
 
             assert_eq!(skills[0]["name"], "example");
+        }
+    }
+
+    #[test]
+    fn managed_skill_metadata_uses_top_level_keys_and_normalizes_line_endings() {
+        let temporary = tempfile::tempdir().unwrap();
+        write_manifest(
+            temporary.path(),
+            PLUGIN_MANIFEST_PATHS[0],
+            &json!({"name": "example"}),
+        );
+        for newline in ["\n", "\r\n"] {
+            let content = "---\nname: actual-name\ndescription: |\n  First line\n  second line\nmetadata:\n  name: internal-id\n  description: Internal description\n---\n".replace('\n', newline);
+            fs::write(temporary.path().join("SKILL.md"), content).unwrap();
+
+            let skills = scan_plugin_skills(temporary.path()).unwrap();
+
+            assert_eq!(skills[0]["name"], "actual-name");
+            assert_eq!(skills[0]["description"], "First line\nsecond line");
         }
     }
 

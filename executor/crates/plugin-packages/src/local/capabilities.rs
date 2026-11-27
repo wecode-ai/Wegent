@@ -53,7 +53,7 @@ mod runtime_skill_config;
 mod shared_packages;
 mod support;
 
-pub(super) use plugin_skills::scan_plugin_skills;
+pub(super) use plugin_skills::{scan_local_plugin_skills, scan_plugin_skills};
 pub use runtime_recovery::PluginRuntimeRecoveryReport;
 use support::*;
 
