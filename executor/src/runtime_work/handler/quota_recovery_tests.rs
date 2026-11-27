@@ -4,6 +4,7 @@
 use super::super::tests::ScalarEnv;
 use super::*;
 
+#[cfg(unix)]
 struct ProviderHold(PathBuf);
 
 #[tokio::test]
@@ -30,6 +31,7 @@ async fn quota_recheck_reservation_remains_publicly_queued() {
         .contains_key("waiting"));
 }
 
+#[cfg(unix)]
 impl Drop for ProviderHold {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);

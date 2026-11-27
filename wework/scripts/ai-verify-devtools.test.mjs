@@ -21,6 +21,82 @@ import {
 } from './ai-verify-devtools.mjs'
 
 describe('DevTools evidence analysis', () => {
+  test('retains replayed source maps when stream events evict script metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'devtools-script-replay-'))
+    const map = {
+      version: 3,
+      sources: ['file:///build/source.ts'],
+      names: [],
+      mappings: 'AAMA',
+    }
+    const script = {
+      sequence: 1,
+      method: 'Debugger.scriptParsed',
+      params: {
+        scriptId: '1',
+        url: 'file:///build/app.js',
+        sourceMapURL: `data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString('base64')}`,
+      },
+    }
+    let replay = false
+    let recording = false
+    const client = async input => {
+      if (input.method === 'Debugger.enable') replay = true
+      if (input.method === 'Profiler.start') {
+        recording = true
+        replay = false
+      }
+      if (input.action === 'events') {
+        const sequence = replay ? (recording ? 4 : 1) : recording ? 3 : 0
+        return {
+          events: replay
+            ? [{ ...script, sequence }]
+            : recording
+              ? [{ sequence, method: 'Tracing.tracingComplete', params: { stream: 'trace' } }]
+              : [],
+          next: sequence,
+          latest: sequence,
+          lost: recording && !replay ? 1 : 0,
+          attached: true,
+        }
+      }
+      if (input.method === 'Profiler.stop')
+        return {
+          profile: {
+            nodes: [
+              {
+                id: 1,
+                callFrame: {
+                  scriptId: '1',
+                  functionName: 'hot',
+                  url: script.params.url,
+                  lineNumber: 0,
+                  columnNumber: 0,
+                },
+              },
+            ],
+            samples: [1],
+            timeDeltas: [1000],
+          },
+        }
+      if (input.method === 'IO.read') return { data: '{"traceEvents":[]}', eof: true }
+      return {}
+    }
+    try {
+      await startPerformanceRecording(client, directory, 1)
+      const reportPath = join(directory, 'report.json')
+      await stopPerformanceRecording(client, directory, 1, reportPath)
+      const report = JSON.parse(await readFile(reportPath, 'utf8'))
+      expect(report.evidence.lostEvents).toBe(1)
+      expect(report.cpu[0].location).toMatchObject({
+        mapped: true,
+        source: '/build/source.ts',
+        line: 7,
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test('discards interrupted recording state only after an authenticated detach succeeds', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'devtools-detach-'))
     const statePath = join(directory, 'performance-1.json')
@@ -57,7 +133,7 @@ describe('DevTools evidence analysis', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
-  test.each(['trace-parse', 'report-write', 'profiler-stop'])(
+  test.each(['trace-parse', 'report-write', 'profiler-stop', 'source-metadata'])(
     'recovers recording state after %s failure',
     async stage => {
       const directory = await mkdtemp(join(tmpdir(), 'devtools-recovery-'))
@@ -83,6 +159,8 @@ describe('DevTools evidence analysis', () => {
           if (stage === 'profiler-stop') throw new Error('Profiler stop failed')
           return { profile: { nodes: [], samples: [], timeDeltas: [] } }
         }
+        if (input.method === 'Debugger.enable' && stage === 'source-metadata')
+          throw new Error('Script metadata replay failed')
         if (input.method === 'IO.read')
           return {
             data: stage === 'trace-parse' ? 'invalid trace' : '{"traceEvents":[]}',
@@ -93,9 +171,16 @@ describe('DevTools evidence analysis', () => {
       try {
         const blocked = join(directory, 'blocked')
         await writeFile(blocked, 'a file cannot be an output directory')
-        await expect(
-          stopPerformanceRecording(client, directory, 1, join(blocked, 'report.json'))
-        ).rejects.toThrow()
+        const report =
+          stage === 'source-metadata'
+            ? join(directory, 'report.json')
+            : join(blocked, 'report.json')
+        await expect(stopPerformanceRecording(client, directory, 1, report)).rejects.toThrow()
+        if (stage === 'source-metadata') {
+          const evidence = JSON.parse(await readFile(report + '.evidence.json', 'utf8'))
+          expect(evidence.profile).toMatchObject({ nodes: [] })
+          expect(evidence.trace).toEqual({ traceEvents: [] })
+        }
         if (stage === 'profiler-stop') {
           expect(await readFile(statePath, 'utf8')).toContain('target')
           expect(calls).not.toContain('Tracing.end')
@@ -111,6 +196,100 @@ describe('DevTools evidence analysis', () => {
       }
     }
   )
+  test('retains enablement events and replayed script metadata when the recording overflows the buffer', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'devtools-overflow-'))
+    const output = join(directory, 'report.json')
+    const buffer = []
+    let sequence = 0
+    const emit = (method, params = {}) => {
+      buffer.push({ sequence: ++sequence, method, params })
+      if (buffer.length > 4) buffer.shift()
+    }
+    const frame = {
+      scriptId: '1',
+      functionName: 'work',
+      url: 'https://fixture.test/app.js',
+      lineNumber: 0,
+      columnNumber: 0,
+    }
+    const client = async input => {
+      if (input.action === 'events') {
+        const events = buffer.filter(event => event.sequence > input.after)
+        return {
+          events,
+          next: events.at(-1)?.sequence ?? input.after,
+          latest: sequence,
+          lost: Math.max(0, (buffer[0]?.sequence ?? 1) - 1 - input.after),
+          attached: true,
+        }
+      }
+      if (input.method === 'Runtime.enable')
+        emit('Runtime.executionContextCreated', {
+          context: { id: 1, auxData: { frameId: 'page' } },
+        })
+      if (input.method === 'Network.enable')
+        emit('Network.requestWillBeSent', {
+          requestId: 'request',
+          timestamp: 1,
+          request: { url: '/data', method: 'GET' },
+        })
+      if (input.method === 'Debugger.enable')
+        emit('Debugger.scriptParsed', {
+          ...frame,
+          executionContextId: 1,
+          sourceMapURL: 'app.js.map',
+        })
+      if (input.method === 'Profiler.start') {
+        for (let index = 0; index < 4; index++) emit('Runtime.consoleAPICalled')
+        emit('Network.loadingFinished', { requestId: 'request', timestamp: 2 })
+      }
+      if (input.method === 'Profiler.stop')
+        return {
+          profile: { nodes: [{ id: 1, callFrame: frame }], samples: [1], timeDeltas: [1000] },
+        }
+      if (input.method === 'Tracing.end') emit('Tracing.tracingComplete', { stream: 'trace' })
+      if (input.method === 'Network.loadNetworkResource') {
+        expect(input.params.frameId).toBe('page')
+        return { resource: { success: true, stream: 'map' } }
+      }
+      if (input.method === 'IO.read')
+        return {
+          data:
+            input.params.handle === 'trace'
+              ? '{"traceEvents":[]}'
+              : '{"version":3,"sources":["src/app.ts"],"names":[],"mappings":"AAMA"}',
+          eof: true,
+        }
+      return {}
+    }
+    try {
+      await startPerformanceRecording(client, directory, 1)
+      await stopPerformanceRecording(client, directory, 1, output)
+      const report = JSON.parse(await readFile(output, 'utf8'))
+      const evidence = JSON.parse(await readFile(output + '.evidence.json', 'utf8'))
+      expect(evidence.metadata.map(event => event.method)).toEqual([
+        'Runtime.executionContextCreated',
+      ])
+      expect(evidence.events.map(event => event.sequence)).toEqual([1, 2, 5, 6, 7, 8, 9])
+      expect(evidence.events.at(-1)).toMatchObject({
+        method: 'Debugger.scriptParsed',
+        params: { scriptId: '1', executionContextId: 1 },
+      })
+      expect(report.evidence).toMatchObject({
+        lostEvents: 2,
+        metadataLostEvents: 0,
+        sourceMapErrors: [],
+      })
+      expect(report.cpu[0].location).toMatchObject({
+        mapped: true,
+        source: 'https://fixture.test/src/app.ts',
+        line: 7,
+      })
+      expect(report.network.requests).toEqual([expect.objectContaining({ url: '/data' })])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test('loads repository maps without following a page-declared map outside the workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'devtools-maps-'))
     const workspace = join(root, 'workspace')

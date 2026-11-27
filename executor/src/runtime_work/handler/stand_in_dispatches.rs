@@ -216,7 +216,13 @@ impl RuntimeWorkRpcHandler {
             return self.start_manual_stand_in_attempt(&config, &issue).await;
         }
         let Some(mut config) = self
-            .stand_in_project_configs(&[settings], project, "cloud")
+            .cloud_issue_intake_configs(
+                &[settings],
+                intent["userId"].as_i64().unwrap_or_default(),
+                project,
+                intent["issueId"].as_str().unwrap_or_default(),
+            )
+            .await?
             .into_iter()
             .find(|config| config["id"] == intent["roleId"])
         else {

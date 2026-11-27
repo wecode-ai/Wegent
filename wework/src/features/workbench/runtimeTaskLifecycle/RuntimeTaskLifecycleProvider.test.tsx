@@ -2,7 +2,12 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { useRuntimeTaskLifecycle, useRuntimeTaskLifecycleStore } from './context'
+import {
+  useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleSelection,
+  useRuntimeTaskLifecycleStore,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from './context'
 import { RuntimeTaskLifecycleProvider } from './RuntimeTaskLifecycleProvider'
 import {
   createRuntimeTaskLifecycleOwnershipView,
@@ -63,5 +68,61 @@ describe('RuntimeTaskLifecycleProvider', () => {
     )
 
     expect(screen.getByTestId('lifecycle-phase')).toHaveTextContent('idle')
+  })
+
+  test('updates a task row only when its selected status changes', () => {
+    const store = new RuntimeTaskLifecycleStore('task-row')
+    store.executorSettled(address)
+    let renders = 0
+    function TaskRow() {
+      const status = useRuntimeTaskLifecycleSelection(
+        address,
+        task => ({ phase: task?.execution.phase }),
+        (previous, next) => previous.phase === next.phase
+      )
+      renders++
+      return <output>{status.phase}</output>
+    }
+    render(
+      <RuntimeTaskLifecycleProvider store={store}>
+        <TaskRow />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const initialRenders = renders
+
+    act(() => store.turnStarted({ ...address, taskId: 'other-task' }, 'other-turn'))
+    expect(renders).toBe(initialRenders)
+    expect(screen.getByRole('status')).toHaveTextContent('idle')
+
+    act(() => store.turnStarted(address, 'current-turn'))
+    expect(screen.getByRole('status')).toHaveTextContent('running')
+
+    const runningRenders = renders
+    const running = store.getTask(address)
+    act(() => store.turnStarted(address, 'next-turn'))
+    expect(store.getTask(address)).not.toBe(running)
+    expect(renders).toBe(runningRenders)
+  })
+
+  test('an inactive task surface renders the current snapshot when opened', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.executorSettled(address)
+    function TaskSurface({ visible }: { visible: boolean }) {
+      const { runningTaskKeys } = useRuntimeTaskLifecycleStoreSnapshot(undefined, visible)
+      return <output>{runningTaskKeys.size}</output>
+    }
+    const surface = (visible: boolean) => (
+      <RuntimeTaskLifecycleProvider store={store}>
+        <TaskSurface visible={visible} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const { rerender } = render(surface(false))
+    act(() => store.turnStarted(address, 'background-turn'))
+    expect(screen.getByRole('status')).toHaveTextContent('0')
+
+    rerender(surface(true))
+    expect(screen.getByRole('status')).toHaveTextContent('1')
+    act(() => store.executorSettled(address))
+    expect(screen.getByRole('status')).toHaveTextContent('0')
   })
 })

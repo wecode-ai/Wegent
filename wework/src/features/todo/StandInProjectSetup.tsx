@@ -62,7 +62,11 @@ export function StandInProjectSetup({
               </SelectItem>
               {roles.map(row => (
                 <SelectItem key={row.id} value={String(row.id)}>
-                  {standInRoleName(row, roles.indexOf(row), t('standIn.personal.default_role'))}
+                  {standInRoleName(
+                    row,
+                    roles.indexOf(row),
+                    t('standIn.personal.unnamed_assistant')
+                  )}
                 </SelectItem>
               ))}
               <SelectItem value="__new">{t('standIn.personal.new_project_stand_in')}</SelectItem>

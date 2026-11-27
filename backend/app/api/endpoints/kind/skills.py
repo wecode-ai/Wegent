@@ -191,6 +191,7 @@ def _get_current_user_or_skill_identity(
 
 
 def _get_current_user_or_skill_query_identity(
+    request: Request,
     db: Session = Depends(get_db),
     oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
     x_api_key_security: Optional[str] = Security(security.api_key_header_optional),
@@ -204,6 +205,7 @@ def _get_current_user_or_skill_query_identity(
     """Authenticate Skill read requests, including runtime Skill identity tokens."""
     try:
         return security.get_current_user_jwt_apikey_tasktoken(
+            request=request,
             db=db,
             oauth2_token=oauth2_token,
             x_api_key_security=x_api_key_security,

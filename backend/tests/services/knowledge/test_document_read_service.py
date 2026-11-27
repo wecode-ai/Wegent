@@ -6,9 +6,130 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models.knowledge import DocumentStatus, KnowledgeDocument
+from app.models.subtask_context import ContextType, SubtaskContext
 from app.services.context.context_service import context_service
 from app.services.knowledge.document_read_service import DocumentReadService
+from app.services.knowledge.document_text_sources import (
+    DocumentTextSources,
+    load_document_text_sources,
+)
+
+
+def _loaded_sources(documents, attachments):
+    """Represent authorized loader results for read/persistence unit contracts."""
+    return {
+        document_id: DocumentTextSources(
+            original=attachments.get(document.attachment_id),
+            converted=attachments.get(
+                getattr(document, "converted_attachment_id", None)
+            ),
+            content_readable=True,
+        )
+        for document_id, document in documents.items()
+    }
+
+
+@pytest.mark.parametrize(
+    "converted_text,foreign_reference,expected",
+    [
+        ("", None, "Original body."),
+        (" \n\t\u2003", None, "Original body."),
+        (" " * 4096 + "Converted body.", None, " " * 4096 + "Converted body."),
+        ("", "original", ""),
+        ("Private converted body.", "converted", "Original body."),
+        ("Legacy converted body.", "legacy", "Legacy converted body."),
+        ("Scanned PDF converted body.", "legacy-only", "Scanned PDF converted body."),
+        ("String reference must not replace original.", "string-ref", "Original body."),
+        ("Boolean reference must not replace original.", "bool-ref", "Original body."),
+        (
+            "Oversized reference must not break reads.",
+            "oversized-ref",
+            "Original body.",
+        ),
+    ],
+    ids=[
+        "empty",
+        "whitespace",
+        "late-converted-body",
+        "foreign-original",
+        "foreign-converted",
+        "legacy-converted",
+        "legacy-converted-only",
+        "numeric_string_ref",
+        "boolean_ref",
+        "oversized_ref",
+    ],
+)
+def test_stored_converted_text_selection_uses_full_usable_body(
+    test_db: Session,
+    test_user,
+    test_admin_user,
+    converted_text: str,
+    foreign_reference: str | None,
+    expected: str,
+) -> None:
+    original = SubtaskContext(
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="original.md",
+        extracted_text="Original body.",
+    )
+    converted = SubtaskContext(
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="converted.md",
+        extracted_text=converted_text,
+    )
+    if foreign_reference == "legacy-only":
+        original.extracted_text = ""
+    if foreign_reference == "original":
+        original.user_id = test_admin_user.id
+    elif foreign_reference == "converted":
+        converted.user_id = test_admin_user.id
+    test_db.add_all([original, converted])
+    test_db.flush()
+    document = KnowledgeDocument(
+        user_id=test_user.id,
+        kind_id=42,
+        attachment_id=original.id,
+        source_config=(
+            {}
+            if foreign_reference == "original"
+            else {"converted_attachment_id": converted.id}
+        ),
+        name="Guide",
+        file_extension="md",
+        is_active=True,
+        status=DocumentStatus.ENABLED,
+    )
+    if foreign_reference == "string-ref":
+        document.source_config = {"converted_attachment_id": str(converted.id)}
+    elif foreign_reference == "bool-ref":
+        document.source_config = {"converted_attachment_id": True}
+    elif foreign_reference == "oversized-ref":
+        document.source_config = {"converted_attachment_id": 2**80}
+    test_db.add(document)
+    test_db.flush()
+
+    result = DocumentReadService().read_documents(
+        test_db, document_ids=[document.id], knowledge_base_ids=[42]
+    )[0]
+
+    assert result["content"] == expected
+    assert result["total_length"] == len(expected)
+    assert result["returned_length"] == len(expected)
+    metadata = load_document_text_sources(test_db, [document], include_text=False)[
+        document.id
+    ]
+    assert metadata.content_readable is bool(expected.strip())
+    assert metadata.select_text() is None
+    if foreign_reference in {"string-ref", "bool-ref"}:
+        sources = load_document_text_sources(test_db, [document])[document.id]
+        assert sources.converted is None
+        assert sources.original.id == original.id
 
 
 @pytest.mark.unit
@@ -39,7 +160,7 @@ class TestDocumentReadService:
             patch.object(
                 self.service,
                 "_load_attachment_contexts",
-                return_value=attachments,
+                return_value=_loaded_sources(documents, attachments),
             ),
             patch.multiple(
                 context_service,
@@ -109,7 +230,7 @@ class TestDocumentReadService:
             patch.object(
                 self.service,
                 "_load_attachment_contexts",
-                return_value=attachments,
+                return_value=_loaded_sources(documents, attachments),
             ),
             patch.multiple(
                 context_service,
@@ -176,7 +297,7 @@ class TestDocumentReadService:
             patch.object(
                 self.service,
                 "_load_attachment_contexts",
-                return_value=attachments,
+                return_value=_loaded_sources(documents, attachments),
             ),
             patch.object(self.service, "_persist_kb_head_usage") as mock_persist,
         ):
@@ -215,7 +336,7 @@ class TestDocumentReadService:
             patch.object(
                 self.service,
                 "_load_attachment_contexts",
-                return_value=attachments,
+                return_value=_loaded_sources(documents, attachments),
             ),
         ):
             results = self.service.read_documents(
@@ -249,7 +370,7 @@ class TestDocumentReadService:
             patch.object(
                 self.service,
                 "_load_attachment_contexts",
-                return_value=attachments,
+                return_value=_loaded_sources(documents, attachments),
             ),
         ):
             results = self.service.read_documents(

@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, LoopItemAttachment
+from app.models.delivery import LoopItem, LoopItemAttachment, LoopItemCollaborator
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -491,3 +491,52 @@ def test_add_attachment_rolls_back_and_returns_503_when_storage_is_unavailable(
         .count()
         == 0
     )
+
+
+def test_unassigned_issue_attachments_require_a_session_and_current_invitation(
+    test_db: Session, test_user: User, attachment_storage: FakeDeliveryStorage
+) -> None:
+    invitee_id = test_user.id + 1
+    issue = LoopItem(
+        title="Issue without a project",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(issue)
+    test_db.flush()
+    invitation = LoopItemCollaborator(
+        loop_item_id=issue.id,
+        user_id=invitee_id,
+        source="manual",
+        added_by_user_id=test_user.id,
+    )
+    test_db.add(invitation)
+    test_db.commit()
+
+    attachment = loop_item_service.add_attachment(
+        test_db,
+        issue.id,
+        test_user.id,
+        "note.txt",
+        "text/plain",
+        io.BytesIO(b"note"),
+        session=True,
+    )
+    assert attachment_storage.objects[attachment.object_key] == b"note"
+
+    with pytest.raises(HTTPException) as no_session:
+        loop_item_service.attachment_content(test_db, attachment.id, test_user.id)
+    assert no_session.value.status_code == 404
+    assert (
+        loop_item_service.attachment_content(
+            test_db, attachment.id, invitee_id, session=True
+        )[0]
+        == b"note"
+    )
+
+    test_db.delete(invitation)
+    test_db.commit()
+    with pytest.raises(HTTPException) as revoked:
+        loop_item_service.attachment_content(
+            test_db, attachment.id, invitee_id, session=True
+        )
+    assert revoked.value.status_code == 404

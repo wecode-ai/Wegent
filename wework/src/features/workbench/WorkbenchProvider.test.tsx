@@ -131,6 +131,7 @@ import {
 } from './runtimeTaskLifecycle'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
 import { useWorkbench } from './useWorkbench'
+import { useWorkbenchTaskReminders, useWorkbenchSidebarReminders } from './runtimeTaskReminders'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 
@@ -181,6 +182,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
   getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
+  getKnownLocalExecutorRuntimeInstanceId: () => 'test-runtime',
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
@@ -1908,12 +1910,13 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
 }
 
 function RuntimePaneSessionIdentityProbe() {
+  const [presentationActive, setPresentationActive] = useState(true)
   const [address, setAddress] = useState<RuntimeTaskAddress>({
     deviceId: 'device-1',
     workspacePath: '/workspace/project-alpha',
     taskId: 'runtime-a',
   })
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address })
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address, presentationActive })
 
   return (
     <div>
@@ -1931,6 +1934,9 @@ function RuntimePaneSessionIdentityProbe() {
           .join('|')}
       </span>
       <span data-testid="runtime-session-error">{paneSession.error}</span>
+      <button type="button" onClick={() => setPresentationActive(active => !active)}>
+        toggle pane presentation
+      </button>
       <button type="button" onClick={() => paneSession.setError('local pane event')}>
         publish a pane error
       </button>
@@ -3030,6 +3036,47 @@ function StartSkillChatProbe() {
 }
 
 describe('WorkbenchProvider runtime tasks', () => {
+  test('publishes reminder items without invalidating workbench and sidebar consumers', async () => {
+    const workbenchRender = vi.fn()
+    const sidebarRender = vi.fn()
+    const WorkbenchReader = memo(function WorkbenchReader() {
+      workbenchRender(useWorkbench())
+      return null
+    })
+    const SidebarReader = memo(function SidebarReader() {
+      sidebarRender(useWorkbenchSidebarReminders())
+      return null
+    })
+    function ReminderReader() {
+      const ids = useWorkbenchTaskReminders().items.map(item => item.address.taskId)
+      return <span data-testid="reminder-ids">{ids.join(',')}</span>
+    }
+    const { lifecycleStore } = renderWorkbenchWithLifecycleCoordinator(
+      <>
+        <BootstrapProbe />
+        <WorkbenchReader />
+        <SidebarReader />
+        <ReminderReader />
+      </>
+    )
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    const workbenchCount = workbenchRender.mock.calls.length
+    const sidebarCount = sidebarRender.mock.calls.length
+    const address = { deviceId: 'device-1', taskId: 'hidden-question' }
+    act(() => {
+      lifecycleStore.syncRuntimeTask(address, {
+        taskId: address.taskId,
+        title: 'Hidden question',
+        workspacePath: '/workspace/repo',
+        runtime: 'codex',
+        interactionStatus: 'awaitingUserReply',
+      })
+    })
+    expect(screen.getByTestId('reminder-ids')).toHaveTextContent(address.taskId)
+    expect(workbenchRender).toHaveBeenCalledTimes(workbenchCount)
+    expect(sidebarRender).toHaveBeenCalledTimes(sidebarCount)
+  })
+
   test('coalesces work-change events while a list refresh is pending', async () => {
     let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
     const pending = deferred<RuntimeWorkListResponse>()
@@ -13465,6 +13512,51 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     expect(globalSubscribeCount()).toBe(1)
     expect(paneSubscribeCount()).toBe(0)
+  })
+
+  test('presents a finished conversation when an inactive pane becomes visible again', async () => {
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'loaded transcript' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    renderWorkbench(
+      <RuntimePaneSessionIdentityProbe />,
+      createWorkbenchServices({ runtimeWorkApi })
+    )
+    const messages = screen.getByTestId('runtime-session-messages')
+    await waitFor(() => expect(messages).toHaveTextContent('loaded transcript'))
+    const toggle = screen.getByRole('button', { name: 'toggle pane presentation' })
+    await userEvent.click(toggle)
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: 'background-turn',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'background-turn',
+        itemId: 'background-content',
+        content: 'finished in another tab',
+      })
+    })
+    expect(
+      getRuntimeConversationMessages(address).some(
+        message => message.content === 'finished in another tab'
+      )
+    ).toBe(true)
+    expect(messages).not.toHaveTextContent('finished in another tab')
+    await userEvent.click(toggle)
+    expect(messages).toHaveTextContent('finished in another tab')
   })
 
   test('defers hidden stream text while publishing interaction requests and completed turns', async () => {

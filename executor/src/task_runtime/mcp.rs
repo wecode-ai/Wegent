@@ -343,6 +343,14 @@ pub(crate) fn space_mcp_client_config(
 pub(crate) fn notifications_mcp_client_config(
     request: &ExecutionRequest,
 ) -> Result<Option<SpaceMcpClientConfig>, String> {
+    // The coordinator routes findings through the stand-in assessment flow.
+    if request
+        .extra
+        .get("origin")
+        .is_some_and(|origin| origin["type"] == "stand_in_coordinator")
+    {
+        return Ok(None);
+    }
     let Some(backend_url) = request
         .backend_url
         .as_deref()
@@ -3790,6 +3798,20 @@ mod tests {
         ChatAgentCreate, LocalExecutionClaim, LocalTaskStore, ProjectDescriptor, ProjectStoreKind,
         ProjectUpdate, TaskCreate, TaskProviderKind,
     };
+
+    #[test]
+    fn coordinator_does_not_receive_direct_notification_capability() {
+        let mut request = ExecutionRequest {
+            backend_url: Some("https://wework.example.com".to_owned()),
+            auth_token: Some("runtime-token".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("origin".into(), json!({"type": "stand_in_coordinator"}));
+
+        assert!(notifications_mcp_client_config(&request).unwrap().is_none());
+    }
 
     fn decode_grant(request: &ExecutionRequest) -> SpaceContextGrant {
         space_context_grant(request)

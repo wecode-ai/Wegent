@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, collections::HashSet};
+use std::collections::HashSet;
 
 use axum::http::StatusCode;
 use serde::Deserialize;
@@ -24,6 +24,8 @@ pub enum CodexRequestMode {
     Auto,
     Standard,
     Passthrough,
+    #[serde(skip)]
+    OfficialSubscription,
 }
 
 impl CodexRequestMode {
@@ -39,6 +41,7 @@ impl CodexRequestMode {
             Self::Auto => "auto",
             Self::Standard => "standard",
             Self::Passthrough => "passthrough",
+            Self::OfficialSubscription => "official_subscription",
         }
     }
 }
@@ -90,44 +93,35 @@ pub(super) fn retain_function_tools(request: &mut Value) -> Result<(), HttpError
     Ok(())
 }
 
-// Older native Goal histories contain synthetic user message IDs that Responses
-// rejects. The ID is only a local receipt key, so omit it from the replayed input.
-fn strip_legacy_event_message_ids(body: &[u8]) -> Result<Cow<'_, [u8]>, HttpError> {
-    const LEGACY_PREFIX: &str = "wework_event_";
-    if !std::str::from_utf8(body)
-        .is_ok_and(|body| body.contains(LEGACY_PREFIX) || body.contains(r"\u"))
-    {
-        return Ok(Cow::Borrowed(body));
-    }
-    let mut request: Value = serde_json::from_slice(body).map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("Invalid Codex Responses request: {error}"),
-    })?;
+const LEGACY_EVENT_PREFIX: &str = "wework_event_";
+
+// Replayed calls and results are paired by call_id. A stale item ID can be
+// omitted when its prefix identifies a different Responses tool item type.
+pub(super) fn strip_incompatible_responses_history_ids(request: &mut Value) -> bool {
     let Some(items) = request.get_mut("input").and_then(Value::as_array_mut) else {
-        return Ok(Cow::Borrowed(body));
+        return false;
     };
     let mut changed = false;
     for item in items.iter_mut().filter_map(Value::as_object_mut) {
-        if item.get("type").and_then(Value::as_str) == Some("message")
-            && item.get("role").and_then(Value::as_str) == Some("user")
-            && item
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| id.starts_with(LEGACY_PREFIX))
-        {
+        let Some(id) = item.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let incompatible = match item.get("type").and_then(Value::as_str) {
+            Some("custom_tool_call") => id.starts_with("fc_") || id.starts_with("tsc_"),
+            Some("function_call") => id.starts_with("ctc_") || id.starts_with("tsc_"),
+            Some("tool_search_call") => id.starts_with("fc_") || id.starts_with("ctc_"),
+            Some("message") => {
+                id.starts_with(LEGACY_EVENT_PREFIX)
+                    && item.get("role").and_then(Value::as_str) == Some("user")
+            }
+            _ => false,
+        };
+        if incompatible {
             item.remove("id");
             changed = true;
         }
     }
-    if !changed {
-        return Ok(Cow::Borrowed(body));
-    }
-    serde_json::to_vec(&request)
-        .map(Cow::Owned)
-        .map_err(|error| HttpError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            detail: format!("Failed to encode Codex event history: {error}"),
-        })
+    changed
 }
 
 /// Preserve the routed request in passthrough mode or apply protocol adaptations.
@@ -147,22 +141,26 @@ pub(super) async fn prepare(
             status: StatusCode::BAD_REQUEST,
             detail,
         })?;
-    let body = strip_legacy_event_message_ids(body)?;
     let body = match upstream.model_id.as_deref() {
-        Some(model_id) => rewrite_request_model(&body, model_id)?,
-        None => body.into_owned(),
+        Some(model_id) => rewrite_request_model(body, model_id)?,
+        None => body.to_vec(),
     };
-    let (body, normalized_reasoning_items, foreign_history_keys) =
-        if upstream.is_official_chatgpt_codex() {
-            super::openai_reasoning::normalize_official_reasoning_history(
-                body,
-                known_foreign_history_keys,
-                model_switched,
-            )?
-        } else {
-            (body, 0, HashSet::new())
-        };
-    if upstream.codex_request_mode == CodexRequestMode::Passthrough {
+    let (body, normalized_reasoning_items, foreign_history_keys) = if upstream
+        .is_official_chatgpt_codex()
+        && upstream.codex_request_mode != CodexRequestMode::Passthrough
+    {
+        super::openai_reasoning::normalize_official_reasoning_history(
+            body,
+            known_foreign_history_keys,
+            model_switched,
+        )?
+    } else {
+        (body, 0, HashSet::new())
+    };
+    if matches!(
+        upstream.codex_request_mode,
+        CodexRequestMode::Passthrough | CodexRequestMode::OfficialSubscription
+    ) {
         return Ok(PreparedRequest {
             body,
             conversion: None,

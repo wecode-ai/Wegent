@@ -11,6 +11,7 @@ import type {
 
 export interface UseProjectRuntimeTaskComposerOptions {
   resolveDeviceId?: () => Promise<string>
+  resolveTaskInput?: (message: string) => Promise<{ message: string; wegentTeamId?: number }>
   project: ProjectWithTasks | null
   deviceWorkspaceId?: number | null
   workspaceExecution?: RuntimeTaskCreateRequest['execution'] | null
@@ -32,6 +33,7 @@ export function createProjectRuntimeTaskComposer(
   createProjectRuntimeTask: ReturnType<typeof useWorkbenchPaneContext>['createProjectRuntimeTask'],
   {
     resolveDeviceId,
+    resolveTaskInput,
     project,
     deviceWorkspaceId,
     workspaceExecution,
@@ -44,13 +46,16 @@ export function createProjectRuntimeTaskComposer(
 ) {
   return async (message: string, options: RuntimeTaskComposerCreateOptions) => {
     let deviceId: string | undefined
+    let input: { message: string; wegentTeamId?: number } = { message }
     try {
       deviceId = await resolveDeviceId?.()
+      if (resolveTaskInput) input = await resolveTaskInput(message)
     } catch (cause) {
       options.onError(cause instanceof Error ? cause.message : String(cause))
       return false
     }
-    const address = await createProjectRuntimeTask(message, {
+    const address = await createProjectRuntimeTask(input.message, {
+      ...(input.wegentTeamId ? { wegentTeamId: input.wegentTeamId } : {}),
       project,
       deviceWorkspaceId,
       ...(deviceId ? { deviceId, deviceWorkspaceId: null } : {}),
@@ -79,6 +84,7 @@ export function useProjectRuntimeTaskComposer(options: UseProjectRuntimeTaskComp
   const { createProjectRuntimeTask } = useWorkbenchPaneContext()
   const {
     resolveDeviceId,
+    resolveTaskInput,
     project,
     deviceWorkspaceId,
     workspaceExecution,
@@ -92,6 +98,7 @@ export function useProjectRuntimeTaskComposer(options: UseProjectRuntimeTaskComp
     () =>
       createProjectRuntimeTaskComposer(createProjectRuntimeTask, {
         resolveDeviceId,
+        resolveTaskInput,
         project,
         deviceWorkspaceId,
         workspaceExecution,
@@ -104,6 +111,7 @@ export function useProjectRuntimeTaskComposer(options: UseProjectRuntimeTaskComp
     [
       createProjectRuntimeTask,
       resolveDeviceId,
+      resolveTaskInput,
       project,
       deviceWorkspaceId,
       workspaceExecution,

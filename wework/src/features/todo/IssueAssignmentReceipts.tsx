@@ -5,8 +5,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { StandInIcon } from '@wegent/collaboration'
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { Check, CircleAlert, CircleDashed, CircleHelp } from 'lucide-react'
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { Check, CircleAlert, CircleDashed, CircleHelp, Clock3, Wrench } from 'lucide-react'
+import { memo, useCallback, useMemo, useSyncExternalStore } from 'react'
 import type {
   IssueAssignmentReceiptObservation,
   IssueAssignmentReceiptState,
@@ -15,6 +15,8 @@ import type {
 import { createIssueAssignmentReceiptObservation } from './issueAssignmentReceiptObservation'
 import { sameIssueAssignment } from './issueAssignmentReceiptScope'
 export type { IssueAssignmentReceiptState } from './issueAssignmentReceiptObservation'
+
+const EMPTY_RECEIPTS: IssueAssignmentReceipt[] = []
 
 export function IssueAssignmentReceipts({
   api,
@@ -69,7 +71,7 @@ export function IssueAssignmentReceipts({
       aria-live="polite"
     >
       <IssueAssignmentReceiptStatus
-        rows={scopedState?.rows ?? []}
+        rows={scopedState?.rows ?? EMPTY_RECEIPTS}
         error={scopedState?.error ?? false}
         assigneeUserId={assigneeUserId}
         currentUserId={currentUserId}
@@ -78,7 +80,7 @@ export function IssueAssignmentReceipts({
   )
 }
 
-export function IssueAssignmentReceiptStatus({
+export const IssueAssignmentReceiptStatus = memo(function IssueAssignmentReceiptStatus({
   rows,
   error,
   assigneeUserId,
@@ -141,7 +143,7 @@ export function IssueAssignmentReceiptStatus({
         ))}
     </>
   )
-}
+})
 
 function DispatchReceipt({
   receipt,
@@ -156,30 +158,31 @@ function DispatchReceipt({
     receipt.reasonCode === 'tag_mismatch'
       ? t('todo.dispatch.tag_mismatch')
       : t(`todo.dispatch.${receipt.state}`)
+  const icon = repair ? CircleAlert : receipt.state === 'waiting_user' ? Clock3 : CircleDashed
   return (
     <span
       data-testid="issue-assignment-dispatch"
-      className="inline-flex items-center gap-1"
-      title={`${label} · ${new Date(receipt.updatedAt).toLocaleString()}`}
+      className="inline-flex shrink-0 items-center gap-1"
     >
-      <span>{label}</span>
+      <ReceiptIcon icon={icon} label={label} value={receipt.updatedAt} />
       {repair && canRepair && (
         <Button
-          variant="ghost"
-          size="sm"
+          variant="unstyled"
           type="button"
           data-testid="issue-assignment-dispatch-repair"
-          className="underline"
+          aria-label={t('todo.dispatch.repair')}
+          title={t('todo.dispatch.repair')}
+          className="inline-grid h-5 w-5 shrink-0 place-items-center rounded hover:bg-muted"
           onClick={() => navigateTo('/stand-in?profileId=@primary')}
         >
-          {t('todo.dispatch.repair')}
+          <Wrench className="h-4 w-4" aria-hidden="true" />
         </Button>
       )}
     </span>
   )
 }
 
-function ReceiptIcon({
+const ReceiptIcon = memo(function ReceiptIcon({
   label,
   value,
   icon: Icon,
@@ -192,7 +195,8 @@ function ReceiptIcon({
   figure?: 'human' | 'stand-in'
   checked?: boolean
 }) {
-  const description = value ? `${label} · ${new Date(value).toLocaleString()}` : label
+  const date = value ? new Date(value) : null
+  const description = date ? `${label} · ${date.toLocaleString()}` : label
   return (
     <Tooltip label={description}>
       <span className="inline-flex shrink-0 items-center" title={description}>
@@ -211,13 +215,13 @@ function ReceiptIcon({
         </span>
         <span className="sr-only">
           {label}
-          {value ? (
+          {date ? (
             <time
               dateTime={value}
-            >{` · ${new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</time>
+            >{` · ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</time>
           ) : null}
         </span>
       </span>
     </Tooltip>
   )
-}
+})

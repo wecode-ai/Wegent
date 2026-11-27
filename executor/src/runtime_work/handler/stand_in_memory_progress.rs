@@ -117,12 +117,20 @@ impl RuntimeWorkRpcHandler {
         }
         let source = super::stand_in_tasks::required(args, "taskId")?;
         let gate = self.task_send_gate(&format!("memory-source:{}:{source}", identity.user));
-        let _guard = gate.lock().await;
         if source.starts_with(super::stand_in_training_progress::SOURCE_PREFIX) {
+            let _guard = tokio::time::timeout(Duration::from_secs(4), gate.lock())
+                .await
+                .map_err(|_| {
+                    AppIpcError::new(
+                        "source_busy",
+                        "A read is already in progress for this source",
+                    )
+                })?;
             return self
                 .training_progress_operation(&store, identity, name, args, source)
                 .await;
         }
+        let _guard = gate.lock().await;
         let actor = self
             .local_task_link(&identity.task_id)
             .ok_or_else(|| AppIpcError::new("permission_denied", "Memory review is unavailable"))?;

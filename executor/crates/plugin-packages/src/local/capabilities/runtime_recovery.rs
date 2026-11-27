@@ -232,8 +232,7 @@ impl GlobalCapabilityStore {
         let normalized = tempfile::tempdir()?;
         let template = normalized.path().join("runtime");
         copy_dir_atomic(&package.path, &template)?;
-        ensure_dual_plugin_manifests(&template)?;
-        ensure_plugin_hook_permissions(&template)?;
+        self.prepare_runtime_copy(&template)?;
         for (target, field) in self.plugin_runtime_targets(&spec) {
             self.ensure_runtime_path(&target, true)?;
             if !exists(&target) || entry_owns_path(entry, &target, field) {
@@ -246,7 +245,7 @@ impl GlobalCapabilityStore {
                 .map(Path::new);
             if !historical.is_some_and(|path| historical_cache_path(path, &spec, field))
                 || (!same_runtime_contents(&target, &template)?
-                    && !self.matches_verified_legacy_contents(&spec, &target, &package.path)?)
+                    && !self.matches_managed_package_copy(&target, &spec, &package.path, entry)?)
             {
                 return Err(CapabilitySyncError::invalid_payload(
                     "Plugin recovery destination is occupied by an unrelated item; preserving it",
@@ -329,27 +328,6 @@ impl GlobalCapabilityStore {
             ));
         }
         Ok(self.shared_root()?.join("shared/plugins").join(digest))
-    }
-
-    fn plugin_paths_current(
-        &self,
-        old: &Value,
-        next: &Value,
-        spec: &PluginSyncSpec,
-    ) -> Result<bool, CapabilitySyncError> {
-        // An unchanged private installation does not need a shared publication.
-        // Its next online installation can publish the archive through the normal flow.
-        let store_current = old.get("store_path") == next.get("store_path")
-            || self.current_recorded_store_path(old)?.is_some();
-        Ok(old.get("runtime") == next.get("runtime")
-            && store_current
-            && old.get("previous") == next.get("previous")
-            && self.plugin_runtime_targets(spec).iter().all(|(path, _)| {
-                path.is_dir()
-                    && !path.is_symlink()
-                    && path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
-                    && path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
-            }))
     }
 
     fn rebase_plugin_entry(
@@ -508,7 +486,7 @@ impl GlobalCapabilityStore {
         let spec = checked_spec(key, entry)?;
         if let Some(hash) = entry.get("checksum").and_then(Value::as_str) {
             let package = self.verified_plugin_package(hash)?;
-            return self.matches_managed_package_copy(target, &spec, &package.path);
+            return self.matches_managed_package_copy(target, &spec, &package.path, entry);
         }
         for (runtime, field) in self.plugin_runtime_targets(&spec) {
             if entry_owns_path(entry, &runtime, field) {
@@ -526,14 +504,49 @@ impl GlobalCapabilityStore {
         target: &Path,
         spec: &PluginSyncSpec,
         package: &Path,
+        entry: &Value,
+    ) -> Result<bool, CapabilitySyncError> {
+        Ok(self.matches_runtime_copy(target, package, entry)?
+            || self.matches_verified_legacy_contents(spec, target, package)?)
+    }
+
+    fn matches_runtime_copy(
+        &self,
+        target: &Path,
+        package: &Path,
+        entry: &Value,
     ) -> Result<bool, CapabilitySyncError> {
         let stage = tempfile::tempdir()?;
         let template = stage.path().join("runtime");
         copy_dir_atomic(package, &template)?;
         ensure_dual_plugin_manifests(&template)?;
         ensure_plugin_hook_permissions(&template)?;
-        Ok(same_runtime_contents(target, &template)?
-            || self.matches_verified_legacy_contents(spec, target, package)?)
+        if same_runtime_contents(target, &template)? {
+            return Ok(true);
+        }
+        let historical = entry["runtime"]["managed_mcp_python"]
+            .as_str()
+            .map(Path::new)
+            .filter(|path| path.is_absolute() && Some(*path) != self.managed_mcp_python.as_deref())
+            .map(|python| {
+                self.clone()
+                    .with_managed_mcp_python(Some(python.to_owned()))
+            })
+            .map(|old| old.managed_python_configs(&template, &template))
+            .transpose()?;
+        let current = self.managed_python_configs(&template, &template)?;
+        for configs in std::iter::once(current).chain(historical) {
+            if configs.is_empty() {
+                continue;
+            }
+            for (path, config) in configs {
+                write_json(&template.join(path), &config)?;
+            }
+            if same_runtime_contents(target, &template)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(super) fn install_plugin_runtime_metadata(
@@ -681,8 +694,7 @@ impl GlobalCapabilityStore {
                 let codex = self.plugin_codex_link(spec);
                 if !published.contains(&codex) {
                     copy_dir_atomic(store_path, &codex)?;
-                    ensure_dual_plugin_manifests(&codex)?;
-                    ensure_plugin_hook_permissions(&codex)?;
+                    self.prepare_runtime_copy(&codex)?;
                 }
                 self.install_codex_marketplace_metadata(
                     spec,
@@ -703,6 +715,16 @@ impl GlobalCapabilityStore {
                 .cloned()
                 .unwrap_or_default();
             runtime.extend(fields["runtime"].as_object().unwrap().clone());
+            runtime.remove("managed_mcp_python");
+            if !self
+                .managed_python_configs(store_path, store_path)?
+                .is_empty()
+            {
+                runtime.insert(
+                    "managed_mcp_python".to_owned(),
+                    json!(self.managed_mcp_python),
+                );
+            }
             if self.codex_only_plugins {
                 runtime.remove("claude_link");
             }
@@ -785,8 +807,7 @@ impl GlobalCapabilityStore {
         for (runtime, field) in self.plugin_runtime_targets(spec) {
             self.ensure_runtime_path(&runtime, true)?;
             copy_dir_atomic(source, &runtime)?;
-            ensure_dual_plugin_manifests(&runtime)?;
-            ensure_plugin_hook_permissions(&runtime)?;
+            self.prepare_runtime_copy(&runtime)?;
             let claude = field == "claude_link";
             let market = if claude {
                 self.claude_marketplace_dir(&spec.marketplace)

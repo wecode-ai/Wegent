@@ -20,6 +20,11 @@ from app.schemas.cloud_project import CloudProjectBoardConfig, default_board_sta
 from app.services.loop_item_history_actor import automation_history_actor
 
 STATUS_HISTORY_KEY = "status_history"
+UNLINKED_ISSUE_STATUSES = {
+    "pending": "待开始",
+    "in_progress": "进行中",
+    "completed": "已完成",
+}
 
 
 @dataclass(frozen=True)
@@ -134,8 +139,10 @@ def automatic_project_status(
     return candidate_status
 
 
-def status_name(project: CloudProject, status_id: str) -> str:
+def status_name(project: CloudProject | None, status_id: str) -> str:
     """Display name for a status id; empty when the id is not on the board."""
+    if project is None:
+        return UNLINKED_ISSUE_STATUSES.get(status_id, "")
     for entry_id, entry_name in project_board_statuses(project):
         if entry_id == status_id:
             return entry_name
@@ -145,7 +152,7 @@ def status_name(project: CloudProject, status_id: str) -> str:
 def write_status_change(
     metadata: dict[str, Any],
     *,
-    project: CloudProject,
+    project: CloudProject | None,
     from_status: str,
     to_status: str,
     trigger: str,

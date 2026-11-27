@@ -1,7 +1,7 @@
 //! Share selected deliverables while retaining an account-private conversation reference.
 use super::*;
 use crate::attachments::upload::max_file_size;
-use brz_http_server::{Binary, HttpResponse, Multipart};
+use brz_http_server::{Multipart, Redirect};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
@@ -26,24 +26,26 @@ pub(super) struct SharedAttachment {
     size: usize,
     object_key: String,
     sha256: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    issue_attachment: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Share {
+    #[serde(default)]
     pub(super) files: Vec<SharedAttachment>,
 }
 
-pub(super) struct NewShare {
-    pub(super) source: SourceTask,
+pub(super) struct IssueUpload {
+    pub(super) source: Option<SourceTask>,
     pub(super) files: Vec<SharedAttachment>,
-    pub(super) project: Option<ProjectInput>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
     request_id: String,
-    source: SourceTask,
+    source: Option<SourceTask>,
     issue: Input,
     project_id: Option<String>,
     project_status: Option<String>,
@@ -69,11 +71,16 @@ async fn create_shared_issue(
         .get("metadata")
         .and_then(|field| serde_json::from_slice(&field.bytes).ok())
         .ok_or_else(|| invalid("Invalid share metadata"))?;
-    let id = share_id(user.0.id, &request.request_id)?;
-    if let Some(target) = share_target(state, user.0.id, &id).await? {
+    let has_source = request.source.is_some();
+    let id = upload_id(user.0.id, &request.request_id, has_source)?;
+    if let Some(target) = upload_target(state, user.0.id, &id, has_source).await? {
         return Ok(target);
     }
-    if !valid_source(&request.source) {
+    if request
+        .source
+        .as_ref()
+        .is_some_and(|source| !valid_source(source))
+    {
         return Err(invalid("Invalid conversation reference"));
     }
     request.issue.validate()?;
@@ -89,27 +96,36 @@ async fn create_shared_issue(
         crate::cloud_projects::parse_project_id(&target.project_id)?;
     }
     let files = stage_files(state, &multipart).await?;
-    let share = NewShare {
+    let upload = IssueUpload {
         source: request.source,
         files,
-        project,
     };
-    let result = create_issue_record(state, user.0.id, request.issue, &id, Some(&share)).await;
+    let result = create_issue_record(
+        state,
+        user.0.id,
+        request.issue,
+        &id,
+        project.as_ref(),
+        Some(&upload),
+    )
+    .await;
     if let Err(error) = result {
         // The transaction may have committed despite a lost response. Only
         // reclaim this attempt's objects after confirming they aren't attached.
         let stored: Vec<StoredFile> = fetch_object_keys(state, &id).await.inspect_err(|_| {
-            tracing::warn!(issue_id=%id, attachment_ids=?share.files.iter().map(|file| &file.id).collect::<Vec<_>>(), "Share staging retained after an uncertain commit");
+            tracing::warn!(issue_id=%id, attachment_ids=?upload.files.iter().map(|file| &file.id).collect::<Vec<_>>(), "Issue attachment staging retained after an uncertain commit");
         })?;
-        let unattached: Vec<_> = share
+        let unattached: Vec<_> = upload
             .files
             .into_iter()
             .filter(|file| !stored.iter().any(|row| row.object_key == file.object_key))
             .collect();
         delete_files(state, &unattached).await;
-        return share_target(state, user.0.id, &id).await?.ok_or(error);
+        return upload_target(state, user.0.id, &id, has_source)
+            .await?
+            .ok_or(error);
     }
-    share_target(state, user.0.id, &id)
+    upload_target(state, user.0.id, &id, has_source)
         .await?
         .ok_or_else(missing)
 }
@@ -120,26 +136,14 @@ struct StoredFile {
 }
 
 async fn fetch_object_keys(state: &AppState, id: &str) -> Result<Vec<StoredFile>, FastApiError> {
-    let attachments = state
+    state
         .mysql
         .fetch_all(
             "SELECT object_key FROM loop_items WHERE loop_item_id=? AND resource_type='attachment'",
             (id,),
         )
         .await
-        .map_err(internal)?;
-    let row: Option<Issue> = state
-        .mysql
-        .fetch_optional(format!("{SELECT} WHERE id=?"), (id,))
-        .await
-        .map_err(internal)?;
-    let mut keys: Vec<StoredFile> = attachments;
-    if let Some(share) = row.and_then(|row| row.metadata.0.share) {
-        keys.extend(share.files.into_iter().map(|file| StoredFile {
-            object_key: file.object_key,
-        }));
-    }
-    Ok(keys)
+        .map_err(internal)
 }
 
 pub(super) fn association_error(reason: Admission) -> brz_mysql::MysqlError {
@@ -156,7 +160,7 @@ pub(super) fn association_error(reason: Admission) -> brz_mysql::MysqlError {
 pub(super) fn creation_error(error: brz_mysql::MysqlError) -> FastApiError {
     match error {
         brz_mysql::MysqlError::InvalidQuery { reason } if reason == "share_project_missing" => {
-            missing()
+            wegent_project_coordination::cloud_projects::cloud_project_not_found()
         }
         brz_mysql::MysqlError::InvalidQuery { reason } if reason == "share_project_invalid" => {
             invalid("Invalid target project or status")
@@ -168,11 +172,18 @@ pub(super) fn creation_error(error: brz_mysql::MysqlError) -> FastApiError {
     }
 }
 
-async fn share_target(
+async fn upload_target(
     state: &AppState,
     user: i32,
     id: &str,
+    has_source: bool,
 ) -> Result<Option<SharedIssueTarget>, FastApiError> {
+    if !has_source {
+        return state.mysql.fetch_optional(
+            format!("SELECT item.id, COALESCE(item.title,'') AS title, NULLIF(item.cloud_project_id,'') AS project_id, false AS restricted FROM loop_items item WHERE item.created_by_user_id=? AND item.id=? AND {LIVE_ITEM}"),
+            (user, id),
+        ).await.map_err(internal);
+    }
     state.mysql.fetch_optional(
         format!("{TARGET_SELECT} WHERE source.resource_type='{SOURCE_TYPE}' AND source.created_by_user_id=? AND item.id=? AND {LIVE_ITEM}"),
         (user, id),
@@ -276,13 +287,16 @@ pub(super) async fn insert_source(
     Ok(())
 }
 
-pub(super) async fn insert_project_attachments(
+pub(super) async fn insert_attachment_records(
     tx: &mut impl MysqlTransaction,
     required: &HashSet<String>,
     issue_id: &str,
     user: i32,
     files: &[SharedAttachment],
 ) -> brz_mysql::MysqlResult<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
     let sql = crate::loop_node_storage::insert_sql(
         &[
             "id",
@@ -338,12 +352,28 @@ pub(super) async fn insert_project_attachments(
     Ok(())
 }
 
-fn share_id(user_id: i32, request_id: &str) -> Result<String, FastApiError> {
+pub(super) const METADATA_WITH_FILES: &str = "
+    CAST(CASE WHEN JSON_TYPE(JSON_EXTRACT(loop_items.metadata,'$.share'))='OBJECT'
+    THEN JSON_SET(loop_items.metadata,'$.share.files',COALESCE((
+        SELECT JSON_ARRAYAGG(JSON_OBJECT(
+            'id',attachment.id,'filename',attachment.display_name,'size',attachment.size_bytes,
+            'object_key',attachment.object_key,'sha256',attachment.sha256,
+            'issue_attachment',CAST('true' AS JSON)
+        )) OVER (ORDER BY attachment.created_at,attachment.id
+            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+        FROM loop_items attachment
+        WHERE attachment.loop_item_id=loop_items.id AND attachment.resource_type='attachment'
+          AND attachment.object_key LIKE 'issue-share/%'
+        LIMIT 1
+    ),JSON_ARRAY())) ELSE loop_items.metadata END AS JSON)";
+
+fn upload_id(user_id: i32, request_id: &str, has_source: bool) -> Result<String, FastApiError> {
     let hex = request_id.replace('-', "");
     if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(invalid("Invalid share request ID"));
     }
-    Ok(format!("share-{user_id}-{}", hex.to_ascii_lowercase()))
+    let prefix = if has_source { "share" } else { "issue-upload" };
+    Ok(format!("{prefix}-{user_id}-{}", hex.to_ascii_lowercase()))
 }
 
 fn valid_source(source: &SourceTask) -> bool {
@@ -381,6 +411,7 @@ async fn stage_files(
             size: file.bytes.len(),
             sha256: format!("{:x}", Sha256::digest(&file.bytes)),
             object_key: object_key.clone(),
+            issue_attachment: false,
         });
         if crate::delivery_storage::write_object(&state.attachment_http, &object_key, &file.bytes)
             .await
@@ -422,9 +453,26 @@ async fn delete_files(state: &AppState, files: &[SharedAttachment]) -> bool {
 pub(super) async fn clean_deleted_share(
     state: &AppState,
     id: &str,
-    files: &[SharedAttachment],
 ) -> brz_mysql::MysqlResult<bool> {
-    let complete = delete_files(state, files).await;
+    let mut complete = true;
+    let attachments: Vec<(String, String)> = state.mysql.fetch_all(
+        "SELECT id,object_key FROM loop_items WHERE resource_type='attachment' AND loop_item_id=?",
+        (id,),
+    ).await?;
+    for (attachment_id, key) in attachments {
+        if crate::delivery_storage::delete_object(&state.attachment_http, &key)
+            .await
+            .is_err()
+        {
+            complete = false;
+            tracing::warn!(%attachment_id, "Issue attachment storage cleanup failed");
+            continue;
+        }
+        state.mysql.execute(
+            "DELETE FROM loop_items WHERE id=? AND resource_type='attachment' AND loop_item_id=?",
+            (attachment_id.as_str(), id),
+        ).await?;
+    }
     // The committed tombstone retains the keys until storage confirms deletion.
     let metadata = if complete {
         "JSON_REMOVE(metadata,'$.share')"
@@ -432,57 +480,64 @@ pub(super) async fn clean_deleted_share(
         "metadata"
     };
     state.mysql.execute(
-        format!("UPDATE loop_items SET metadata={metadata},updated_at=UTC_TIMESTAMP(6) WHERE id=? AND deleted_at>'1970-01-01 00:00:01'"),
+        format!("UPDATE loop_items SET metadata={metadata},updated_at={DATABASE_NOW_SQL} WHERE id=? AND deleted_at>'1970-01-01 00:00:01'"),
         (id,),
     ).await?;
     Ok(complete)
 }
 
 pub(crate) async fn retry_deleted_shares(state: &AppState) -> anyhow::Result<Value> {
-    #[derive(FromMysqlRow)]
-    struct Tombstone {
-        id: String,
-        metadata: Json<Metadata>,
-    }
-    let rows: Vec<Tombstone> = state.mysql.fetch_all(
-        "SELECT id,metadata FROM loop_items WHERE resource_type='task' AND deleted_at>'1970-01-01 00:00:01' AND JSON_EXTRACT(metadata,'$.standalone')=true AND JSON_LENGTH(JSON_EXTRACT(metadata,'$.share.files'))>0 ORDER BY updated_at,id LIMIT 32",
+    let rows: Vec<(String,)> = state.mysql.fetch_all(
+        "SELECT issue.id FROM loop_items issue WHERE issue.resource_type='task' AND (issue.cloud_project_id IS NULL OR issue.cloud_project_id='') AND issue.deleted_at>'1970-01-01 00:00:01' AND EXISTS (SELECT 1 FROM loop_items attachment WHERE attachment.resource_type='attachment' AND attachment.loop_item_id=issue.id) ORDER BY issue.updated_at,issue.id LIMIT 32",
         (),
     ).await?;
     let mut completed = 0;
     let mut pending = 0;
-    for row in rows {
-        if let Some(share) = row.metadata.0.share {
-            if clean_deleted_share(state, &row.id, &share.files).await? {
-                completed += 1;
-            } else {
-                pending += 1;
-            }
+    for (id,) in rows {
+        if clean_deleted_share(state, &id).await? {
+            completed += 1;
+        } else {
+            pending += 1;
         }
     }
     Ok(json!({"completed":completed,"pending":pending}))
 }
 
 #[brz_http_server::get("/api/v1/personal-issues/:issue_id/attachments/:attachment_id")]
-async fn download_shared_attachment(
+pub(super) async fn redirect_shared_attachment(
     #[inject(state)] state: &AppState,
     #[auth] user: SessionUser,
     issue_id: &str,
     attachment_id: &str,
-) -> Result<HttpResponse<Binary>, FastApiError> {
-    let issue = read(&state.mysql, issue_id, user.0.id).await?;
-    let file = issue
-        .metadata
-        .0
-        .share
-        .as_ref()
-        .and_then(|share| share.files.iter().find(|file| file.id == attachment_id))
-        .ok_or_else(missing)?;
-    let bytes = crate::delivery_storage::read_object(&state.attachment_http, &file.object_key)
+) -> Result<Redirect, FastApiError> {
+    let scope = crate::loop_tasks::item_access::IssueReadScope::load(&state.mysql, issue_id)
         .await
-        .map_err(|_| FastApiError::internal())?;
-    HttpResponse::new(Binary::new(bytes))
-        .header("content-type", "application/octet-stream")
-        .map_err(|_| FastApiError::internal())
+        .map_err(internal)?
+        .filter(|scope| scope.project_id.is_none())
+        .ok_or_else(missing)?;
+    scope.require(&state.mysql, issue_id, user.0.id).await?;
+    let attachment: Option<(String,)> = state
+        .mysql
+        .fetch_optional(
+            "SELECT attachment.id FROM loop_items attachment
+             JOIN loop_items issue ON issue.id=attachment.loop_item_id
+             WHERE attachment.id=? AND attachment.resource_type='attachment'
+               AND attachment.loop_item_id=? AND attachment.object_key LIKE 'issue-share/%'
+               AND JSON_TYPE(JSON_EXTRACT(issue.metadata,'$.share'))='OBJECT'",
+            (attachment_id, issue_id),
+        )
+        .await
+        .map_err(internal)?;
+    let (id,) = attachment.ok_or_else(missing)?;
+    Ok(Redirect::temporary(shared_attachment_location(&id)))
+}
+
+fn shared_attachment_location(id: &str) -> String {
+    let encoded: String = url::form_urlencoded::byte_serialize(id.as_bytes()).collect();
+    format!(
+        "/api/v1/loop-item-attachments/{}/content",
+        encoded.replace('+', "%20")
+    )
 }
 
 #[cfg(test)]
@@ -492,8 +547,27 @@ mod tests {
     #[test]
     fn share_request_ids_are_scoped_by_account() {
         let request = "60029fa1-2f7f-4429-bb06-65f839fa196e";
-        assert_ne!(share_id(3, request).unwrap(), share_id(4, request).unwrap());
-        assert!(share_id(3, "../../issue").is_err());
+        assert_ne!(
+            upload_id(3, request, true).unwrap(),
+            upload_id(4, request, true).unwrap()
+        );
+        assert!(upload_id(3, "../../issue", true).is_err());
+        assert_ne!(
+            upload_id(3, request, true).unwrap(),
+            upload_id(3, request, false).unwrap()
+        );
+    }
+
+    #[test]
+    fn attachment_creation_does_not_require_a_conversation_source() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "request_id": "60029fa1-2f7f-4429-bb06-65f839fa196e",
+            "issue": { "title": "Issue with files" },
+            "project_id": "1001",
+        }))
+        .unwrap();
+        assert!(request.source.is_none());
+        assert_eq!(request.project_id.as_deref(), Some("1001"));
     }
 
     #[test]
@@ -502,5 +576,13 @@ mod tests {
         assert!(validate_attachment_limits(MAX_SHARED_ATTACHMENTS, max_bytes).is_ok());
         assert!(validate_attachment_limits(MAX_SHARED_ATTACHMENTS + 1, 0).is_err());
         assert!(validate_attachment_limits(1, max_bytes + 1).is_err());
+    }
+
+    #[test]
+    fn attachment_redirect_keeps_the_id_in_one_path_segment() {
+        assert_eq!(
+            shared_attachment_location("file #1/?"),
+            "/api/v1/loop-item-attachments/file%20%231%2F%3F/content"
+        );
     }
 }

@@ -65,7 +65,8 @@ export function createPlatformIssueCreationState(api: SharedWorkspaceApi) {
     recordCreatedTask(
       project: CollaborationProject,
       issue: CollaborationIssue,
-      task: WorkspaceRuntimeTaskAddress
+      task: WorkspaceRuntimeTaskAddress,
+      confirmed = true
     ) {
       if (!observers.size) return
       publish({
@@ -76,7 +77,7 @@ export function createPlatformIssueCreationState(api: SharedWorkspaceApi) {
             ...issue,
             project_key: project.project_key,
             project_name: project.name,
-            has_active_task: true,
+            has_active_task: confirmed,
           },
           task,
         },

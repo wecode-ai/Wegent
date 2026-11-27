@@ -932,6 +932,11 @@ describe('Electron desktop E2E automation', () => {
         kind === 'element'
           ? [
               { id: 'start-metrics', action: 'startElementMetricsSampling', value: '10000' },
+              {
+                id: 'recent-widths',
+                action: 'getElementMetricsSample',
+                value: 'recentWidths',
+              },
               { id: 'stop-metrics', action: 'stopElementMetricsSampling' },
             ]
           : [
@@ -964,12 +969,24 @@ describe('Electron desktop E2E automation', () => {
       })
       void runDesktopControlClient('http://127.0.0.1:43111', 'main')
       try {
-        await vi.waitFor(() => expect(results).toHaveLength(2))
+        await vi.waitFor(() => expect(results).toHaveLength(kind === 'element' ? 3 : 2))
         expect(results.every(result => result.ok)).toBe(true)
-        const sample = JSON.parse(results[1].value!)
+        const sample = JSON.parse(results.at(-1)!.value!)
         expect(sample.done).toBe(true)
         expect(sample.frames.length).toBeGreaterThan(0)
         expect(sample.frames.at(-1).time).toBeLessThan(10000)
+        if (kind === 'element') {
+          const status = JSON.parse(results[1].value!)
+          expect(status.done).toBe(false)
+          expect(status.initialWidth).toBe(sample.frames[0].clientWidth)
+          expect(status.recentWidths.length).toBeGreaterThan(0)
+          expect(status.recentWidths.length).toBeLessThanOrEqual(2)
+          expect(status.recentWidths).toEqual(
+            Array(status.recentWidths.length).fill(sample.frames[0].clientWidth)
+          )
+          expect(status).not.toHaveProperty('frames')
+          expect(sample.expired).toBe(false)
+        }
       } finally {
         root.remove()
       }

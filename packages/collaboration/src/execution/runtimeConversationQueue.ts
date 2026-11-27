@@ -9,7 +9,7 @@ import {
 export interface RuntimeConversationQueuePort<Lifecycle = unknown> {
   send(
     message: RuntimePaneQueuedMessage,
-  ): Promise<{ sent: boolean; error?: string | null }>;
+  ): Promise<{ sent: boolean; error?: string | null; guided?: boolean }>;
   guide(
     message: RuntimePaneQueuedMessage,
   ): Promise<{ sent: boolean; error?: string | null }>;
@@ -104,6 +104,7 @@ export class RuntimeConversationQueue<Lifecycle = unknown> {
     try {
       const result = await port.send(message);
       if (result.sent) {
+        if (result.guided) this.awaitingNextTurn = null;
         this.remove(id);
         return true;
       }
@@ -222,6 +223,7 @@ export function runtimeQueuedMessageRequest(
     ...context,
     // Public (undefined) is also captured intent, never inherited from a later pane.
     conversationContext: message.conversationContext,
+    assistantPrompt: message.assistantPrompt,
     ...(message.origin ? { origin: message.origin } : {}),
     ...(message.cloudProjectId
       ? { cloudProjectId: message.cloudProjectId }

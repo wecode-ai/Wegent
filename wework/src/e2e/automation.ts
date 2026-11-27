@@ -43,6 +43,7 @@ import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import { composeDesktopInput } from './input-composition'
+import { recordComposerSubmitModel } from './composer-submit-model-diagnostics'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { decodeDesktopControlImage } from './desktop-control-image'
@@ -310,6 +311,10 @@ function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sour
 
 interface ElementMetricsSamplePoint {
   elements?: ReturnType<ReturnType<typeof createElementFrameSampler>>
+  clientHeight: number
+  clientWidth: number
+  scrollHeight: number
+  scrollTop: number
   connected: boolean
   height: number
   label: string | null
@@ -1396,6 +1401,7 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
+  recordComposerSubmitModel(element, keyboardEvent)
   for (const type of ['keydown', 'keyup']) {
     element.dispatchEvent(
       new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
@@ -1451,6 +1457,9 @@ async function pressNativeDesktopControlKey(
     : null
   const recordKey = (event: KeyboardEvent) => {
     recordNativeTerminalKey('native-event', key, element, event)
+    if (event.type === 'keydown' && event.target === element) {
+      recordComposerSubmitModel(element, event)
+    }
     if (event.key === expectedKey) observation?.record(event)
   }
   window.addEventListener(eventType, recordKey, true)
@@ -3356,6 +3365,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           : []
         sample.frames.push({
           elements: sampleElements?.(),
+          clientHeight: element?.clientHeight ?? 0,
+          clientWidth: element?.clientWidth ?? 0,
+          scrollHeight: element?.scrollHeight ?? 0,
+          scrollTop: element?.scrollTop ?? 0,
           connected: element?.isConnected ?? false,
           height: rect?.height ?? 0,
           label: element?.dataset.weworkBrowserWebview ?? null,
@@ -3388,10 +3401,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getElementMetricsSample': {
       const sample = activeElementMetricsSample
       if (!sample) throw new Error('Element metrics sampling has not started')
-      if (command.action === 'stopElementMetricsSampling') sample.stop()
+      if (command.action === 'getElementMetricsSample' && command.value === 'recentWidths') {
+        return JSON.stringify({
+          done: sample.done,
+          initialWidth: sample.frames[0]?.clientWidth ?? 0,
+          recentWidths: sample.frames.slice(-2).map(frame => frame.clientWidth),
+        })
+      }
+      const stopping = command.action === 'stopElementMetricsSampling'
+      const expired = sample.done
+      if (stopping) sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
+        ...(stopping ? { expired } : {}),
       })
     }
     case 'startScrollStabilitySampling': {
@@ -4216,7 +4239,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           element,
           command.value ?? '',
           command.by,
-          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+          command.includeOptionsOnError
         )
       })
     }

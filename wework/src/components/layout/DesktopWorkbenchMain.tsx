@@ -4,10 +4,7 @@ import {
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
-import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   type EmbeddedBrowserOpenRequest,
@@ -15,7 +12,7 @@ import {
 import { closeLocalTerminal } from '@/lib/local-terminal'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import styles from './DesktopWorkbenchMain.module.css'
 import {
   DEFAULT_ENVIRONMENT_INFO_VISIBILITY,
@@ -38,11 +35,10 @@ import {
 import { SingleWorkbenchPane } from './workbenchPanePresentation'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
 import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
-export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
-  const { state } = useWorkbenchPaneContext()
-  const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(state.runtimeWork)
-  const { services, openRuntimeTask } = useWorkbench()
-  const { t } = useTranslation('common')
+export const DesktopWorkbenchMain = memo(function DesktopWorkbenchMain(
+  props: DesktopWorkbenchMainProps
+) {
+  const { state, services, openRuntimeTask } = useWorkbenchPaneContext()
   const { onLocalHarnessSessionStarted, onLocalHarnessSessionClose, onLocalHarnessSessionExit } =
     props
   const appearanceContext = useOptionalAppearance()
@@ -241,22 +237,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     },
     [setPendingBrowserOpenRequests]
   )
-  const getPaneTitle = useCallback(
-    (pane: WorkbenchPaneIdentity) => {
-      if (!pane.currentRuntimeTask) {
-        return pane.currentProject?.name ?? t('workbench.new_chat', '新任务')
-      }
-      const task = resolveRuntimeTaskSummary(pane.currentRuntimeTask)
-      return (
-        truncateRuntimeTaskTitle(task?.title) ??
-        t('workbench.task_fallback_title', {
-          defaultValue: '任务 {{taskId}}',
-          taskId: pane.currentRuntimeTask.taskId,
-        })
-      )
-    },
-    [resolveRuntimeTaskSummary, t]
-  )
   const focusPane = useCallback(
     (pane: WorkbenchPaneIdentity) => {
       if (pane.currentRuntimeTask) void openRuntimeTask(pane.currentRuntimeTask)
@@ -325,7 +305,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       activeTestId={props.visible === false ? null : 'desktop-workbench-main'}
       workbenchVisible={props.visible ?? true}
       resolvePane={resolvePane}
-      getPaneTitle={getPaneTitle}
+      runtimeWork={state.runtimeWork}
       onPaneFocus={focusPane}
       onLayoutFocus={splitGroups.focusPane}
       onLayoutClose={paneId => getActiveWorkbenchLayout(splitGroups.closePane(paneId))}
@@ -377,4 +357,4 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       {mainContent}
     </div>
   )
-}
+})

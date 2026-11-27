@@ -28,7 +28,7 @@ pub(crate) async fn enqueue_mention_on(
     .await
 }
 
-/// Commit an explicit project assignment with its recipient-owned wakeup.
+/// Commit an explicit Issue assignment with its recipient-owned wakeup.
 pub(crate) async fn enqueue_assignment_on(
     tx: &mut impl MysqlTransaction,
     user: i64,
@@ -36,26 +36,12 @@ pub(crate) async fn enqueue_assignment_on(
     issue: &str,
     assignment: &str,
 ) -> MysqlResult<()> {
-    enqueue_on(
-        tx,
-        user,
-        json!({"assignmentId":assignment,"itemId":issue,"projectId":project}),
-    )
-    .await
-}
-
-pub(crate) async fn enqueue_personal_assignment_on(
-    tx: &mut impl MysqlTransaction,
-    user: i64,
-    issue: &str,
-    assignment: &str,
-) -> MysqlResult<()> {
-    enqueue_on(
-        tx,
-        user,
-        json!({"assignmentId":assignment,"personalIssueId":issue}),
-    )
-    .await
+    let payload = if project.is_empty() {
+        json!({"assignmentId":assignment,"personalIssueId":issue})
+    } else {
+        json!({"assignmentId":assignment,"itemId":issue,"projectId":project})
+    };
+    enqueue_on(tx, user, payload).await
 }
 
 async fn enqueue_on(tx: &mut impl MysqlTransaction, user: i64, payload: Value) -> MysqlResult<()> {

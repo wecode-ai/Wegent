@@ -46,7 +46,7 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
-import type { StandInNotification } from './standInNotifications'
+import { standInStartFailureCopy, type StandInNotification } from './standInNotifications'
 import { useStandInNotifications } from './useStandInNotifications'
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
@@ -504,49 +504,51 @@ function ConnectedNotificationCenter({
     })
 
   const selectedCloudCategory =
-    category === 'collaboration' || category === 'general' ? category : null
+    anchor && (category === 'collaboration' || category === 'general') ? category : null
   const selectedCloudInbox =
     selectedCloudCategory === 'collaboration'
       ? { items: collaboration.items, next_offset: inboxes.collaboration?.next_offset ?? null }
       : selectedCloudCategory
         ? inboxes[selectedCloudCategory]
         : null
-  const categoryRows = [
-    {
-      id: 'tasks' as const,
-      title: t('notifications.category_tasks'),
-      preview: sortedTasks[0]?.task.title,
-      timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
-      unread: taskUnreadCount,
-      icon: CheckCircle2,
-    },
-    {
-      id: 'collaboration' as const,
-      title: t('notifications.category_collaboration'),
-      preview: collaboration.items[0]
-        ? notificationPreview(collaboration.items[0])
-        : api && !inboxes.collaboration && !error
-          ? t('notifications.loading')
-          : undefined,
-      timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
-      unread: collaboration.unreadCount,
-      icon: UsersRound,
-    },
-    {
-      id: 'general' as const,
-      title: t('notifications.category_general'),
-      preview: inboxes.general?.items[0]
-        ? notificationPreview(inboxes.general.items[0])
-        : api && !inboxes.general && !error
-          ? t('notifications.loading')
-          : undefined,
-      timestamp: inboxes.general?.items[0]
-        ? cloudTimestamp(inboxes.general.items[0].created_at)
-        : 0,
-      unread: inboxes.general?.unread_count ?? 0,
-      icon: Bell,
-    },
-  ]
+  const categoryRows = anchor
+    ? [
+        {
+          id: 'tasks' as const,
+          title: t('notifications.category_tasks'),
+          preview: sortedTasks[0]?.task.title,
+          timestamp: sortedTasks[0] ? taskTimestamp(sortedTasks[0]) : 0,
+          unread: taskUnreadCount,
+          icon: CheckCircle2,
+        },
+        {
+          id: 'collaboration' as const,
+          title: t('notifications.category_collaboration'),
+          preview: collaboration.items[0]
+            ? notificationPreview(collaboration.items[0])
+            : api && !inboxes.collaboration && !error
+              ? t('notifications.loading')
+              : undefined,
+          timestamp: collaboration.items[0] ? collaboration.timestamp(collaboration.items[0]) : 0,
+          unread: collaboration.unreadCount,
+          icon: UsersRound,
+        },
+        {
+          id: 'general' as const,
+          title: t('notifications.category_general'),
+          preview: inboxes.general?.items[0]
+            ? notificationPreview(inboxes.general.items[0])
+            : api && !inboxes.general && !error
+              ? t('notifications.loading')
+              : undefined,
+          timestamp: inboxes.general?.items[0]
+            ? cloudTimestamp(inboxes.general.items[0].created_at)
+            : 0,
+          unread: inboxes.general?.unread_count ?? 0,
+          icon: Bell,
+        },
+      ]
+    : []
   const selectedCategoryRow = categoryRows.find(row => row.id === category)
 
   return (
@@ -826,6 +828,12 @@ function ConnectedNotificationCenter({
                   busy,
                   onClick: () =>
                     selectedCloudCategory && openNotification(notification, selectedCloudCategory),
+                  ...(notification.payload.action === 'stand_in_start_failed' &&
+                    standInStartFailureCopy(
+                      t,
+                      notification.payload.itemTitle ?? notification.title,
+                      notification.payload.failureCode
+                    )),
                 }
                 return notification.kind === 'issue_dispatch_assignment' ? (
                   <StandInNotificationProcessing

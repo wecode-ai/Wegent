@@ -32,7 +32,7 @@ function delay(ms: number): Promise<void> {
  */
 export async function authorizeConnectorApp(
   slug: string,
-  options: { isCurrent?: () => boolean } = {}
+  options: { isCurrent?: () => boolean; authorizationTicket?: string } = {}
 ): Promise<void> {
   const scope = apiClient.getCacheScope()
   let authorizationWindow: Window | null = null
@@ -53,7 +53,9 @@ export async function authorizeConnectorApp(
 
   let session
   try {
-    session = await adminApis.createConnectorOAuthSession(slug)
+    session = options.authorizationTicket
+      ? await adminApis.createConnectorOAuthSession(slug, options.authorizationTicket)
+      : await adminApis.createConnectorOAuthSession(slug)
     checkCurrent()
   } catch (error) {
     authorizationWindow?.close()

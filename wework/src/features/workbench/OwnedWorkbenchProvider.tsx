@@ -10,6 +10,7 @@ import {
 import { createWorkbenchRuntimeOperations } from './workbenchRuntimeOperations'
 import {
   createWorkbenchPaneActions,
+  useWorkbenchContextValue,
   useWorkbenchPaneValue,
   useWorkbenchProjectChatValue,
 } from './useWorkbenchContextProjection'
@@ -40,7 +41,7 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { WORKBENCH_NEW_CHAT_REQUEST_EVENT } from '@/lib/workbenchComposerFocus'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
-import type { LocalDeviceApp, PluginPathComponent, User } from '@/types/api'
+import type { LocalDeviceApp, PluginPathComponent, RuntimeTaskAddress, User } from '@/types/api'
 import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   getProjectWorkPreferenceKey,
@@ -49,12 +50,7 @@ import {
 import { findModelForSelection, modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { runtimeConversationKey } from './runtimeConversationCache'
 import { defaultNewChatModelSelection } from './runtimeModelSelection'
-import {
-  RuntimeTaskLifecycleStore,
-  useRuntimeTaskLifecycleStoreSnapshot,
-  useRuntimeTaskSummaryResolver,
-} from './runtimeTaskLifecycle'
-import { useRuntimeTaskReminders } from './runtimeTaskReminders'
+import { RuntimeTaskLifecycleStore, useRuntimeTaskSummaryResolver } from './runtimeTaskLifecycle'
 import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import {
@@ -116,11 +112,7 @@ import {
   useUpdateGlobalImNotification,
 } from './useWorkbenchTaskCallbacks'
 import { useWorkspaceTabDraftInput } from './useWorkspaceTabDraftInput'
-import type {
-  WorkbenchContextValue,
-  WorkbenchPaneContextValue,
-  WorkbenchProviderProps,
-} from './workbenchContextTypes'
+import type { WorkbenchPaneContextValue, WorkbenchProviderProps } from './workbenchContextTypes'
 import {
   getModelSelectionScopeKey,
   getNewChatModelSelection,
@@ -214,9 +206,6 @@ export function OwnedWorkbenchProvider({
     get harnessAppLaunch() {
       return harnessAppLaunchInput
     },
-    get notificationTaskReminders() {
-      return runtimeTaskReminders
-    },
     t,
     executorClient,
     isWorkspaceTabActive,
@@ -265,8 +254,6 @@ export function OwnedWorkbenchProvider({
   })
   useDOMEvent('window', WORKBENCH_NEW_CHAT_REQUEST_EVENT, session.startRequestedChat)
   useDOMEvent('window', LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, session.invalidatePluginCatalog)
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-
   const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(
     state.runtimeWork,
     sharedLifecycleStore
@@ -280,13 +267,6 @@ export function OwnedWorkbenchProvider({
 
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
 
-  const runtimeTaskReminders = useRuntimeTaskReminders({
-    runtimeWork: state.runtimeWork,
-    lifecycleStore,
-    lifecycleSnapshot,
-    standInApi: resolvedServices.standInApi,
-    runtimeApi: resolvedServices.runtimeWorkApi,
-  })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
@@ -422,16 +402,19 @@ export function OwnedWorkbenchProvider({
       ? (runtimeProject?.aiSettings?.modelSelection ?? null)
       : null
   }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+  const savedTaskModelSelection = resolveRuntimeTaskSummary(
+    state.currentRuntimeTask
+  )?.modelSelection
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
-        resolveRuntimeTaskSummary(state.currentRuntimeTask)?.modelSelection ??
+        savedTaskModelSelection ??
         modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
         null
       )
     }
     return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, projectModelSelection, resolveRuntimeTaskSummary, state.currentRuntimeTask])
+  }, [currentUser, projectModelSelection, savedTaskModelSelection, state.currentRuntimeTask])
   const defaultModelSelectionConfig = defaultNewChatModelSelection
   const persistNewChatModelSelection = usePersistNewChatModelSelection({
     latestUserPreferencesRef,
@@ -494,6 +477,14 @@ export function OwnedWorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
+  // The model store restores selections missing from the discovery catalog.
+  const resolveActiveTaskSelectionReady = useCallback(
+    (address: RuntimeTaskAddress) =>
+      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+        ? modelSelection.isSelectionReady
+        : null,
+    [modelSelection.isSelectionReady, state.currentRuntimeTask]
+  )
   const {
     resolveRuntimeTaskModelSelection,
     setRuntimeTaskSelectedModel,
@@ -503,12 +494,7 @@ export function OwnedWorkbenchProvider({
     userId: currentUser.id,
     resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
-    // The model store restores the focused task's saved selection, including a
-    // persisted cloud reference that the discovery catalog does not list.
-    resolveActiveTaskSelectionReady: address =>
-      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
-        ? modelSelection.isSelectionReady
-        : null,
+    resolveActiveTaskSelectionReady,
   })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
@@ -586,8 +572,12 @@ export function OwnedWorkbenchProvider({
     debugSnapshotEnabled && publishDebugSnapshots
       ? {
           state,
-          lifecycle: lifecycleSnapshot,
-          taskReminders: runtimeTaskReminders,
+          get lifecycle() {
+            return sharedLifecycleStore.getSnapshot()
+          },
+          get taskReminders() {
+            return session.getTaskReminders()
+          },
           cloudWorkStatus,
           composer: {
             scopeKey: projectChatScopeKey,
@@ -662,6 +652,7 @@ export function OwnedWorkbenchProvider({
     dispatch,
     workspaceTabId,
     user,
+    setDraftInputForScope,
   })
 
   const localSkillsWorkspacePath =
@@ -893,11 +884,11 @@ export function OwnedWorkbenchProvider({
   )
   const paneValue: WorkbenchPaneContextValue = useWorkbenchPaneValue({
     ...paneActions,
+    workspaceTabId,
     services: resolvedServices,
     state: paneState,
     isStartupReady,
     workspaceFileApi,
-    runtimeTaskReminders,
     projectChat: paneProjectChatValue,
     upgradingDevices,
     projectExecutionMode,
@@ -914,17 +905,12 @@ export function OwnedWorkbenchProvider({
     resolvedServices,
     t
   )
-  const value: WorkbenchContextValue = useMemo(
-    () => ({
-      ...paneValue,
-      workspaceTabId,
-      state,
-      cloudWorkStatus,
-      projectChat: projectChatValue,
-      updateUserPreferences,
-    }),
-    [paneValue, workspaceTabId, state, cloudWorkStatus, projectChatValue, updateUserPreferences]
-  )
+  const value = useWorkbenchContextValue(paneValue, {
+    state,
+    cloudWorkStatus,
+    projectChat: projectChatValue,
+    updateUserPreferences,
+  })
 
   const operationTargets: WorkbenchSessionOperations = {
     ...createWorkbenchRuntimeOperations({
@@ -997,6 +983,7 @@ export function OwnedWorkbenchProvider({
     <WorkbenchContextProviders
       value={value}
       retainOwner={observation.retain}
+      publishTaskReminders={session.publishTaskReminders}
       paneValue={paneValue}
       sharedLifecycleStore={sharedLifecycleStore}
       lifecycleStore={lifecycleStore}

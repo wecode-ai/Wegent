@@ -1,3 +1,4 @@
+import { dequal } from 'dequal'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { issueHumanInteraction } from './issueHumanInteractions'
@@ -7,6 +8,7 @@ type Store = 'local' | 'backend'
 interface Snapshot {
   items: RuntimeInteraction[]
   resolved: RuntimeInteraction[]
+  transferred: RuntimeInteraction[]
   error?: string
 }
 const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
@@ -22,12 +24,21 @@ export function createIssueHumanInteractionSource(
       .filter(item => item.sharedRequest && item.project?.store === store)
       .map(item => ({ ...item, cached: true })),
     resolved: [],
+    transferred: [],
   }
   let epoch = 0
   let sequence = 0
   const listeners = new Set<() => void>()
   const publish = (patch: Partial<Snapshot>) => {
-    snapshot = { ...snapshot, ...patch }
+    const next = { ...snapshot, ...patch }
+    if (
+      next.error === snapshot.error &&
+      dequal(next.items, snapshot.items) &&
+      next.resolved === snapshot.resolved &&
+      dequal(next.transferred, snapshot.transferred)
+    )
+      return
+    snapshot = next
     listeners.forEach(listener => listener())
   }
   const refresh = async () => {
@@ -45,7 +56,9 @@ export function createIssueHumanInteractionSource(
         item => item.sharedRequest && !ids.has(item.sharedRequest.id)
       )
       const incoming = response.items.map(request => issueHumanInteraction(request, store))
-      publish({ items: [...incoming, ...removed.map(item => ({ ...item, cached: true }))] })
+      const transferred = snapshot.transferred.filter(item => !ids.has(item.sharedRequest!.id))
+      if (removed.length)
+        publish({ items: [...incoming, ...removed.map(item => ({ ...item, cached: true }))] })
       const retained: RuntimeInteraction[] = []
       const failures: string[] = []
       for (const previous of removed) {
@@ -64,6 +77,8 @@ export function createIssueHumanInteractionSource(
           ) {
             // Missing metadata cannot settle a question; a confirmed handoff retires this inbox lease.
             retained.push({ ...previous, cached: true })
+          } else {
+            transferred.push(previous)
           }
         } catch (cause) {
           if (!current()) return
@@ -74,6 +89,7 @@ export function createIssueHumanInteractionSource(
       if (!current()) return
       publish({
         items: [...incoming, ...retained],
+        transferred: transferred.slice(-100),
         error: failures.length ? failures.join('\n') : undefined,
       })
     } catch (cause) {

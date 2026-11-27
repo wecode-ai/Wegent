@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import { pathExists, until } from '../modules/plugin-regression-fixture.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -28,6 +29,29 @@ const USER = 9001
 const ROLE = 'triage-assistant'
 const PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 const testId = name => `[data-testid="${name}"]`
+
+async function verifyLearningReport(control, capture, stage, expected, options = {}) {
+  if (options.refresh) {
+    await control.command('clickWhenEnabled', testId('stand-in-learning-report-refresh'))
+  } else {
+    await openStandInSettings(control)
+    await control.command('clickWhenEnabled', testId('stand-in-ghost-revision-open'))
+  }
+  await control.command('waitFor', testId('stand-in-learning-report'), { text: expected.status })
+  await control.command('waitFor', testId('stand-in-learning-identity'), { text: ROLE })
+  for (const [name, value] of Object.entries(expected.metrics)) {
+    await control.command('waitFor', testId('stand-in-learning-' + name), { text: value })
+    const actual = await control.command('getText', testId('stand-in-learning-' + name))
+    assert.equal(actual.trim(), value)
+  }
+  for (const [axis, text] of Object.entries(expected.dimensions ?? {})) {
+    await control.command('waitFor', testId('stand-in-learning-dimension-' + axis), { text })
+  }
+  await capture(control, `learning-report-${stage}.png`)
+  if (options.keepOpen) return
+  await control.command('clickWhenEnabled', testId('stand-in-close'))
+  await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
+}
 
 function source(name) {
   return {
@@ -173,6 +197,21 @@ export function createDesktopScenario(options) {
         assert.ok(
           role(optedIn).connections.every(connection => connection.policy.automatic === false)
         )
+        await verifyLearningReport(
+          control,
+          options.captureScreenshot,
+          '01-empty',
+          {
+            status: '还没有完成评测',
+            metrics: { iterations: '0', current_score: '暂无', candidate_score: '暂无' },
+          },
+          { keepOpen: true }
+        )
+        await control.command('clickWhenEnabled', testId('stand-in-learning-run-now'))
+        await control.command('waitFor', testId('stand-in-learning-run-status'), {
+          text: '当前助理还没有足够的独立案例可供评估',
+          timeoutMs: 10_000,
+        })
         await publishHistory(history, true)
         arrangement = await until(
           async () =>
@@ -249,7 +288,36 @@ export function createDesktopScenario(options) {
           'Observe the native notification channel after the background review',
           options.uiTimeoutMs
         )
-        await control.command('focusMainWindow', 'body')
+        // The notification assertion needs native blur. Report and proposal clicks use renderer
+        // controls and only require a visible window.
+        await verifyLearningReport(
+          control,
+          options.captureScreenshot,
+          '02-pending',
+          {
+            status: '改进建议待确认',
+            dimensions: { intent: '证据不足', verification: '0 → 100', clarity: '50 → 100' },
+            metrics: {
+              iterations: '1',
+              current_score: '0',
+              baseline_score: '0',
+              candidate_score: '100',
+              'score-change': '+100 分',
+            },
+          },
+          { refresh: true, keepOpen: true }
+        )
+        const reportProposal = testId('stand-in-learning-view-proposal')
+        await control.command('clickWhenEnabled', reportProposal, { timeoutMs: 10_000 })
+        const proposalDialog = testId('stand-in-proposal-dialog')
+        await control.command('waitFor', proposalDialog, { text: REVISED, timeoutMs: 5000 })
+        await control.command('waitFor', testId('stand-in-profile-panel'), {
+          visible: false,
+          timeoutMs: 5000,
+        })
+        await options.captureScreenshot(control, 'learning-report-02a-review-from-report.png')
+        await control.command('clickWhenEnabled', testId('stand-in-proposal-dialog-close'))
+        await control.command('waitFor', proposalDialog, { visible: false, timeoutMs: 5000 })
         await openStandInDetails(control)
         await control.command('clickWhenEnabled', testId('stand-in-proposal-open'))
         const card = testId('stand-in-proposal')
@@ -270,6 +338,16 @@ export function createDesktopScenario(options) {
         )
         assert.deepEqual(role(applied).connections, role(optedIn).connections)
         assert.deepEqual(applied.primary, optedIn.primary)
+        await verifyLearningReport(control, options.captureScreenshot, '03-accepted', {
+          status: '已采纳改进建议',
+          dimensions: { judgment: '证据不足', verification: '0 → 100' },
+          metrics: {
+            iterations: '1',
+            current_score: '100',
+            baseline_score: '0',
+            candidate_score: '100',
+          },
+        })
         await openStandInMemory(control)
         const review = testId('stand-in-recent-review')
         for (const period of ['today', 'week']) {
@@ -301,6 +379,34 @@ export function createDesktopScenario(options) {
           ),
           'Keeping connected history must not dispatch a reply task'
         )
+        await control.command('clickWhenEnabled', testId('stand-in-memory-path-settings'))
+        await control.command('clickWhenEnabled', testId('stand-in-close'))
+        await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
+        await selectWorkbenchTheme(control, { mode: 'dark', themeId: 'wework' })
+        await control.command('clickWhenEnabled', testId('stand-in-overview-role-' + ROLE))
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 375, height: 800 }),
+        })
+        await verifyLearningReport(
+          control,
+          options.captureScreenshot,
+          '04-accepted-narrow-dark',
+          {
+            status: '已采纳改进建议',
+            metrics: { iterations: '1', current_score: '100' },
+          },
+          { keepOpen: true }
+        )
+        await control.command('clickWhenEnabled', testId('stand-in-ghost-revision-undo'))
+        await control.command('waitFor', testId('stand-in-learning-report'), {
+          text: '已撤回本轮改进',
+        })
+        assert.equal(
+          await control.command('getText', testId('stand-in-learning-current_score')),
+          '0'
+        )
+        assert.equal(role(await profile()).prompt, ORIGINAL)
+        await options.captureScreenshot(control, 'learning-report-05-undone.png')
       } finally {
         if (arrangement)
           await rpc('runtime.automations.toggle', { automationId: arrangement.id, enabled: false })

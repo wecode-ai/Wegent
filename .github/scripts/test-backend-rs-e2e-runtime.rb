@@ -25,7 +25,7 @@ summary = jobs.fetch("platform-e2e-summary").fetch("steps").first.fetch("env")
       values.each { |key, value| expression = expression.gsub(key, value.inspect) }
       eval(expression)
     end
-    runtime_required = event != "pull_request" || (!draft && (platform || desktop))
+    runtime_required = (platform || desktop) && (event != "pull_request" || !draft)
     delivery_required = delivery && (event != "pull_request" || !draft)
     [
       [producer.fetch("if"), runtime_required],
@@ -52,7 +52,8 @@ end
 # Compile-time migration assets must exist at the same relative paths inside the
 # builder. Check the actual include paths against its COPY instructions.
 builder = File.read(File.join(root, ".github/runtime-images/backend-rs-builder.Dockerfile"))
-unless builder.include?("COPY shared/assets/codex-models /workspace/shared/assets/codex-models")
+unless builder.include?("COPY shared/assets/codex-models /source/shared/assets/codex-models") &&
+  builder.include?("rsync -rlp --checksum --delete /source/shared/ /workspace/shared/")
   raise "Backend Rust builder omits the embedded Codex model catalogs"
 end
 {
@@ -65,16 +66,18 @@ end
     raise "#{path} must copy the offline calendar before compiling shared crates"
   end
 end
-copies = builder.scan(/^COPY (backend-rs\/\S+) (\.\/\S+)$/)
+source_copy = builder.lines
+  .drop_while { |line| !line.start_with?("FROM ${DEPS_IMAGE} AS build") }
+  .join.gsub(/\\\n\s+/, " ").lines
+  .find { |line| line.end_with?("backend-rs/ /source/backend-rs/\n") }
+raise "Missing backend workspace source copy" unless source_copy
+exclusions = source_copy.scan(/--exclude=(\S+)/).flatten
 Dir[File.join(root, "backend-rs/be-server/src/migrations/**/*.rs")].each do |source|
   File.read(source).scan(/include_(?:str|bytes)!\(\s*"([^"]+)"/).flatten.each do |path|
     asset = File.expand_path(path, File.dirname(source))
     relative = asset.delete_prefix("#{root}/backend-rs/")
-    copied = copies.any? do |input, destination|
-      prefix = destination.delete_prefix("./")
-      candidate = File.join(root, input, relative.delete_prefix("#{prefix}/"))
-      relative.start_with?("#{prefix}/") && File.file?(candidate)
-    end
+    copied = asset.start_with?("#{root}/backend-rs/") && File.file?(asset) &&
+      exclusions.none? { |path| relative == path || relative.start_with?("#{path}/") }
     raise "Backend Rust builder omits embedded asset #{relative}" unless copied
   end
 end
@@ -97,6 +100,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   FileUtils.cp(File.join(root, recipe), File.join(directory, recipe))
   %w[.github/runtime-images/backend-rs-builder.Dockerfile .github/ci/rust-toolchain
     .github/scripts/ci-prebuilt-images.mjs .github/scripts/resolve-ci-image.mjs backend-rs/Cargo.toml backend-rs/Cargo.lock
+    .github/scripts/resolve-backend-rs-e2e-dependencies.sh
     backend-rs/be-server/Cargo.toml backend-rs/src/task_export_docx/templates/thumbnail.jpeg].each do |input|
     FileUtils.mkdir_p(File.dirname(File.join(directory, input)))
     FileUtils.cp(File.join(root, input), File.join(directory, input))
@@ -156,7 +160,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
           cp "$context/$source" "$TEST_IMAGE$destination"
         done < "$recipe"
         ;;
-      manifest) exit 1 ;;
+      manifest) [[ "${3-}" == "${TEST_SEED:-missing}" ]] ;;
       push|pull) ;;
       create) echo contract-container ;;
       cp) cp "$TEST_IMAGE/${2#*:/}" "$3" ;;
@@ -174,6 +178,46 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
     "TEST_IMAGE" => File.join(directory, "image"),
     "TEST_CLEANUP" => File.join(directory, "cleanup")
   }
+  git = lambda do |*arguments|
+    output, status = Open3.capture2e("git", *arguments, chdir: directory)
+    raise output unless status.success?
+    output.strip
+  end
+  git.call("init", "-q")
+  git.call("add", ".")
+  git.call("-c", "user.name=CI", "-c", "user.email=ci@example.com", "commit", "-qm", "seed")
+  metadata, status = Open3.capture2e(
+    "node", ".github/scripts/ci-prebuilt-images.mjs", "backend-rs-deps", "example", chdir: directory
+  )
+  raise metadata unless status.success?
+  seed = YAML.safe_load(metadata).fetch("image")
+  environment["BASE_SHA"] = git.call("rev-parse", "HEAD")
+  environment["TEST_SEED"] = seed
+  seed_selection = lambda do
+    output, status = Open3.capture2e(environment, "bash",
+      ".github/scripts/resolve-backend-rs-e2e-dependencies.sh", chdir: directory)
+    raise output unless status.success?
+    output.strip
+  end
+  raise "Exact seed was not selected" unless seed_selection.call == seed
+  File.write(File.join(directory, "backend-rs/backend-config/src/cache-test.rs"), "// changed source")
+  File.open(File.join(directory, ".github/runtime-images/backend-rs-builder.Dockerfile"), "a") do |file|
+    file.puts "# Updated final build stage"
+  end
+  raise "Compatible base seed was not reused" unless seed_selection.call == seed
+  lockfile = File.join(directory, "backend-rs/Cargo.lock")
+  original_lock = File.read(lockfile)
+  File.write(lockfile, original_lock + "\n# new lock")
+  git.call("add", ".")
+  git.call("-c", "user.name=CI", "-c", "user.email=ci@example.com", "commit", "-qm", "unpushed prewarm")
+  environment["BASE_SHA"] = git.call("rev-parse", "HEAD")
+  raise "Older seed with compatible recipe was not reused" unless seed_selection.call == seed
+  toolchain = File.join(directory, ".github/ci/rust-toolchain")
+  original_toolchain = File.read(toolchain)
+  File.write(toolchain, "1.0.0\n")
+  raise "Incompatible toolchain seed was selected" unless seed_selection.call.empty?
+  File.write(toolchain, original_toolchain)
+
   run = lambda do |name, success|
     output, status = Open3.capture2e(environment, "bash", "-e", "-o", "pipefail", "-c",
       step.call(name), chdir: directory)

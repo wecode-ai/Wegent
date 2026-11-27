@@ -16,8 +16,7 @@ impl RuntimeWorkRpcHandler {
                     row["status"] != "stopped"
                         && row["expires_at"].as_i64().unwrap_or_default() <= now_ms()
                 }) {
-                    record["status"] = json!("stopped");
-                    record["cloud_stop_pending"] = json!(record["cloud_registration"].is_object());
+                    mark_stopped(record, "expired");
                 }
                 Ok(())
             },

@@ -16,6 +16,7 @@ import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
+import { createPersonalAssistantAccountApi } from '@/api/personalAssistantAccount'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
@@ -215,6 +216,7 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    personalAssistantAccountApi: createPersonalAssistantAccountApi(client),
     standInApi: createStandInExecutorApi(
       (method, payload, deviceId) => composerRuntimeIpc.request(method, payload, deviceId),
       cloudPluginApi

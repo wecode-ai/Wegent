@@ -90,6 +90,34 @@ fn runtime_owner_uses_the_effective_profile_for_mcp_approval_visibility() {
 }
 
 #[test]
+fn forwarded_mcp_tool_approval_waits_for_user_input_without_single_approval() {
+    let (handler, root) = interaction_handler("mcp-external-automatic");
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "origin": {"type": "stand_in_task", "initiatedBy": "stand_in", "askBeforeAct": false}
+    }))
+    .unwrap();
+    handler.register_thread_event_route("thread-1", "task-1".into(), request, true);
+    let mut approval = ordinary_request(json!(1), "turn-1");
+    approval["params"]["questions"][0]["id"] = json!("mcp_tool_call_approval_call-1");
+    handler.route_codex_notification(approval);
+
+    assert_interaction_status(&handler, Some(INTERACTION_WAITING_FOR_USER_INPUT));
+    let active = handler.active_codex_transcript_items.lock().unwrap();
+    let items = &active["task-1"].items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["renderPayload"]["requestId"], 1);
+    assert!(items[0]["renderPayload"]["standInSingleApproval"].is_null());
+    drop(active);
+    assert_eq!(
+        handler
+            .request_user_input_response_key("task-1", "turn-1", &json!({"answers": {}}))
+            .as_deref(),
+        Some("1"),
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn ordinary_question_recovers_with_real_request_identity_and_persists_its_answer() {
     let (handler, root) = interaction_handler("ordinary-refresh-history");
     let ordinary = ordinary_request(json!(1), "turn-1");
@@ -618,6 +646,202 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn question_files_use_current_connection_but_preserve_the_original_reply_in_history() {
+    question_files_preserve_execution_identity(false);
+}
+
+#[test]
+fn question_files_restore_enabling_member_without_device_owner_substitution() {
+    question_files_preserve_execution_identity(true);
+}
+
+fn question_files_preserve_execution_identity(coordinator: bool) {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(assert_question_files_preserve_execution_identity(
+            coordinator,
+        ));
+}
+
+async fn assert_question_files_preserve_execution_identity(coordinator: bool) {
+    let (handler, root) = interaction_handler(if coordinator {
+        "question-files-coordinator"
+    } else {
+        "question-files-history"
+    });
+    let _workspace = ScalarEnv::set("WORKSPACE_ROOT", root.join("workspace").to_str().unwrap());
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(9), "turn-1"),
+    );
+    let (sender, mut receiver) = mpsc::channel(1);
+    handler.active_request_user_inputs.lock().unwrap().insert(
+        "task-1".into(),
+        ActiveRequestUserInput {
+            execution_id,
+            sender,
+        },
+    );
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+        backend_url: format!("http://{address}/api/"),
+        auth_token: "current-download-token".into(),
+        ..ConnectionConfig::default()
+    });
+    let expected_token = if coordinator {
+        "enabling-member-token"
+    } else {
+        "current-download-token"
+    };
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert!(count > 0 && headers.len() < 8192);
+            headers.extend_from_slice(&buffer[..count]);
+        }
+        assert!(String::from_utf8_lossy(&headers).contains(&format!("Bearer {expected_token}")));
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 18\r\nConnection: close\r\n\r\nReal question file").await.unwrap();
+    });
+    let file = json!({"id": 1, "filename": "brief.txt", "original_filename":"brief.txt"});
+    let response = json!({"requestId": 9, "interactionScope": "turn-1", "answers": {"choice": {"answers": ["Review"], "attachments": [file.clone()]}}});
+    let mut stale = response.clone();
+    stale["interactionScope"] = json!("old-turn");
+    assert_eq!(
+        handler
+            .send_request_user_input_response("task-1", stale, None)
+            .await
+            .unwrap()["code"],
+        "stale_request_user_input"
+    );
+    assert!(handler
+        .send_request_user_input_response(
+            "task-1",
+            response.clone(),
+            Some(ExecutionRequest::default())
+        )
+        .await
+        .is_err());
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(
+        handler.active_codex_transcript_items.lock().unwrap()["task-1"].items[0]["renderPayload"]
+            ["interactionStatus"],
+        "pending"
+    );
+    let mut request = ExecutionRequest::default();
+    // Backend blocking replies omit executionRequest and carry resolved files separately.
+    request.extra.insert("attachments".into(), json!([]));
+    if coordinator {
+        request.extra.insert(
+            "origin".into(),
+            json!({"project_coordination":{
+                "projectId":"1001", "groupId":"101", "commandId":"command-1", "userId":7,
+                "deviceId":"device-1", "generation":"generation-1", "inputDigest":"digest-1"
+            }}),
+        );
+        request.auth_token = Some("enabling-member-token".into());
+    }
+    let identity = project_coordination_execution::capture_identity(&request);
+    handler.store.update_task("task-1", |link| {
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+        if let Some(identity) = identity {
+            link.runtime_handle[project_coordination_execution::IDENTITY_KEY] = identity;
+        }
+    });
+    let reply = json!({"taskId":"task-1", "attachments":[file.clone()],
+        "requestUserInputResponse":response.clone()});
+    if coordinator {
+        let identity = handler.local_task_link("task-1").unwrap().runtime_handle
+            [project_coordination_execution::IDENTITY_KEY]
+            .clone();
+        let mut mismatch = identity.clone();
+        mismatch["context"]["generation"] = json!("superseded");
+        for unavailable in [Value::Null, mismatch] {
+            handler.store.update_task("task-1", |link| {
+                link.runtime_handle[project_coordination_execution::IDENTITY_KEY] = unavailable;
+            });
+            assert_eq!(
+                handler
+                    .prepare_question_reply(&reply)
+                    .await
+                    .err()
+                    .unwrap()
+                    .code,
+                "attachment_preparation_failed"
+            );
+        }
+        handler.store.update_task("task-1", |link| {
+            link.runtime_handle[project_coordination_execution::IDENTITY_KEY] = identity;
+        });
+    } else {
+        let connection = handler.backend_connection.lock().unwrap().take();
+        assert_eq!(
+            handler
+                .prepare_question_reply(&reply)
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "attachment_preparation_failed"
+        );
+        *handler.backend_connection.lock().unwrap() = connection;
+    }
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(
+        handler
+            .send_message(
+                json!({"taskId":"task-1", "message":"Review", "attachments":[file],
+                "requestUserInputResponse":response.clone()})
+            )
+            .await
+            .unwrap()["success"],
+        true
+    );
+    let native = receiver.recv().await.unwrap();
+    assert!(native["answers"]["choice"]["answers"]
+        .to_string()
+        .contains("<attachment>"));
+    assert!(native["answers"]["choice"].get("attachments").is_none());
+    let context = native["answers"]["choice"]["answers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|text| text.contains("<attachment>"))
+        .unwrap();
+    let path = context
+        .lines()
+        .find(|line| line.starts_with("- brief.txt ("))
+        .unwrap()
+        .split_once("): ")
+        .unwrap()
+        .1;
+    assert_eq!(fs::read_to_string(path).unwrap(), "Real question file");
+    fs::remove_dir_all(Path::new(path).parent().unwrap()).unwrap();
+    server.await.unwrap();
+    let saved =
+        handler.local_task_link("task-1").unwrap().runtime_handle["executionRequest"].clone();
+    assert!(saved["auth_token"].is_null());
+    assert!(saved["backend_url"].is_null());
+    assert_eq!(
+        handler.active_codex_transcript_items.lock().unwrap()["task-1"].items[0]["renderPayload"]
+            ["response"],
+        response
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -645,27 +869,27 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
         json!({"answers": {}}),
     ] {
         let rejected = handler
-            .send_request_user_input_response("task-1", invalid)
+            .send_request_user_input_response("task-1", invalid, None)
             .await
             .unwrap();
         assert_eq!(rejected["code"], "stale_request_user_input");
     }
     let mut answer = json!({"requestId": 0, "interactionScope": "turn-old", "answers": {"action": {"answers": ["production"]}}});
     let stale = handler
-        .send_request_user_input_response("task-1", answer.clone())
+        .send_request_user_input_response("task-1", answer.clone(), None)
         .await
         .unwrap();
     assert_eq!(stale["code"], "stale_request_user_input");
     answer["interactionScope"] = json!("turn-1");
     let accepted = handler
-        .send_request_user_input_response("task-1", answer.clone())
+        .send_request_user_input_response("task-1", answer.clone(), None)
         .await
         .unwrap();
     assert_eq!(accepted["success"], true);
     assert_eq!(receiver.recv().await.unwrap(), answer);
     let generic = json!({"requestId": 42, "interactionScope": "turn-1", "answers": {"choice": {"answers": ["yes"]}}});
     let unregistered = handler
-        .send_request_user_input_response("task-1", generic.clone())
+        .send_request_user_input_response("task-1", generic.clone(), None)
         .await
         .unwrap();
     assert_eq!(unregistered["code"], "stale_request_user_input");
@@ -676,7 +900,7 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
         &ordinary_request(json!(42), "turn-1"),
     );
     let accepted = handler
-        .send_request_user_input_response("task-1", generic.clone())
+        .send_request_user_input_response("task-1", generic.clone(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -688,7 +912,7 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
     pending["params"]["interactionStatus"] = json!("expired");
     handler.record_active_codex_transcript_item("task-1", "turn-1", &pending);
     let stale = handler
-        .send_request_user_input_response("task-1", answer)
+        .send_request_user_input_response("task-1", answer, None)
         .await
         .unwrap();
     assert_eq!(stale["code"], "stale_request_user_input");

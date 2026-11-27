@@ -762,9 +762,15 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
             // Preserve the archived task and worktree metadata so cleanup can be retried.
-            let mut ids = vec![link.local_task_id.clone()];
-            ids.extend(link.thread_id.iter().cloned());
-            self.store.unmark_deleted_archived_task_ids(&ids);
+            if let Err(error) = self.store.unmark_deleted_archived_link(&link) {
+                log_executor_event(
+                    "runtime archived conversation deletion rollback failed",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        ("error", error.to_string()),
+                    ],
+                );
+            }
         }
         if let Some(event_tx) = &self.event_tx {
             let _ = event_tx.send(json!({

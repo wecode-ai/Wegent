@@ -43,6 +43,8 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   cloudProjectId?: RuntimeSendRequest['cloudProjectId']
   origin?: RuntimeSendRequest['origin']
   conversationContext?: RuntimeSendRequest['conversationContext']
+  assistantPrompt?: RuntimeSendRequest['assistantPrompt']
+  requestUserInputResponse?: RuntimeSendRequest['requestUserInputResponse']
 }
 
 export interface GuidanceWorkbenchMessage {

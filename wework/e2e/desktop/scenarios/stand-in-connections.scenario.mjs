@@ -3,17 +3,20 @@ import {
   verifyStandInProfileNavigation,
 } from '../modules/stand-in-profile-navigation.mjs'
 import { createStandInDingTalkFixture } from '../modules/stand-in-dingtalk-fixture.mjs'
+import { verifyStandInDingTalkDelegation } from '../modules/stand-in-dingtalk-delegation.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project-connections.mjs'
 import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-catalog.mjs'
+import { verifyProjectFieldFocus } from '../modules/project-create-focus-indicator.mjs'
 import { verifyStandInSessionSettings } from '../modules/stand-in-session-settings.mjs'
 import { verifyStandInGroupMessageScope } from '../modules/stand-in-group-message-scope.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
+const SCENARIO_ROLE = 'dingtalk-connection-scenario'
 
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
@@ -114,22 +117,79 @@ export function createDesktopScenario(options) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await control.command('waitFor', '[data-testid="stand-in-overview"]')
+        await verifyProjectFieldFocus(control, 'stand-in-primary-open', {
+          nextButtonPattern: /^stand-in-(?:overview-role-.+|create-role)$/,
+        })
         await verifyStandInProfileNavigation(control, options.captureScreenshot)
         await openStandInSettings(control)
+        await verifyProjectFieldFocus(control, 'stand-in-preferences', {
+          includeParent: true,
+          nextButtonPattern: /^stand-in-primary-connections-open$/,
+        })
         await control.command(
           'clickWhenEnabled',
           '[data-testid="stand-in-primary-connections-open"]'
         )
         await control.command('waitFor', '[data-testid="stand-in-connection-settings"]')
         await verifyStandInConnectionCatalog(control, uiTimeoutMs, options.captureScreenshot)
-        await openConnectionTypePicker(control)
-        await control.command('waitFor', '[data-testid="stand-in-add-dingtalk-connection"]')
-        await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
-        await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')
-        await verifyStandInSessionSettings(control, uiTimeoutMs)
-        await verifyStandInGroupMessageScope(control, uiTimeoutMs)
         await control.command('click', '[data-testid="stand-in-primary-cancel"]')
+        const current = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.get',
+          { userId: USER },
+          uiTimeoutMs
+        )
+        await requestExecutor(
+          control,
+          'runtime.stand_in.personal.save',
+          {
+            userId: USER,
+            settings: {
+              ...current,
+              primary: { ...current.primary, connections: [] },
+              roles: [
+                ...current.roles,
+                {
+                  id: SCENARIO_ROLE,
+                  name: '钉钉连接测试角色',
+                  enabled: false,
+                  prompt: '',
+                  tags: [],
+                  executionDeviceId: current.executionDeviceId,
+                  version: 0,
+                  collaboration: {
+                    enabled: false,
+                    allProjects: false,
+                    projects: [],
+                    excludedProjects: [],
+                    tags: [],
+                  },
+                  connections: current.primary.connections,
+                },
+              ],
+            },
+          },
+          uiTimeoutMs
+        )
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+        await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="stand-in-overview-role-${SCENARIO_ROLE}"]`
+        )
+        await openStandInSettings(control)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
+        await openConnectionTypePicker(control)
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="stand-in-add-dingtalk-connection"]'
+        )
+        await verifyStandInSessionSettings(control, uiTimeoutMs, SCENARIO_ROLE)
+        await verifyStandInGroupMessageScope(control, uiTimeoutMs, SCENARIO_ROLE)
+        await control.command('clickWhenEnabled', '[data-testid="stand-in-cancel"]')
         await verifyStandInProjectConnectionNames(control, uiTimeoutMs)
+        await verifyStandInDingTalkDelegation(control, USER, fixture, options)
       } finally {
         const current = await requestExecutor(
           control,

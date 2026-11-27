@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
 
     # ========== Default Model Configuration ==========
-    DEFAULT_MODEL: str = "claude-3-5-sonnet-20241022"
+    DEFAULT_MODEL: str = "claude-sonnet-4-6"
     DEFAULT_MAX_TOKENS: int = 4096
 
     # ========== Chat Configuration ==========

@@ -367,13 +367,29 @@ impl RuntimeWorkRpcHandler {
                                         .iter()
                                         .find(|entry| {
                                             entry["clientUserMessageId"] == client_id
-                                                && entry["source"]["source"] == "connection_event"
+                                                && (entry["guidance"] == true
+                                                    || entry["source"]["source"]
+                                                        == "connection_event")
                                         })
                                         .cloned()
                                 })
                                 .flatten()
                         });
                         if let Some(display) = display {
+                            if display["guidance"] == true && display["source"]["source"] == "im" {
+                                if let Some(turn_id) = notification_turn_id.as_ref() {
+                                    self.store.update_task_without_snapshot(
+                                        &local_task_id,
+                                        |link| {
+                                            retain_stand_in_guidance_source(
+                                                link,
+                                                &json!(turn_id),
+                                                &display,
+                                            );
+                                        },
+                                    );
+                                }
+                            }
                             message["params"]["weworkGuidanceDisplay"] = display;
                         }
                     }

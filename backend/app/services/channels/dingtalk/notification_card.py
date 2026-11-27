@@ -92,11 +92,12 @@ def _custom_card_param_map(
     except ValueError:
         secondary_url = ""
     detail = _card_detail(push.detail)
+    is_dispatch_assignment = push.kind == "issue_dispatch_assignment"
     return {
         "kindLabel": kind_label,
         "tone": tone,
-        "headline": push.headline,
-        "itemTitle": _payload_text(push, "itemTitle"),
+        "headline": push.card_headline if is_dispatch_assignment else push.headline,
+        "itemTitle": _dispatch_task_title(push) or _payload_text(push, "itemTitle"),
         "itemKey": _payload_text(push, "itemKey"),
         "metaLine": _meta_line(push),
         "detailLabel": push.detail_label,
@@ -118,6 +119,12 @@ def _presentation(push: PushNotification) -> tuple[str, str]:
 
 def _payload_text(push: PushNotification, key: str) -> str:
     return str(push.payload.get(key) or "")
+
+
+def _dispatch_task_title(push: PushNotification) -> str:
+    if push.kind == "issue_dispatch_assignment":
+        return _payload_text(push, "taskTitle").strip()
+    return ""
 
 
 def _card_detail(detail: str) -> str:
@@ -146,7 +153,14 @@ def _body(push: PushNotification) -> str:
     a value — a comment, a failure reason — is whatever a member typed.
     """
 
-    lines = [f"**{label}**：{escape_markdown(value)}" for label, value in push.facts]
+    task_title = _dispatch_task_title(push)
+    lines = [
+        f"**{label}**：{escape_markdown(value)}"
+        for label, value in push.facts
+        if not task_title or label != "任务标题"
+    ]
+    if task_title:
+        lines.insert(0, f"**任务标题**：{escape_markdown(task_title)}")
     if push.detail:
         if lines:
             # Keep the detail — a comment, a result — apart from the facts it

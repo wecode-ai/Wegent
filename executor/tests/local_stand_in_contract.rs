@@ -136,7 +136,7 @@ fn workspace_settings_round_trip_and_reject_invalid_modes() {
         .unwrap();
     assert_eq!(
         store.stand_in_settings("project", 7, "default").unwrap()["workspace"],
-        settings["workspace"]
+        json!({"projectKey":"repo","executionMode":"git_worktree","branch":"develop"})
     );
     settings["version"] = saved["version"].clone();
     settings["workspace"]["executionMode"] = json!("unknown");

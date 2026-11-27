@@ -24,7 +24,7 @@ interface InstanceObservation {
   active: boolean
   entryRequestKey?: number
 }
-const configured = (settings: PersonalStandInSettings) =>
+export const hasSavedStandIn = (settings: PersonalStandInSettings) =>
   Boolean(
     settings.version > 0 ||
     settings.roles.some(
@@ -96,24 +96,17 @@ export function createStandInInstanceSource({
     epoch: number,
     revision: number
   ) => {
-    const [owned, local] = await Promise.all([
-      api!.personalGet(userId, deviceId),
-      userId === LOCAL_USER.id
-        ? Promise.resolve(undefined)
-        : api!.personalGet(LOCAL_USER.id, deviceId),
-    ])
+    const owned = await api!.personalGet(userId, deviceId)
     const mayBind = () =>
       observed(revision, deviceId) && observation?.active && activation === epoch
     if (!mayBind()) return { binding: unbound }
-    const localOwner = !initialDeviceId && !configured(owned) && !!local && configured(local)
     const available = owner.connected ? availableStandInDevices(owner.devices) : []
     const preferred = available.find(device => device.is_default) ?? available[0]
     const target = {
-      userId: localOwner ? LOCAL_USER.id : userId,
-      backendUrl: localOwner || userId === LOCAL_USER.id ? '' : backendUrl,
+      userId,
+      backendUrl: userId === LOCAL_USER.id ? '' : backendUrl,
       deviceId:
-        initialDeviceId ||
-        (configured(owned) || localOwner ? deviceId : (preferred?.device_id ?? deviceId)),
+        initialDeviceId || (hasSavedStandIn(owned) ? deviceId : (preferred?.device_id ?? deviceId)),
     }
     if (target.deviceId !== deviceId) {
       await api!.personalGet(target.userId, target.deviceId)
@@ -227,6 +220,7 @@ export function createStandInInstanceSource({
       target?: StandInBindingTarget
       roleId?: string
       primaryName?: string
+      targetApi?: StandInExecutorApi
     }
   ) => {
     if (!listeners.size || !observation?.active || snapshot.busy) return
@@ -283,6 +277,7 @@ export function createStandInInstanceSource({
               targetUser: target.userId,
               targetDevice: target.deviceId,
               primaryName: input.primaryName!,
+              targetApi: input.targetApi,
               assertOwnership: () => assertObserved(revision, localDeviceId),
             })
           : undefined
@@ -338,8 +333,12 @@ export function createStandInInstanceSource({
     bind: async (target: StandInBindingTarget) => {
       await mutate('bind', { target })
     },
-    migrate: (target: StandInBindingTarget, roleId: string | undefined, primaryName: string) =>
-      mutate('migrate', { target, roleId, primaryName }),
+    migrate: (
+      target: StandInBindingTarget,
+      roleId: string | undefined,
+      primaryName: string,
+      targetApi?: StandInExecutorApi
+    ) => mutate('migrate', { target, roleId, primaryName, targetApi }),
     reload: () => {
       void read()
     },

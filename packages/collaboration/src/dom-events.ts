@@ -15,6 +15,7 @@ import {
   useState,
   type RefObject,
 } from 'react'
+import { flushSync } from 'react-dom'
 import { observeReadableScrollRequest, type ReadableScrollMemory } from './readableScrollRequest'
 import { focusEditorTarget, type EditorFocusTarget, type EditorFocusGuard } from './editorFocus'
 import { isolateModalBackground } from './controls/dialogAccessibility'
@@ -697,23 +698,22 @@ function observeElementTypography(
   propertyNames: readonly string[],
   readFontRevision: () => number,
   advanceFontRevision: () => void,
-  publish: (snapshot: ElementTypographySnapshot) => void
+  publish: (snapshot: ElementTypographySnapshot, fromResize?: boolean) => void
 ) {
   let active = true
+  let snapshot: ElementTypographySnapshot | null = null
+  let horizontalPadding = 0
   const root = element.ownerDocument.documentElement
   const fonts = element.ownerDocument.fonts
-  const update = () => {
+  const readWidth = () => Math.max(0, Math.round(element.clientWidth - horizontalPadding))
+  const update = (fromResize = false, observedWidth?: number) => {
     if (!active) return
+    if (observedWidth !== undefined && observedWidth === snapshot?.contentWidth) return
     const style = getComputedStyle(element)
-    publish({
-      contentWidth: Math.max(
-        0,
-        Math.round(
-          element.clientWidth -
-            (Number.parseFloat(style.paddingLeft) || 0) -
-            (Number.parseFloat(style.paddingRight) || 0)
-        )
-      ),
+    horizontalPadding =
+      (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0)
+    snapshot = {
+      contentWidth: observedWidth ?? readWidth(),
       fontFamily: style.fontFamily,
       fontWeight: style.fontWeight,
       rootFontSize: getComputedStyle(root).fontSize,
@@ -721,11 +721,19 @@ function observeElementTypography(
         propertyNames.map(name => [name, style.getPropertyValue(name)])
       ),
       fontRevision: readFontRevision(),
-    })
+    }
+    publish(snapshot, fromResize)
   }
-  const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+  const resize =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(entries => {
+          const entry = entries[0]
+          if (entry) update(true, Math.max(0, Math.round(entry.contentRect.width)))
+        })
   resize?.observe(element)
-  const mutation = typeof MutationObserver === 'undefined' ? null : new MutationObserver(update)
+  const mutation =
+    typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => update())
   const themeScope = element.closest('.collaboration-theme')
   const styleChanges = { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] }
   mutation?.observe(root, styleChanges)
@@ -742,6 +750,23 @@ function observeElementTypography(
   return {
     element,
     propertyKey: JSON.stringify(propertyNames),
+    updateWidth() {
+      if (!active) return
+      // A shell split only changes geometry. Reuse typography unless a style
+      // or font invalidation is pending in the same commit.
+      if (
+        !snapshot ||
+        mutation?.takeRecords().length ||
+        snapshot.fontRevision !== readFontRevision()
+      ) {
+        update()
+        return
+      }
+      const contentWidth = readWidth()
+      if (contentWidth === snapshot.contentWidth) return
+      snapshot = { ...snapshot, contentWidth }
+      publish(snapshot)
+    },
     stop() {
       active = false
       resize?.disconnect()
@@ -755,16 +780,29 @@ function observeElementTypography(
 export function useElementTypography(
   target: RefObject<HTMLElement | null>,
   propertyNames: readonly `--${string}`[],
-  enabled = true
+  enabled = true,
+  layoutRevision?: string
 ) {
   const [snapshot, setSnapshot] = useState<ElementTypographySnapshot | null>(null)
   const latest = useRef<ElementTypographySnapshot | null>(null)
   const fontRevision = useRef(0)
   const binding = useRef<ReturnType<typeof observeElementTypography> | null>(null)
-  const publish = (next: ElementTypographySnapshot | null) => {
+  const committedRevision = useRef(layoutRevision)
+  const publish = (next: ElementTypographySnapshot | null, fromResize = false) => {
     if (JSON.stringify(latest.current) === JSON.stringify(next)) return
+    const previousWidth = latest.current?.contentWidth ?? 0
     latest.current = next
-    setSnapshot(next)
+    // A measured column resize must publish its geometry before the next paint.
+    // Initial and typography-only observations keep the normal React update path.
+    if (
+      fromResize &&
+      previousWidth > 0 &&
+      next &&
+      next.contentWidth > 0 &&
+      next.contentWidth !== previousWidth
+    ) {
+      flushSync(() => setSnapshot(next))
+    } else setSnapshot(next)
   }
   useLayoutEffect(() => {
     const element = target.current
@@ -788,7 +826,12 @@ export function useElementTypography(
         },
         publish
       )
+    } else if (committedRevision.current !== layoutRevision) {
+      // The owning layout has just committed a different split. Read its actual
+      // column now so a second observer-driven commit cannot expose old geometry.
+      binding.current.updateWidth()
     }
+    committedRevision.current = layoutRevision
   })
   useLayoutEffect(
     () => () => {

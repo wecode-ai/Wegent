@@ -43,6 +43,7 @@ import { getRecognizedLink } from './link-preview'
 import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
 import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -127,7 +128,25 @@ type AssistantMarkdownPart =
   | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
 
 /** Renders assistant and user Markdown with shared link and diagram handling. */
-export const AssistantMarkdown = memo(function AssistantMarkdown({
+export const AssistantMarkdown = memo(function AssistantMarkdown(props: AssistantMarkdownProps) {
+  const { streamingTextFlushIntervalMs = 0 } = useMarkdownServices()
+  return props.variant !== 'user' && streamingTextFlushIntervalMs > 0 ? (
+    <BufferedAssistantMarkdown {...props} flushIntervalMs={streamingTextFlushIntervalMs} />
+  ) : (
+    <AssistantMarkdownContent {...props} />
+  )
+}, areAssistantMarkdownPropsEqual)
+
+function BufferedAssistantMarkdown({
+  flushIntervalMs,
+  ...props
+}: AssistantMarkdownProps & { flushIntervalMs: number }) {
+  // Keep the renderer mounted through settlement and skip parsing superseded appends.
+  const content = useBufferedStreamingText(props.content, props.isStreaming ?? false, flushIntervalMs)
+  return <AssistantMarkdownContent {...props} content={content} />
+}
+
+const AssistantMarkdownContent = memo(function AssistantMarkdownContent({
   content,
   isStreaming = false,
   preserveLineBreaks = false,
@@ -139,6 +158,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 }: AssistantMarkdownProps) {
   const services = useMarkdownServices()
   const renderVisualization = renderVisualizationOverride ?? services.renderVisualization
+  const showVisualizations = variant !== 'user' && Boolean(renderVisualization)
   const streamdownMode =
     variant === 'default' || variant === 'process' || isStreaming
       ? ('streaming' as const)
@@ -178,10 +198,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   // Keep live block identities through completion. Settled history already has display chunks.
   const parseWindowInOnePass = windowMarkdown && !hasStreamed
   const contentParts = useMemo(() => {
-    const parts =
-      variant === 'user' || !renderVisualization
-        ? [{ kind: 'markdown' as const, content: displayContent }]
-        : splitCodexInlineVisualizations(displayContent)
+    const parts = showVisualizations
+      ? splitCodexInlineVisualizations(displayContent)
+      : [{ kind: 'markdown' as const, content: displayContent }]
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const wholeSource = hasMarkdownReferenceDefinitions(part.content)
@@ -193,7 +212,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         wholeSource,
       }))
     })
-  }, [displayContent, windowMarkdown, variant, renderVisualization])
+  }, [displayContent, windowMarkdown, showVisualizations])
+  // A single streamed chunk has no sibling to window. Keep its mounted layout
+  // through completion and let the conversation row own offscreen virtualization.
+  const keepSingleStreamedChunk = hasStreamed && contentParts.length === 1
   const headingClasses = MARKDOWN_HEADING_CLASSES[variant === 'user' ? 'default' : variant]
   const components = useMemo(
     () => ({
@@ -421,7 +443,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                 key={key}
                 chunkIndex={index}
                 content={part.content}
-                eager={isStreaming && (index === 0 || isLastPart)}
+                eager={keepSingleStreamedChunk || (isStreaming && (index === 0 || isLastPart))}
               >
                 {markdown}
               </WindowedMarkdownChunk>

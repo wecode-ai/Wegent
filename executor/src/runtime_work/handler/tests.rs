@@ -25,6 +25,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.cli",
         "runtime.connections.host",
         "runtime.connections.catalog",
+        "runtime.connections.readiness",
         "runtime.connections.resources",
         "runtime.connections.observations.collect",
         "runtime.connections.dependencies.inventory",
@@ -2966,6 +2967,10 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
     let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        root.path().join("workspace").to_str().unwrap(),
+    );
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -3041,27 +3046,38 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
         });
 }
 
-#[tokio::test]
-async fn archived_delete_falls_back_inline_when_enqueue_fails() {
-    let index_path = temp_runtime_work_index_path("delete-enqueue-fallback");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
-    let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
-    drop(archived_delete_rx);
-    handler.archived_delete_tx = archived_delete_tx;
-    let link = RuntimeTaskLink::new_pending(
-        "task-1".to_owned(),
-        "/tmp/runtime-work-delete-enqueue-fallback".to_owned(),
-        "Task".to_owned(),
+#[test]
+fn archived_delete_falls_back_inline_when_enqueue_fails() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _workspace = ScalarEnv::set(
+        "WORKSPACE_ROOT",
+        root.path().join("workspace").to_str().unwrap(),
     );
-    handler.upsert_local_task(link.clone());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+            handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+            let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+            drop(archived_delete_rx);
+            handler.archived_delete_tx = archived_delete_tx;
+            let link = RuntimeTaskLink::new_pending(
+                "task-1".to_owned(),
+                root.path().join("project").to_string_lossy().into_owned(),
+                "Task".to_owned(),
+            );
+            handler.upsert_local_task(link.clone());
 
-    let response = handler.delete_archived_link(link).await;
+            let response = handler.delete_archived_link(link).await;
 
-    assert_eq!(response["deleted"], true);
-    assert_eq!(response["cleanup"]["background"], false);
-    assert!(handler.local_task_link("task-1").is_none());
-    let _ = fs::remove_file(index_path);
+            assert_eq!(response["deleted"], true);
+            assert_eq!(response["cleanup"]["background"], false);
+            assert!(handler.local_task_link("task-1").is_none());
+        });
 }
 
 #[test]
@@ -5645,6 +5661,18 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
             .to_string()
     ));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn runtime_work_test_paths_are_independent_for_the_same_label() {
+    let paths = (0..128)
+        .map(|_| temp_runtime_work_index_path("shared-label"))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        paths.len(),
+        128,
+        "Test cleanup must not remove another fixture"
+    );
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {

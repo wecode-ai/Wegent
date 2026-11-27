@@ -21,6 +21,13 @@ export interface ReplyPredictionFeedSnapshot {
   accept(scope: string, key: string): void
 }
 
+interface PredictionTask {
+  source: ReplyPredictionSource
+  key: string
+  requested: boolean
+  prediction: ReplyPredictionResult | null
+}
+
 /** The window feed owns background scopes and publishes the candidates consumed by composers. */
 export function createReplyPredictionFeed(
   service: ReplyPredictionService,
@@ -29,16 +36,10 @@ export function createReplyPredictionFeed(
   const listeners = new Set<() => void>()
   const owners = new Map<string, { scope: string; release(): void }>()
   const observedActivity = new Set<string>()
-  const tasks = new Map<
-    string,
-    {
-      source: ReplyPredictionSource
-      key: string
-      requested: boolean
-      prediction: ReplyPredictionResult | null
-    }
-  >()
-  let previous: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']> | undefined
+  const tasks = new Map<string, PredictionTask>()
+  const changedScopes = new Set<string>()
+  let refreshAll = false
+  let initialized = false
   let stopStore: (() => void) | undefined
   let stopService: (() => void) | undefined
   let synchronizing = false
@@ -53,29 +54,43 @@ export function createReplyPredictionFeed(
     )
       return
     entry.prediction.onAccept()
-    publish()
+    updateScope(scope)
   }
   let snapshot: ReplyPredictionFeedSnapshot = { service, entries: new Map(), accept }
   function suspend(error: unknown) {
     tasks.clear()
+    changedScopes.clear()
+    refreshAll = false
     observedActivity.clear()
     for (const owner of owners.values()) owner.release()
     owners.clear()
-    previous = undefined
+    initialized = false
     snapshot = { service, entries: new Map(), accept }
     listeners.forEach(listener => listener())
     reportReplyPredictionFeedError(error)
   }
+  function updateScope(scope?: string) {
+    if (scope === undefined) refreshAll = true
+    else changedScopes.add(scope)
+    publish()
+  }
   function publish() {
-    if (synchronizing) return
+    if (synchronizing || (!refreshAll && !changedScopes.size)) return
     try {
-      const entries = new Map<string, ReplyPredictionFeedEntry>()
+      let entries: Map<string, ReplyPredictionFeedEntry> | undefined
       const pendingScopes = service.getPendingScopes()
-      let changed = false
-      for (const task of tasks.values()) {
+      const scopes = refreshAll
+        ? new Set([...snapshot.entries.keys(), ...tasks.keys()])
+        : changedScopes
+      for (const scope of scopes) {
+        const task = tasks.get(scope)
+        const prior = (entries ?? snapshot.entries).get(scope)
+        if (!task) {
+          if (prior) (entries ??= new Map(snapshot.entries)).delete(scope)
+          continue
+        }
         const prediction = task.prediction?.isCurrent() ? task.prediction : null
-        const pending = !task.source.busy && pendingScopes.has(task.source.scope)
-        const prior = snapshot.entries.get(task.source.scope)
+        const pending = !task.source.busy && pendingScopes.has(scope)
         const entry: ReplyPredictionFeedEntry = {
           key: task.key,
           busy: task.source.busy,
@@ -90,86 +105,80 @@ export function createReplyPredictionFeed(
           prior.requested === entry.requested &&
           prior.prediction === entry.prediction &&
           prior.pending === entry.pending
-        ) {
-          entries.set(task.source.scope, prior)
-        } else {
-          entries.set(task.source.scope, entry)
-          changed = true
-        }
+        )
+          continue
+        entries ??= new Map(snapshot.entries)
+        entries.set(scope, entry)
       }
-      if (!changed && snapshot.entries.size === entries.size) return
+      refreshAll = false
+      changedScopes.clear()
+      if (!entries) return
       snapshot = { service, entries, accept }
       listeners.forEach(listener => listener())
     } catch (error) {
       suspend(error)
     }
   }
-  const synchronize = () => {
+  const synchronize: Parameters<RuntimeTaskLifecycleStore['subscribeTaskChanges']>[0] = (
+    changedKeys,
+    before,
+    after
+  ) => {
     synchronizing = true
-    let synchronized = false
     try {
-      const next = store.getSnapshot()
-      const before = previous ?? next
-      for (const key of before.tasks.keys()) {
-        if (next.tasks.has(key)) continue
-        owners.get(key)?.release()
-        owners.delete(key)
-        observedActivity.delete(key)
-        tasks.delete(key)
-      }
-      for (const [key, task] of next.tasks) {
-        const prior = before.tasks.get(key)
-        if (task.derived.isBusy || (prior && prior.turn.latestId !== task.turn.latestId))
+      const keys = initialized ? changedKeys : after.keys()
+      for (const key of keys) {
+        const task = after.get(key)
+        const prior = before.get(key)
+        if (task && (task.derived.isBusy || (prior && prior.turn.latestId !== task.turn.latestId)))
           observedActivity.add(key)
-        const source = runtimeReplyPredictionSource(task.address, task)
-        if (!source) {
-          tasks.delete(key)
-          owners.get(key)?.release()
+        const source = task && runtimeReplyPredictionSource(task.address, task)
+        const owner = owners.get(key)
+        if (owner && owner.scope !== source?.scope) {
+          owner.release()
+          tasks.delete(owner.scope)
+          changedScopes.add(owner.scope)
           owners.delete(key)
+        }
+        if (!source) {
           observedActivity.delete(key)
           continue
         }
-        const owner = owners.get(key)
         if (owner?.scope !== source.scope) {
-          owner?.release()
           owners.set(key, { scope: source.scope, release: service.retain(source.scope) })
         }
         const predictionKey = replyPredictionKey(source)
-        let current = tasks.get(key)
+        let current = tasks.get(source.scope)
         if (!current || current.key !== predictionKey || current.source.busy !== source.busy) {
           current = { source, key: predictionKey, requested: false, prediction: null }
-          tasks.set(key, current)
-        }
-        if (source.busy) {
-          service.invalidate(source.scope)
-          current.requested = false
-          current.prediction = null
-          continue
+          tasks.set(source.scope, current)
+          changedScopes.add(source.scope)
+          if (source.busy) service.invalidate(source.scope)
         }
         // A historical task retains its scope but starts no backlog request.
-        if (!observedActivity.has(key) || current.requested) continue
+        if (source.busy || !observedActivity.has(key) || current.requested) continue
         current.requested = true
+        changedScopes.add(source.scope)
         const request = current
         void service.request(source).then(
           prediction => {
-            if (tasks.get(key) !== request || !listeners.size) return
+            if (tasks.get(source.scope) !== request || !listeners.size) return
             request.prediction = prediction
-            publish()
+            updateScope(source.scope)
           },
           () => {
-            if (tasks.get(key) !== request || !listeners.size) return
+            if (tasks.get(source.scope) !== request || !listeners.size) return
             request.prediction = null
-            publish()
+            updateScope(source.scope)
           }
         )
       }
-      previous = next
-      synchronized = true
+      initialized = true
     } catch (error) {
       suspend(error)
     } finally {
       synchronizing = false
-      if (synchronized) publish()
+      publish()
     }
   }
   return {
@@ -178,10 +187,10 @@ export function createReplyPredictionFeed(
       listeners.add(listener)
       if (listeners.size === 1) {
         try {
-          previous = store.getSnapshot()
-          stopService = service.subscribe(publish)
-          stopStore = store.subscribe(synchronize)
-          synchronize()
+          const { tasks: currentTasks } = store.getSnapshot()
+          stopService = service.subscribe(updateScope)
+          stopStore = store.subscribeTaskChanges(synchronize)
+          synchronize(new Set(), currentTasks, currentTasks)
         } catch (error) {
           stopStore?.()
           stopStore = undefined
@@ -201,6 +210,9 @@ export function createReplyPredictionFeed(
         owners.clear()
         observedActivity.clear()
         tasks.clear()
+        changedScopes.clear()
+        refreshAll = false
+        initialized = false
         snapshot = { service, entries: new Map(), accept }
       }
     },

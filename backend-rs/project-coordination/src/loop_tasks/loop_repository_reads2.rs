@@ -84,7 +84,12 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     /// Read assignment history without initializing or locking the active index.
     pub async fn list_assignment_comments(&self, item_id: &str) -> MysqlResult<Vec<CommentRow>> {
         self.mysql
-            .fetch_all(ordered_comments_query(true), (item_id,))
+            .fetch_all(
+                ordered_comments_query(
+                    "AND JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.event_type')) = 'assignment'",
+                ),
+                (item_id,),
+            )
             .await
     }
 

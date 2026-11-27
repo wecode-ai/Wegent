@@ -1,8 +1,11 @@
-import { createRuntimeTaskReminderSource } from './runtimeTaskReminderSource'
-export { getVisibleRuntimeTaskUnreadKeys } from './runtimeTaskReminderSource'
+import {
+  createRuntimeTaskReminderSource,
+  EMPTY_RUNTIME_TASK_REMINDERS,
+  projectRuntimeTaskReminders,
+} from './runtimeTaskReminderSource'
 import { createAppPreferencesStore } from '@/features/app-preferences/appPreferencesStore'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { defaultAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
+import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import { createActiveNotificationPreferencesStore } from '@/features/notifications/notificationPreferences'
 import type {
   RuntimeDeviceWorkspace,
@@ -18,6 +21,7 @@ import { useStandInMessageReminders } from './useStandInMessageReminders'
 import { useUnlistedStandInTasks } from '@/features/notifications/useUnlistedStandInTasks'
 import type { StandInExecutorApi } from '@/api/standIn'
 import type { WorkbenchServices } from './workbenchServices'
+import { RuntimeTaskRemindersContext, WorkbenchSidebarRemindersContext } from './workbenchContexts'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
@@ -43,13 +47,14 @@ export interface RuntimeTaskReminderState {
   items: RuntimeTaskReminderItem[]
 }
 
-export const EMPTY_RUNTIME_TASK_REMINDERS: RuntimeTaskReminderState = {
-  unreadTaskKeys: new Set<string>(),
-  unreadCount: 0,
-  hasRunningTasks: false,
-  preferences: defaultAppPreferences,
-  markRuntimeTaskRead: () => {},
-  items: [],
+export { EMPTY_RUNTIME_TASK_REMINDERS }
+
+export function useWorkbenchTaskReminders(): RuntimeTaskReminderState {
+  return useContext(RuntimeTaskRemindersContext) ?? EMPTY_RUNTIME_TASK_REMINDERS
+}
+
+export function useWorkbenchSidebarReminders() {
+  return useContext(WorkbenchSidebarRemindersContext) ?? EMPTY_RUNTIME_TASK_REMINDERS
 }
 
 export function getRuntimeTaskReminderKey(address: RuntimeTaskAddress): string {
@@ -110,12 +115,14 @@ export function useRuntimeTaskReminders({
   lifecycleSnapshot,
   standInApi,
   runtimeApi,
+  publish,
 }: {
   runtimeWork: RuntimeWorkListResponse | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   lifecycleSnapshot: RuntimeTaskLifecycleStoreSnapshot
   standInApi?: StandInExecutorApi
   runtimeApi?: WorkbenchServices['runtimeWorkApi']
+  publish?: (reminders: RuntimeTaskReminderState) => void
 }): RuntimeTaskReminderState {
   const [appPreferences] = useState(createAppPreferencesStore)
   const [notificationPreferencesStore] = useState(createActiveNotificationPreferencesStore)
@@ -126,12 +133,7 @@ export function useRuntimeTaskReminders({
   )
 
   const sidebarItems = useMemo(() => collectRuntimeTaskReminderItems(runtimeWork), [runtimeWork])
-  const listedItems = useUnlistedStandInTasks(
-    sidebarItems,
-    lifecycleSnapshot,
-    standInApi,
-    runtimeApi
-  )
+  const listedItems = useUnlistedStandInTasks(sidebarItems, lifecycleSnapshot, standInApi)
   const items = useMemo(() => {
     const visible = new Set(listedItems.map(item => item.key))
     const unlisted = [...lifecycleSnapshot.tasks.values()].flatMap(snapshot => {
@@ -152,7 +154,7 @@ export function useRuntimeTaskReminders({
         },
       ]
     })
-    return [...listedItems, ...unlisted]
+    return unlisted.length ? [...listedItems, ...unlisted] : listedItems
   }, [listedItems, lifecycleSnapshot.tasks])
   const unreadMessageCounts = useStandInMessageReminders(
     items,
@@ -168,31 +170,23 @@ export function useRuntimeTaskReminders({
         listedItems,
         notificationPreferences,
         unreadMessageCounts,
+        preferences,
+        publish,
       }),
-    [source, items, listedItems, notificationPreferences, unreadMessageCounts]
+    [source, items, listedItems, notificationPreferences, unreadMessageCounts, preferences, publish]
   )
-  const visibleUnreadTaskKeys = useSyncExternalStore(subscribe, source.getSnapshot)
-
+  const unreadTaskKeys = useSyncExternalStore(subscribe, source.getSnapshot)
+  const hasRunningTasks = lifecycleSnapshot.runningTaskKeys.size > 0
   return useMemo(
-    () => ({
-      unreadTaskKeys: visibleUnreadTaskKeys,
-      unreadMessageCounts,
-      unreadCount: [...visibleUnreadTaskKeys].reduce(
-        (total, key) => total + (unreadMessageCounts.get(key) ?? 1),
-        0
-      ),
-      hasRunningTasks: lifecycleSnapshot.runningTaskKeys.size > 0,
-      preferences,
-      items,
-      markRuntimeTaskRead: (address: RuntimeTaskAddress) => lifecycleStore.markRead(address),
-    }),
-    [
-      items,
-      lifecycleSnapshot.runningTaskKeys.size,
-      lifecycleStore,
-      preferences,
-      visibleUnreadTaskKeys,
-      unreadMessageCounts,
-    ]
+    () =>
+      projectRuntimeTaskReminders({
+        unreadTaskKeys,
+        unreadMessageCounts,
+        hasRunningTasks,
+        preferences,
+        items,
+        markRuntimeTaskRead: source.markRuntimeTaskRead,
+      }),
+    [unreadTaskKeys, unreadMessageCounts, hasRunningTasks, preferences, items, source]
   )
 }
