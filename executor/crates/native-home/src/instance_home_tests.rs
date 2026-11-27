@@ -647,3 +647,24 @@ fn shell_only_desktop_request_does_not_create_an_agent_instance() {
     assert!(request_home(&request).is_none());
     assert!(acquire(&request).unwrap().is_none());
 }
+
+#[test]
+fn personal_bot_grants_bind_native_homes_to_the_owner_team_and_pipeline_member() {
+    let root = tempfile::tempdir().unwrap();
+    let mut request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"local-task","team_id":0,"user_id":4,"team_ref":"stand-in-team-local",
+        "collaboration_model":"pipeline","new_session":true,
+        "bot":[{"id":"reviewer","shell_type":"Codex","native_capability_scope":"bot"}]
+    }))
+    .unwrap();
+    let home = named_home_at(root.path(), &request).unwrap();
+    assert_eq!(
+        home,
+        root.path()
+            .join("personal-teams/4/stand-in-team-local/bots/reviewer")
+    );
+    assert!(request_home(&request).is_some());
+    drop(acquire_at(&request, root.path(), &home).unwrap());
+    request.bot[0]["id"] = json!(2);
+    assert_ne!(named_home_at(root.path(), &request).unwrap(), home);
+}

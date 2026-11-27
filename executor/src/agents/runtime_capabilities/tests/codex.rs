@@ -356,6 +356,17 @@ fn assert_codex_skill_deployment(with_owner: bool, direct_profile: bool) {
         if direct_profile {
             assert!(!temp.path().join("agents").exists());
             assert!(!temp.path().join("codex/skills").exists());
+            request
+                .extra
+                .insert("team_ref".to_owned(), json!("stand-in-team-imported"));
+            request.bot[0]["native_capability_scope"] = json!("bot");
+            request.bot[0]["skills"] = json!([]);
+            request.extra.remove("preload_skills");
+            request.extra.remove("skill_refs");
+            prepare_codex_runtime(&request).await.unwrap();
+            assert!(!skills_dir.join("required-skill/SKILL.md").exists());
+            let home = crate::agents::instance_home::request_home(&request).unwrap();
+            assert!(!home.join("skills/required-skill/SKILL.md").exists());
         } else {
             assert!(!temp.path().join("workspace/.codex").exists());
         }
